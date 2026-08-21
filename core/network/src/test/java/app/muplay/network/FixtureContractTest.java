@@ -20,6 +20,12 @@ public class FixtureContractTest {
     validator.assertValid("/rest/getMusicFolders", fixture("getMusicFolders_navidrome.json"));
   }
 
+  @Test
+  public void getOpenSubsonicExtensionsFixtureMatchesSpec() throws IOException {
+    validator.assertValid(
+        "/rest/getOpenSubsonicExtensions", fixture("getOpenSubsonicExtensions_navidrome.json"));
+  }
+
   static String fixture(String name) throws IOException {
     try (var in = FixtureContractTest.class.getResourceAsStream("/fixtures/" + name)) {
       if (in == null) {

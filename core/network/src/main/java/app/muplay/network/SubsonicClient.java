@@ -11,7 +11,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
@@ -79,6 +81,26 @@ public final class SubsonicClient {
             }
           }
           return List.copyOf(out);
+        });
+  }
+
+  @Nonnull
+  public ListenableFuture<Map<String, List<Integer>>> getOpenSubsonicExtensions() {
+    return enqueue(
+        api.getOpenSubsonicExtensions(
+            auth.authParams(credentials, SubsonicAuth.randomSaltSupplier())),
+        body -> {
+          Map<String, List<Integer>> out = new LinkedHashMap<>();
+          List<SubsonicResponse.OpenSubsonicExtension> exts = body.openSubsonicExtensions();
+          if (exts != null) {
+            for (SubsonicResponse.OpenSubsonicExtension e : exts) {
+              if (e.name() != null) {
+                out.put(
+                    e.name(), List.copyOf(Objects.requireNonNullElse(e.versions(), List.of())));
+              }
+            }
+          }
+          return Map.copyOf(out);
         });
   }
 

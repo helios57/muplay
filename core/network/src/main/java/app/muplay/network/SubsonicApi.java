@@ -13,4 +13,7 @@ interface SubsonicApi {
 
   @GET("rest/getMusicFolders")
   Call<SubsonicResponse> getMusicFolders(@QueryMap Map<String, String> auth);
+
+  @GET("rest/getOpenSubsonicExtensions")
+  Call<SubsonicResponse> getOpenSubsonicExtensions(@QueryMap Map<String, String> auth);
 }
