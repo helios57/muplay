@@ -248,15 +248,43 @@ Navidrome indexes an `.m4b` as **one multi-hour track** and cannot see chapters.
 MuPlay extracts them **client-side from the stream**. Nothing in the Subsonic
 ecosystem does this.
 
-Requirements and caveats:
+Requirements and caveats — **verified end-to-end by spike S3**
+(`docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`), which
+corrected two things below that were wrong or underspecified before the spike:
 - Needs HTTP Range → **`format=raw`**, no transcoding.
-- `faststart` files put the chapter atom at the **end** — a range request to the
-  file tail before playback.
+- **`faststart` files put the chapter atom at the front** (that is the entire
+  point of `-movflags +faststart` — it moves `moov`, and the `chpl` atom
+  inside it, to the start of the file). **Non-faststart files put it at the
+  end** — a range request to the file tail before chapters are readable. (The
+  previous version of this section had this backwards.) Confirmed at both
+  small and realistic (~1.4 MB) file sizes: for a realistic non-faststart
+  file, Media3 seeks directly to the moov atom's byte offset via a targeted
+  Range request and does **not** download the intervening audio payload
+  first — chapter extraction from a non-faststart file over HTTP is cheap,
+  not "read the whole file."
 - Chapter times are **period-relative, not window-relative**: subtract
   `timeline.getWindow(idx, w).positionInFirstPeriodUs / 1000` before `seekTo`.
-- `chpl` v0 vs v1 differ in the count field width; Media3 assumes v1.
-- Read without playing via `androidx.media3.inspector.MetadataRetriever` (the
-  old `exoplayer.MetadataRetriever` was deprecated in 1.9 and removed).
+- `chpl` v0 vs v1 differ in the count field width; Media3 assumes v1. (Not
+  independently re-verified by S3 — the spike's fixtures used whichever
+  version ffmpeg 6.1.1 writes by default.)
+- Read without playing via `androidx.media3.inspector.MetadataRetriever` —
+  confirmed to exist exactly as named, but **it ships in its own Maven
+  artifact, `androidx.media3:media3-inspector`, which `media3-exoplayer` does
+  not pull in transitively** and must be added as an explicit dependency.
+  (The old `exoplayer.MetadataRetriever` was deprecated in 1.9 and is
+  confirmed removed in 1.11 — a plain `javac` compile against it fails with
+  "cannot find symbol.")
+- **`MetadataRetriever.Builder` must be given an explicit `MediaSourceFactory`
+  (e.g. `new DefaultMediaSourceFactory(context).setDataSourceFactory(...)`)
+  via `.setMediaSourceFactory(...)`.** The bare `Builder(context,
+  mediaItem).build()` form compiles, runs, and returns success — but silently
+  drops QuickTime `chap`-track chapters entirely (returns zero) and leaves
+  every `chpl`-sourced `Chapter.getEndTimeMs()` unpopulated
+  (`C.TIME_UNSET`), with no exception or log signal. This was reproduced
+  twice each way in S3 and is the single most important implementation
+  detail for whichever plan writes the chapter-extraction code.
+- `Chapter.getTitle()` returns `androidx.media3.common.Label` (`.value` for
+  the text), not `String`.
 - Cache extracted chapters by `(id, size, lastModified)`.
 
 Multi-file books (one track = one chapter) remain the default convention and
@@ -509,11 +537,40 @@ ACCESS_LOCAL_NETWORK   (targetSdk 37+)
 
 No `ACCESS_FINE_LOCATION`, no `NEARBY_WIFI_DEVICES`, no `WAKE_LOCK`.
 
-**Android 17 / API 37** makes `ACCESS_LOCAL_NETWORK` mandatory, gating outgoing
-TCP to `:1400`, **inbound TCP to our proxy**, and all UDP. Failures are TCP
-timeouts and `EPERM`. Built behind `SDK_INT >= 37` from the start, with the
+**Corrected by spike S1**
+(`docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md`): the
+gate is triggered by the **app's declared `targetSdkVersion`, not the
+device's API level** — confirmed on a real API 37 (Android 17) device by
+running the identical code with only `targetSdk` changed: a `targetSdk 36`
+build reaches a same-subnet address with no permission at all, while a
+`targetSdk 37` build on the *same device* is blocked. Code must not gate this
+on `Build.VERSION.SDK_INT >= 37` (a runtime check of the device); the correct
+framing is "we are built with `targetSdk >= 37`," a compile-time fact. **Since
+this project's `targetSdk` is 36 (see Global Constraints), this permission is
+currently inert and does not need to be declared today** — it only becomes
+necessary if/when `targetSdk` is bumped to 37, at which point it must be
+declared **and** the app must obtain a runtime grant (it is `protectionLevel:
+dangerous`, confirmed via `pm list permissions -g` on the device — not a
+normal/install-time permission). A CI test cannot rely on a user tapping a
+system dialog; it must run
+`adb shell pm grant <package> android.permission.ACCESS_LOCAL_NETWORK` as
+part of device setup, after install, before the test executes.
+
+Also corrected: the observed failure mode is a **TCP connect timeout**
+(`java.net.SocketTimeoutException`, packets silently dropped), not an
+immediate `EPERM`/`SecurityException` — a test or a real connection attempt
+hangs for the full configured timeout rather than failing fast. Gates outgoing
+TCP to a same-subnet address (confirmed here over HTTP) and, by extrapolation
+from the same mechanism, `:1400` and UDP — the `:1400`/UDP claims were not
+independently verified by S1, which tested TCP HTTP only. Also unresolved by
+S1: whether `10.0.2.2` (the emulator's own subnet) behaves identically to a
+*real* same-subnet peer on a physical device — S1's cross-subnet test
+(routed, not same-broadcast-domain) was **not** gated, which is consistent
+with the gate applying to same-subnet destinations specifically, but this was
+not confirmed against two real devices on the same Wi-Fi network. The
 `NsdManager` `FLAG_SHOW_PICKER` path as a no-permission fallback for discovery
-(useless when remote, since it is mDNS-based).
+(useless when remote, since it is mDNS-based) is unaffected by any of the
+above and remains as designed.
 
 **Google Play requires `targetSdk 36` from 2026-08-31.** Target 36, compile 37.
 
@@ -733,14 +790,19 @@ same guarantee.
 
 Each is cheap and each could invalidate an assumption:
 
-1. **`ACCESS_LOCAL_NETWORK` vs `10.0.2.2`.** If Android 17 gates RFC1918 addresses,
-   the containerized-CI approach needs a debug-manifest change. Testable today on
-   Android 16 via `am compat enable RESTRICT_LOCAL_NETWORK`.
+1. **`ACCESS_LOCAL_NETWORK` vs `10.0.2.2`. ANSWERED** — see
+   `docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md`. Gated
+   by the app's `targetSdkVersion`, not the device's API level; inert at this
+   project's actual `targetSdk 36`; becomes required, with a runtime `pm
+   grant`, only if `targetSdk` is bumped to 37.
 2. **Navidrome transcode-cache seekability** — does a *completed* cached transcode
    become Range-seekable? Affects the format policy. A `curl -r` answers it.
-3. **M4B chapter extraction over HTTP** — confirm Media3 1.11 extracts chapters
-   from a `faststart` file served by Navidrome with `format=raw`, including the
-   tail range request. This is the differentiator; prove it early.
+3. **M4B chapter extraction over HTTP. ANSWERED** — see
+   `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`. Works for
+   both faststart and non-faststart files, over HTTP, via `MetadataRetriever`
+   in the `media3-inspector` artifact — but only when constructed with an
+   explicit `MediaSourceFactory`; the bare `Builder().build()` form silently
+   drops QuickTime `chap` chapters and leaves `chpl` end times unset.
 4. **Sonos + Let's Encrypt.** No longer load-bearing, but five minutes to know.
 5. **Lidarr payload shape** against a live instance.
 
@@ -762,7 +824,7 @@ jukebox mode · multi-user.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Sonos disables UPnP by default or removes it | Medium, 2–3 years | Kills casting | Detect and guide; the 1443 websocket backend is designed for |
-| Android 17 `ACCESS_LOCAL_NETWORK` semantics | Certain when targeting 37 | Breaks discovery and the proxy | Built in from the start; spike #2 |
+| Android 17 `ACCESS_LOCAL_NETWORK` semantics | Confirmed inert at `targetSdk 36` (spike S1); would become certain if `targetSdk` is bumped to 37 | Breaks discovery and the proxy | `SDK_INT`-based gating is wrong (spike S1) — gate on `targetSdk`, add the permission and a runtime `pm grant`/user-grant flow only when `targetSdk` moves to 37 |
 | Navidrome Opus downsampling reaching a speaker | High if unguarded | Silent playback failure | Hard-force `f=raw`/`f=mp3` |
 | Office AP client isolation | Medium | Proxy unreachable | Detect (proxy never receives the GET) and say so plainly |
 | Full-tunnel VPN capturing LAN traffic | Medium | Discovery and proxy fail | Source-IP probe detects it; the fix is the user's VPN setting — a platform contract, not something we can engineer around |

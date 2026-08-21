@@ -42,15 +42,15 @@ means testing it against a stub.
 These run inside Plan 1, before anything is built on their assumptions. Each is
 cheap and each could invalidate a design decision.
 
-| Spike | Question | If it fails |
+| Spike | Question | Result |
 |---|---|---|
-| **S1** | Does `ACCESS_LOCAL_NETWORK` gate `10.0.2.2` on API 37? | The containerized-CI strategy needs a debug-manifest change — affects every plan |
-| **S2** | Does a *completed* cached Navidrome transcode become Range-seekable? | Changes the format policy in Plans 3 and 6 |
-| **S3** | Does Media3 1.11 extract M4B chapters from a `faststart` file served over HTTP with `format=raw`? | The chapter differentiator in Plan 4 needs rethinking |
-| **S4** | Does Sonos accept the Let's Encrypt certificate? | Nothing — no scenario depends on it. Run it for information only. |
-| **S5** | Lidarr `POST /api/v1/album` payload against a live instance | Corrects Plan 7's unverified assumptions |
+| **S1** | Does `ACCESS_LOCAL_NETWORK` gate `10.0.2.2` on API 37? | **Answered — no action needed today.** The gate is triggered by the app's `targetSdkVersion`, not the device's API level: a `targetSdk 36` app (this project's actual configured value) reaches `10.0.2.2` on an API 37 device with zero extra permissions. It only becomes required if/when `targetSdk` is bumped to 37, at which point `ACCESS_LOCAL_NETWORK` must be declared **and** runtime-granted (`pm grant` in CI; a real permission dialog for end users — it is a dangerous/runtime permission, not install-time). `10.0.2.2` and a real cross-subnet LAN address behave differently (only same-subnet destinations are gated). Full evidence: `docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md`. |
+| **S2** | Does a *completed* cached Navidrome transcode become Range-seekable? | Not yet run — informational, not blocking. |
+| **S3** | Does Media3 1.11 extract M4B chapters from a `faststart` file served over HTTP with `format=raw`? | **Answered — mechanism works, with one required correction.** Media3 1.11 extracts both Nero `chpl` and QuickTime `chap` chapters over HTTP, for both faststart and non-faststart files (non-faststart seeks directly to the moov atom via HTTP Range rather than downloading the whole file, confirmed at realistic ~1.4 MB size). **But `MetadataRetriever` lives in a separate artifact (`media3-inspector`, not pulled in by `media3-exoplayer`) and must be constructed with an explicit `MediaSourceFactory` — the bare `Builder(...).build()` form silently drops QuickTime `chap` chapters entirely and leaves `chpl` chapter end times unpopulated, with no exception.** Full evidence and the exact API surface: `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`. |
+| **S4** | Does Sonos accept the Let's Encrypt certificate? | Not yet run — informational, not blocking. |
+| **S5** | Lidarr `POST /api/v1/album` payload against a live instance | Not yet run — informational, not blocking. |
 
-S1 and S3 are blocking. S2, S4 and S5 are informational and can run in parallel.
+S1 and S3 were blocking and are now both answered — neither invalidates the plan's architecture, but S3 found a required correction to how `MetadataRetriever` must be constructed (see the spike document). S2, S4 and S5 remain informational and can run in parallel whenever convenient.
 
 ---
 
