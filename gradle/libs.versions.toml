@@ -13,7 +13,12 @@ truth = "1.4.4"
 nullaway = "0.12.7"
 errorprone = "2.38.0"
 openapiValidator = "3.0.0"
-checkstyle = "14.0.0"
+# Pinned below the latest release (14.0.0 at time of writing) deliberately: checkstyle 13.x/14.x
+# ship class files compiled for Java 21 (class file major version 65), which a JDK 17 JVM — what
+# .github/workflows/pr.yml's setup-java step provisions, matching this project's Java 17 target —
+# cannot load at all (UnsupportedClassVersionError). 12.3.1 is the newest release still compiled
+# for Java 17 (major version 61). Verify with the same class-file check before bumping this again.
+checkstyle = "12.3.1"
 slf4j = "2.0.18"
 
 [libraries]
