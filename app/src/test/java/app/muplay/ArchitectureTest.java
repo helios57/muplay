@@ -52,20 +52,30 @@ public class ArchitectureTest {
             + Path.of("").toAbsolutePath());
   }
 
-  /** The project is Java-only. A stray Kotlin plugin must fail the build. */
+  /**
+   * The project is Java-only. A stray Kotlin plugin must fail the build.
+   *
+   * <p>Matches every Gradle <em>build</em> script regardless of extension — {@code build.gradle}
+   * and {@code build.gradle.kts} alike — not just files named exactly {@code build.gradle}. A
+   * {@code build.gradle.kts} is itself banned outright by {@link #noKotlinFilesExistAnywhere}
+   * (any {@code .kts} file anywhere fails the build), but this scan is deliberately independent
+   * defense-in-depth: it must keep catching a Kotlin plugin application by content, in every
+   * build script Gradle would actually execute, even if that separate blanket ban were ever
+   * weakened or bypassed.
+   */
   @Test
   public void noModuleAppliesTheKotlinPlugin() throws IOException {
     Path root = findRepoRoot();
     List<Path> buildFiles;
     try (Stream<Path> walk = Files.walk(root, 6)) {
       buildFiles =
-          walk.filter(p -> p.getFileName().toString().equals("build.gradle"))
+          walk.filter(p -> p.getFileName().toString().matches("build\\.gradle(\\.kts)?"))
               .filter(p -> !p.toString().contains("/build/"))
               .toList();
     }
     assertWithFailureMessage(
         !buildFiles.isEmpty(),
-        "Found zero build.gradle files under "
+        "Found zero build.gradle(.kts) files under "
             + root
             + " — this rule is scanning the wrong directory, not verifying anything.");
     for (Path p : buildFiles) {
@@ -92,6 +102,41 @@ public class ArchitectureTest {
             + root
             + " — this rule is scanning the wrong directory, not verifying anything.");
     assertThat(ktFiles).isEmpty();
+  }
+
+  /**
+   * "No Kotlin anywhere" (the project's hardest constraint — see the plan's global constraints)
+   * is not just about {@code .kt} source files: a {@code build.gradle.kts}, a {@code
+   * settings.gradle.kts}, or any other {@code .kts} script is Kotlin too, and {@link
+   * #noModuleAppliesTheKotlinPlugin} above only inspects files that look like Gradle build
+   * scripts — it would not, on its own, catch some other stray {@code .kts} file (a init script,
+   * a precompiled script plugin, anything) that never happens to match {@code
+   * build.gradle(.kts)}. This is the blanket backstop: any {@code .kts} file anywhere in the repo
+   * fails the build outright, independent of what it's named or what it contains.
+   */
+  @Test
+  public void noKotlinFilesExistAnywhere() throws IOException {
+    Path root = findRepoRoot();
+    List<Path> javaFiles;
+    List<Path> ktsFiles;
+    try (Stream<Path> walk = Files.walk(root)) {
+      List<Path> all = walk.filter(p -> !p.toString().contains("/build/")).toList();
+      javaFiles = all.stream().filter(p -> p.toString().endsWith(".java")).toList();
+      ktsFiles = all.stream().filter(p -> p.toString().endsWith(".kts")).toList();
+    }
+    // Same sanity check as noKotlinSourceFilesExist: prove the walk actually canvassed the repo
+    // before trusting an empty ktsFiles result as a real pass rather than a vacuous one.
+    assertWithFailureMessage(
+        !javaFiles.isEmpty(),
+        "Found zero .java files under "
+            + root
+            + " — this rule is scanning the wrong directory, not verifying anything.");
+    assertWithFailureMessage(
+        ktsFiles.isEmpty(),
+        "Found .kts file(s) under "
+            + root
+            + " which are banned outright regardless of content: "
+            + ktsFiles);
   }
 
   @Test

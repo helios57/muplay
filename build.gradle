@@ -31,6 +31,14 @@ subprojects {
     afterEvaluate {
       dependencies {
         compileOnly libs.jsr305
+        // ArchUnit (and possibly other test-only dependencies) pull in slf4j-api transitively
+        // with no binding on the test runtime classpath, so every unit test JVM prints "No SLF4J
+        // providers were found... Defaulting to no-operation (NOP) logger" to stderr — noise that
+        // would otherwise multiply across every module's test suite in every later plan.
+        // slf4j-nop is SLF4J's own purpose-built no-op provider: it satisfies the binding lookup
+        // so the warning never fires, without adding any real logging behavior or weight, and
+        // testRuntimeOnly keeps it out of the production dependency graph entirely.
+        testRuntimeOnly libs.slf4j.nop
       }
     }
 
@@ -88,6 +96,96 @@ subprojects {
             (options.annotationProcessorPath ?: project.objects.fileCollection()) +
                 errorproneClasspath
       }
+    }
+
+    pluginManager.apply('checkstyle')
+    checkstyle {
+      configFile = rootProject.file('config/checkstyle/checkstyle.xml')
+      toolVersion = libs.versions.checkstyle.get()
+    }
+
+    pluginManager.apply('jacoco')
+
+    tasks.withType(Test).configureEach {
+      finalizedBy tasks.matching { it.name == 'jacocoTestReport' }
+      maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
+      forkEvery = 100
+      maxHeapSize = '4g'
+    }
+
+    // The core 'jacoco' plugin only auto-registers a task literally named 'jacocoTestReport' when
+    // the 'java'/'java-library' plugin is present (:core:model, :testing). For Android modules
+    // (:app, :core:network), applying 'jacoco' instead makes AGP itself register
+    // 'create<Variant>UnitTestCoverageReport' (e.g. createDebugUnitTestCoverageReport) — a
+    // differently-named but equally real Jacoco HTML/XML report. Left alone, the workflow's single
+    // `./gradlew jacocoTestReport` invocation — and the finalizedBy wiring above — would silently
+    // produce a report for :core:model and :testing while producing nothing at all for :app and
+    // :core:network, exactly the "coverage step that silently produces nothing" failure this gate
+    // exists to prevent. Alias every AGP-generated *UnitTestCoverageReport task under the same
+    // 'jacocoTestReport' name so one task name means "produce this module's coverage report"
+    // everywhere, uniformly.
+    //
+    // Two reentrancy hazards, both worked around the same way the 'compileOnly' dependency above
+    // already is (see that comment): this whole plugins.withType(JavaBasePlugin) callback fires
+    // synchronously while AGP is still mid-way through applying itself, so at this point
+    // plugins.hasPlugin('com.android.application'/'com.android.library') is still false — AGP has
+    // not yet registered itself in the plugins container — and registering a brand-new task here
+    // would in any case land inside whatever task-container operation is currently reentering.
+    // Deferring to afterEvaluate sidesteps both: by then AGP has finished applying (the plugin
+    // check is reliable) and project configuration is no longer nested inside any task-container
+    // callback (tasks.register(...) is safe to call directly). The dependsOn target itself stays
+    // lazy (tasks.matching {}, not a resolved list) so it still doesn't force AGP's
+    // create*UnitTestCoverageReport task into existence until the task graph actually needs it.
+    afterEvaluate {
+      if (plugins.hasPlugin('com.android.application') || plugins.hasPlugin('com.android.library')) {
+        tasks.register('jacocoTestReport') {
+          group = 'verification'
+          description = 'Generates code coverage report for the unit test task.'
+          dependsOn tasks.matching { it.name ==~ /create.*UnitTestCoverageReport/ }
+        }
+
+        // The core 'checkstyle' plugin has the exact same gap as 'jacoco' above and for the same
+        // reason: it only auto-registers checkstyleMain/checkstyleTest tasks when it finds a
+        // JavaPluginExtension-provided sourceSets container (added by the 'java'/'java-library'
+        // plugin), which AGP never adds — Android modules get no checkstyle tasks at all from
+        // applying the plugin alone. Confirmed empirically: :app and :core:network show zero
+        // checkstyle* tasks in `tasks --all` without this. Registering these two tasks by hand,
+        // pointed straight at the plain source directories, keeps the task name uniform
+        // (checkstyleMain/checkstyleTest everywhere) so a single `./gradlew checkstyleMain
+        // checkstyleTest` invocation actually reaches every module's hand-written Java, not just
+        // :core:model's and :testing's.
+        tasks.register('checkstyleMain', org.gradle.api.plugins.quality.Checkstyle) {
+          group = 'verification'
+          description = 'Run Checkstyle analysis for main classes.'
+          source = fileTree('src/main/java')
+          include '**/*.java'
+          classpath = files()
+        }
+        tasks.register('checkstyleTest', org.gradle.api.plugins.quality.Checkstyle) {
+          group = 'verification'
+          description = 'Run Checkstyle analysis for test classes.'
+          source = fileTree('src/test/java')
+          include '**/*.java'
+          classpath = files()
+        }
+        tasks.named('check').configure {
+          dependsOn tasks.named('checkstyleMain'), tasks.named('checkstyleTest')
+        }
+      }
+
+      // Confirmed empirically (not from documentation): the core 'jacoco' plugin's auto-registered
+      // java-library 'jacocoTestReport' does not, in this Gradle version, dependOn 'test' on its
+      // own — running it in isolation (`./gradlew clean jacocoTestReport`, nothing else requested)
+      // leaves :core:model's and :testing's 'test' task out of the graph entirely and the report
+      // task SKIPPED for missing execution data, silently producing no report. The PR gate's
+      // "Coverage" workflow step is exactly that kind of isolated `./gradlew jacocoTestReport`
+      // invocation (a separate step from "Unit tests", i.e. a separate `./gradlew` process), so
+      // this dependency cannot be left implicit. Wiring it explicitly here makes every module's
+      // jacocoTestReport self-sufficient: requesting it alone always (re)runs that module's tests
+      // first, so the report always reflects a real, current test run — never stale or absent
+      // data. (Redundant but harmless for :app/:core:network, whose alias above already reaches
+      // 'test' transitively through create*UnitTestCoverageReport.)
+      tasks.named('jacocoTestReport').configure { dependsOn tasks.named('test') }
     }
   }
 }

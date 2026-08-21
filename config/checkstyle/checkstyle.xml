@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  MuPlay is Java-only (no Kotlin anywhere, including build logic — see the global constraints in
+  the plan). detekt is a Kotlin-only tool and is not applicable to this codebase; this is the
+  static-analysis equivalent for the project's actual language. Deliberately a lean, real ruleset
+  rather than the full bundled google_checks.xml: the full config's javadoc/import-order strictness
+  would flag large swaths of already-reviewed, already-merged code the moment it was switched on,
+  which the Definition-of-Done rule ("no new suppressions") gives no clean way to silence. Every
+  module below is active and enforced — this file has no rule that would let the checkstyle step
+  pass merely because nothing in it is actually checking anything.
+-->
+<module name="Checker">
+  <property name="charset" value="UTF-8"/>
+  <property name="severity" value="error"/>
+  <property name="fileExtensions" value="java"/>
+
+  <!-- Google Java Format (already this codebase's house style) wraps at 100 columns; a few
+       existing lines run to 101, so 120 leaves real headroom instead of failing on day one. -->
+  <module name="LineLength">
+    <property name="max" value="120"/>
+    <property name="ignorePattern" value="^import .*$"/>
+  </module>
+
+  <module name="TreeWalker">
+    <!-- Imports -->
+    <module name="AvoidStarImport"/>
+    <module name="RedundantImport"/>
+    <module name="UnusedImports"/>
+
+    <!-- Structure -->
+    <module name="OneTopLevelClass"/>
+    <module name="OuterTypeFilename"/>
+    <module name="ModifierOrder"/>
+    <module name="RedundantModifier"/>
+
+    <!-- Correctness -->
+    <module name="EqualsHashCode"/>
+    <module name="EmptyStatement"/>
+    <module name="SimplifyBooleanExpression"/>
+    <module name="SimplifyBooleanReturn"/>
+    <module name="NeedBraces"/>
+  </module>
+</module>

@@ -1,0 +1,47 @@
+name: PR
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Architecture rules
+        run: ./gradlew :app:testDebugUnitTest --tests '*ArchitectureTest*'
+
+      - name: Static analysis
+        run: ./gradlew checkstyleMain checkstyleTest
+
+      - name: Unit tests
+        # Not `testDebugUnitTest`: that task only exists on the two Android modules (:app,
+        # :core:network). :core:model and :testing are plain java-library modules, whose unit
+        # test task is named plain `test` — `testDebugUnitTest` alone would silently never run
+        # ServerCapabilitiesTest or OpenApiFixtureValidatorTest. `test` is the lifecycle task
+        # every module (Android or java-library) exposes, and for the Android modules it already
+        # resolves to exactly `testDebugUnitTest` (there is no release unit test variant in this
+        # project), so this covers all four modules with no change in scope for :app/:core:network.
+        run: ./gradlew test
+
+      - name: Coverage
+        run: ./gradlew jacocoTestReport
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/**'

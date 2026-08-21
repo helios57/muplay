@@ -13,6 +13,8 @@ truth = "1.4.4"
 nullaway = "0.12.7"
 errorprone = "2.38.0"
 openapiValidator = "3.0.0"
+checkstyle = "14.0.0"
+slf4j = "2.0.18"
 
 [libraries]
 media3-exoplayer   = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
@@ -35,6 +37,7 @@ nullaway           = { module = "com.uber.nullaway:nullaway", version.ref = "nul
 errorprone-core    = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
 openapi-validator  = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
 jsr305             = { module = "com.google.code.findbugs:jsr305", version = "3.0.2" }
+slf4j-nop          = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
