@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import org.junit.Test;
 
@@ -104,6 +105,48 @@ public class ArchitectureTest {
         .resideInAnyPackage("android..", "androidx..")
         .allowEmptyShould(true)
         .check(CLASSES);
+  }
+
+  /**
+   * The two bans below (no {@code System.currentTimeMillis()} outside {@code app.muplay.di}, no
+   * {@code Thread.sleep}) only mean something if {@code CLASSES} actually contains classes from
+   * every module that ships production or shared-test-infrastructure code under {@code
+   * app.muplay}. {@code noClasses()...should()...check(CLASSES)} silently, trivially passes when
+   * zero classes match — so a module that stops flowing onto {@code :app}'s test classpath (for
+   * example, a dropped {@code testImplementation project(...)} line) would make those two rules
+   * vacuously green instead of failing, hiding exactly the coverage gap they exist to catch. This
+   * was a real, confirmed gap for {@code :testing}: it is only ever pulled in as a {@code
+   * testImplementation} of {@code :core:network}, never of {@code :app}, so its classes were
+   * never on {@code :app}'s test classpath and the two bans never saw
+   * {@code app.muplay.testing.*} at all.
+   *
+   * <p>This test pins one representative, stable class per module currently expected to flow into
+   * {@code CLASSES} and fails loudly, naming the missing module, if any of them disappears from
+   * the import. If a module is intentionally dropped from this scan, remove its entry here
+   * explicitly rather than letting the coverage silently shrink.
+   */
+  @Test
+  public void classImportCoversEveryModuleTheBansMustReach() {
+    Map<String, String> representativeClassByModule =
+        Map.of(
+            ":app", "app.muplay.MuPlayApplication",
+            ":core:model", "app.muplay.model.SubsonicCredentials",
+            ":core:network", "app.muplay.network.SubsonicAuth",
+            ":testing", "app.muplay.testing.OpenApiFixtureValidator");
+    for (Map.Entry<String, String> entry : representativeClassByModule.entrySet()) {
+      assertWithFailureMessage(
+          CLASSES.contain(entry.getValue()),
+          "Expected module "
+              + entry.getKey()
+              + " to be covered by this test's class import (checked via "
+              + entry.getValue()
+              + "), so the System.currentTimeMillis/Thread.sleep bans actually reach it. Either"
+              + " this class was renamed/removed (update this map to a class that still exists),"
+              + " or "
+              + entry.getKey()
+              + " silently stopped flowing onto :app's test classpath — check its dependency wiring"
+              + " (e.g. a testImplementation project(...) line in app/build.gradle).");
+    }
   }
 
   @Test

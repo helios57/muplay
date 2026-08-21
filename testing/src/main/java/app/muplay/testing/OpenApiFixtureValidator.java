@@ -8,6 +8,7 @@ import com.atlassian.oai.validator.report.ValidationReport;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Validates a recorded Subsonic response against the vendored OpenSubsonic OpenAPI spec.
@@ -23,22 +24,42 @@ public final class OpenApiFixtureValidator {
 
   private static final String SPEC = "/openapi/opensubsonic-1.16.1.json";
 
-  private final OpenApiInteractionValidator validator;
+  public OpenApiFixtureValidator() {}
 
-  public OpenApiFixtureValidator() {
-    this.validator =
-        OpenApiInteractionValidator.createForInlineApiSpecification(readSpec())
-            // The spec composes every response schema via allOf (e.g. SubsonicSuccessResponse =
-            // SubsonicBaseResponse + {status}). Without this flag the validator checks each allOf
-            // branch against the *whole* instance independently, so a field declared in one
-            // branch (e.g. "status") is reported as an undeclared "additional property" by every
-            // other branch that doesn't itself declare it — even a perfectly valid response then
-            // fails with zero of the oneOf alternatives matching. withResolveCombinators(true)
-            // merges allOf branches before validating, which is what a base+extension schema
-            // style like this one requires. Verified: still correctly rejects a response missing
-            // a required field, a wrong-typed field, and an undefined path.
-            .withResolveCombinators(true)
-            .build();
+  /**
+   * Holds the one parsed {@link OpenApiInteractionValidator} for the whole JVM.
+   *
+   * <p>Parsing the 453 KB spec costs roughly 150ms warm / 1.6s cold; every fixture test across
+   * every module constructs its own {@link OpenApiFixtureValidator}, and repeating that parse per
+   * instance would multiply the cost across all of them. A nested holder class is initialized
+   * lazily — only on first access to {@link #VALIDATOR} — and the JVM's class-initialization
+   * rules guarantee that happens at most once and that concurrent threads block until it
+   * completes, so no explicit synchronization is needed here. (If the vendored spec is ever
+   * missing from the classpath, {@link #readSpec()} still throws — from inside this holder's
+   * static initializer on first use, surfacing as {@link ExceptionInInitializerError} with the
+   * original {@link IllegalStateException} as its cause. That is a different exception type than
+   * before this class was made shared, but it carries the same message and is exactly as
+   * impossible to miss: it fails the first test that touches this class, loudly, with a full
+   * cause chain.)
+   */
+  private static final class Holder {
+    private static final OpenApiInteractionValidator VALIDATOR = buildValidator();
+
+    private static OpenApiInteractionValidator buildValidator() {
+      return OpenApiInteractionValidator.createForInlineApiSpecification(readSpec())
+          // The spec composes every response schema via allOf (e.g. SubsonicSuccessResponse =
+          // SubsonicBaseResponse + {status}). Without this flag the validator checks each allOf
+          // branch against the *whole* instance independently, so a field declared in one branch
+          // (e.g. "status") is reported as an undeclared "additional property" by every other
+          // branch that doesn't itself declare it — even a perfectly valid response then fails
+          // with zero of the oneOf alternatives matching. withResolveCombinators(true) merges
+          // allOf branches before validating, which is what a base+extension schema style like
+          // this one requires. Verified: still correctly rejects a response missing a required
+          // field, a response with an extra/undefined field (nested and top-level), a
+          // wrong-typed field, and an undefined path.
+          .withResolveCombinators(true)
+          .build();
+    }
   }
 
   private static String readSpec() {
@@ -63,19 +84,37 @@ public final class OpenApiFixtureValidator {
    * @param jsonBody the full response body
    */
   public void assertValid(@Nonnull String endpointPath, @Nonnull String jsonBody) {
+    requireNonBlank(endpointPath, "endpointPath");
     Response response =
         SimpleResponse.Builder.ok()
             .withContentType("application/json")
             .withBody(jsonBody)
             .build();
     ValidationReport report =
-        validator.validateResponse(endpointPath, Request.Method.GET, response);
+        Holder.VALIDATOR.validateResponse(endpointPath, Request.Method.GET, response);
     if (report.hasErrors()) {
       throw new AssertionError(
           "Response does not match the OpenSubsonic spec for "
               + endpointPath
               + ":\n"
               + report);
+    }
+  }
+
+  /**
+   * {@code endpointPath} is {@code @Nonnull}, but this class is called from test code across
+   * every module in the project, not all of it under this build's NullAway coverage — so a caller
+   * that passes a literal {@code null} (bypassing the compile-time check) or an empty string
+   * should still fail as a clear {@link AssertionError} naming the problem, not as a raw
+   * {@link NullPointerException} thrown from deep inside a third-party validator, and not as an
+   * {@link AssertionError} whose message trails off after "for" with nothing after it.
+   */
+  private static void requireNonBlank(@Nullable String endpointPath, String paramName) {
+    if (endpointPath == null) {
+      throw new AssertionError(paramName + " must not be null; got null.");
+    }
+    if (endpointPath.isBlank()) {
+      throw new AssertionError(paramName + " must not be blank; got \"" + endpointPath + "\".");
     }
   }
 }

@@ -25,4 +25,12 @@ dependencies {
   testImplementation libs.junit
   testImplementation libs.truth
   testImplementation libs.archunit
+  // Not just for direct use in :app's own tests: this is what puts :testing's classes on
+  // :app's test classpath, so ArchitectureTest's ClassFileImporter().importPackages("app.muplay")
+  // actually scans app.muplay.testing.* too. Without it, the System.currentTimeMillis/
+  // Thread.sleep ArchUnit bans are silently vacuous for :testing (ArchUnit finds zero classes
+  // there and the "no classes should..." rule trivially holds). See
+  // ArchitectureTest#classImportCoversEveryModuleTheBansMustReach, which fails loudly if this
+  // ever stops being true.
+  testImplementation project(':testing')
 }
