@@ -248,9 +248,17 @@ Navidrome indexes an `.m4b` as **one multi-hour track** and cannot see chapters.
 MuPlay extracts them **client-side from the stream**. Nothing in the Subsonic
 ecosystem does this.
 
-Requirements and caveats — **verified end-to-end by spike S3**
-(`docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`), which
-corrected two things below that were wrong or underspecified before the spike:
+Requirements and caveats — **the extraction mechanics below were verified by
+spike S3**
+(`docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`) against a
+throwaway Range-compliant HTTP server standing in for Navidrome, which
+corrected two things that were wrong or underspecified before the spike.
+**S3 did not test against a real Navidrome instance** — no Subsonic auth, no
+`format=raw` query parameter, no check of Navidrome's actual response
+headers or Content-Length/chunked-transfer behavior. That verification is
+carried forward as an explicit Task 8 deliverable (real, pinned Navidrome
+container). Until then, "verified" below means "verified against Media3 and
+a generic HTTP Range server," not "verified against Navidrome."
 - Needs HTTP Range → **`format=raw`**, no transcoding.
 - **`faststart` files put the chapter atom at the front** (that is the entire
   point of `-movflags +faststart` — it moves `moov`, and the `chpl` atom
@@ -532,7 +540,7 @@ INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE,
 CHANGE_WIFI_MULTICAST_STATE, POST_NOTIFICATIONS,
 FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK,
 FOREGROUND_SERVICE_CONNECTED_DEVICE,
-ACCESS_LOCAL_NETWORK   (targetSdk 37+)
+ACCESS_LOCAL_NETWORK   (targetSdk 37+ — NOT declared today; MuPlay is targetSdk 36, see below)
 ```
 
 No `ACCESS_FINE_LOCATION`, no `NEARBY_WIFI_DEVICES`, no `WAKE_LOCK`.

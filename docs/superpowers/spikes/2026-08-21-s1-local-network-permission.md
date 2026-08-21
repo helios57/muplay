@@ -1,7 +1,15 @@
 # Spike S1 — Does `ACCESS_LOCAL_NETWORK` gate `10.0.2.2` on API 37?
 
-**Status: BLOCKING spike, answered.** Confidence: high (four independent, reproducible
-on-device variants; the two central results were each reproduced twice).
+**Status: BLOCKING spike, answered.** Confidence: high. Each of the four
+variants below was captured cleanly exactly once (not re-run) — the "no
+manifest change needed at `targetSdk 36`" and "`targetSdk 37` blocks
+same-subnet traffic" findings each rest on that single clean capture per
+variant, not on repeated runs. What does corroborate them across runs:
+variants 2 and 3 (both `targetSdk 37`) independently produced the identical
+failure signature (`SocketTimeoutException` after ~4 s) despite differing in
+whether the permission was declared, and variant 4 (same device, same code,
+permission granted) went from that timeout to a 145 ms success — a
+same-device, single-variable contrast, not a rerun of the same configuration.
 
 ## The question
 
@@ -38,6 +46,16 @@ Four concrete sub-questions, from the task brief:
   `ro.build.version.release_or_codename=17`, fingerprint
   `google/sdk_gphone64_x86_64/emu64xa:17/CE2A.260420.019/15611780:userdebug/dev-keys`,
   security patch `2026-05-05`. This is genuinely Android 17 / API 37, not a preview.
+- **Deviation from the task brief:** the brief's Step 1 recipe tests on an API
+  36 emulator with `adb shell am compat enable RESTRICT_LOCAL_NETWORK` to
+  force the future behaviour on. This spike instead used a real, GA API 37
+  image directly (available in this environment, per the task's own
+  environment notes) and varied `targetSdk` in the app instead of forcing a
+  compat flag on the platform. This tests the real, shipped API 37 enforcement
+  rather than a forced approximation of it on API 36, which I judge to be
+  strictly stronger evidence — but it is a real substitution for what the
+  brief asked for, not what was literally specified, and is disclosed here
+  rather than left implicit.
 - Spike app: `app.muplayspike`, a minimal throwaway Android app (`compileSdk 37`,
   `minSdk 26`, plugin `com.android.application` 9.3.1 only — no Hilt, no Media3).
   Built as a standalone Gradle project outside the repo
@@ -150,10 +168,28 @@ $ adb shell pm list permissions -f -g | grep -B3 -A8 ACCESS_LOCAL_NETWORK
     protectionLevel:dangerous
 ```
 
-`protectionLevel:dangerous` = a **runtime** permission. It is not present in
-`install permissions:` (which lists only the auto-granted normal ones —
-`INTERNET` in every variant) and requires an explicit grant, confirmed above via
-`pm grant`/`pm revoke` and `runtime permissions:` in `dumpsys package`.
+`protectionLevel:dangerous` = a **runtime** permission, confirmed by the
+package dump right after installing the variant-3/4 APK (before any `pm
+grant` call):
+
+```
+$ adb shell dumpsys package app.muplayspike
+    ...
+    requested permissions:
+      android.permission.ACCESS_LOCAL_NETWORK
+      android.permission.INTERNET
+    install permissions:
+      android.permission.INTERNET: granted=true
+```
+
+`ACCESS_LOCAL_NETWORK` is listed under `requested permissions:` (so the
+manifest declaration was accepted) but is absent from `install permissions:`
+(the auto-granted, normal-protection-level permissions — only `INTERNET`
+appears there) and, at this point, absent from `runtime permissions:` too
+(quoted above, empty). It only appears under `runtime permissions:` — and
+only after an explicit grant — as shown in the variant-3/4 blocks above.
+This is what "requires an explicit grant" means concretely: it is not enough
+for the manifest to declare it.
 
 Corroborating platform evidence that this is a real, intentionally-shipped
 feature on this build (not an artifact of the spike's own setup):
@@ -222,7 +258,17 @@ is `targetSdk 36` (`compileSdk 37, targetSdk 36`, from
 `targetSdk 36` app reaches `10.0.2.2` on an API 37 device with zero extra
 permissions, zero grants, and no behavioral difference from `targetSdk 36` on
 an older device. The blocking risk the spike was designed to catch does not
-currently apply.
+currently apply. **This conclusion rests entirely on `targetSdk 36`, not on
+having tested the specific address the nightly lane actually plans to use.**
+Spec §10 commits the nightly lane to `adb reverse` → `127.0.0.1` (loopback),
+not `10.0.2.2` — this spike tested `10.0.2.2` (the QEMU alias) and a
+cross-subnet LAN address, not loopback. Loopback traffic is not obviously
+routed through the same local-network classification as either of those; I
+did not test it, and variant 1's "nothing is gated at `targetSdk 36`" result
+covers it only by extension (targetSdk 36 gates nothing local-network-shaped
+at all, by every address tested), not by direct measurement. This is listed
+again under "Not directly tested" below because it is exactly the gap that
+will matter once `targetSdk` moves to 37.
 
 **But it is a real, precisely-triggered future risk**, not a non-issue:
 
@@ -262,6 +308,17 @@ currently apply.
   up the containerized-Navidrome lane.
 
 - **Not directly tested / cannot yet confirm:**
+  - **`127.0.0.1` / loopback via `adb reverse`, the actual address spec §10
+    commits the nightly lane to** — not tested here at all. Only `10.0.2.2`
+    (QEMU alias, same-subnet as the guest) and a cross-subnet LAN address
+    were tested. Loopback is a distinct code path from both (it never leaves
+    the device, whereas `10.0.2.2` is a real routed address even if it maps
+    back to the host), so this spike cannot say whether `targetSdk 37` gates
+    it the same way. Since it is moot today (variant 1 shows `targetSdk 36`
+    gates nothing regardless of address), this is deferred rather than
+    re-spiked, but it must be checked directly before `targetSdk` is ever
+    bumped to 37, or the nightly lane risks the same silent-timeout failure
+    mode this document describes, on the one address it actually uses.
   - UDP and port-1400 (Sonos control) gating specifically — this spike only
     exercised TCP HTTP GET. The spec's claim that the permission also gates
     "outgoing TCP to `:1400`... and all UDP" is a reasonable extrapolation
