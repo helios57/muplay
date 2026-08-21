@@ -1,0 +1,24 @@
+plugins { id 'com.android.library' }
+android {
+  namespace 'app.muplay.network'
+  compileSdk 37
+  defaultConfig { minSdk 26 }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  testOptions.unitTests.includeAndroidResources = true
+}
+dependencies {
+  api project(':core:model')
+  api libs.guava
+  implementation libs.okhttp
+  implementation libs.retrofit
+  implementation libs.retrofit.jackson
+  implementation libs.jackson.databind
+  testImplementation libs.junit
+  testImplementation libs.truth
+  testImplementation libs.robolectric
+  testImplementation libs.mockwebserver3
+  testImplementation project(':testing')
+}

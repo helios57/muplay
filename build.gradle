@@ -1,0 +1,93 @@
+plugins {
+  alias(libs.plugins.android.application) apply false
+  alias(libs.plugins.android.library) apply false
+  alias(libs.plugins.hilt) apply false
+  alias(libs.plugins.errorprone) apply false
+}
+
+subprojects {
+  // The root project's own build script (and therefore this subprojects{} block) is evaluated
+  // before any subproject's build.gradle has applied its own plugins, and settings.gradle's
+  // include(':core:model', ':core:network') also creates an implicit, plugin-less ':core'
+  // container project. plugins.withType(JavaBasePlugin) restricts this to subprojects that
+  // actually compile Java (java-library, com.android.library, com.android.application all apply
+  // JavaBasePlugin) and skips container projects like ':core' that never do.
+  //
+  // net.ltgt.errorprone is applied here, synchronously (not deferred inside afterEvaluate): the
+  // 'errorprone' configuration it creates must exist before the `dependencies { errorprone ... }`
+  // block below runs.
+  //
+  // 'compileOnly', by contrast, is a configuration AGP itself creates, and it does not exist yet
+  // this early — AGP is still mid-way through applying JavaBasePlugin when this callback fires
+  // reentrantly. That dependency line alone is deferred to afterEvaluate, by which point AGP has
+  // finished configuring the subproject.
+  plugins.withType(JavaBasePlugin) {
+    pluginManager.apply('net.ltgt.errorprone')
+
+    dependencies {
+      errorprone libs.errorprone.core
+      errorprone libs.nullaway
+    }
+    afterEvaluate {
+      dependencies {
+        compileOnly libs.jsr305
+      }
+    }
+
+    // 'errorprone' (created by the net.ltgt.errorprone plugin) is a dependency-declaration-only
+    // configuration (canBeResolved = false) — Android's JavaCompile tasks need an actual resolved
+    // FileCollection for options.annotationProcessorPath below, so extend it with a resolvable
+    // configuration of our own.
+    def errorproneClasspath = configurations.create('errorproneClasspath') {
+      canBeConsumed = false
+      canBeResolved = true
+      extendsFrom configurations.errorprone
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+      options.compilerArgs += [
+        // "-processing" is carved out of "all": javac's -Xlint:processing flags an annotation as
+        // unclaimed once processing's final round completes with no further elements to
+        // generate. This is a benign round-completion notice from aggregating annotation
+        // processors such as Dagger/Hilt's, not a real compilation defect, and would otherwise
+        // turn -Werror into a hard, unfixable failure on any module using @HiltAndroidApp.
+        '-Xlint:all,-processing',
+        '-Werror',
+      ]
+      options.errorprone {
+        enabled = true
+        // Dagger/Hilt generates its component implementations into app.muplay (alongside
+        // MuPlayApplication) under build/generated/hilt/..., which NullAway's AnnotatedPackages
+        // scope below would otherwise hold to the same @NonNull-by-default bar as hand-written
+        // code — generated builder classes routinely assign @NonNull fields from a switch with no
+        // default case, which NullAway cannot prove exhaustive, so real -Werror build failures
+        // resulted from code nobody here wrote or can edit. Every annotation-processor output
+        // lives under build/generated, so excluding that whole tree is the standard fix (see
+        // errorprone.info's -XepExcludedPaths option) rather than trying to enumerate individual
+        // generated file patterns.
+        excludedPaths = '.*/build/generated/.*'
+        check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.ERROR)
+        option('NullAway:AnnotatedPackages', 'app.muplay')
+      }
+      // net.ltgt.errorprone only auto-wires the 'errorprone' configuration into the standard
+      // Gradle `java`/`java-library` source-set annotationProcessor configurations; it has no
+      // support for Android's variant-based source sets (confirmed against the plugin's own
+      // README, which states Android integration is deliberately left to consumers), so
+      // Error Prone — and NullAway with it — silently never runs on :app or :core:network without
+      // manually adding it to options.annotationProcessorPath here. That property can't just be
+      // assigned during configureEach above, though: AGP sets its own value for
+      // options.annotationProcessorPath later, during its variant wiring, which — being a plain
+      // property assignment, not a list append — clobbers whatever this configureEach block
+      // assigned earlier. doFirst runs at execution time, once all configuration-time mutations
+      // (ours and AGP's) have already happened, so appending there is the only place guaranteed
+      // to win regardless of registration order. Verified by injecting a deliberate NullAway
+      // violation (`String s = null;` passed to a @NonNull-shaped parameter): the build stayed
+      // green without this doFirst block, and fails as expected with it.
+      doFirst {
+        options.annotationProcessorPath =
+            (options.annotationProcessorPath ?: project.objects.fileCollection()) +
+                errorproneClasspath
+      }
+    }
+  }
+}

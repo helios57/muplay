@@ -1,0 +1,28 @@
+plugins {
+  id 'com.android.application'
+  id 'com.google.dagger.hilt.android'
+}
+android {
+  namespace 'app.muplay'
+  compileSdk 37
+  defaultConfig {
+    applicationId 'app.muplay'
+    minSdk 26
+    targetSdk 36
+    versionCode 1
+    versionName '0.1.0'
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+dependencies {
+  implementation project(':core:network')
+  implementation libs.hilt.android
+  annotationProcessor libs.hilt.compiler
+  testImplementation libs.junit
+  testImplementation libs.truth
+  testImplementation libs.archunit
+}
