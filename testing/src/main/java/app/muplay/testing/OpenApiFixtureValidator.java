@@ -1,0 +1,81 @@
+package app.muplay.testing;
+
+import com.atlassian.oai.validator.OpenApiInteractionValidator;
+import com.atlassian.oai.validator.model.Request;
+import com.atlassian.oai.validator.model.Response;
+import com.atlassian.oai.validator.model.SimpleResponse;
+import com.atlassian.oai.validator.report.ValidationReport;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import javax.annotation.Nonnull;
+
+/**
+ * Validates a recorded Subsonic response against the vendored OpenSubsonic OpenAPI spec.
+ *
+ * <p>This is an oracle external to this codebase: it asserts what the protocol says a response
+ * looks like, not what our parser happens to accept.
+ *
+ * <p>Note the spec requires {@code type}, {@code serverVersion} and {@code openSubsonic} on every
+ * response — fields a legacy Subsonic server would not send. Validating against it therefore
+ * asserts OpenSubsonic compliance, which is deliberate for a Navidrome client.
+ */
+public final class OpenApiFixtureValidator {
+
+  private static final String SPEC = "/openapi/opensubsonic-1.16.1.json";
+
+  private final OpenApiInteractionValidator validator;
+
+  public OpenApiFixtureValidator() {
+    this.validator =
+        OpenApiInteractionValidator.createForInlineApiSpecification(readSpec())
+            // The spec composes every response schema via allOf (e.g. SubsonicSuccessResponse =
+            // SubsonicBaseResponse + {status}). Without this flag the validator checks each allOf
+            // branch against the *whole* instance independently, so a field declared in one
+            // branch (e.g. "status") is reported as an undeclared "additional property" by every
+            // other branch that doesn't itself declare it — even a perfectly valid response then
+            // fails with zero of the oneOf alternatives matching. withResolveCombinators(true)
+            // merges allOf branches before validating, which is what a base+extension schema
+            // style like this one requires. Verified: still correctly rejects a response missing
+            // a required field, a wrong-typed field, and an undefined path.
+            .withResolveCombinators(true)
+            .build();
+  }
+
+  private static String readSpec() {
+    try (var in = OpenApiFixtureValidator.class.getResourceAsStream(SPEC)) {
+      if (in == null) {
+        throw new IllegalStateException("Vendored spec not found on classpath: " + SPEC);
+      }
+      return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    } catch (IOException e) {
+      throw new IllegalStateException("Could not read vendored OpenAPI spec", e);
+    }
+  }
+
+  /**
+   * Asserts that {@code jsonBody} matches the OpenSubsonic spec's response shape for {@code
+   * endpointPath}.
+   *
+   * @param endpointPath the literal key under the spec's {@code paths} map, e.g. {@code
+   *     "/rest/ping"}. The vendored spec keys every operation with its full REST path — including
+   *     the {@code /rest} prefix and excluding any {@code .view} suffix — so that is what this
+   *     method expects too; it does not rewrite or guess at the path.
+   * @param jsonBody the full response body
+   */
+  public void assertValid(@Nonnull String endpointPath, @Nonnull String jsonBody) {
+    Response response =
+        SimpleResponse.Builder.ok()
+            .withContentType("application/json")
+            .withBody(jsonBody)
+            .build();
+    ValidationReport report =
+        validator.validateResponse(endpointPath, Request.Method.GET, response);
+    if (report.hasErrors()) {
+      throw new AssertionError(
+          "Response does not match the OpenSubsonic spec for "
+              + endpointPath
+              + ":\n"
+              + report);
+    }
+  }
+}
