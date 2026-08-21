@@ -10,7 +10,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -110,38 +112,82 @@ public class ArchitectureTest {
   }
 
   /**
-   * Parses the module paths declared via {@code include ...} in {@code settings.gradle} (e.g.
-   * {@code ":app"}, {@code ":core:model"}).
+   * Enumerates this repo's Gradle modules by walking the filesystem for {@code build.gradle}
+   * files (excluding the root project's own), mirroring how {@link #noModuleAppliesTheKotlinPlugin}
+   * already finds them.
    *
-   * <p>Deliberately not {@code trimmed.startsWith("include")}: that would also match {@code
-   * includeBuild(...)}, Gradle's composite-build directive, which takes a directory rather than a
-   * project path and has nothing to do with this repo's own module list.
+   * <p>This — not a {@code settings.gradle} parse — is what actually determines the module list
+   * {@link #classImportCoversEveryModuleTheBansMustReach} checks {@link #CLASSES} against. An
+   * earlier version of that test parsed {@code settings.gradle}'s {@code include ...}
+   * declarations line by line, which silently dropped any module declared on a continuation line
+   * (an {@code include(} whose argument list, or a comma-separated {@code include} list, wraps
+   * across multiple lines) — the loop below then simply never iterated over the dropped module:
+   * no assertion, no failure, the exact vacuous-pass defect this whole test exists to eliminate,
+   * just moved up one layer. Walking the filesystem for {@code build.gradle} files cannot be
+   * defeated by how {@code settings.gradle} happens to be formatted. A directory that has a
+   * {@code build.gradle} but was never wired into {@code settings.gradle} is an equally real
+   * anomaly, and this deliberately still fails loudly on it rather than silently ignoring it:
+   * such a module's classes will never appear in {@link #CLASSES} either, for the same underlying
+   * reason.
+   *
+   * @return each discovered module's Gradle path (e.g. {@code ":core:model"}) mapped to its
+   *     directory
    */
-  private static List<String> readIncludedModules(Path root) throws IOException {
-    Path settingsFile = root.resolve("settings.gradle");
-    Pattern modulePathPattern = Pattern.compile(":[\\w.-]+(?::[\\w.-]+)*");
-    List<String> modules = new ArrayList<>();
-    for (String line : Files.readAllLines(settingsFile)) {
-      String trimmed = line.trim();
-      if (!(trimmed.startsWith("include ") || trimmed.startsWith("include("))) {
-        continue;
-      }
-      Matcher matcher = modulePathPattern.matcher(trimmed);
-      while (matcher.find()) {
-        modules.add(matcher.group());
-      }
+  private static Map<String, Path> discoverModulesFromBuildFiles(Path root) throws IOException {
+    List<Path> buildFiles;
+    try (Stream<Path> walk = Files.walk(root, 6)) {
+      buildFiles =
+          walk.filter(p -> p.getFileName().toString().equals("build.gradle"))
+              .filter(p -> !p.toString().contains("/build/"))
+              .filter(p -> !root.equals(p.getParent())) // exclude the root project's own
+              .toList();
+    }
+    Map<String, Path> directoryByModulePath = new LinkedHashMap<>();
+    for (Path buildFile : buildFiles) {
+      Path moduleDir = buildFile.getParent();
+      String modulePath = ":" + root.relativize(moduleDir).toString().replace('/', ':');
+      directoryByModulePath.put(modulePath, moduleDir);
     }
     assertWithFailureMessage(
-        !modules.isEmpty(),
-        "Found zero included modules while parsing "
-            + settingsFile
-            + " — this parsing is broken, not verifying anything.");
-    return modules;
+        !directoryByModulePath.isEmpty(),
+        "Found zero module build.gradle files under "
+            + root
+            + " (excluding the root project's own) — this discovery is broken, not verifying"
+            + " anything.");
+    return directoryByModulePath;
   }
 
-  /** {@code ":core:model"} under {@code root} resolves to {@code <root>/core/model}. */
-  private static Path modulePathToDirectory(Path root, String modulePath) {
-    return root.resolve(modulePath.substring(1).replace(':', '/'));
+  /**
+   * A second, independent count of the declared module set, used only to cross-check {@link
+   * #discoverModulesFromBuildFiles} — not as the source of truth for which modules {@link
+   * #classImportCoversEveryModuleTheBansMustReach} actually checks. This is exactly the kind of
+   * check that would have caught that test's own earlier bug: a module silently dropped by one
+   * derivation produces no visible symptom on its own, but it does produce a mismatched count
+   * against an independent derivation, and a mismatch fails loudly instead of quietly
+   * under-covering.
+   *
+   * <p>Reads {@code settings.gradle} as one whole string rather than line by line — a
+   * line-oriented reader is exactly what missed a continuation line before — and strips comments
+   * first so a commented-out {@code include(...)} cannot inflate the count. Matches every {@code
+   * include ...} / {@code include(...)} statement (parenthesized or not, single- or multi-line)
+   * and counts the quoted module-path tokens inside each one.
+   */
+  private static int countModulesDeclaredInSettingsGradle(Path root) throws IOException {
+    String text = Files.readString(root.resolve("settings.gradle"));
+    String withoutComments = text.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//[^\n]*", "");
+    Pattern modulePathPattern = Pattern.compile(":[\\w.-]+(?::[\\w.-]+)*");
+    Pattern includeStatementPattern =
+        Pattern.compile(
+            "include\\s*\\(?\\s*((?:['\"]" + modulePathPattern.pattern() + "['\"]\\s*,?\\s*)+)\\)?");
+    int count = 0;
+    Matcher statementMatcher = includeStatementPattern.matcher(withoutComments);
+    while (statementMatcher.find()) {
+      Matcher moduleMatcher = modulePathPattern.matcher(statementMatcher.group(1));
+      while (moduleMatcher.find()) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
@@ -181,24 +227,39 @@ public class ArchitectureTest {
    * of {@code :core:network}, never of {@code :app}, so its classes were never on {@code :app}'s
    * test classpath and the two bans never saw {@code app.muplay.testing.*} at all.
    *
-   * <p>Rather than pin a hand-maintained list of representative classes — which stops protecting
-   * a module the moment someone forgets to add an entry for it, exactly the failure mode this
-   * test exists to catch — this test derives the expected module set from {@code
-   * settings.gradle}'s {@code include} declarations directly, so a module a later plan adds is
-   * covered automatically with no list to remember to update.
+   * <p>The module set this test checks comes from {@link #discoverModulesFromBuildFiles} (a
+   * filesystem walk, not a hand-maintained list — see that method's doc for why a hand-maintained
+   * list, and even an earlier {@code settings.gradle}-parsing version of this test, both silently
+   * under-covered). {@link #countModulesDeclaredInSettingsGradle} cross-checks its count
+   * independently so a systematic under-count in the filesystem walk cannot go unnoticed either.
    *
-   * <p>For each included module: if it has no {@code src/main/java} directory, or that directory
-   * has zero {@code .java} files, the module is skipped — it legitimately has nothing to check yet
-   * (true of {@code :core:model} for one task in this project's history, before its first domain
-   * class landed). But if it has {@code .java} files and <em>none</em> of them appear in {@code
-   * CLASSES}, that is exactly the silent coverage gap this test exists to catch, and this fails
-   * loudly, naming the module and the files it expected {@code CLASSES} to contain.
+   * <p>For each discovered module: if it has no {@code src/main/java} directory, or that
+   * directory has zero {@code .java} files, the module is skipped — it legitimately has nothing
+   * to check yet (true of {@code :core:model} for one task in this project's history, before its
+   * first domain class landed). But if it has {@code .java} files and <em>none</em> of them
+   * appear in {@code CLASSES}, that is exactly the silent coverage gap this test exists to catch,
+   * and this fails loudly, naming the module and the files it expected {@code CLASSES} to
+   * contain.
    */
   @Test
   public void classImportCoversEveryModuleTheBansMustReach() throws IOException {
     Path root = findRepoRoot();
-    for (String module : readIncludedModules(root)) {
-      Path mainSourceDir = modulePathToDirectory(root, module).resolve("src/main/java");
+    Map<String, Path> moduleDirectories = discoverModulesFromBuildFiles(root);
+    int declaredInSettings = countModulesDeclaredInSettingsGradle(root);
+    assertWithFailureMessage(
+        moduleDirectories.size() == declaredInSettings,
+        "Module discovery disagreement: found "
+            + moduleDirectories.size()
+            + " module(s) with a build.gradle on disk "
+            + moduleDirectories.keySet()
+            + ", but settings.gradle declares "
+            + declaredInSettings
+            + " module(s). One of these two derivations is silently seeing fewer (or more)"
+            + " modules than the other — investigate rather than trusting either count blindly;"
+            + " this disagreement is exactly the class of bug this cross-check exists to catch.");
+    for (Map.Entry<String, Path> entry : moduleDirectories.entrySet()) {
+      String module = entry.getKey();
+      Path mainSourceDir = entry.getValue().resolve("src/main/java");
       if (!Files.isDirectory(mainSourceDir)) {
         continue; // No main source set at all for this module — legitimately nothing to check.
       }

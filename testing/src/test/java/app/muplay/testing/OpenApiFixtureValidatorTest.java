@@ -117,7 +117,10 @@ public class OpenApiFixtureValidatorTest {
     assertTrue(
         "Expected the underlying failure to be an AssertionError, got: " + cause,
         cause instanceof AssertionError);
-    assertNotNull(cause.getMessage());
+    String message = cause.getMessage();
+    assertNotNull(message);
+    assertTrue(
+        "Expected a message explaining the null path, got: " + message, message.contains("null"));
   }
 
   @Test
