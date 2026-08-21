@@ -4,6 +4,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import org.junit.Test;
 
 public class OpenApiFixtureValidatorTest {
@@ -91,14 +93,31 @@ public class OpenApiFixtureValidatorTest {
         message.contains(unknownPath));
   }
 
+  /**
+   * {@code assertValid}'s {@code endpointPath} parameter is {@code @Nonnull}, so passing a null
+   * literal directly from this test would be a compile-time NullAway error — correctly so, since
+   * every caller inside this build's NullAway-covered code is already stopped there. The
+   * defensive null check in {@code requireNonBlank} exists for callers outside that boundary
+   * (e.g. a dynamically-constructed path from data this build doesn't statically check), so it is
+   * exercised here through reflection instead: {@code Method.invoke} takes {@code Object}
+   * arguments, which erases the {@code @Nonnull} contract NullAway would otherwise enforce,
+   * without requiring a suppression.
+   */
   @Test
-  @SuppressWarnings("NullAway") // deliberately passing null to prove assertValid guards it itself
-  public void rejectsANullEndpointPath() {
+  public void rejectsANullEndpointPath() throws NoSuchMethodException {
     OpenApiFixtureValidator validator = new OpenApiFixtureValidator();
-    String nullPath = null;
-    AssertionError error =
-        assertThrows(AssertionError.class, () -> validator.assertValid(nullPath, VALID_PING));
-    assertNotNull(error.getMessage());
+    Method assertValid =
+        OpenApiFixtureValidator.class.getMethod("assertValid", String.class, String.class);
+    InvocationTargetException thrown =
+        assertThrows(
+            InvocationTargetException.class,
+            () -> assertValid.invoke(validator, null, VALID_PING));
+    Throwable cause = thrown.getCause();
+    assertNotNull(cause);
+    assertTrue(
+        "Expected the underlying failure to be an AssertionError, got: " + cause,
+        cause instanceof AssertionError);
+    assertNotNull(cause.getMessage());
   }
 
   @Test

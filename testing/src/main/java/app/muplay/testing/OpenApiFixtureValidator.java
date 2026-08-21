@@ -34,13 +34,21 @@ public final class OpenApiFixtureValidator {
    * instance would multiply the cost across all of them. A nested holder class is initialized
    * lazily — only on first access to {@link #VALIDATOR} — and the JVM's class-initialization
    * rules guarantee that happens at most once and that concurrent threads block until it
-   * completes, so no explicit synchronization is needed here. (If the vendored spec is ever
-   * missing from the classpath, {@link #readSpec()} still throws — from inside this holder's
-   * static initializer on first use, surfacing as {@link ExceptionInInitializerError} with the
-   * original {@link IllegalStateException} as its cause. That is a different exception type than
-   * before this class was made shared, but it carries the same message and is exactly as
-   * impossible to miss: it fails the first test that touches this class, loudly, with a full
-   * cause chain.)
+   * completes, so no explicit synchronization is needed here.
+   *
+   * <p>If the vendored spec is ever missing from the classpath, {@link #readSpec()} still throws
+   * — but sharing this holder makes that failure less legible than the old per-instance {@link
+   * IllegalStateException}, not equally loud, and that is worth documenting honestly rather than
+   * asserting it away. Per JLS 12.4.2: the <em>first</em> thread to touch {@link #VALIDATOR} in
+   * the JVM gets {@link ExceptionInInitializerError} with the original {@link
+   * IllegalStateException} as its cause — a full, legible chain. Every subsequent touch of this
+   * class in that same JVM — the normal case, since Gradle reuses one forked test worker across a
+   * whole test task — instead gets a bare {@link NoClassDefFoundError} with no cause at all,
+   * because the JVM marks the class permanently unusable after its initializer fails once. That
+   * is a real degradation versus throwing {@link IllegalStateException} fresh from every
+   * constructor call. It is accepted here rather than engineered around, because it only surfaces
+   * if the packaged spec resource goes missing — which fails every test in the fixture suite, not
+   * just one, so the first test's full cause chain is what a developer will actually read.
    */
   private static final class Holder {
     private static final OpenApiInteractionValidator VALIDATOR = buildValidator();
@@ -55,8 +63,8 @@ public final class OpenApiFixtureValidator {
           // with zero of the oneOf alternatives matching. withResolveCombinators(true) merges
           // allOf branches before validating, which is what a base+extension schema style like
           // this one requires. Verified: still correctly rejects a response missing a required
-          // field, a response with an extra/undefined field (nested and top-level), a
-          // wrong-typed field, and an undefined path.
+          // field, a response with an extra/undefined nested field, a wrong-typed field, and an
+          // undefined path.
           .withResolveCombinators(true)
           .build();
     }
