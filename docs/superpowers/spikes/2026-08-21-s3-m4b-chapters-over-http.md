@@ -208,14 +208,19 @@ surprised when the class can't be found.
 
 All five fixtures, served over HTTP, produced chapters — shown here with the
 `setMediaSourceFactory(...)` configuration (Finding 3 explains why that
-qualifier matters), first run:
+qualifier matters), full per-chapter output, first run:
 
 ```
 RESULT fixture=book_faststart_chpl.m4b       outcome=SUCCESS elapsedMs=580  chapterCount=3
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three]
 RESULT fixture=book_nofaststart_chpl.m4b     outcome=SUCCESS elapsedMs=75   chapterCount=3
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three]
 RESULT fixture=book_faststart_chpl_big.m4b   outcome=SUCCESS elapsedMs=597  chapterCount=3
+  chapters=[start=0 end=60000 title=Chapter One] [start=60000 end=120000 title=Chapter Two] [start=120000 end=180000 title=Chapter Three]
 RESULT fixture=book_nofaststart_chpl_big.m4b outcome=SUCCESS elapsedMs=748  chapterCount=3
+  chapters=[start=0 end=60000 title=Chapter One] [start=60000 end=120000 title=Chapter Two] [start=120000 end=180000 title=Chapter Three]
 RESULT fixture=book_qt_chap.m4b              outcome=SUCCESS elapsedMs=356  trackGroups=2 chapterCount=4
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three] [start=15000 end=15023 title=]
 ```
 
 and second run, a fresh `am start` against the same fixtures and server, no
@@ -223,17 +228,26 @@ code changes:
 
 ```
 RESULT fixture=book_faststart_chpl.m4b       outcome=SUCCESS elapsedMs=1761 chapterCount=3
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three]
 RESULT fixture=book_nofaststart_chpl.m4b     outcome=SUCCESS elapsedMs=36   chapterCount=3
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three]
 RESULT fixture=book_faststart_chpl_big.m4b   outcome=SUCCESS elapsedMs=315  chapterCount=3
+  chapters=[start=0 end=60000 title=Chapter One] [start=60000 end=120000 title=Chapter Two] [start=120000 end=180000 title=Chapter Three]
 RESULT fixture=book_nofaststart_chpl_big.m4b outcome=SUCCESS elapsedMs=432  chapterCount=3
+  chapters=[start=0 end=60000 title=Chapter One] [start=60000 end=120000 title=Chapter Two] [start=120000 end=180000 title=Chapter Three]
 RESULT fixture=book_qt_chap.m4b              outcome=SUCCESS elapsedMs=210  trackGroups=2 chapterCount=4
+  chapters=[start=0 end=5000 title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000 end=15000 title=Chapter Three] [start=15000 end=15023 title=]
 ```
 
-(`book_qt_chap.m4b`'s 4th chapter is the trailing artifact described above,
-reproduced identically to `ffprobe`'s own reading of the file — titles/times
-for the 3 real chapters, identical across both runs: `[start=0 end=5000
-title=Chapter One] [start=5000 end=10000 title=Chapter Two] [start=10000
-end=15000 title=Chapter Three]`, all correct.)
+(`hidden=false` on every entry omitted above for width; hidden was `false` on
+every chapter in every fixture, no exceptions. `book_qt_chap.m4b`'s 4th
+chapter is the trailing artifact described above, reproduced identically to
+`ffprobe`'s own reading of the file. All values identical across both runs,
+for every fixture.)
+
+**This block — not the narrative summary that used to stand in for it — is
+the real per-chapter evidence Finding 4 draws on below, for the `chpl`
+fixtures specifically, not `book_qt_chap.m4b`.**
 
 **Both Nero `chpl` and QuickTime `chap` are read — but only under one specific
 wiring of `MetadataRetriever`, discovered by accident and then isolated
@@ -319,23 +333,41 @@ filling this in.
 
 **My first draft of this finding claimed the rule was simply "end = next
 chapter's start," and that is wrong** — it is contradicted by my own quoted
-evidence. The small `chpl` fixture's *last* chapter, "Chapter Three," has no
-next chapter, yet Finding 2's quoted results show it with
-`end=15000` populated, not `C.TIME_UNSET`. "Next chapter's start" cannot be
-the whole rule if the last chapter's end is also populated. The data is
-consistent with a broader rule — **end = next chapter's start, or the
-track/content duration when there is no next chapter** — since 15000 ms is
-also the small fixture's total duration. But I did not independently confirm
-the "track duration" half of that rule (e.g. by testing a fixture whose last
+evidence. (An earlier revision of this correction also cited the wrong
+fixture as that evidence — `book_qt_chap.m4b`'s trailing artifact, whose
+title-track cues carry their own end times directly rather than having them
+inferred by Media3, and whose true duration is 15.023 s, not the 15.000 s
+this paragraph now actually uses. That fixture cannot support a claim about
+how Media3 handles `chpl`. The evidence below is `chpl`-specific.)
+
+Every `chpl`-sourced chapter's `end` in Finding 2's quoted output, including
+each fixture's *last* chapter — which has no next chapter to inherit a start
+time from — is populated: `book_faststart_chpl.m4b`'s "Chapter Three" shows
+`end=15000`, not `C.TIME_UNSET`; the `_big` fixtures' "Chapter Three" shows
+`end=180000`. "Next chapter's start" cannot be the whole rule if a
+last-chapter end is also populated. Checked directly against each file's own
+measured duration (`ffprobe -show_format`, run separately from the Media3
+test, on the same fixture files): `book_faststart_chpl.m4b` and
+`book_nofaststart_chpl.m4b` both report `"duration": "15.000000"`;
+`book_faststart_chpl_big.m4b` and `book_nofaststart_chpl_big.m4b` both report
+`"duration": "180.000000"`. In both cases the last chapter's populated `end`
+is exactly the file's own measured duration in milliseconds — not a
+coincidence limited to one fixture, since it holds for all four `chpl`
+fixtures at two different durations (15 s and 180 s). The data is consistent
+with a broader rule — **end = next chapter's start, or the track/content
+duration when there is no next chapter**. I did not independently confirm
+this is actually how Media3 computes it (e.g. by testing a fixture whose last
 chapter ends *before* the file's true duration, to see whether Media3 reports
-the chapter end or the file end). **This is inferred from the pattern in the
-data available, not confirmed** — stated here as a corrected hypothesis, not
-as an established fact, which is a more honest position than the original
-draft's single-cause claim. This matches the spec's own description of
-chapter-boundary handling elsewhere (§5, "never cross a chapter boundary
-backwards") but should not be relied on beyond what was actually shown:
-`getEndTimeMs()` was populated and correct for every chapter tested,
-including the last one, once the `MediaSourceFactory` wiring above is used.
+the chapter's own declared end or the file's end — `chpl` doesn't distinguish
+these cases in any fixture built here, since every fixture's last chapter was
+authored to run to the end of the file). **This is inferred from the pattern
+in real, `chpl`-specific, per-chapter data — not confirmed against Media3's
+source** — stated here as a corrected hypothesis, not as an established fact.
+This matches the spec's own description of chapter-boundary handling
+elsewhere (§5, "never cross a chapter boundary backwards") but should not be
+relied on beyond what was actually shown: `getEndTimeMs()` was populated and
+correct for every `chpl` chapter tested, including every fixture's last one,
+once the `MediaSourceFactory` wiring above is used.
 
 ## Does non-faststart require reading the whole file? (No — for realistically-sized files)
 

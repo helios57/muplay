@@ -805,12 +805,15 @@ Each is cheap and each could invalidate an assumption:
    grant`, only if `targetSdk` is bumped to 37.
 2. **Navidrome transcode-cache seekability** — does a *completed* cached transcode
    become Range-seekable? Affects the format policy. A `curl -r` answers it.
-3. **M4B chapter extraction over HTTP. ANSWERED** — see
+3. **M4B chapter extraction over HTTP. ANSWERED against a generic Range
+   server, not against Navidrome** — see
    `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`. Works for
    both faststart and non-faststart files, over HTTP, via `MetadataRetriever`
    in the `media3-inspector` artifact — but only when constructed with an
    explicit `MediaSourceFactory`; the bare `Builder().build()` form silently
-   drops QuickTime `chap` chapters and leaves `chpl` end times unset.
+   drops QuickTime `chap` chapters and leaves `chpl` end times unset. Not yet
+   verified against a real Navidrome instance or its `format=raw` parameter —
+   carried forward as a Task 8 deliverable.
 4. **Sonos + Let's Encrypt.** No longer load-bearing, but five minutes to know.
 5. **Lidarr payload shape** against a live instance.
 
