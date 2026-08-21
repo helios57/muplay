@@ -5,7 +5,6 @@ import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
-import java.io.IOException;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
@@ -13,14 +12,19 @@ import javax.annotation.Nonnull;
  * Three-tier capability negotiation: {@code ping} establishes reachability and whether the
  * server speaks OpenSubsonic at all; only then is it worth asking for the extension list.
  *
- * <p>The extension fetch itself is allowed to fail without failing negotiation: a server that
- * advertised {@code openSubsonic=true} on {@code ping} but errors on {@code
- * getOpenSubsonicExtensions} (an older OpenSubsonic-flagged server that predates the endpoint, a
- * transient 404, or a Subsonic-level error in the body) still degrades to a capabilities object
- * with no extensions rather than failing every caller of {@link #negotiate()}. {@link
- * SubsonicClient} maps both an unsuccessful HTTP response and a Subsonic-level error onto an
- * {@link IOException} (the latter via {@link SubsonicErrorException}), so catching {@link
- * IOException} here covers both without masking an unrelated programming error.
+ * <p>The extension fetch itself is allowed to fail without failing negotiation, but only for a
+ * failure that is itself a real answer: a server that advertised {@code openSubsonic=true} on
+ * {@code ping} but responds to {@code getOpenSubsonicExtensions} with a non-2xx HTTP status (an
+ * older OpenSubsonic-flagged server 404ing an endpoint it doesn't implement — {@link
+ * SubsonicHttpException}) or a Subsonic-level error in the body ({@link SubsonicErrorException})
+ * still degrades to a capabilities object with no extensions rather than failing every caller of
+ * {@link #negotiate()}. Catching the sealed {@link SubsonicResponseException} — the common
+ * supertype of exactly those two — covers both of those "we asked, and the answer is no" cases.
+ * A transport-level failure (DNS, connection refused, timeout, TLS error — a bare {@link
+ * java.io.IOException} from OkHttp, or the "malformed/unparseable response" {@link
+ * java.io.IOException} raised by {@link SubsonicClient} when a 2xx response has no usable body)
+ * means "we don't know what the server would have said" and is deliberately left to propagate
+ * out of {@link #negotiate()} instead of being folded into the same degraded result.
  */
 public final class CapabilityNegotiator {
 
@@ -42,7 +46,7 @@ public final class CapabilityNegotiator {
                   .transform(
                       exts -> new ServerCapabilities(true, exts), MoreExecutors.directExecutor())
                   .catching(
-                      IOException.class,
+                      SubsonicResponseException.class,
                       e -> new ServerCapabilities(true, Map.of()),
                       MoreExecutors.directExecutor());
             },

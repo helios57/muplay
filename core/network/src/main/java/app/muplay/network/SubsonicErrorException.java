@@ -1,12 +1,13 @@
 package app.muplay.network;
 
-import java.io.IOException;
-
 /**
- * A Subsonic-level error. Note these arrive with HTTP 200 — the status lives in
- * the response body, not the status line.
+ * A Subsonic-level error: the server understood the request and produced a full {@code
+ * subsonic-response} body, but that body's {@code error} element signals failure. Note these
+ * arrive with HTTP 200 — the status lives in the response body, not the status line. Contrast
+ * with {@link SubsonicHttpException}, which is a non-2xx HTTP status with no Subsonic body at
+ * all.
  */
-public final class SubsonicErrorException extends IOException {
+public final class SubsonicErrorException extends SubsonicResponseException {
 
   // Not intended for Java serialization; declared only to satisfy -Xlint:serial (this build
   // treats warnings as errors) since IOException implements Serializable.

@@ -20,8 +20,15 @@ public record ServerCapabilities(
     extensions = Map.copyOf(extensions);
   }
 
+  // The OpenSubsonic spec sets no minItems on an extension's versions array, so a server may
+  // legally advertise an extension with an empty version list. Treating mere key presence as
+  // "supported" would then disagree with supports(extension, version), which correctly returns
+  // false for every version in that case — a caller using the unversioned form as a pre-flight
+  // gate before a version-specific call would get a contradiction. "Supported" therefore means
+  // "advertised with at least one usable version," which is exactly what a caller doing that
+  // pre-flight check needs it to mean.
   public boolean supports(@Nonnull String extension) {
-    return extensions.containsKey(extension);
+    return !extensions.getOrDefault(extension, List.of()).isEmpty();
   }
 
   public boolean supports(@Nonnull String extension, int version) {

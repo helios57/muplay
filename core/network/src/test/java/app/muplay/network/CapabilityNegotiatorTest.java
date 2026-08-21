@@ -1,11 +1,16 @@
 package app.muplay.network;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 
 import app.muplay.model.ServerCapabilities;
 import app.muplay.model.SubsonicCredentials;
+import java.io.IOException;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 import mockwebserver3.MockResponse;
 import mockwebserver3.MockWebServer;
+import mockwebserver3.SocketEffect;
 import okhttp3.HttpUrl;
 import org.junit.After;
 import org.junit.Before;
@@ -96,8 +101,8 @@ public class CapabilityNegotiatorTest {
   public void negotiate_extensionsFetchFailureDegradesToNoExtensions() throws Exception {
     enqueue("ping_navidrome.json");
     // Server claims OpenSubsonic in ping but the extensions endpoint 404s — an older
-    // OpenSubsonic-flagged server that predates this call, or a transient failure. Negotiation
-    // must still complete rather than propagate the failure to every caller.
+    // OpenSubsonic-flagged server that predates this call. That is a real answer ("no"), so
+    // negotiation must still complete rather than propagate the failure to every caller.
     server.enqueue(new MockResponse.Builder().code(404).build());
 
     ServerCapabilities caps = negotiator.negotiate().get();
@@ -124,6 +129,24 @@ public class CapabilityNegotiatorTest {
 
     assertThat(caps.isOpenSubsonic()).isTrue();
     assertThat(caps.supports("songLyrics")).isFalse();
+  }
+
+  @Test
+  public void negotiate_extensionsFetchTransportFailurePropagates() throws Exception {
+    enqueue("ping_navidrome.json");
+    // The connection dies mid-request — not a real answer from the server (contrast with the
+    // 404 and Subsonic-error cases above), so this must propagate out of negotiate() rather than
+    // being folded into a degraded ServerCapabilities a caller can't tell apart from "confirmed
+    // zero extensions".
+    server.enqueue(
+        new MockResponse.Builder().onRequestStart(new SocketEffect.CloseSocket()).build());
+
+    ExecutionException thrown =
+        assertThrows(ExecutionException.class, () -> negotiator.negotiate().get());
+
+    Throwable cause = Objects.requireNonNull(thrown.getCause());
+    assertThat(cause).isInstanceOf(IOException.class);
+    assertThat(cause).isNotInstanceOf(SubsonicResponseException.class);
   }
 
   private void enqueue(String fixture) throws Exception {
