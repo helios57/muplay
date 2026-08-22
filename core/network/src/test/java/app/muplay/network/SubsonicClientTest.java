@@ -6,7 +6,6 @@ import static org.junit.Assert.assertThrows;
 import app.muplay.model.LibraryRole;
 import app.muplay.model.MusicLibrary;
 import app.muplay.model.SubsonicCredentials;
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +14,7 @@ import mockwebserver3.MockResponse;
 import mockwebserver3.MockWebServer;
 import mockwebserver3.RecordedRequest;
 import okhttp3.HttpUrl;
+import okhttp3.OkHttpClient;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,6 +65,32 @@ public class SubsonicClientTest {
     // The password must never appear on the wire.
     assertThat(url.toString()).doesNotContain("sesame");
     assertThat(url.queryParameter("p")).isNull();
+  }
+
+  @Test
+  public void create_withSharedOkHttpClientUsesExactlyThatClient() throws Exception {
+    // Plan 3 needs Media3's OkHttpDataSource on the same client and connection pool as this one,
+    // and Plan 6's proxy needs it too — this overload exists so both can share one OkHttpClient
+    // rather than each opening its own pool to the same server. Proven here by a request actually
+    // succeeding end-to-end through a client built from a caller-supplied OkHttpClient, not the
+    // package-private default one.
+    OkHttpClient shared = new OkHttpClient.Builder().build();
+    HttpUrl base = server.url("/");
+    SubsonicClient sharedClient =
+        SubsonicClient.create(
+            SubsonicCredentials.create(
+                base.toString().substring(0, base.toString().length() - 1), "alice", "sesame"),
+            shared);
+    server.enqueue(
+        new MockResponse.Builder()
+            .code(200)
+            .setHeader("Content-Type", "application/json")
+            .body(FixtureContractTest.fixture("ping_navidrome.json"))
+            .build());
+
+    SubsonicClient.ServerInfo info = sharedClient.ping().get();
+
+    assertThat(info.type()).isEqualTo("navidrome");
   }
 
   @Test
@@ -121,7 +147,7 @@ public class SubsonicClientTest {
   }
 
   @Test
-  public void emptyResponseBodyBecomesADistinctIOException() {
+  public void emptyResponseBodyBecomesAMalformedSubsonicResponseException() {
     // HTTP 204: a genuinely empty, successful response. Retrofit skips body conversion entirely
     // for 204/205, so response.body() is null even though the HTTP call itself succeeded — this
     // must not be reported as "HTTP 200", which would misattribute the problem.
@@ -129,13 +155,15 @@ public class SubsonicClientTest {
 
     ExecutionException thrown = assertThrows(ExecutionException.class, () -> client.ping().get());
     Throwable cause = Objects.requireNonNull(thrown.getCause());
-    assertThat(cause).isInstanceOf(IOException.class);
+    // Asserted by type, not by matching message text: callers (Plan 2's error UI included) must
+    // be able to tell "server replied with garbage" apart from other IOExceptions without
+    // parsing English out of getMessage().
+    assertThat(cause).isInstanceOf(MalformedSubsonicResponseException.class);
     assertThat(cause).isNotInstanceOf(SubsonicResponseException.class);
-    assertThat(cause.getMessage()).contains("empty or could not be parsed");
   }
 
   @Test
-  public void missingEnvelopeBecomesADistinctIOException() {
+  public void missingEnvelopeBecomesAMalformedSubsonicResponseException() {
     // Valid JSON, but no "subsonic-response" key at all — a different defect than either an
     // HTTP-level error or an empty body, and must not be conflated with either.
     server.enqueue(
@@ -147,9 +175,29 @@ public class SubsonicClientTest {
 
     ExecutionException thrown = assertThrows(ExecutionException.class, () -> client.ping().get());
     Throwable cause = Objects.requireNonNull(thrown.getCause());
-    assertThat(cause).isInstanceOf(IOException.class);
+    assertThat(cause).isInstanceOf(MalformedSubsonicResponseException.class);
     assertThat(cause).isNotInstanceOf(SubsonicResponseException.class);
-    assertThat(cause.getMessage()).contains("subsonic-response");
+  }
+
+  @Test
+  public void statusFailedWithNoErrorObjectBecomesAGenericSubsonicErrorException() {
+    // A non-compliant server or a mangling proxy could plausibly send status:"failed" without an
+    // accompanying error object — SubsonicClient must still detect the failure via status(),
+    // not silently hand the mapper a "successful" body it can't make sense of.
+    server.enqueue(
+        new MockResponse.Builder()
+            .code(200)
+            .setHeader("Content-Type", "application/json")
+            .body(
+                "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\","
+                    + "\"type\":\"navidrome\",\"serverVersion\":\"0.63.2\","
+                    + "\"openSubsonic\":true}}")
+            .build());
+
+    ExecutionException thrown = assertThrows(ExecutionException.class, () -> client.ping().get());
+    SubsonicErrorException cause =
+        (SubsonicErrorException) Objects.requireNonNull(thrown.getCause());
+    assertThat(cause.code()).isEqualTo(SubsonicErrorException.CODE_GENERIC);
   }
 
   @Test

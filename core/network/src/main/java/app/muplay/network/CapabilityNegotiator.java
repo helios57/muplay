@@ -21,10 +21,10 @@ import javax.annotation.Nonnull;
  * {@link #negotiate()}. Catching the sealed {@link SubsonicResponseException} — the common
  * supertype of exactly those two — covers both of those "we asked, and the answer is no" cases.
  * A transport-level failure (DNS, connection refused, timeout, TLS error — a bare {@link
- * java.io.IOException} from OkHttp, or the "malformed/unparseable response" {@link
- * java.io.IOException} raised by {@link SubsonicClient} when a 2xx response has no usable body)
- * means "we don't know what the server would have said" and is deliberately left to propagate
- * out of {@link #negotiate()} instead of being folded into the same degraded result.
+ * java.io.IOException} from OkHttp, or a {@link MalformedSubsonicResponseException} raised by
+ * {@link SubsonicClient} when a 2xx response has no usable body) means "we don't know what the
+ * server would have said" and is deliberately left to propagate out of {@link #negotiate()}
+ * instead of being folded into the same degraded result.
  */
 public final class CapabilityNegotiator {
 

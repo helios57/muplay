@@ -9,7 +9,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -37,16 +37,49 @@ public final class SubsonicClient {
     this.credentials = credentials;
   }
 
+  /**
+   * Builds a client with a private, default-configured {@link OkHttpClient} (see {@link
+   * #defaultHttpClient()}). Prefer {@link #create(SubsonicCredentials, OkHttpClient)} whenever an
+   * {@link OkHttpClient} already exists elsewhere in the app: Plan 3 needs Media3's {@code
+   * OkHttpDataSource} on the same client and connection pool as this one, and Plan 6's proxy
+   * needs it too — sharing one client and pool avoids duplicate connection pools/thread pools to
+   * the same server.
+   */
   @Nonnull
   public static SubsonicClient create(@Nonnull SubsonicCredentials credentials) {
-    OkHttpClient http = new OkHttpClient.Builder().build();
+    return create(credentials, defaultHttpClient());
+  }
+
+  /**
+   * Builds a client on top of a caller-supplied {@link OkHttpClient}, e.g. one already shared
+   * with Media3's {@code OkHttpDataSource} or a local proxy. This client adds nothing to it (no
+   * interceptors, no timeout overrides) — it is used exactly as given.
+   */
+  @Nonnull
+  public static SubsonicClient create(
+      @Nonnull SubsonicCredentials credentials, @Nonnull OkHttpClient httpClient) {
     Retrofit retrofit =
         new Retrofit.Builder()
             .baseUrl(credentials.baseUrl() + "/")
-            .client(http)
+            .client(httpClient)
             .addConverterFactory(JacksonConverterFactory.create(mapper()))
             .build();
     return new SubsonicClient(retrofit.create(SubsonicApi.class), credentials);
+  }
+
+  @Nonnull
+  private static OkHttpClient defaultHttpClient() {
+    // Spike S1 (docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md) found that a
+    // *blocked* local-network connection manifests as a silent TCP connect timeout
+    // (SocketTimeoutException, packets dropped with no error at all), not a fast, loud failure —
+    // so relying on whatever OkHttp's own built-in default happens to be is a real risk, not
+    // merely a style preference: a caller has no way to tell "still connecting" from "will never
+    // connect" until some timeout fires. Explicit here, rather than implicit, so this behavior is
+    // visible in this codebase and does not silently shift if OkHttp's own default ever changes.
+    return new OkHttpClient.Builder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .readTimeout(Duration.ofSeconds(15))
+        .build();
   }
 
   private static ObjectMapper mapper() {
@@ -128,14 +161,15 @@ public final class SubsonicClient {
           @Override
           public void onResponse(
               Call<SubsonicResponse> c, retrofit2.Response<SubsonicResponse> response) {
-            // These three failure modes are kept distinct rather than collapsed into one
-            // "HTTP <code>" message: a real HTTP-level error, an empty/unparseable body, and a
-            // parsed-but-envelope-less body are different problems with different messages, and
-            // only the first is a genuine HTTP failure — the other two would misleadingly report
-            // "HTTP 200" as if that were the defect. SubsonicHttpException additionally exists
-            // (rather than a bare IOException) so callers such as CapabilityNegotiator can catch
-            // "the server answered, just not successfully" without also catching a transport
-            // failure they don't understand well enough to degrade on.
+            // These four failure modes are kept distinct rather than collapsed into one "HTTP
+            // <code>" message: a real HTTP-level error, an empty/unparseable body, a
+            // parsed-but-envelope-less body, and a Subsonic-level error are different problems
+            // with different messages, and only the first is a genuine HTTP failure — the middle
+            // two would misleadingly report "HTTP 200" as if that were the defect.
+            // SubsonicHttpException additionally exists (rather than a bare IOException) so
+            // callers such as CapabilityNegotiator can catch "the server answered, just not
+            // successfully" without also catching a transport failure they don't understand well
+            // enough to degrade on.
             if (!response.isSuccessful()) {
               future.setException(new SubsonicHttpException(response.code()));
               return;
@@ -143,7 +177,7 @@ public final class SubsonicClient {
             SubsonicResponse envelope = response.body();
             if (envelope == null) {
               future.setException(
-                  new IOException(
+                  new MalformedSubsonicResponseException(
                       "Subsonic response body was empty or could not be parsed (HTTP "
                           + response.code()
                           + ")"));
@@ -151,7 +185,7 @@ public final class SubsonicClient {
             }
             if (envelope.body() == null) {
               future.setException(
-                  new IOException(
+                  new MalformedSubsonicResponseException(
                       "Subsonic response was missing its \"subsonic-response\" envelope (HTTP "
                           + response.code()
                           + ")"));
@@ -159,10 +193,17 @@ public final class SubsonicClient {
             }
             SubsonicResponse.Body body = envelope.body();
             SubsonicResponse.SubsonicError error = body.error();
-            if (error != null) {
-              future.setException(
-                  new SubsonicErrorException(
-                      error.code(), Objects.requireNonNullElse(error.message(), "")));
+            // body.status() is otherwise parsed and carried for decoration only, read by nothing
+            // — checking it here hardens against a non-compliant server or a mangling proxy that
+            // sends status:"failed" without an accompanying error object, at no cost on the
+            // common path where a compliant server always pairs the two.
+            if (error != null || "failed".equals(body.status())) {
+              int code = error != null ? error.code() : SubsonicErrorException.CODE_GENERIC;
+              String message =
+                  error != null
+                      ? Objects.requireNonNullElse(error.message(), "")
+                      : "Subsonic response status was \"failed\" with no error object";
+              future.setException(new SubsonicErrorException(code, message));
               return;
             }
             try {
