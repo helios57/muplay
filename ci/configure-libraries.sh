@@ -9,7 +9,8 @@ set -euo pipefail
 #   DELETE /api/library/1
 #     -> 500 {"error":"validation error: library with ID 1 cannot be deleted"}
 #
-# (Confirmed against the real, pinned deluan/navidrome:0.63.2 image — see task-8-report.md.)
+# (Confirmed against the real, pinned deluan/navidrome:0.63.2 image — the two error strings
+# above are quoted verbatim from it.)
 # So the compose file mounts the two fixture subtrees at disjoint container paths (/music and
 # /audiobooks — see navidrome.compose.yml's volumes comment) and this script uses Navidrome's
 # native (non-Subsonic) REST API to rename library 1 to "Music" (path unchanged) and create a
@@ -68,7 +69,13 @@ for attempt in 1 2 3 4 5; do
   curl -sf "$BASE/rest/startScan.view?$Q&fullScan=true" > /dev/null
 
   for i in $(seq 1 30); do
-    scanning="$(curl -sf "$BASE/rest/getScanStatus.view?$Q" | grep -o '"scanning":[a-z]*' | cut -d: -f2)"
+    # `|| true` on the whole pipeline: under `set -euo pipefail`, a single flaky request here
+    # (curl failing, or the response not matching the grep) would otherwise abort the entire
+    # script immediately, never reaching the outer 5-attempt retry loop this is nested inside —
+    # the one thing that loop exists for. A failed poll iteration should read the same as "not
+    # done scanning yet" and simply try again next second, not crash the script outright.
+    scanning="$(curl -sf "$BASE/rest/getScanStatus.view?$Q" 2>/dev/null \
+      | grep -o '"scanning":[a-z]*' | cut -d: -f2 || true)"
     [ "$scanning" = "false" ] && break
     sleep 1
   done

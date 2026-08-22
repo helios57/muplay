@@ -21,7 +21,7 @@ services:
       # under two musicFolderIds). Mounting the two fixture subtrees at disjoint container paths
       # keeps library 1 (renamed "Music", path unchanged at /music) and the new "Audiobooks"
       # library (path /audiobooks) non-overlapping. See docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md
-      # and task-8-report.md for the full investigation.
+      # for the full investigation.
       - ./fixtures/Music:/music:ro
       - ./fixtures/Audiobooks:/audiobooks:ro
     healthcheck:

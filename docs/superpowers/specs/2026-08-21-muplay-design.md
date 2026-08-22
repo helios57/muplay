@@ -259,8 +259,8 @@ corrected two things that were wrong or underspecified before the spike.
 issues for a non-faststart file — with correctly clamped and correctly
 gated (`416` on a genuinely unsatisfiable range) responses, verified
 byte-for-byte, and always serves a real `Content-Length` (never chunked
-transfer encoding). See S3's "Task 8 follow-up" section for the raw evidence
-and `task-8-report.md` for the full method. The non-faststart "cheap to
+transfer encoding). See S3's "Task 8 follow-up" section for the raw evidence.
+The non-faststart "cheap to
 read" conclusion below is therefore confirmed against Navidrome itself, not
 only against a generic Range server.
 - Needs HTTP Range → **`format=raw`**, no transcoding.
@@ -809,8 +809,8 @@ Each is cheap and each could invalidate an assumption:
    grant`, only if `targetSdk` is bumped to 37.
 2. **Navidrome transcode-cache seekability** — does a *completed* cached transcode
    become Range-seekable? Affects the format policy. A `curl -r` answers it.
-3. **M4B chapter extraction over HTTP. ANSWERED**, including against a real
-   Navidrome — see `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`.
+3. **M4B chapter extraction over HTTP. ANSWERED** against a generic Range
+   server — see `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`.
    Works for both faststart and non-faststart files, over HTTP, via
    `MetadataRetriever` in the `media3-inspector` artifact — but only when
    constructed with an explicit `MediaSourceFactory`; the bare
@@ -820,6 +820,9 @@ Each is cheap and each could invalidate an assumption:
    HTTP Range requests (including the exact tail-seek a non-faststart file
    needs) and always serves a real `Content-Length`, never chunked transfer
    encoding — verified byte-for-byte, see S3's "Task 8 follow-up" section.
+   Media3's own `MetadataRetriever` extraction was not separately re-run
+   against Navidrome's `format=raw` URL — this closed the HTTP-precondition
+   gap the mechanism depends on, not a full end-to-end Navidrome re-run.
 4. **Sonos + Let's Encrypt.** No longer load-bearing, but five minutes to know.
 5. **Lidarr payload shape** against a live instance.
 

@@ -29,7 +29,7 @@ jobs:
           # Navidrome's default library (ID 1) is pinned to the compose file's first mount and
           # cannot be repointed or deleted via its API, so the two fixture subtrees are mounted
           # at disjoint container paths and rewired into "Music" + "Audiobooks" libraries here —
-          # see ci/configure-libraries.sh's header comment and task-8-report.md for the evidence.
+          # see ci/configure-libraries.sh's header comment for the evidence.
           ./ci/configure-libraries.sh
           # Do NOT poll scanning==false: it is already false before the startup
           # scan begins. Poll the expected track count instead.

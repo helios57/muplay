@@ -20,7 +20,10 @@ import javax.annotation.Nullable;
  * running Task 8's live contract test against a real Navidrome on API 37, not from any unit
  * test. {@code @JsonCreator} plus per-parameter {@code @JsonProperty} makes the constructor a
  * creator Jackson recognises directly, independent of whether the runtime class is a "real"
- * {@code java.lang.Record}. See docs/superpowers/sdd/2026-08-21-muplay-01-foundation/task-8-report.md.
+ * {@code java.lang.Record}. {@code :app}'s {@code ArchitectureTest.everyDtoRecordHasAnExplicitJacksonCreator}
+ * enforces this on every record in this package so a future DTO cannot silently regress it —
+ * not linked here as a real {@code @link}, since {@code :core:network} does not depend on
+ * {@code :app} and the reference would not resolve.
  */
 public record SubsonicResponse(@JsonProperty("subsonic-response") @Nullable Body body) {
 

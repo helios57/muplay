@@ -3,7 +3,10 @@ package app.muplay;
 import static com.google.common.truth.Truth.assertThat;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaConstructor;
+import com.tngtech.archunit.core.domain.JavaParameter;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import java.io.IOException;
@@ -13,8 +16,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.Test;
 
@@ -336,6 +341,78 @@ public class ArchitectureTest {
               + " — check its dependency wiring (e.g. a testImplementation project('"
               + module
               + "') line in app/build.gradle).");
+    }
+  }
+
+  private static final String JSON_CREATOR = "com.fasterxml.jackson.annotation.JsonCreator";
+  private static final String JSON_PROPERTY = "com.fasterxml.jackson.annotation.JsonProperty";
+
+  /**
+   * Every Jackson-deserialized DTO record in {@code app.muplay.network.dto} must have an
+   * explicit {@code @JsonCreator} canonical constructor with {@code @JsonProperty} on every
+   * parameter — see {@code SubsonicResponse}'s class doc for the full mechanism. In short:
+   * Android's D8 compiler desugars Java records into plain classes for any module with {@code
+   * minSdk < 33} (this project's {@code minSdk} is 26), which strips the {@code java.lang.Record}
+   * metadata Jackson's automatic, annotation-free record deserialization depends on. A record
+   * relying on that automatic path compiles, passes every Robolectric/JVM unit test (which run
+   * undexed {@code javac} output, never through D8), and silently fails to deserialize on a real
+   * device with no compile-time or unit-test signal — exactly the defect Task 8's live contract
+   * test against a real Navidrome found and fixed once already. This rule exists so the next DTO
+   * record added without having read that class doc fails loudly here instead of silently on a
+   * user's phone.
+   *
+   * <p>Scoped to {@code app.muplay.network.dto} specifically — the package that exists to hold
+   * Jackson DTOs — not every record in the codebase: {@code core.model}'s records ({@code
+   * MusicLibrary}, {@code ServerCapabilities}, {@code SubsonicCredentials}, ...) are
+   * hand-constructed domain types, never deserialized by Jackson, and are correctly out of scope.
+   *
+   * <p>{@code isAnnotatedWith(String)} (the fully-qualified-name overload, not {@code
+   * isAnnotatedWith(Class)}) is used throughout so this rule does not need Jackson on {@code
+   * :app}'s own test classpath — ArchUnit reads the annotation directly out of the imported
+   * bytecode without needing to load the annotation type.
+   */
+  @Test
+  public void everyDtoRecordHasAnExplicitJacksonCreator() {
+    List<JavaClass> dtoRecords =
+        CLASSES.stream()
+            .filter(c -> c.getPackageName().equals("app.muplay.network.dto"))
+            .filter(JavaClass::isRecord)
+            .collect(Collectors.toList());
+
+    assertWithFailureMessage(
+        !dtoRecords.isEmpty(),
+        "Found zero record classes in app.muplay.network.dto — this rule is scanning the wrong"
+            + " package, not verifying anything.");
+
+    for (JavaClass dtoRecord : dtoRecords) {
+      Set<JavaConstructor> constructors = dtoRecord.getConstructors();
+      assertWithFailureMessage(
+          constructors.size() == 1,
+          dtoRecord.getFullName()
+              + " has "
+              + constructors.size()
+              + " constructor(s) — a record is expected to have exactly one (its canonical"
+              + " constructor); this rule does not know which one Jackson would use.");
+      JavaConstructor canonical = constructors.iterator().next();
+      assertWithFailureMessage(
+          canonical.isAnnotatedWith(JSON_CREATOR),
+          dtoRecord.getFullName()
+              + "'s canonical constructor is missing @JsonCreator. Without it, Jackson falls"
+              + " back to its automatic Java-records deserialization, which Android's D8"
+              + " compiler silently breaks for minSdk < 33 (this project's minSdk is 26) — see"
+              + " SubsonicResponse's class doc. Add @JsonCreator to the canonical (compact)"
+              + " constructor, e.g. `@JsonCreator public "
+              + dtoRecord.getSimpleName()
+              + " {}`.");
+      for (JavaParameter parameter : canonical.getParameters()) {
+        assertWithFailureMessage(
+            parameter.isAnnotatedWith(JSON_PROPERTY),
+            dtoRecord.getFullName()
+                + "'s canonical constructor parameter #"
+                + parameter.getIndex()
+                + " is missing @JsonProperty. Add @JsonProperty(\"...\") to that component in"
+                + " the record header, matching the server's JSON field name.");
+      }
     }
   }
 

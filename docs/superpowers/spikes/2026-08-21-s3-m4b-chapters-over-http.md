@@ -545,9 +545,8 @@ Confidence: high — direct HTTP evidence (raw response headers and byte-level
 comparison), against the real, pinned `deluan/navidrome:0.63.2` image, not a
 stand-in. This section answers exactly the two sub-questions the task brief
 asked for: does `format=raw` honour HTTP Range requests, and does it send a
-real `Content-Length` or chunked transfer encoding. Full method, commands and
-container setup are in `task-8-report.md`; this is the extract relevant to
-the chapter-extraction question this spike opened.
+real `Content-Length` or chunked transfer encoding. Raw `curl -D -`
+transcripts for every case are in "Findings" below.
 
 ### Method
 
@@ -573,44 +572,190 @@ response headers verbatim, with and without a `Range` header, and the
 returned bytes were compared byte-for-byte against a full, un-ranged download
 of the same file.
 
-### Findings
+### Findings — raw transcripts
 
-**Range is honoured — full RFC 7233 behaviour, not partial support:**
+Song IDs (fresh per container instance; re-derive via `getSong`/`search3` if
+reproducing): small faststart fixture `V5GNJES0EHenSDhMQa41It`, temporary big
+non-faststart fixture `DHShAxNeUzhSYhVAwoGc8S`. All requests are
+`GET /rest/stream.view?v=1.16.1&c=ci&f=json&u=admin&p=testpass&id=<id>&format=raw`
+via `curl -s -D - -o <body-file> [-H "Range: ..."] <url>`, with the response
+body written to a separate file and diffed byte-for-byte against a full,
+un-ranged download of the same file. These six blocks — not a narrative
+paraphrase of them — are the real evidence; see Finding 2's own precedent for
+why that distinction is enforced in this document specifically.
 
-- A plain request (no `Range` header) returns `200 OK`, `Accept-Ranges:
-  bytes`, and a full-file `Content-Length` (`65160` for the small fixture).
-- `Range: bytes=0-999` returns `206 Partial Content`, `Content-Range: bytes
-  0-999/65160`, `Content-Length: 1000` — and the 1000 returned bytes are
-  byte-identical to the first 1000 bytes of the full download.
-- `Range: bytes=-1000` (a suffix range — the "last N bytes" form) returns
-  `206 Partial Content`, `Content-Range: bytes 64160-65159/65160`, and those
-  bytes are byte-identical to the last 1000 bytes of the full download.
-- `Range: bytes=64000-99999` (end offset past EOF) is correctly **clamped**:
-  `206 Partial Content`, `Content-Range: bytes 64000-65159/65160`,
-  `Content-Length: 1160` — not an error, not the whole file.
-- `Range: bytes=999999-1000000` (a range that starts past EOF, genuinely
-  unsatisfiable) correctly returns `416 Requested Range Not Satisfiable` with
-  `Content-Range: bytes */65160`.
-- **The exact scenario this spike's non-faststart finding depends on**: on
-  the 1,479,120 B non-faststart fixture, `Range: bytes=1446647-1479119` (the
-  moov atom's own byte range, computed by this spike's independent box
-  walker) returns `206 Partial Content`, `Content-Length: 32473`,
-  `Content-Range: bytes 1446647-1479119/1479120` — and the returned bytes are
-  byte-identical to the source file's moov box, confirmed both by direct
-  comparison and by the returned bytes literally starting with the ASCII tag
-  `moov` at their offset-4 position. This is precisely the request Media3's
-  `DefaultHttpDataSource` issues when `MetadataRetriever` seeks straight to a
-  non-faststart file's moov offset instead of reading forward through `mdat`
-  (this spike's Finding 2) — Navidrome serves it exactly as a Range-compliant
-  server should.
+**No `Range` header — plain `200`, real `Content-Length`:**
 
-**`Content-Length`, never chunked**: every response observed — full-file and
-every Range variant, both fixture sizes — carried a numeric `Content-Length`
-header. No response carried `Transfer-Encoding: chunked`. This matters
-because `DefaultHttpDataSource`'s Range-seeking logic (the entire mechanism
-this spike's non-faststart finding relies on) needs to know the total
-resource length up front; a chunked response without `Content-Length` would
-not give it that.
+```
+HTTP/1.1 200 OK
+Accept-Ranges: bytes
+Content-Length: 65160
+Content-Type: audio/mp4
+Last-Modified: Fri, 21 Aug 2026 23:21:50 GMT
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 15.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:15 GMT
+
+body bytes: 65160
+```
+
+**`Range: bytes=0-999` — `206`, `Content-Range`, and the bytes verified
+identical to the first 1000 bytes of a full download:**
+
+```
+HTTP/1.1 206 Partial Content
+Accept-Ranges: bytes
+Content-Length: 1000
+Content-Range: bytes 0-999/65160
+Content-Type: audio/mp4
+Last-Modified: Fri, 21 Aug 2026 23:21:50 GMT
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 15.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:15 GMT
+
+body bytes: 1000
+```
+```
+$ python3 -c "print(open('t2-body.bin','rb').read() == open('t1-body.bin','rb').read()[0:1000])"
+True
+```
+
+**`Range: bytes=-1000` (suffix form — "last N bytes") — `206`, and the bytes
+verified identical to the last 1000 bytes of a full download:**
+
+```
+HTTP/1.1 206 Partial Content
+Accept-Ranges: bytes
+Content-Length: 1000
+Content-Range: bytes 64160-65159/65160
+Content-Type: audio/mp4
+Last-Modified: Fri, 21 Aug 2026 23:21:50 GMT
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 15.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:15 GMT
+
+body bytes: 1000
+```
+```
+$ python3 -c "print(open('t3-body.bin','rb').read() == open('t1-body.bin','rb').read()[-1000:])"
+True
+```
+
+**`Range: bytes=64000-99999` (end offset past EOF) — correctly clamped to
+`206`, not an error and not the whole file, `Content-Range` reporting the
+clamped range, and the bytes verified identical to `full[64000:65160]`:**
+
+```
+HTTP/1.1 206 Partial Content
+Accept-Ranges: bytes
+Content-Length: 1160
+Content-Range: bytes 64000-65159/65160
+Content-Type: audio/mp4
+Last-Modified: Fri, 21 Aug 2026 23:21:50 GMT
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 15.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:15 GMT
+
+body bytes: 1160
+```
+```
+$ python3 -c "print(open('t4-body.bin','rb').read() == open('t1-body.bin','rb').read()[64000:65160])"
+True
+```
+
+**`Range: bytes=999999-1000000` (start offset past EOF — genuinely
+unsatisfiable) — correctly `416`, not `206` and not `200`:**
+
+```
+HTTP/1.1 416 Requested Range Not Satisfiable
+Content-Range: bytes */65160
+Content-Type: text/plain; charset=utf-8
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 15.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:15 GMT
+Content-Length: 33
+
+body bytes: 33
+```
+
+**The load-bearing case: on the 1,479,120 B temporary non-faststart fixture
+(built with this spike's own `book_nofaststart_chpl_big.m4b` recipe — see
+"Method" below — `ftyp`→`free`→`mdat` (1,446,611 B)→`moov` at offset
+1,446,647, size 32,473 B, confirmed by an independent box walk), `Range:
+bytes=1446647-1479119` — the moov box's own computed byte range, exactly the
+request Media3's `DefaultHttpDataSource` issues when `MetadataRetriever`
+seeks to a non-faststart file's moov offset instead of reading forward
+through `mdat` (this spike's Finding 2) — returns `206`, `Content-Length:
+32473`, `Content-Range: bytes 1446647-1479119/1479120`, and the returned
+bytes are byte-for-byte identical to the source file's moov box, confirmed
+both by direct comparison and by the first four bytes after the box-size
+field literally spelling `moov`:**
+
+```
+HTTP/1.1 206 Partial Content
+Accept-Ranges: bytes
+Content-Length: 32473
+Content-Range: bytes 1446647-1479119/1479120
+Content-Type: audio/mp4
+Last-Modified: Sat, 22 Aug 2026 00:28:36 GMT
+Permissions-Policy: autoplay=(), camera=(), microphone=(), usb=()
+Referrer-Policy: same-origin
+Set-Cookie: nd-player-61646d696e=CqFmbn4BvKazidmAJldIhx; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict
+Vary: Origin
+X-Content-Duration: 180.02
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Date: Sat, 22 Aug 2026 00:28:45 GMT
+
+body bytes: 32473
+```
+```
+$ python3 -c "
+with open('book-nofaststart-big.m4b','rb') as f:
+    f.seek(1446647); expected = f.read()
+with open('t6-body.bin','rb') as f:
+    actual = f.read()
+print('lengths', len(expected), len(actual))
+print('matches:', expected == actual)
+print('first 8 bytes:', actual[:8])
+"
+lengths 32473 32473
+matches: True
+first 8 bytes: b'\x00\x00~\xd9moov'
+```
+
+**`Content-Length`, never chunked**: every transcript above — full-file and
+every `Range` variant, both fixture sizes — carries a numeric
+`Content-Length` header. None carries `Transfer-Encoding: chunked`. This
+matters because `DefaultHttpDataSource`'s Range-seeking logic (the entire
+mechanism this spike's non-faststart finding relies on) needs to know the
+total resource length up front; a chunked response without `Content-Length`
+would not give it that.
 
 ### Answer to the carried-forward question
 

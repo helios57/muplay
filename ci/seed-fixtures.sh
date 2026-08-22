@@ -17,7 +17,7 @@ done
 # The brief's own recipe hands this step a pre-built /tmp/book.m4b. That file
 # doesn't build itself, so its generation is folded in here rather than left
 # as an undocumented external prerequisite — this is the one deviation from
-# the brief's literal script text (see task-8-report.md). Three chapters
+# the brief's literal script text. Three chapters
 # (0-5s, 5-10s, 10-15s), Nero `chpl` (ffmpeg's mov muxer default — it never
 # writes QuickTime `chap`), faststart (moov at front) — the common case per
 # spike S3's own recommendation for the nightly fixture. `-movflags
