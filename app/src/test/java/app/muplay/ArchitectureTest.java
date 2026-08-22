@@ -3,6 +3,7 @@ package app.muplay;
 import static com.google.common.truth.Truth.assertThat;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.core.domain.JavaAnnotation;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaConstructor;
@@ -344,27 +345,45 @@ public class ArchitectureTest {
     }
   }
 
+  private static final String JACKSON_ANNOTATION_PACKAGE_PREFIX = "com.fasterxml.jackson.";
   private static final String JSON_CREATOR = "com.fasterxml.jackson.annotation.JsonCreator";
   private static final String JSON_PROPERTY = "com.fasterxml.jackson.annotation.JsonProperty";
 
   /**
-   * Every Jackson-deserialized DTO record in {@code app.muplay.network.dto} must have an
-   * explicit {@code @JsonCreator} canonical constructor with {@code @JsonProperty} on every
-   * parameter — see {@code SubsonicResponse}'s class doc for the full mechanism. In short:
-   * Android's D8 compiler desugars Java records into plain classes for any module with {@code
-   * minSdk < 33} (this project's {@code minSdk} is 26), which strips the {@code java.lang.Record}
-   * metadata Jackson's automatic, annotation-free record deserialization depends on. A record
-   * relying on that automatic path compiles, passes every Robolectric/JVM unit test (which run
-   * undexed {@code javac} output, never through D8), and silently fails to deserialize on a real
-   * device with no compile-time or unit-test signal — exactly the defect Task 8's live contract
-   * test against a real Navidrome found and fixed once already. This rule exists so the next DTO
-   * record added without having read that class doc fails loudly here instead of silently on a
-   * user's phone.
+   * Every Jackson-deserialized DTO record must have an explicit {@code @JsonCreator} canonical
+   * constructor with {@code @JsonProperty} on every parameter. Why this matters, in one sentence:
+   * Android's D8 compiler strips a record's {@code java.lang.Record} reflection metadata for any
+   * module with {@code minSdk < 33} (this project's {@code minSdk} is 26), Robolectric never sees
+   * that stripping because it runs undexed {@code javac} output, so Jackson's implicit,
+   * annotation-free records deserialization silently works in every JVM unit test and silently
+   * fails on a real device — exactly the defect Task 8's live contract test against a real
+   * Navidrome found and fixed once already (see {@code SubsonicResponse}'s class doc for the full
+   * mechanism). This rule exists so the next DTO record added without having read that class doc
+   * fails loudly here instead of silently on a user's phone.
    *
-   * <p>Scoped to {@code app.muplay.network.dto} specifically — the package that exists to hold
-   * Jackson DTOs — not every record in the codebase: {@code core.model}'s records ({@code
-   * MusicLibrary}, {@code ServerCapabilities}, {@code SubsonicCredentials}, ...) are
-   * hand-constructed domain types, never deserialized by Jackson, and are correctly out of scope.
+   * <p>A record is in scope for this rule if <em>either</em> of two independent conditions holds
+   * — not just literal residence in {@code app.muplay.network.dto}, the one package this
+   * repository happens to use for Jackson DTOs today. Plans 2-7 add Lidarr/Bindery/DLNA-DIDL
+   * integrations that will plausibly put their own Jackson DTOs in a different package entirely;
+   * a hard-coded single package would leave such a record silently unprotected, reproducing this
+   * exact on-device failure one directory over.
+   *
+   * <ol>
+   *   <li>its package contains a {@code dto} path segment anywhere under {@code app.muplay} (not
+   *       only exactly {@code app.muplay.network.dto} — {@code app.muplay.integrations.lidarr.dto}
+   *       or {@code app.muplay.dto.anything} match too), or
+   *   <li>it already carries at least one {@code com.fasterxml.jackson.*} annotation somewhere —
+   *       on the class itself, on a constructor, or on any constructor parameter — regardless of
+   *       package. This catches a record that is already halfway to being a Jackson DTO (one
+   *       {@code @JsonProperty} added, the rest forgotten) wherever it happens to live, which is
+   *       exactly the half-annotated shape a real mistake looks like, not only a from-scratch
+   *       unannotated one.
+   * </ol>
+   *
+   * <p>{@code core.model}'s records ({@code MusicLibrary}, {@code ServerCapabilities}, {@code
+   * SubsonicCredentials}, ...) match neither condition — no {@code dto} segment, no Jackson
+   * annotation anywhere on them — and are correctly out of scope: they are hand-constructed
+   * domain types, never deserialized by Jackson.
    *
    * <p>{@code isAnnotatedWith(String)} (the fully-qualified-name overload, not {@code
    * isAnnotatedWith(Class)}) is used throughout so this rule does not need Jackson on {@code
@@ -375,14 +394,15 @@ public class ArchitectureTest {
   public void everyDtoRecordHasAnExplicitJacksonCreator() {
     List<JavaClass> dtoRecords =
         CLASSES.stream()
-            .filter(c -> c.getPackageName().equals("app.muplay.network.dto"))
             .filter(JavaClass::isRecord)
+            .filter(ArchitectureTest::isInJacksonDtoScope)
             .collect(Collectors.toList());
 
     assertWithFailureMessage(
         !dtoRecords.isEmpty(),
-        "Found zero record classes in app.muplay.network.dto — this rule is scanning the wrong"
-            + " package, not verifying anything.");
+        "Found zero Jackson-DTO-scoped record classes under app.muplay (a `dto`-segmented"
+            + " package, or a record already carrying a Jackson annotation) — this rule is"
+            + " scanning the wrong thing, not verifying anything.");
 
     for (JavaClass dtoRecord : dtoRecords) {
       Set<JavaConstructor> constructors = dtoRecord.getConstructors();
@@ -414,6 +434,48 @@ public class ArchitectureTest {
                 + " the record header, matching the server's JSON field name.");
       }
     }
+  }
+
+  private static boolean isInJacksonDtoScope(JavaClass javaClass) {
+    return packageHasDtoSegment(javaClass.getPackageName()) || alreadyCarriesJacksonAnnotation(javaClass);
+  }
+
+  private static boolean packageHasDtoSegment(String packageName) {
+    // Deliberately not packageName.split("\\.") -- Error Prone's StringSplitter check (-Werror
+    // in this build) flags String.split(String) as surprising (empty-string and regex-metachar
+    // pitfalls); a package name has none of those characters, but the boundary checks below are
+    // exactly as correct for this purpose and need no regex at all.
+    return packageName.equals("dto")
+        || packageName.startsWith("dto.")
+        || packageName.endsWith(".dto")
+        || packageName.contains(".dto.");
+  }
+
+  private static boolean alreadyCarriesJacksonAnnotation(JavaClass javaClass) {
+    if (hasJacksonAnnotation(javaClass.getAnnotations())) {
+      return true;
+    }
+    for (JavaConstructor constructor : javaClass.getConstructors()) {
+      if (hasJacksonAnnotation(constructor.getAnnotations())) {
+        return true;
+      }
+      for (JavaParameter parameter : constructor.getParameters()) {
+        if (hasJacksonAnnotation(parameter.getAnnotations())) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasJacksonAnnotation(
+      Iterable<? extends JavaAnnotation<?>> annotations) {
+    for (JavaAnnotation<?> annotation : annotations) {
+      if (annotation.getRawType().getFullName().startsWith(JACKSON_ANNOTATION_PACKAGE_PREFIX)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Test
