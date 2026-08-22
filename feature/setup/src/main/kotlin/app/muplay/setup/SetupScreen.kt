@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -21,10 +22,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * The first-run setup screen: a server URL, username and password, and a Connect button that
- * reports [SetupUiState] back to the user. Deliberately thin — no branching this file owns is
- * unit-tested; [SetupViewModel] carries all of it, and Task 8's emulator journey covers this
- * screen end to end. `viewModel()` uses the platform's default factory, which is able to
- * construct [SetupViewModel] because every one of its constructor parameters is defaulted.
+ * reports [SetupUiState] back to the user. Deliberately thin — the only branching this file owns
+ * is which `Text`/`Composable` to render for a given [SetupUiState], which genuinely needs
+ * Compose to exercise and is left for Task 8's emulator journey; [SetupViewModel] carries the
+ * state-machine logic, and the failure-to-message mapping lives in `SetupFailureReason.toMessage`
+ * precisely so it does *not* need Compose or an emulator to test. `viewModel()` uses the
+ * platform's default factory, which is able to construct [SetupViewModel] because every one of
+ * its constructor parameters is defaulted.
  */
 @Composable
 fun SetupScreen(modifier: Modifier = Modifier, viewModel: SetupViewModel = viewModel()) {
@@ -38,9 +42,16 @@ private fun SetupScreen(
   onConnect: (serverUrl: String, username: String, password: String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  // Server URL and username are not sensitive, so losing them on rotation would be a pure
+  // usability regression — rememberSaveable is right for both. The password is different:
+  // rememberSaveable writes into the Activity's saved-instance-state Bundle, which survives not
+  // just configuration change but process death, meaning a plaintext credential would sit in
+  // system-managed state. Plain `remember` only survives recomposition, never process death, so
+  // the password is deliberately lost on rotation rather than persisted anywhere. Do not "fix"
+  // this inconsistency by making all three uniform.
   var serverUrl by rememberSaveable { mutableStateOf("") }
   var username by rememberSaveable { mutableStateOf("") }
-  var password by rememberSaveable { mutableStateOf("") }
+  var password by remember { mutableStateOf("") }
   val isConnecting = uiState is SetupUiState.Connecting
 
   Column(
@@ -97,10 +108,4 @@ private fun SetupScreen(
         )
     }
   }
-}
-
-private fun SetupFailureReason.toMessage(): String = when (this) {
-  SetupFailureReason.InvalidUrl -> "Enter a valid server URL, e.g. https://music.example.com."
-  is SetupFailureReason.Rejected -> "Could not sign in" + (detail?.let { ": $it" } ?: " (server error $code).")
-  SetupFailureReason.Unreachable -> "Could not reach the server. Check the URL and your connection."
 }

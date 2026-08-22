@@ -36,3 +36,16 @@ sealed interface SetupFailureReason {
    */
   data object Unreachable : SetupFailureReason
 }
+
+/**
+ * The user-facing message for [this] reason. `internal`, not `private` to `SetupScreen.kt`: this
+ * is a plain three-branch `when` with no Compose or Android dependency, so it belongs beside the
+ * type it maps and is tested directly on the JVM (see `SetupFailureReasonTest`) rather than left
+ * for Task 8's emulator journey — that tier is for the branching that genuinely needs Compose to
+ * exercise (see [SetupUiState]'s own rendering in `SetupScreen`), not for this.
+ */
+internal fun SetupFailureReason.toMessage(): String = when (this) {
+  SetupFailureReason.InvalidUrl -> "Enter a valid server URL, e.g. https://music.example.com."
+  is SetupFailureReason.Rejected -> "Could not sign in" + (detail?.let { ": $it" } ?: " (server error $code).")
+  SetupFailureReason.Unreachable -> "Could not reach the server. Check the URL and your connection."
+}
