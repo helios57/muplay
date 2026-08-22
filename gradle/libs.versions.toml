@@ -1,74 +1,87 @@
 [versions]
+kotlin = "2.4.10"
+# plan said agp = "9.0.0"; that resolves fine, but the task instructions require the latest
+# *stable* 9.x, not the oldest that resolves. Latest published stable (dl.google.com
+# com/android/application/.../maven-metadata.xml) is 9.3.1; 9.4.0 is still alpha-only.
 agp = "9.3.1"
+# plan said ksp = "2.4.10-2.0.4", assuming the old "<kotlinVersion>-<kspImplVersion>" coupling.
+# As of KSP 2.3.0 (2025-10-22) that format is discontinued: KSP is explicitly decoupled from the
+# Kotlin compiler version (github.com/google/ksp release notes for 2.3.0: "KSP version is no
+# longer tied to the Kotlin compiler version... We wanted to match the Kotlin language version").
+# No "2.4.10-*" coordinate exists or ever will under the new scheme. Latest published is 2.3.11
+# (com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin maven-metadata.xml) — used it.
+ksp = "2.3.11"
+composeBom = "2026.08.00"
+material3 = "1.4.0"
+navigation3 = "1.1.6"
 media3 = "1.11.0"
+okhttp = "5.5.0"
+retrofit = "2.11.0"
+serialization = "1.11.0"
+coroutines = "1.11.0"
 room = "2.8.4"
 hilt = "2.60.1"
-okhttp = "5.5.0"
-retrofit = "3.0.0"
-jackson = "2.20.0"
-guava = "33.4.8-android"
-archunit = "1.5.0"
-robolectric = "4.16.1"
-truth = "1.4.4"
-nullaway = "0.12.7"
-errorprone = "2.38.0"
+coil = "3.5.0"
+junit5 = "6.1.3"
+assertj = "3.27.7"
+turbine = "1.2.1"
+androidxTest = "1.7.0"
+androidxTestExt = "1.3.0"
+jacoco = "0.8.12"
 openapiValidator = "3.0.0"
-# Pinned below the latest release (14.0.0 at time of writing) deliberately: checkstyle 13.x/14.x
-# ship class files compiled for Java 21 (class file major version 65), which a JDK 17 JVM — what
-# .github/workflows/pr.yml's setup-java step provisions, matching this project's Java 17 target —
-# cannot load at all (UnsupportedClassVersionError). 12.3.1 is the newest release still compiled
-# for Java 17 (major version 61). Verify with the same class-file check before bumping this again.
-checkstyle = "12.3.1"
-slf4j = "2.0.18"
-androidxTestRunner = "1.7.0"
-# androidx.test:core is released in lockstep with androidx.test:runner (androidxTestRunner above)
-# and shares its version number; tracked as its own key rather than reusing androidxTestRunner's
-# ref so each artifact's version can be bumped independently if that lockstep ever breaks.
-androidxTestCore = "1.7.0"
-rxjava = "3.1.10"
-rxandroid = "3.0.2"
-# Room's Java annotation processor only recognizes androidx.annotation.NonNull (plus a couple of
-# other non-JSR-305 spellings — see room-compiler-processing's NONNULL_ANNOTATIONS) when deciding
-# whether a @PrimaryKey column is allowed to be non-null; javax.annotation.Nonnull (this project's
-# usual JSR-305 annotation, required everywhere else by ArchitectureTest) does not satisfy it.
-# compileOnly only: this is read by Room's annotation processor and embedded as a class-retention
-# marker, never something a consumer of this module's compiled classes needs on their classpath.
-androidxAnnotation = "1.10.0"
 
 [libraries]
-media3-exoplayer   = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
-media3-session     = { module = "androidx.media3:media3-session", version.ref = "media3" }
-media3-testutils   = { module = "androidx.media3:media3-test-utils", version.ref = "media3" }
-media3-testutils-robolectric = { module = "androidx.media3:media3-test-utils-robolectric", version.ref = "media3" }
-okhttp             = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
-mockwebserver3     = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
-retrofit           = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
-retrofit-jackson   = { module = "com.squareup.retrofit2:converter-jackson", version.ref = "retrofit" }
-jackson-databind   = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
-guava              = { module = "com.google.guava:guava", version.ref = "guava" }
-hilt-android       = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
-hilt-compiler      = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
-archunit           = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
-robolectric        = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
-truth              = { module = "com.google.truth:truth", version.ref = "truth" }
-junit              = { module = "junit:junit", version = "4.13.2" }
-nullaway           = { module = "com.uber.nullaway:nullaway", version.ref = "nullaway" }
-errorprone-core    = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
-openapi-validator  = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
-jsr305             = { module = "com.google.code.findbugs:jsr305", version = "3.0.2" }
-slf4j-nop          = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
-androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
-androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
-room-runtime       = { module = "androidx.room:room-runtime", version.ref = "room" }
-room-compiler      = { module = "androidx.room:room-compiler", version.ref = "room" }
-room-rxjava3       = { module = "androidx.room:room-rxjava3", version.ref = "room" }
-room-testing       = { module = "androidx.room:room-testing", version.ref = "room" }
-rxjava             = { module = "io.reactivex.rxjava3:rxjava", version.ref = "rxjava" }
-rxandroid          = { module = "io.reactivex.rxjava3:rxandroid", version.ref = "rxandroid" }
-androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidxAnnotation" }
+compose-bom            = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui             = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling     = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-material3      = { module = "androidx.compose.material3:material3", version.ref = "material3" }
+activity-compose       = { module = "androidx.activity:activity-compose", version = "1.12.0" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version = "2.10.0" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version = "2.10.0" }
+navigation3-runtime    = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
+navigation3-ui         = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
+okhttp                 = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-coroutines      = { module = "com.squareup.okhttp3:okhttp-coroutines", version.ref = "okhttp" }
+okhttp-mockwebserver   = { module = "com.squareup.okhttp3:mockwebserver3-junit5", version.ref = "okhttp" }
+retrofit               = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
+retrofit-serialization = { module = "com.squareup.retrofit2:converter-kotlinx-serialization", version.ref = "retrofit" }
+serialization-json     = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+coroutines-core        = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-test        = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+hilt-android           = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
+hilt-compiler          = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
+junit-jupiter          = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj                = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+turbine                = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+androidx-test-runner   = { module = "androidx.test:runner", version.ref = "androidxTest" }
+androidx-test-ext      = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
+openapi-validator      = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
+
+# Not in the plan's catalogue draft; added so build-logic/convention can declare these as real
+# `implementation` dependencies and apply them programmatically by class from inside the
+# convention plugins (the [plugins] block below only aliases plugin *ids* for consumption via
+# `alias(libs.plugins.x)` in ordinary module build files — build-logic itself needs the plugin
+# jars on its own runtime classpath, or Gradle cannot decorate a Plugin<Project> class that
+# references their DSL types). Same pinned version refs as above; no new version numbers
+# introduced.
+android-gradlePlugin    = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradlePlugin     = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+compose-compiler-gradlePlugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
+ksp-gradlePlugin        = { module = "com.google.devtools.ksp:symbol-processing-gradle-plugin", version.ref = "ksp" }
+hilt-gradlePlugin       = { module = "com.google.dagger:hilt-android-gradle-plugin", version.ref = "hilt" }
 
 [plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
-android-library     = { id = "com.android.library", version.ref = "agp" }
-hilt                = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
-errorprone          = { id = "net.ltgt.errorprone", version = "4.1.0" }
+android-application    = { id = "com.android.application", version.ref = "agp" }
+android-library        = { id = "com.android.library", version.ref = "agp" }
+# Kept for the catalogue's own completeness, but do not apply this: AGP 9's built-in Kotlin
+# support compiles Kotlin sources itself and refuses to build if this plugin is also applied
+# ("The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP
+# 9.0" — see AndroidLibraryConventionPlugin, which deliberately does not apply it).
+kotlin-android         = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm             = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose         = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization   = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp                    = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt                   = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }

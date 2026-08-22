@@ -5,5 +5,15 @@
   <application
       android:name=".MuPlayApplication"
       android:label="MuPlay"
-      android:allowBackup="false" />
+      android:allowBackup="false"
+      android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <activity
+        android:name=".MainActivity"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
 </manifest>

@@ -1,9 +1,0 @@
-pluginManagement {
-  repositories { google(); mavenCentral(); gradlePluginPortal() }
-}
-dependencyResolutionManagement {
-  repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
-  repositories { google(); mavenCentral() }
-}
-rootProject.name = 'MuPlay'
-include ':app', ':core:model', ':core:network', ':core:database', ':testing'
