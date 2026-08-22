@@ -5,6 +5,21 @@ plugins {
   alias(libs.plugins.errorprone) apply false
 }
 
+// Coverage ratchet floors: JaCoCo branch coverage on every :core:* module (spec §10's "Coverage"
+// row: "JaCoCo branch coverage on :core:*, ratcheting"). These are measured, not invented —
+// recorded from this commit's actual `./gradlew :core:model:jacocoTestReport
+// :core:network:jacocoTestReport` output (each module's own HTML report, "Missed Branches"/"Cov."
+// row: :core:model 2/8 = 25%, :core:network 29/32 ≈ 90.6%), truncated to two decimal places so a
+// trivial, non-regressing rounding difference in a future JaCoCo point release cannot fail the
+// build on its own. "Ratcheting" means these are floors, not targets: they are meant to rise as
+// real tests are added over Plans 2+, and jacocoTestCoverageVerification below (wired into the PR
+// gate) fails the build if a change lets a module's branch coverage fall below the floor recorded
+// here for it. New :core:* modules have no entry until someone measures and adds one.
+ext.coreBranchCoverageBaseline = [
+    ':core:model'  : 0.25d,
+    ':core:network': 0.90d,
+]
+
 subprojects {
   // The root project's own build script (and therefore this subprojects{} block) is evaluated
   // before any subproject's build.gradle has applied its own plugins, and settings.gradle's
@@ -186,6 +201,96 @@ subprojects {
       // data. (Redundant but harmless for :app/:core:network, whose alias above already reaches
       // 'test' transitively through create*UnitTestCoverageReport.)
       tasks.named('jacocoTestReport').configure { dependsOn tasks.named('test') }
+
+      // Coverage ratchet (see coreBranchCoverageBaseline above): only :core:* modules with a
+      // recorded baseline are gated — :app and :testing are deliberately not in scope, matching
+      // the spec's "JaCoCo branch coverage on :core:*" wording exactly.
+      def requiredBranchCoverage = rootProject.ext.coreBranchCoverageBaseline[project.path]
+      if (requiredBranchCoverage != null) {
+        if (tasks.findByName('jacocoTestCoverageVerification') != null) {
+          // Plain java-library modules (:core:model today): the core 'jacoco' plugin already
+          // registers a real org.gradle.testing.jacoco.tasks.JacocoCoverageVerification task here.
+          // It has no rule configured by default, so left alone it passes vacuously regardless of
+          // actual coverage — give it the real rule.
+          tasks.named('jacocoTestCoverageVerification', org.gradle.testing.jacoco.tasks.JacocoCoverageVerification).configure {
+            violationRules {
+              rule {
+                limit {
+                  counter = 'BRANCH'
+                  minimum = requiredBranchCoverage
+                }
+              }
+            }
+          }
+        } else {
+          // Android-library modules (:core:network today): AGP's own coverage machinery
+          // (com.android.build.gradle.internal.coverage.JacocoReportTask, aliased to
+          // jacocoTestReport above) has no verification counterpart at all — confirmed
+          // empirically, `:core:network:tasks --all` lists createDebugUnitTestCoverageReport but
+          // no jacocoTestCoverageVerification, unlike a plain java-library module. Hand-wiring the
+          // standard JacocoCoverageVerification task type against AGP's internal exec-data/
+          // class-directory outputs would mean depending on AGP internals nothing else in this
+          // build touches. Reading the report.xml AGP's own task already writes (the same counters
+          // its HTML report shows, already correctly excluding generated R/BuildConfig classes)
+          // avoids that: this enforces exactly the coverage AGP itself reports, rather than
+          // reimplementing how AGP computes it.
+          def jacocoReportTask = tasks.named('jacocoTestReport')
+          tasks.register('jacocoTestCoverageVerification') {
+            group = 'verification'
+            description =
+                "Fails if ${project.path}'s branch coverage has dropped below its recorded" +
+                    ' baseline.'
+            dependsOn jacocoReportTask
+            def xmlReport = layout.buildDirectory.file('reports/coverage/test/debug/report.xml')
+            inputs.file(xmlReport)
+            doLast {
+              File reportFile = xmlReport.get().asFile
+              if (!reportFile.exists()) {
+                throw new GradleException(
+                    "Expected a JaCoCo XML report at ${reportFile} but found none — AGP's own" +
+                        ' coverage report task did not produce one, so this verification has' +
+                        ' nothing to check and must not pass silently.')
+              }
+              def factory = javax.xml.parsers.SAXParserFactory.newInstance()
+              // The report references report.dtd (JaCoCo's own DTD) but does not ship it
+              // alongside the XML, and this must not depend on network access to fetch it on
+              // every build — disable external DTD loading and validation outright; this is
+              // trusted, generated input, not untrusted external XML.
+              factory.setFeature(
+                  'http://apache.org/xml/features/nonvalidating/load-external-dtd', false)
+              factory.setFeature('http://xml.org/sax/features/validation', false)
+              factory.setNamespaceAware(false)
+              def report = new groovy.xml.XmlSlurper(factory.newSAXParser()).parse(reportFile)
+              def branchCounter = report.counter.find { it.@type.text() == 'BRANCH' }
+              if (branchCounter == null || branchCounter.isEmpty()) {
+                throw new GradleException(
+                    "No top-level BRANCH counter found in ${reportFile} — cannot verify" +
+                        ' coverage; investigate rather than trusting a vacuous pass.')
+              }
+              int missed = Integer.parseInt(branchCounter.@missed.text())
+              int covered = Integer.parseInt(branchCounter.@covered.text())
+              int total = missed + covered
+              if (total == 0) {
+                throw new GradleException(
+                    "${project.path} recorded zero total branches in ${reportFile} — this" +
+                        ' module has apparently gone completely untested; investigate rather' +
+                        ' than trusting a vacuous pass.')
+              }
+              double ratio = (double) covered / total
+              if (ratio < requiredBranchCoverage) {
+                throw new GradleException(String.format(
+                    '%s branch coverage is %.2f%% (%d/%d branches covered), below the recorded' +
+                        ' baseline of %.2f%%. Either add tests to restore it, or — if the drop is' +
+                        ' deliberate and reviewed — lower coreBranchCoverageBaseline["%s"] in the' +
+                        ' root build.gradle to the new measured value.',
+                    project.path, ratio * 100, covered, total, requiredBranchCoverage * 100,
+                    project.path))
+              }
+            }
+          }
+        }
+        tasks.named('check').configure { dependsOn tasks.named('jacocoTestCoverageVerification') }
+      }
     }
   }
 }
