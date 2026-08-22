@@ -53,3 +53,113 @@ jobs:
           script: |
             adb reverse tcp:4533 tcp:4533
             ./gradlew :app:connectedDebugAndroidTest
+
+  # Advisory only, per spec §10 ("a nightly non-blocking drift check"): the vendored OpenSubsonic
+  # OpenAPI spec (testing/src/main/resources/openapi/opensubsonic-1.16.1.json) is a Netlify build
+  # artifact, not a versioned release, so it is vendored rather than fetched at build/test time —
+  # see OpenApiFixtureValidator's class doc. This job's only purpose is to report when the live
+  # copy has moved on since vendoring, so a human can decide whether to re-vendor; it must never
+  # fail the job or block anything, hence continue-on-error on every step in addition to the
+  # script always exiting 0 itself.
+  openapi-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        continue-on-error: true
+
+      - name: Fetch the live spec and diff against the vendored copy
+        continue-on-error: true
+        run: |
+          set +e
+          vendored='testing/src/main/resources/openapi/opensubsonic-1.16.1.json'
+          live_url='https://opensubsonic.netlify.app/docs/openapi/openapi.json'
+          {
+            echo "# OpenSubsonic OpenAPI spec drift (advisory — does not block anything)"
+            echo
+            echo "Live: <$live_url>"
+            echo "Vendored: \`$vendored\`"
+            echo
+            if curl -fsSL "$live_url" -o /tmp/live-openapi.json; then
+              if diff -q <(jq -S . "$vendored") <(jq -S . /tmp/live-openapi.json) > /dev/null; then
+                echo "No drift: the vendored spec matches the live spec byte-for-byte (modulo key order)."
+              else
+                echo "Drift found — the live spec no longer matches the vendored copy:"
+                echo '```diff'
+                diff <(jq -S . "$vendored") <(jq -S . /tmp/live-openapi.json)
+                echo '```'
+              fi
+            else
+              echo "Could not fetch the live spec from $live_url (network error, redirect, or" \
+                   "non-2xx response) — nothing to report this run."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # Advisory only: testing/src/main/resources/fixtures/*_navidrome.json are named as if recorded
+  # from Navidrome but are hand-written from the OpenSubsonic spec — their *shape* is spec-proven
+  # (OpenApiFixtureValidatorTest checks that), their *content* is not server-proven. This job
+  # fetches the same three endpoints from the real, pinned Navidrome container these fixtures
+  # claim to represent and reports how they differ, so a human can judge whether a difference is
+  # expected (serverVersion and similar per-instance fields legitimately differ) or a sign the
+  # fixture's shape has quietly gone stale. Never fails the job or blocks anything — same
+  # continue-on-error + always-exit-0 pattern as the openapi-drift job above, for the same reason.
+  fixture-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        continue-on-error: true
+
+      - name: Start Navidrome
+        continue-on-error: true
+        run: |
+          docker compose -f ci/navidrome.compose.yml up -d --wait
+          # See ci/configure-libraries.sh's header comment: library 1 is pinned to /music and
+          # cannot be repointed, so the fixture subtrees are mounted at disjoint container paths
+          # and rewired into "Music" + "Audiobooks" libraries here, same as the instrumented job.
+          ./ci/configure-libraries.sh
+          Q='v=1.16.1&c=MuPlay&f=json&u=admin&p=testpass'
+          for i in $(seq 1 60); do
+            n=$(wget -qO- "http://localhost:4533/rest/getScanStatus.view?$Q" \
+                | grep -o '"count":[0-9]*' | head -1 | cut -d: -f2)
+            [ "$n" = "4" ] && break
+            sleep 1
+          done
+          test "$n" = "4"
+
+      - name: Diff fixtures against the live, pinned Navidrome
+        continue-on-error: true
+        run: |
+          set +e
+          q='v=1.16.1&c=MuPlay&f=json&u=admin&p=testpass'
+          {
+            echo "# Fixture drift against the live, pinned Navidrome (advisory — does not block" \
+                 "anything)"
+            echo
+            echo "Some drift (\`serverVersion\` and similar per-instance fields) is expected and" \
+                 "is not itself a defect — read the diff, don't just count lines."
+            for pair in \
+                'ping_navidrome.json:ping' \
+                'getMusicFolders_navidrome.json:getMusicFolders' \
+                'getOpenSubsonicExtensions_navidrome.json:getOpenSubsonicExtensions'; do
+              fixture="${pair%%:*}"
+              endpoint="${pair##*:}"
+              committed="testing/src/main/resources/fixtures/$fixture"
+              echo
+              echo "## $fixture (\`$endpoint\`)"
+              if ! live=$(wget -qO- "http://localhost:4533/rest/${endpoint}.view?$q"); then
+                echo "Could not reach the live Navidrome container for this endpoint — nothing to" \
+                     "report this run."
+                continue
+              fi
+              if diff -q <(jq -S . "$committed") <(echo "$live" | jq -S .) > /dev/null; then
+                echo "No drift."
+              else
+                echo '```diff'
+                diff <(jq -S . "$committed") <(echo "$live" | jq -S .)
+                echo '```'
+              fi
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
