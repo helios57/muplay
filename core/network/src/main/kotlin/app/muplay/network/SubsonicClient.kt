@@ -62,6 +62,23 @@ class SubsonicClient(
   }
 
   /**
+   * Calls `getOpenSubsonicExtensions` and returns each advertised extension name mapped to its
+   * list of supported versions, straight from the response's `versions` arrays — no filtering or
+   * interpretation here. [CapabilityNegotiator] is what decides what an empty or absent entry
+   * means; this method only reports what the server said.
+   *
+   * Throws [SubsonicException] on failure exactly like [ping] and [getMusicFolders] — including
+   * when the server rejects the call outright (a Subsonic-level error, or a non-2xx HTTP status,
+   * e.g. a server old enough not to implement this command at all). [CapabilityNegotiator] is
+   * where that failure gets interpreted as "no extensions" rather than propagated; this method
+   * itself draws no such distinction; a caller with no need to degrade should let it propagate.
+   */
+  suspend fun getOpenSubsonicExtensions(): Map<String, List<Int>> {
+    val body = call { api.getOpenSubsonicExtensions(authParams()) }
+    return body.openSubsonicExtensions.orEmpty().associate { it.name to it.versions }
+  }
+
+  /**
    * Runs [request] and returns the decoded [SubsonicResponseBody] only once it is proven to
    * represent success. Two, and only two, things become a [SubsonicException] here:
    *

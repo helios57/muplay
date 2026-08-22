@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.entry
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -91,6 +92,51 @@ class SubsonicClientTest {
   @Test
   fun `getMusicFolders missing-name fixture matches the OpenSubsonic spec`() {
     OpenApiFixtureValidator.assertValid("/rest/getMusicFolders", fixture(MUSIC_FOLDER_MISSING_NAME_FIXTURE))
+  }
+
+  @Test
+  fun `getOpenSubsonicExtensions success fixture matches the OpenSubsonic spec`() {
+    OpenApiFixtureValidator.assertValid(
+      "/rest/getOpenSubsonicExtensions",
+      fixture(EXTENSIONS_SUCCESS_FIXTURE),
+    )
+  }
+
+  // Synthetic, not server-captured: confirmed empirically (see Task 5's report) that Navidrome's
+  // real getOpenSubsonicExtensions endpoint requires no credentials at all (its spec entry
+  // declares "security": []) and so never actually produces a failure response — this fixture
+  // reuses the shared, spec-defined SubsonicFailureResponse shape (the same one
+  // ping-failed-wrong-credentials.json exercises for a different command) as a stand-in for a
+  // hypothetical OpenSubsonic-compliant server that does reject this call.
+  @Test
+  fun `getOpenSubsonicExtensions failed fixture matches the OpenSubsonic spec`() {
+    OpenApiFixtureValidator.assertValid(
+      "/rest/getOpenSubsonicExtensions",
+      fixture(EXTENSIONS_FAILED_FIXTURE),
+    )
+  }
+
+  // Spec-derived, not server-captured: the OpenSubsonicExtension schema places no `minItems` on
+  // `versions`, so an empty array is a valid — if never actually observed from live Navidrome —
+  // shape. Backs ServerCapabilities.supports's empty-array guarantee (see CapabilityNegotiatorTest).
+  @Test
+  fun `getOpenSubsonicExtensions empty-versions fixture matches the OpenSubsonic spec`() {
+    OpenApiFixtureValidator.assertValid(
+      "/rest/getOpenSubsonicExtensions",
+      fixture(EXTENSIONS_EMPTY_VERSIONS_FIXTURE),
+    )
+  }
+
+  // Synthetic, not server-captured: every real Navidrome ping in this suite reports
+  // "openSubsonic": true regardless of client id or requested protocol version (confirmed
+  // empirically against the real container — see Task 5's report), so a "plain Subsonic server"
+  // response cannot be captured live from it. `openSubsonic: false` is still a fully spec-valid
+  // value (a required boolean field, not a required-true one), so this fixture is spec-derived
+  // rather than invented, and `type`/`serverVersion` use a distinct, non-Navidrome value so it
+  // cannot be mistaken for a real Navidrome capture.
+  @Test
+  fun `ping success legacy-subsonic fixture matches the OpenSubsonic spec`() {
+    OpenApiFixtureValidator.assertValid("/rest/ping", fixture(PING_LEGACY_FIXTURE))
   }
 
   // --- SubsonicClient behavior, using those same proven fixtures as the server's response -----
@@ -197,10 +243,65 @@ class SubsonicClientTest {
     )
   }
 
+  @Test
+  fun `ping reports isOpenSubsonic false for a legacy Subsonic server`() = runTest {
+    enqueue(fixture(PING_LEGACY_FIXTURE))
+
+    val info = client.ping()
+
+    assertThat(info.isOpenSubsonic).isFalse()
+    assertThat(info.type).isEqualTo("libresonic")
+  }
+
+  @Test
+  fun `getOpenSubsonicExtensions maps every advertised extension to its versions`() = runTest {
+    enqueue(fixture(EXTENSIONS_SUCCESS_FIXTURE))
+
+    val extensions = client.getOpenSubsonicExtensions()
+
+    assertThat(extensions).containsExactlyInAnyOrderEntriesOf(
+      mapOf(
+        "transcodeOffset" to listOf(1),
+        "formPost" to listOf(1),
+        "songLyrics" to listOf(1, 2),
+        "indexBasedQueue" to listOf(1),
+        "transcoding" to listOf(1),
+        "playbackReport" to listOf(1),
+      ),
+    )
+    // Confirmed directly against the live container (see Task 5's report): despite third-party
+    // claims, Navidrome 0.63.2 does not advertise this extension.
+    assertThat(extensions).doesNotContainKey("apiKeyAuthentication")
+  }
+
+  @Test
+  fun `getOpenSubsonicExtensions surfaces a Subsonic-level failure as a typed error`() = runTest {
+    enqueue(fixture(EXTENSIONS_FAILED_FIXTURE))
+
+    val result = runCatching { client.getOpenSubsonicExtensions() }
+
+    val error = result.exceptionOrNull()
+    assertThat(error).isInstanceOf(SubsonicErrorException::class.java)
+    assertThat((error as SubsonicErrorException).code).isEqualTo(0)
+  }
+
+  @Test
+  fun `getOpenSubsonicExtensions preserves an advertised extension's empty versions array`() = runTest {
+    enqueue(fixture(EXTENSIONS_EMPTY_VERSIONS_FIXTURE))
+
+    val extensions = client.getOpenSubsonicExtensions()
+
+    assertThat(extensions).containsExactly(entry("futureExtension", emptyList()))
+  }
+
   private companion object {
     const val PING_SUCCESS_FIXTURE = "ping-success.json"
     const val PING_FAILED_FIXTURE = "ping-failed-wrong-credentials.json"
+    const val PING_LEGACY_FIXTURE = "ping-success-legacy-subsonic.json"
     const val MUSIC_FOLDERS_SUCCESS_FIXTURE = "get-music-folders-success.json"
     const val MUSIC_FOLDER_MISSING_NAME_FIXTURE = "get-music-folders-missing-name.json"
+    const val EXTENSIONS_SUCCESS_FIXTURE = "get-open-subsonic-extensions-success.json"
+    const val EXTENSIONS_FAILED_FIXTURE = "get-open-subsonic-extensions-failed.json"
+    const val EXTENSIONS_EMPTY_VERSIONS_FIXTURE = "get-open-subsonic-extensions-empty-versions.json"
   }
 }

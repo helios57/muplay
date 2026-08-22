@@ -23,9 +23,8 @@ data class SubsonicEnvelope(
  * with every field nullable models that union without a custom polymorphic deserializer: whichever
  * branch the server actually sent, the fields that branch does not have simply decode as `null`
  * (or, for [musicFolders], as absent). Anything a response can carry that this class does not
- * model (e.g. `getOpenSubsonicExtensions`' `openSubsonicExtensions` field, unused before Task 5) is
- * silently dropped by `Json(ignoreUnknownKeys = true)` — configured where this is deserialized —
- * rather than failing to parse at all.
+ * model is silently dropped by `Json(ignoreUnknownKeys = true)` — configured where this is
+ * deserialized — rather than failing to parse at all.
  */
 @Serializable
 data class SubsonicResponseBody(
@@ -36,6 +35,7 @@ data class SubsonicResponseBody(
   val openSubsonic: Boolean? = null,
   val error: SubsonicErrorBody? = null,
   val musicFolders: MusicFoldersBody? = null,
+  val openSubsonicExtensions: List<OpenSubsonicExtensionBody>? = null,
 )
 
 /**
@@ -63,4 +63,21 @@ data class MusicFoldersBody(
 data class MusicFolderBody(
   val id: Int,
   val name: String? = null,
+)
+
+/**
+ * The OpenSubsonic `OpenSubsonicExtension` schema: one entry of `getOpenSubsonicExtensions`'
+ * `openSubsonicExtensions` array. Both [name] and [versions] are required per the schema, but
+ * [versions] still defaults to an empty list here — the same defensive stance every other field in
+ * this file takes against a non-compliant server, not an assumption that the schema allows it to
+ * be absent.
+ *
+ * [versions] can itself legitimately *be* an empty array even from a compliant server (the schema
+ * places no `minItems` constraint on it) — [app.muplay.model.ServerCapabilities] is built to treat
+ * that the same as the extension not being advertised at all; see its own documentation.
+ */
+@Serializable
+data class OpenSubsonicExtensionBody(
+  val name: String,
+  val versions: List<Int> = emptyList(),
 )

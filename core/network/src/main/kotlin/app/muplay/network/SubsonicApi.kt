@@ -28,4 +28,7 @@ interface SubsonicApi {
 
   @GET("rest/getMusicFolders")
   suspend fun getMusicFolders(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/getOpenSubsonicExtensions")
+  suspend fun getOpenSubsonicExtensions(@QueryMap params: Map<String, String>): SubsonicEnvelope
 }
