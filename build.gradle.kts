@@ -383,6 +383,7 @@ subprojects {
     dependsOn("test")
 
     val floors = coverageFloors[project.path]
+    val modulePath = project.path
     if (floors.isNullOrEmpty()) {
       // Loud, not silent: a module simply absent from `coverageFloors` used to fail this
       // `return`/no-op with no signal at all — `:app` was fine because it is documented above,
@@ -390,12 +391,26 @@ subprojects {
       // `settings.gradle.kts` with no floor and no comment explaining why. This does not fail the
       // build — an ungated module is a real, sometimes-correct state (see `:app`'s own case) — it
       // just makes sure nobody has to go looking for the gap.
-      logger.warn(
-        "COVERAGE: ${project.path} has no entry in `coverageFloors` (root build.gradle.kts) " +
-          "-- its branch/line coverage is completely unenforced in Tier 1. If that is " +
-          "deliberate, document why there (see :app's own entry there for the precedent); if " +
-          "not, add a measured floor.",
-      )
+      //
+      // `doLast` + `outputs.upToDateWhen { false }`, not a bare `logger.warn` call right here at
+      // configuration time (an earlier version of this code did exactly that): configuration-cache
+      // *reuse* skips re-running build-script configuration entirely by design (that is the whole
+      // point of the cache), so a warning that only ever fires as a side effect of configuration
+      // silently stops firing on every cache-reuse run — reproduced directly: fired on a store run
+      // and on every plain run, vanished on every reuse run. Task *execution* still happens on a
+      // cache hit (the cache skips reconfiguring, not rerunning), so moving this into `doLast` and
+      // forcing the task to never be UP-TO-DATE-skippable either (the same fix
+      // `warnUngatedClasses` below already needed, for the identical underlying reason) is what
+      // makes it survive both paths a warning can otherwise go silent on.
+      outputs.upToDateWhen { false }
+      doLast {
+        logger.warn(
+          "COVERAGE: $modulePath has no entry in `coverageFloors` (root build.gradle.kts) " +
+            "-- its branch/line coverage is completely unenforced in Tier 1. If that is " +
+            "deliberate, document why there (see :app's own entry there for the precedent); if " +
+            "not, add a measured floor.",
+        )
+      }
       return@configureEach
     }
 
@@ -418,7 +433,6 @@ subprojects {
     // no earlier than the equivalent lookups elsewhere in this file that are already proven safe
     // at this point), produces a plain, trivially serializable `File`: no `Task`, no `Provider`
     // chain, nothing left for the configuration cache to choke on.
-    val modulePath = project.path
     val reportXmlFile: File =
       project.tasks.named("jacocoTestReport", JacocoReport::class.java).get()
         .reports.xml.outputLocation.get().asFile
