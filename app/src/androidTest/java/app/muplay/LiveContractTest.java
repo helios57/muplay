@@ -43,4 +43,15 @@ public class LiveContractTest {
     assertThat(caps.isOpenSubsonic()).isTrue();
     assertThat(caps.supports("indexBasedQueue", 1)).isTrue();
   }
+
+  @Test
+  public void apiKeyAuthenticationIsNotYetAdvertised() throws Exception {
+    // Not implemented as of the pinned 0.63.2 image, despite third-party claims. Unlike a test
+    // against a hand-written fixture (which is frozen and can never disagree with itself), this
+    // runs against the real, pinned Navidrome container, so the comment below is actually true:
+    // if this ever starts failing, Navidrome shipped it and we can drop password storage.
+    ServerCapabilities caps =
+        new CapabilityNegotiator(client()).negotiate().get(30, TimeUnit.SECONDS);
+    assertThat(caps.supports("apiKeyAuthentication")).isFalse();
+  }
 }

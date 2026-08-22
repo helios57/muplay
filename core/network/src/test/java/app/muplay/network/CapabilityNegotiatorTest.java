@@ -65,18 +65,6 @@ public class CapabilityNegotiatorTest {
   }
 
   @Test
-  public void negotiate_apiKeyAuthenticationIsNotAdvertisedByNavidrome() throws Exception {
-    enqueue("ping_navidrome.json");
-    enqueue("getOpenSubsonicExtensions_navidrome.json");
-
-    ServerCapabilities caps = negotiator.negotiate().get();
-
-    // Not implemented as of 0.63.2, despite third-party claims. If this ever
-    // starts failing, Navidrome shipped it and we can drop password storage.
-    assertThat(caps.supports("apiKeyAuthentication")).isFalse();
-  }
-
-  @Test
   public void negotiate_legacyServerWithoutOpenSubsonicYieldsEmptyCapabilities()
       throws Exception {
     server.enqueue(
