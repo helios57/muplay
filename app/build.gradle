@@ -33,4 +33,19 @@ dependencies {
   // ArchitectureTest#classImportCoversEveryModuleTheBansMustReach, which fails loudly if this
   // ever stops being true.
   testImplementation project(':testing')
+
+  // The nightly lane's live contract test (app/src/androidTest/java/app/muplay/LiveContractTest.java)
+  // runs against a real Navidrome container via `adb reverse`, not in :app's own PR-gate unit
+  // tests — see .github/workflows/nightly.yml. No androidTestImplementation project(':core:network')
+  // line is needed: confirmed empirically (removed it, ran a clean `./gradlew :app:compileDebugAndroidTestJavaWithJavac`,
+  // it still succeeded) that AGP's application-module androidTest variant already extends the
+  // tested (main) variant's compile classpath, so :core:network — and, transitively through its
+  // own `api project(':core:model')` and `api libs.guava`, MusicLibrary/ServerCapabilities/
+  // SubsonicCredentials/ListenableFuture — is already reachable via the `implementation
+  // project(':core:network')` declared above. Only what the main variant does not already bring
+  // in (JUnit, Truth, and the androidx.test runner AndroidJUnitRunner/InstrumentationRegistry
+  // depend on) needs declaring here.
+  androidTestImplementation libs.junit
+  androidTestImplementation libs.truth
+  androidTestImplementation libs.androidx.test.runner
 }

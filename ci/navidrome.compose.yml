@@ -1,0 +1,32 @@
+services:
+  navidrome:
+    image: deluan/navidrome:0.63.2
+    ports: ["4533:4533"]
+    environment:
+      # This is the real flag. ND_DEFAULTADMINPASSWORD does not exist, and the
+      # `navidrome user create` CLI reads the password from a TTY, so piping
+      # stdin does not work.
+      ND_DEVAUTOCREATEADMINPASSWORD: testpass
+      ND_SCANSCHEDULE: "0"
+      ND_LOGLEVEL: warn
+      ND_ENABLESHARING: "true"
+    volumes:
+      # Two separate mounts, not one `./fixtures:/music:ro` covering both subtrees: Navidrome's
+      # default library (ID 1) is permanently pinned to path "/music" — confirmed empirically,
+      # `PUT /api/library/1` with a different path fails with "validation error: path for library
+      # with ID 1 cannot be changed", and `DELETE /api/library/1` fails with "library with ID 1
+      # cannot be deleted". A single mount at /music would make library 1 itself contain the
+      # Audiobooks subtree, so a second library rooted at /music/Audiobooks would double-count
+      # those files (getScanStatus's `count` would read 5, not 4, and the same song would appear
+      # under two musicFolderIds). Mounting the two fixture subtrees at disjoint container paths
+      # keeps library 1 (renamed "Music", path unchanged at /music) and the new "Audiobooks"
+      # library (path /audiobooks) non-overlapping. See docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md
+      # and task-8-report.md for the full investigation.
+      - ./fixtures/Music:/music:ro
+      - ./fixtures/Audiobooks:/audiobooks:ro
+    healthcheck:
+      # The image has wget and nc but NO curl, and /rest/ping.view returns 200
+      # even on auth failure — so match the body, not the status code.
+      test: ["CMD-SHELL", "wget -qO- 'http://localhost:4533/rest/ping.view?v=1.16.1&c=hc&f=json' | grep -q navidrome"]
+      interval: 2s
+      retries: 30

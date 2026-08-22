@@ -253,12 +253,16 @@ spike S3**
 (`docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`) against a
 throwaway Range-compliant HTTP server standing in for Navidrome, which
 corrected two things that were wrong or underspecified before the spike.
-**S3 did not test against a real Navidrome instance** — no Subsonic auth, no
-`format=raw` query parameter, no check of Navidrome's actual response
-headers or Content-Length/chunked-transfer behavior. That verification is
-carried forward as an explicit Task 8 deliverable (real, pinned Navidrome
-container). Until then, "verified" below means "verified against Media3 and
-a generic HTTP Range server," not "verified against Navidrome."
+**Task 8 closed the Navidrome gap**: against the real, pinned
+`deluan/navidrome:0.63.2` image, `format=raw` honours HTTP Range requests
+— including the exact tail-seek request (`bytes=<moov-offset>-<eof>`) Media3
+issues for a non-faststart file — with correctly clamped and correctly
+gated (`416` on a genuinely unsatisfiable range) responses, verified
+byte-for-byte, and always serves a real `Content-Length` (never chunked
+transfer encoding). See S3's "Task 8 follow-up" section for the raw evidence
+and `task-8-report.md` for the full method. The non-faststart "cheap to
+read" conclusion below is therefore confirmed against Navidrome itself, not
+only against a generic Range server.
 - Needs HTTP Range → **`format=raw`**, no transcoding.
 - **`faststart` files put the chapter atom at the front** (that is the entire
   point of `-movflags +faststart` — it moves `moov`, and the `chpl` atom
@@ -805,15 +809,17 @@ Each is cheap and each could invalidate an assumption:
    grant`, only if `targetSdk` is bumped to 37.
 2. **Navidrome transcode-cache seekability** — does a *completed* cached transcode
    become Range-seekable? Affects the format policy. A `curl -r` answers it.
-3. **M4B chapter extraction over HTTP. ANSWERED against a generic Range
-   server, not against Navidrome** — see
-   `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`. Works for
-   both faststart and non-faststart files, over HTTP, via `MetadataRetriever`
-   in the `media3-inspector` artifact — but only when constructed with an
-   explicit `MediaSourceFactory`; the bare `Builder().build()` form silently
-   drops QuickTime `chap` chapters and leaves `chpl` end times unset. Not yet
-   verified against a real Navidrome instance or its `format=raw` parameter —
-   carried forward as a Task 8 deliverable.
+3. **M4B chapter extraction over HTTP. ANSWERED**, including against a real
+   Navidrome — see `docs/superpowers/spikes/2026-08-21-s3-m4b-chapters-over-http.md`.
+   Works for both faststart and non-faststart files, over HTTP, via
+   `MetadataRetriever` in the `media3-inspector` artifact — but only when
+   constructed with an explicit `MediaSourceFactory`; the bare
+   `Builder().build()` form silently drops QuickTime `chap` chapters and
+   leaves `chpl` end times unset. Task 8 closed the remaining gap: against
+   the real, pinned `deluan/navidrome:0.63.2` image, `format=raw` honours
+   HTTP Range requests (including the exact tail-seek a non-faststart file
+   needs) and always serves a real `Content-Length`, never chunked transfer
+   encoding — verified byte-for-byte, see S3's "Task 8 follow-up" section.
 4. **Sonos + Let's Encrypt.** No longer load-bearing, but five minutes to know.
 5. **Lidarr payload shape** against a live instance.
 

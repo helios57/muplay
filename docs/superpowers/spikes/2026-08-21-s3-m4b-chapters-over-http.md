@@ -535,3 +535,102 @@ reproducible; no binary `.m4b` fixtures were added to the repository, per this
 task's guardrail against touching `app/`, `core/`, or `testing/`. Plan 4 should
 regenerate (or commit, at its own discretion) fixtures using the exact
 commands in "Fixtures built" above.
+
+---
+
+## Task 8 follow-up: verified against a real Navidrome — gap closed
+
+**Status: the "not tested against Navidrome" limitation above is now closed.**
+Confidence: high — direct HTTP evidence (raw response headers and byte-level
+comparison), against the real, pinned `deluan/navidrome:0.63.2` image, not a
+stand-in. This section answers exactly the two sub-questions the task brief
+asked for: does `format=raw` honour HTTP Range requests, and does it send a
+real `Content-Length` or chunked transfer encoding. Full method, commands and
+container setup are in `task-8-report.md`; this is the extract relevant to
+the chapter-extraction question this spike opened.
+
+### Method
+
+Task 8's pinned Navidrome container (`deluan/navidrome:0.63.2`, admin user
+`admin`/`testpass`) was seeded with the nightly lane's committed M4B fixture
+(`ci/fixtures/Audiobooks/Test Author/Test Book/Test Book.m4b` — 65,160 B,
+**faststart**, Nero `chpl`, 3 chapters — the "common case" fixture this
+document's own "Recommend for the nightly-lane fixture" section above asked
+for) plus a second, larger, **non-faststart** M4B built with the exact same
+ffmpeg recipe as this spike's own `book_nofaststart_chpl_big.m4b` (`-f lavfi
+sine ... -c:a aac -b:a 64k -ac 1 -bitexact`, no `+faststart`, 180 s / 3× 60 s
+chapters), seeded temporarily into the container to reproduce this spike's
+"big" case (1,479,120 B; box walk confirms `ftyp`→`free`→`mdat` (1,446,611 B)
+→`moov` (offset 1,446,647, 32,473 B) — `mdat` first, `moov` at the tail,
+exactly the non-faststart shape this spike's "Does non-faststart need the
+whole file?" finding depends on). The temporary big file was never committed
+— it was removed and the library rescanned back to the committed 4-track
+state immediately after this test, so it leaves no trace in the repo.
+
+Both files' song IDs were found via `getSong`/`search3`, then queried at
+`/rest/stream.view?...&id=<id>&format=raw` with `curl -D -` to capture
+response headers verbatim, with and without a `Range` header, and the
+returned bytes were compared byte-for-byte against a full, un-ranged download
+of the same file.
+
+### Findings
+
+**Range is honoured — full RFC 7233 behaviour, not partial support:**
+
+- A plain request (no `Range` header) returns `200 OK`, `Accept-Ranges:
+  bytes`, and a full-file `Content-Length` (`65160` for the small fixture).
+- `Range: bytes=0-999` returns `206 Partial Content`, `Content-Range: bytes
+  0-999/65160`, `Content-Length: 1000` — and the 1000 returned bytes are
+  byte-identical to the first 1000 bytes of the full download.
+- `Range: bytes=-1000` (a suffix range — the "last N bytes" form) returns
+  `206 Partial Content`, `Content-Range: bytes 64160-65159/65160`, and those
+  bytes are byte-identical to the last 1000 bytes of the full download.
+- `Range: bytes=64000-99999` (end offset past EOF) is correctly **clamped**:
+  `206 Partial Content`, `Content-Range: bytes 64000-65159/65160`,
+  `Content-Length: 1160` — not an error, not the whole file.
+- `Range: bytes=999999-1000000` (a range that starts past EOF, genuinely
+  unsatisfiable) correctly returns `416 Requested Range Not Satisfiable` with
+  `Content-Range: bytes */65160`.
+- **The exact scenario this spike's non-faststart finding depends on**: on
+  the 1,479,120 B non-faststart fixture, `Range: bytes=1446647-1479119` (the
+  moov atom's own byte range, computed by this spike's independent box
+  walker) returns `206 Partial Content`, `Content-Length: 32473`,
+  `Content-Range: bytes 1446647-1479119/1479120` — and the returned bytes are
+  byte-identical to the source file's moov box, confirmed both by direct
+  comparison and by the returned bytes literally starting with the ASCII tag
+  `moov` at their offset-4 position. This is precisely the request Media3's
+  `DefaultHttpDataSource` issues when `MetadataRetriever` seeks straight to a
+  non-faststart file's moov offset instead of reading forward through `mdat`
+  (this spike's Finding 2) — Navidrome serves it exactly as a Range-compliant
+  server should.
+
+**`Content-Length`, never chunked**: every response observed — full-file and
+every Range variant, both fixture sizes — carried a numeric `Content-Length`
+header. No response carried `Transfer-Encoding: chunked`. This matters
+because `DefaultHttpDataSource`'s Range-seeking logic (the entire mechanism
+this spike's non-faststart finding relies on) needs to know the total
+resource length up front; a chunked response without `Content-Length` would
+not give it that.
+
+### Answer to the carried-forward question
+
+**Does the "non-faststart is cheap over HTTP" conclusion transfer to real
+Navidrome? Yes.** Range is honoured — including the exact tail-seek pattern
+Media3 depends on — with byte-for-byte correct, correctly-clamped, correctly-
+gated (416 on genuinely unsatisfiable ranges) responses, and `format=raw`
+always advertises a real `Content-Length`, never chunked encoding. Nothing in
+Navidrome's real behaviour contradicts this spike's original finding that a
+non-faststart M4B is cheap to read because the client can seek to the tail —
+the load-bearing assumption holds. **Not independently re-run in this pass**:
+the actual Media3 `MetadataRetriever` chapter-extraction call, end to end,
+against Navidrome's `format=raw` URL (with real Subsonic token auth) — this
+section verifies the HTTP-protocol layer Media3's `DefaultHttpDataSource`
+depends on, which is what determines whether the mechanism works, but does
+not re-run Media3 itself against Navidrome. Given the protocol-level evidence
+above is unambiguous and this spike's own Finding 2 already proved Media3's
+client-side behaviour against a generic Range-compliant server, this is
+judged sufficient to close the "not tested against Navidrome" gap for the
+specific question Task 8 was asked to resolve (Range and `Content-Length`
+behaviour) — a full Media3-against-Navidrome chapter-extraction run remains a
+reasonable follow-up for whichever plan implements the chapter feature, not
+a blocking gap.

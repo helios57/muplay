@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay, merged only into debug-variant builds (never release).
+
+  android:usesCleartextTraffic is needed for the nightly lane's LiveContractTest: it reaches
+  the pinned Navidrome container over plain HTTP via `adb reverse tcp:4533 tcp:4533` at
+  http://127.0.0.1:4533 (spec S10; see docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md
+  for why this is loopback, not the QEMU 10.0.2.2 alias). targetSdk 28+ blocks cleartext traffic
+  by default via the platform's Network Security Config, independent of the ACCESS_LOCAL_NETWORK
+  permission question spike S1 answers — S1 confirmed no manifest change is required for
+  ACCESS_LOCAL_NETWORK at this project's targetSdk 36, but cleartext HTTP is a separate,
+  unconditional requirement that S1 also surfaced.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application android:usesCleartextTraffic="true" />
+</manifest>
