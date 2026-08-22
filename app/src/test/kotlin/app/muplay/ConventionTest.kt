@@ -147,6 +147,35 @@ class ConventionTest {
   }
 
   @Test
+  fun `the live-Navidrome test task name is not hand-synced into drift`() {
+    // Testing.kt's `configureJUnit5` and root build.gradle.kts's `liveNavidromeTest` task
+    // registration each declare their own `LIVE_NAVIDROME_TEST_TASK_NAME` constant -- a true
+    // shared declaration is not reachable across that boundary (`build-logic` is included only
+    // via `pluginManagement.includeBuild`, which exposes its plugins by id, not its Kotlin source,
+    // to the root build the other way) -- so nothing but this test stops the two from drifting
+    // apart. That drift is not hypothetical: this project hit exactly it once already, as a task
+    // that ran "successfully" while silently executing zero tests (see Testing.kt's own doc on
+    // `configureJUnit5` for the full story) -- a mismatch here reintroduces it with no build
+    // failure to catch it, only this test.
+    val testingKt = File(repoRoot(), "build-logic/convention/src/main/kotlin/Testing.kt")
+    val rootBuildGradleKts = File(repoRoot(), "build.gradle.kts")
+    val pattern = Regex("""LIVE_NAVIDROME_TEST_TASK_NAME\s*=\s*"([^"]+)"""")
+
+    val testingKtValue = pattern.find(testingKt.readText())?.groupValues?.get(1)
+    val rootBuildValue = pattern.find(rootBuildGradleKts.readText())?.groupValues?.get(1)
+
+    // A pattern that stops matching either declaration (both renamed the constant, say) must fail
+    // loudly here too, not silently pass two nulls as "equal" -- the same "a scan that finds
+    // nothing is the failure mode every rule here guards against" principle as the very first test
+    // in this class.
+    assertThat(testingKtValue).describedAs(testingKt.path).isNotNull()
+    assertThat(rootBuildValue).describedAs(rootBuildGradleKts.path).isNotNull()
+    assertThat(testingKtValue)
+      .describedAs("${testingKt.path} vs ${rootBuildGradleKts.path}")
+      .isEqualTo(rootBuildValue)
+  }
+
+  @Test
   fun `no module or convention plugin uses kapt`() {
     // A word-boundary-aware pattern, not a bare substring: this convention plugins' own comments
     // legitimately explain *why* kapt is banned ("Hilt via KSP, never kapt") without using it, and

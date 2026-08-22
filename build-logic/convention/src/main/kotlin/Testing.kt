@@ -9,7 +9,9 @@ import org.gradle.kotlin.dsl.withType
 // either, so a genuine shared `const val` isn't reachable across that boundary. Searching the repo
 // for `LIVE_NAVIDROME_TEST_TASK_NAME` finds both declarations; before this constant existed, a
 // bare string literal on each side could drift silently -- exactly the failure mode
-// `configureJUnit5`'s own doc below records having already hit once.
+// `configureJUnit5`'s own doc below records having already hit once. `app/src/test/kotlin/app/
+// muplay/ConventionTest.kt`'s "the live-Navidrome test task name is not hand-synced into drift"
+// is what actually enforces the sync now, rather than leaving it a convention nothing checks.
 internal const val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
 
 /**
