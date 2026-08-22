@@ -233,97 +233,130 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
 )
 
 /**
- * A JaCoCo `includes`/`excludes` glob pattern (`*` = any sequence, everything else literal) as a
- * [Regex]. Reimplements enough of `org.jacoco.core.analysis.WildcardMatcher` to answer "would this
- * pattern match that class" from plain Kotlin, for [warnUngatedClasses]'s own use — not to
- * duplicate JaCoCo's actual rule evaluation (that stays entirely inside the real `violationRules`
- * block below; this is a read-only, best-effort check to decide whether to print a warning, never
- * something a build's pass/fail depends on).
+ * Every function below is deliberately self-contained (no reference to any other top-level
+ * `val`/`fun` in this script) inside a genuine Kotlin `object`, not left as plain script-level
+ * `private fun`s: a `.gradle.kts` script's own top-level declarations are actually *members* of
+ * an implicit script class (confirmed earlier by `const val` being rejected outside "top level,
+ * named objects, companion objects" -- a real top-level Kotlin file allows it, a script body
+ * does not), so calling one script-level `private fun` from inside a task's `doLast { }` closure
+ * implicitly captures a reference to *the whole script object* to make that call. The
+ * configuration cache refuses to serialize that ("cannot serialize Gradle script object
+ * references") -- confirmed empirically: this was still failing under `--configuration-cache`
+ * even after every `Task`/`Provider` reference elsewhere in this function had already been
+ * replaced with a plain `File` (see the comment on `reportXmlFile` below, and task-7-report.md
+ * for the full sequence). A genuine Kotlin `object` is its own independent, stateless class --
+ * calling `UngatedClassChecker.warnUngatedClasses(...)` from `doLast { }` references only that
+ * object's own singleton, never this script, which the configuration cache serializes fine.
  */
-private fun wildcardToRegex(pattern: String): Regex =
-  Regex(pattern.split("*").joinToString(".*") { Regex.escape(it) })
+object UngatedClassChecker {
+  /**
+   * A JaCoCo `includes`/`excludes` glob pattern (`*` = any sequence, everything else literal) as a
+   * [Regex]. Reimplements enough of `org.jacoco.core.analysis.WildcardMatcher` to answer "would this
+   * pattern match that class" from plain Kotlin, for [warnUngatedClasses]'s own use — not to
+   * duplicate JaCoCo's actual rule evaluation (that stays entirely inside the real `violationRules`
+   * block below; this is a read-only, best-effort check to decide whether to print a warning, never
+   * something a build's pass/fail depends on).
+   */
+  private fun wildcardToRegex(pattern: String): Regex =
+    Regex(pattern.split("*").joinToString(".*") { Regex.escape(it) })
 
-/**
- * Whether [floor] covers [qualifiedClassName] — mirroring JaCoCo's own two rules, both learned the
- * hard way while making [coverageFloors] itself work (see that map's own doc and
- * task-7-report.md): an `"BUNDLE"`-element rule covers every class in the module regardless of
- * `includes`/`excludes` (those properties have no effect at that element), and a `"CLASS"`-element
- * rule covers a class only if it matches at least one `includes` pattern (or `includes` is empty)
- * and no `excludes` pattern. [qualifiedClassName] must already be in JaCoCo's own "qualified" form
- * (binary name with both `/` and `$` replaced by `.` — see [warnUngatedClasses]), the same form
- * `includes`/`excludes` patterns are matched against.
- */
-private fun matchesFloor(qualifiedClassName: String, floor: CoverageFloor): Boolean {
-  if (floor.element == "BUNDLE") return true
-  val included = floor.includes.isEmpty() || floor.includes.any { wildcardToRegex(it).matches(qualifiedClassName) }
-  val excluded = floor.excludes.any { wildcardToRegex(it).matches(qualifiedClassName) }
-  return included && !excluded
-}
+  /**
+   * Whether [floor] covers [qualifiedClassName] — mirroring JaCoCo's own two rules, both learned the
+   * hard way while making [coverageFloors] itself work (see that map's own doc and
+   * task-7-report.md): an `"BUNDLE"`-element rule covers every class in the module regardless of
+   * `includes`/`excludes` (those properties have no effect at that element), and a `"CLASS"`-element
+   * rule covers a class only if it matches at least one `includes` pattern (or `includes` is empty)
+   * and no `excludes` pattern. [qualifiedClassName] must already be in JaCoCo's own "qualified" form
+   * (binary name with both `/` and `$` replaced by `.` — see [warnUngatedClasses]), the same form
+   * `includes`/`excludes` patterns are matched against.
+   */
+  private fun matchesFloor(qualifiedClassName: String, floor: CoverageFloor): Boolean {
+    if (floor.element == "BUNDLE") return true
+    val included = floor.includes.isEmpty() || floor.includes.any { wildcardToRegex(it).matches(qualifiedClassName) }
+    val excluded = floor.excludes.any { wildcardToRegex(it).matches(qualifiedClassName) }
+    return included && !excluded
+  }
 
-/**
- * Finding 2 recurring one level down: `coverageFloors` gates modules, and a module simply absent
- * from it now warns loudly (see the `logger.warn` below) — but a module *present* in the table can
- * still contain a class none of its own rules actually cover (`:feature:setup` is in the table,
- * `SetupScreenKt` — 94 branches, 54 lines, 0% on both — is covered by none of its three `"CLASS"`
- * -element rules, and the only signal that fact carried before this function existed was prose in
- * `coverageFloors`'s own doc comment). Reads [xmlFile] (the `jacocoTestReport` task's own XML
- * output for this module — always present and fresh, since `jacocoTestCoverageVerification`
- * depends on it below) and warns, by name and measured coverage, for every class [floors] does not
- * cover. Never fails the build: a genuinely-uncovered class can be the right call today (`.00%` is
- * unfireable for the same reason a `0.00` floor is — see `coverageFloors`'s own doc), the same way
- * an absent module is; the point is that it is never silent about it.
- *
- * Classes with zero measured branches *and* zero measured lines (`SetupUiState.Idle` and similar
- * plain `data object`s) are skipped: there is nothing in them for any rule to gate, so flagging
- * them would only be noise on every run.
- */
-private fun warnUngatedClasses(modulePath: String, xmlFile: File, floors: List<CoverageFloor>, logger: Logger) {
-  if (!xmlFile.isFile) return
-
-  val factory = DocumentBuilderFactory.newInstance()
-  // JaCoCo's own XML report declares a DOCTYPE pointing at its DTD on jacoco.org; parsing must
-  // never depend on fetching that over the network (offline dev machines, and CI runners with no
-  // reason to trust this parse with network access at all) -- the class/counter data below does
-  // not depend on DTD validation succeeding.
-  factory.isValidating = false
-  factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-  val document = factory.newDocumentBuilder().parse(xmlFile)
-
-  val classNodes = document.getElementsByTagName("class")
-  for (i in 0 until classNodes.length) {
-    val classElement = classNodes.item(i) as Element
-    val binaryName = classElement.getAttribute("name") // e.g. app/muplay/setup/SetupScreenKt
-    val qualifiedName = binaryName.replace('/', '.').replace('$', '.')
-    if (floors.any { matchesFloor(qualifiedName, it) }) continue
-
-    var branchMissed = 0
-    var branchCovered = 0
-    var lineMissed = 0
-    var lineCovered = 0
-    val counterNodes = classElement.getElementsByTagName("counter")
-    for (j in 0 until counterNodes.length) {
-      val counterElement = counterNodes.item(j) as Element
-      val missed = counterElement.getAttribute("missed").toInt()
-      val covered = counterElement.getAttribute("covered").toInt()
-      when (counterElement.getAttribute("type")) {
-        "BRANCH" -> { branchMissed = missed; branchCovered = covered }
-        "LINE" -> { lineMissed = missed; lineCovered = covered }
-      }
+  /**
+   * Finding 2 recurring one level down: `coverageFloors` gates modules, and a module simply absent
+   * from it now warns loudly (see the `logger.warn` below) — but a module *present* in the table can
+   * still contain a class none of its own rules actually cover (`:feature:setup` is in the table,
+   * `SetupScreenKt` — 94 branches, 54 lines, 0% on both — is covered by none of its three `"CLASS"`
+   * -element rules, and the only signal that fact carried before this function existed was prose in
+   * `coverageFloors`'s own doc comment). Reads [xmlFile] (the `jacocoTestReport` task's own XML
+   * output for this module — `dependsOn("jacocoTestReport")` below means it is present for any
+   * ordinary invocation, but `./gradlew ... -x jacocoTestReport` against a module that has never
+   * built one can still hand this a path that does not exist) and warns, by name and measured
+   * coverage, for every class [floors] does not cover. Never *fails* the build: a genuinely-uncovered
+   * class can be the right call today (`.00%` is unfireable for the same reason a `0.00` floor is —
+   * see `coverageFloors`'s own doc), the same way an absent module is; the point is that none of this
+   * is ever silent — including the missing-report case itself, which is not "nothing to warn about".
+   *
+   * Classes with zero measured branches *and* zero measured lines (`SetupUiState.Idle` and similar
+   * plain `data object`s) are skipped: there is nothing in them for any rule to gate, so flagging
+   * them would only be noise on every run.
+   */
+  fun warnUngatedClasses(modulePath: String, xmlFile: File, floors: List<CoverageFloor>, logger: Logger) {
+    if (!xmlFile.isFile) {
+      // Loud, not a quiet `return`: an absent report reads exactly like "nothing to warn about" to
+      // anyone who has not read this function's own source, which is the same silent-gate shape
+      // this entire mechanism was built to close. `-P`/`-x`-style invocations that skip
+      // `jacocoTestReport` are the one way `dependsOn` below cannot guarantee this file exists.
+      logger.warn(
+        "COVERAGE: $modulePath's jacocoTestReport XML ($xmlFile) does not exist -- the " +
+          "ungated-class check could not run at all. If jacocoTestReport was deliberately " +
+          "skipped (e.g. -x jacocoTestReport), this module's per-class coverage is unverified " +
+          "this run; run jacocoTestReport first to restore it.",
+      )
+      return
     }
-    val branchTotal = branchMissed + branchCovered
-    val lineTotal = lineMissed + lineCovered
-    if (branchTotal == 0 && lineTotal == 0) continue
 
-    val branchSummary = if (branchTotal > 0) "branch $branchCovered/$branchTotal" else "branch n/a"
-    val lineSummary = if (lineTotal > 0) "line $lineCovered/$lineTotal" else "line n/a"
-    logger.warn(
-      "COVERAGE: $modulePath's $binaryName is not covered by any rule in `coverageFloors` " +
-        "(root build.gradle.kts) -- measured $branchSummary, $lineSummary. If that is " +
-        "deliberate (a genuinely 0%-covered Composable file, say), no action needed; if a rule " +
-        "should cover this class and does not, its includes/excludes pattern is probably wrong.",
-    )
+    val factory = DocumentBuilderFactory.newInstance()
+    // JaCoCo's own XML report declares a DOCTYPE pointing at its DTD on jacoco.org; parsing must
+    // never depend on fetching that over the network (offline dev machines, and CI runners with no
+    // reason to trust this parse with network access at all) -- the class/counter data below does
+    // not depend on DTD validation succeeding.
+    factory.isValidating = false
+    factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+    val document = factory.newDocumentBuilder().parse(xmlFile)
+
+    val classNodes = document.getElementsByTagName("class")
+    for (i in 0 until classNodes.length) {
+      val classElement = classNodes.item(i) as Element
+      val binaryName = classElement.getAttribute("name") // e.g. app/muplay/setup/SetupScreenKt
+      val qualifiedName = binaryName.replace('/', '.').replace('$', '.')
+      if (floors.any { matchesFloor(qualifiedName, it) }) continue
+
+      var branchMissed = 0
+      var branchCovered = 0
+      var lineMissed = 0
+      var lineCovered = 0
+      val counterNodes = classElement.getElementsByTagName("counter")
+      for (j in 0 until counterNodes.length) {
+        val counterElement = counterNodes.item(j) as Element
+        val missed = counterElement.getAttribute("missed").toInt()
+        val covered = counterElement.getAttribute("covered").toInt()
+        when (counterElement.getAttribute("type")) {
+          "BRANCH" -> { branchMissed = missed; branchCovered = covered }
+          "LINE" -> { lineMissed = missed; lineCovered = covered }
+        }
+      }
+      val branchTotal = branchMissed + branchCovered
+      val lineTotal = lineMissed + lineCovered
+      if (branchTotal == 0 && lineTotal == 0) continue
+
+      val branchSummary = if (branchTotal > 0) "branch $branchCovered/$branchTotal" else "branch n/a"
+      val lineSummary = if (lineTotal > 0) "line $lineCovered/$lineTotal" else "line n/a"
+      logger.warn(
+        "COVERAGE: $modulePath's $binaryName is not covered by any rule in `coverageFloors` " +
+          "(root build.gradle.kts) -- measured $branchSummary, $lineSummary. If that is " +
+          "deliberate (a genuinely 0%-covered Composable file, say), no action needed; if a rule " +
+          "should cover this class and does not, its includes/excludes pattern is probably wrong.",
+      )
+    }
   }
 }
+
 
 subprojects {
   // `tasks.withType(...).configureEach { }` applies whenever a task of that type is registered —
@@ -370,15 +403,35 @@ subprojects {
     // order tasks were invoked in (the CI workflow already runs "Coverage report" before
     // "Coverage gate" as separate steps, but this makes that guaranteed rather than assumed).
     dependsOn("jacocoTestReport")
-    // Captured now, at configuration time, rather than read from inside `doLast` below:
-    // `Task.project` is deprecated at *execution* time (incompatible with the configuration
-    // cache) — confirmed by this exact line originally living inside `doLast` and Gradle logging
-    // "Invocation of Task.project at execution time has been deprecated" on every run. A
-    // `TaskProvider` captured here stays perfectly lazy (nothing about `jacocoTestReport` is
-    // actually realized or read until `doLast` calls `.get()` on it), so this loses no laziness,
-    // only the deprecated access pattern.
+    // A plain `File`, resolved *now* -- eagerly, at configuration time -- not a `Provider` or a
+    // `TaskProvider<JacocoReport>` deferred into `doLast`. Two earlier attempts at "lazy" both
+    // failed for the same underlying reason: `JacocoReport.reports.xml.outputLocation` is a
+    // `Report` property, not a plain task output property Gradle's own dependency/serialization
+    // machinery knows how to associate back to the task that produces it. A `TaskProvider<...>`
+    // captured and `.get()`-resolved inside `doLast` hit the *deprecated* "Task.project at
+    // execution time" warning; switching to `.flatMap { it.reports.xml.outputLocation }` for a
+    // supposedly-safe `Provider<RegularFile>` instead failed outright under
+    // `--configuration-cache` with "error writing value of type 'FlatMapProvider'" — same root
+    // cause, just surfacing at serialization time instead of a deprecation warning. Resolving the
+    // path *here*, synchronously, while `jacocoTestCoverageVerification` is itself being
+    // configured (i.e. once general project configuration has already finished — this line runs
+    // no earlier than the equivalent lookups elsewhere in this file that are already proven safe
+    // at this point), produces a plain, trivially serializable `File`: no `Task`, no `Provider`
+    // chain, nothing left for the configuration cache to choke on.
     val modulePath = project.path
-    val reportTaskProvider = project.tasks.named("jacocoTestReport", JacocoReport::class.java)
+    val reportXmlFile: File =
+      project.tasks.named("jacocoTestReport", JacocoReport::class.java).get()
+        .reports.xml.outputLocation.get().asFile
+    // This is what actually closes the silent-skip failure the review demonstrated: two identical
+    // plain-command runs in a row previously reported UP-TO-DATE the second time (byte-identical
+    // XML, byte-identical execution data, nothing at all had changed) and skipped `doLast`
+    // outright, printing zero warnings — silently, exactly the failure mode this whole mechanism
+    // exists to prevent. This task's own JaCoCo Ant check and the small XML parse it does
+    // afterward are both fast (this project's modules are small today), so re-running them
+    // unconditionally on every invocation costs real but negligible time, in exchange for a
+    // coverage/ungated-class warning that can never silently go stale between runs the way a
+    // cached one could.
+    outputs.upToDateWhen { false }
 
     violationRules {
       isFailOnViolation = true
@@ -404,8 +457,7 @@ subprojects {
     }
 
     doLast {
-      val reportXml = reportTaskProvider.get().reports.xml.outputLocation.get().asFile
-      warnUngatedClasses(modulePath, reportXml, floors, logger)
+      UngatedClassChecker.warnUngatedClasses(modulePath, reportXmlFile, floors, logger)
     }
   }
 }
