@@ -102,6 +102,19 @@ internal fun Project.configureAndroidJacocoReport(commonExtension: CommonExtensi
     // makes the include pattern follow whichever module applies this convention (`:app` today,
     // future application modules — e.g. the roadmap's Wear OS target — tomorrow) instead of
     // silently mis-scoping to a namespace this convention plugin does not own.
+    // This function is reached from `configureKotlinAndroid`, so it is wired into both
+    // `muplay.android.application` and `muplay.android.library` — but as of this task, only
+    // `:app` (an application module) actually applies an Android convention plugin at all;
+    // `:core:model`, `:core:network`, and `:core:testing` all use `muplay.jvm.library` instead,
+    // which never reaches this code. That means the assumption below — that a module's compiled
+    // class *package* path matches its declared `namespace` closely enough for
+    // `include("<namespace-as-path>/**")` to catch everything the module actually wrote — has
+    // only ever been exercised against `:app`, where namespace and package genuinely are both
+    // `app.muplay`. AGP does not require the two to match (a library's `namespace` only
+    // determines its generated `R`/`BuildConfig` package, not where its own Kotlin/Java sources
+    // must live), so the *first* `muplay.android.library` consumer with source code living
+    // outside its own namespace package should check this include pattern still finds it, rather
+    // than assuming this comment's confidence carries over untested.
     val ownPackagePath = requireNotNull(commonExtension.namespace) {
       "muplay.android.application/library requires `android.namespace` to be set before " +
         "jacocoTestReport can scope its own-code include pattern to it"

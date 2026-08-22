@@ -152,9 +152,11 @@ class ConventionTest {
     // legitimately explain *why* kapt is banned ("Hilt via KSP, never kapt") without using it, and
     // a bare `.doesNotContain("kapt")` would flag its own explanation the moment build-logic
     // sources were included below. Matches actual usage syntax instead: `kapt(...)`,
-    // `id("kapt")`/`id("org.jetbrains.kotlin.kapt")`, `kotlin("kapt")`, `add("kapt", ...)` — kapt
-    // immediately followed by `(` or `"`, which prose describing kapt does not do.
-    val kaptUsage = Regex("""kapt\s*[("]""")
+    // `id("kapt")`/`id("org.jetbrains.kotlin.kapt")`, `kotlin("kapt")`, `add("kapt", ...)`,
+    // `kapt { correctErrorTypes = true }` — kapt immediately followed by `(`, `"`, or `{`, which
+    // prose describing kapt does not do (an earlier version of this regex, `kapt\s*[("]`, missed
+    // the bare-block form entirely — verified missing, then fixed, by injection: see the report).
+    val kaptUsage = Regex("""kapt\s*[("{]""")
     (moduleBuildFiles() + buildLogicFiles()).forEach {
       assertThat(kaptUsage.containsMatchIn(it.readText())).describedAs(it.path).isFalse()
     }
