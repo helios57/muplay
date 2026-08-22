@@ -78,9 +78,13 @@ Every task in every plan inherits these.
 - Media3 cache keys derive from the **track id alone** via `setCustomCacheKey`.
 - Book positions are **local only**.
 - **No mock frameworks.** Fakes only, and only where the real thing cannot run.
-- **Branch coverage ≥ 90%** per module, generated code excluded, enforced by
-  **JaCoCo** merging JVM and emulator execution data. Kover cannot collect
-  instrumented coverage.
+- **Coverage ≥ 90% per module**, generated code excluded, enforced by **JaCoCo**
+  merging JVM and emulator execution data (Kover cannot collect instrumented
+  coverage). The metric differs by kind of code: **branch** coverage for non-UI
+  code, **line** coverage for Compose UI, because the Compose compiler emits
+  synthetic branches inside author method bodies that no test can reach and no
+  class-level exclusion can filter. Every floor is measured, never invented, and
+  **must be able to fail**; a module with no floor entry warns loudly.
 - **Two-tier merge gate, both required.** Tier 1 ≤ 10 minutes with a real
   Navidrome container but no emulator. **Tier 2 is emulator end-to-end and must
   be green to merge.**
@@ -93,7 +97,8 @@ Every task in every plan inherits these.
 1. All tasks' tests pass; both tiers green.
 2. **Tier 2 carries this plan's E2E journeys.** A plan is not done until its
    journeys are in the emulator suite.
-3. Branch coverage ≥ 90% on every module the plan touches.
+3. Coverage ≥ 90% on every module the plan touches — **branch** for non-UI
+   code, **line** for Compose UI. Every floor measured, and able to fail.
 4. No mock framework has entered the dependency graph.
 5. Every new external-API assumption is backed by a contract test against the
    vendored OpenAPI spec, or a live test against the Navidrome container.
