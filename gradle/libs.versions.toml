@@ -69,6 +69,12 @@ openapi-validator      = { module = "com.atlassian.oai:openapi-request-validator
 android-gradlePlugin    = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 kotlin-gradlePlugin     = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 compose-compiler-gradlePlugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
+# The kotlinx.serialization Kotlin compiler subplugin's own Gradle-plugin marker, separate from
+# kotlin-gradlePlugin above (unlike org.jetbrains.kotlin.jvm/.android, which kotlin-gradle-plugin
+# registers itself, org.jetbrains.kotlin.plugin.serialization is its own artifact). Lets
+# KotlinSerializationConventionPlugin apply it by bare id from build-logic's own classpath, the
+# same way every other muplay.* convention plugin applies its underlying plugin.
+kotlin-serialization-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
 ksp-gradlePlugin        = { module = "com.google.devtools.ksp:symbol-processing-gradle-plugin", version.ref = "ksp" }
 hilt-gradlePlugin       = { module = "com.google.dagger:hilt-android-gradle-plugin", version.ref = "hilt" }
 

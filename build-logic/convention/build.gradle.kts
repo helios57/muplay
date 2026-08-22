@@ -27,6 +27,7 @@ dependencies {
   // classpath, not via a consuming module's `plugins {}` block.
   implementation(libs.android.gradlePlugin)
   implementation(libs.kotlin.gradlePlugin)
+  implementation(libs.kotlin.serialization.gradlePlugin)
   implementation(libs.compose.compiler.gradlePlugin)
   implementation(libs.ksp.gradlePlugin)
   implementation(libs.hilt.gradlePlugin)
@@ -49,6 +50,10 @@ gradlePlugin {
     register("jvmLibrary") {
       id = "muplay.jvm.library"
       implementationClass = "JvmLibraryConventionPlugin"
+    }
+    register("kotlinSerialization") {
+      id = "muplay.kotlin.serialization"
+      implementationClass = "KotlinSerializationConventionPlugin"
     }
     register("androidHilt") {
       id = "muplay.android.hilt"
