@@ -724,22 +724,55 @@ code *does*, not what it *should*.
 5. **Write the test first, from the spec** — for Subsonic, the spec exists.
 6. **Budget the suite.** Past ~10 minutes the iteration loop degrades and humans
    merge on red. Speed is a correctness property.
+7. **No mock frameworks.** Mockito, MockK, EasyMock and PowerMock are banned
+   from the dependency graph, enforced by a build check. A test whose assertion
+   is satisfied by a mock returning what it was told to return proves nothing
+   about the system, and under coverage pressure an agent will reach for exactly
+   that. The two rules below only work together: a 90% floor without this one
+   actively causes the harm it is meant to prevent.
+8. **Coverage floor of 90% branch coverage** on every `:core:*` module, and on
+   every module added later — not a ratchet from wherever a module happens to
+   sit. Generated code (Room `*_Impl`, Dagger/Hilt, `BuildConfig`, `R`) is
+   excluded from the denominator: measuring machine output would describe the
+   code generator, not our work.
+
+### The test hierarchy
+
+Reach for the strongest available rung, always. Coverage earned lower down the
+list is worth less, and coverage earned on rung 4 may be worth nothing.
+
+| | Rung | What it means here |
+|---|---|---|
+| 1 | **End-to-end** | Real device, real pinned Navidrome container, real emulator. `LiveContractTest`, the scoped-shuffle journey, browse journeys. |
+| 2 | **Integration against a real server** | A pinned Navidrome container, **in the PR gate, not just nightly**. Docker is not an emulator — the container starts in 5-11s against a 10-minute budget, so anything that talks to a server is tested against a real one. Plus real in-memory Room and real SQL, real Media3 with `PlaybackOutput` dumps, an in-process real UPnP renderer. |
+| 3 | **Unit with real collaborators** | Pure logic — token derivation, resume maths, DIDL escaping — against real inputs. |
+| 4 | **Fakes and stubs** | Only where the real thing genuinely cannot run: an injected `java.time.Clock`, a deliberately severed socket, a forced 429. Never to avoid the work of standing something up. |
+
+**`MockWebServer` is reserved for what a real Navidrome cannot be made to do on
+demand:** a severed socket mid-request, a malformed or truncated body, a forced
+HTTP 429, a deliberately spec-violating response from a hypothetical
+non-Navidrome server. It is a real HTTP server speaking real sockets, so it is
+rung 2 rather than rung 4 — but where the behaviour under test is *Navidrome's*,
+use Navidrome. A fixture recorded from a container and replayed is weaker
+evidence than the container itself, and the container is now cheap enough that
+there is no excuse.
 
 ### PR gate — ≤ 10 minutes, no emulator
 
 | Job | Content |
 |---|---|
-| Static | Checkstyle, ArchUnit (detekt/ktlint are Kotlin-only and banned) |
+| Static | Checkstyle, ArchUnit (detekt/ktlint are Kotlin-only and banned), no-mock-framework check |
+| **Live integration** | JVM tests against a **pinned Navidrome container** — no emulator needed, so this belongs in the PR gate |
 | Unit | mappers, token derivation, queue logic, resume maths with injected `java.time.Clock` |
 | **Playback goldens** | `PlaybackOutput` + dump files; `ShadowAudioTrack` byte-compare for gapless; silence-skip frame counts; chapter assertion on the M4B fixture |
 | **Session** | Browse tree and all `onPlaybackResumption` cases — under Robolectric, since they only need `Bundle`/`MediaItem`. `isAutomotiveController` branching tests Auto with no car. |
 | **Contract** | Every fixture validated against the vendored OpenAPI spec |
 | **Cast** | In-process fake renderer on `127.0.0.1:0` — SOAPACTION quoting, DIDL escaping round-trip, `protocolInfo` vs served `Content-Type`, renderer GETs the advertised URL, Range → 206/416/HEAD |
 | Screenshot | **Roborazzi** on Views (`captureRoboImage()` works on any `View`), sharded, phone/tablet × light/dark |
-| Coverage | **JaCoCo** branch coverage on `:core:*`, ratcheting (Kover is Kotlin-oriented) |
+| Coverage | **JaCoCo** branch coverage on `:core:*` — **hard floor of 90%**, generated code excluded (Kover is Kotlin-oriented) |
 
 Java is an advantage across this table rather than a tax: Media3's test utilities,
-Robolectric, JUnit 4, Espresso, ArchUnit, Truth and Mockito are all Java-native,
+Robolectric, JUnit 4, Espresso, ArchUnit and Truth are all Java-native,
 and the golden-file playback machinery is Java by origin.
 
 Media3's Robolectric machinery covers playback end-to-end on the JVM. Coded audio

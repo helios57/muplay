@@ -77,6 +77,13 @@ Copied verbatim from the spec. Every task in every plan inherits these.
 - **PR gate ≤ 10 minutes with no emulator.** Emulator work is nightly.
 - Goldens are recorded as **separate bot commits**, never in the same commit as
   the change they justify.
+- **Branch coverage ≥ 90% on every `:core:*` module**, and on every module added
+  later — a hard floor, not a ratchet. Generated code (Room `*_Impl`,
+  Dagger/Hilt, `BuildConfig`, `R`) is excluded from the denominator.
+- **No mock frameworks.** Mockito, MockK, EasyMock and PowerMock may not enter
+  the dependency graph; a build check enforces it. Prefer end-to-end, then
+  integration against real collaborators, then unit tests with real inputs.
+  Fakes only where the real thing cannot be run. See the spec's test hierarchy.
 - Inject `java.time.Clock`; `System.currentTimeMillis()` is banned outside `:di`.
 
 ---
@@ -86,7 +93,7 @@ Copied verbatim from the spec. Every task in every plan inherits these.
 1. All tasks' tests pass.
 2. PR gate green in under 10 minutes.
 3. No new ArchUnit or NullAway suppressions.
-4. Branch coverage on touched `:core:*` modules has not decreased.
+4. Branch coverage on every `:core:*` module is **at or above 90%**.
 5. Every new external-API assumption is backed by a contract test against the
    vendored OpenAPI spec, or by a live test against the Navidrome container.
 6. Anything discovered to be wrong in the spec is corrected **in the spec**, not
