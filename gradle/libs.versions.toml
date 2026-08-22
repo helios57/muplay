@@ -21,6 +21,19 @@ openapiValidator = "3.0.0"
 checkstyle = "12.3.1"
 slf4j = "2.0.18"
 androidxTestRunner = "1.7.0"
+# androidx.test:core is released in lockstep with androidx.test:runner (androidxTestRunner above)
+# and shares its version number; tracked as its own key rather than reusing androidxTestRunner's
+# ref so each artifact's version can be bumped independently if that lockstep ever breaks.
+androidxTestCore = "1.7.0"
+rxjava = "3.1.10"
+rxandroid = "3.0.2"
+# Room's Java annotation processor only recognizes androidx.annotation.NonNull (plus a couple of
+# other non-JSR-305 spellings — see room-compiler-processing's NONNULL_ANNOTATIONS) when deciding
+# whether a @PrimaryKey column is allowed to be non-null; javax.annotation.Nonnull (this project's
+# usual JSR-305 annotation, required everywhere else by ArchitectureTest) does not satisfy it.
+# compileOnly only: this is read by Room's annotation processor and embedded as a class-retention
+# marker, never something a consumer of this module's compiled classes needs on their classpath.
+androidxAnnotation = "1.10.0"
 
 [libraries]
 media3-exoplayer   = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
@@ -45,6 +58,14 @@ openapi-validator  = { module = "com.atlassian.oai:openapi-request-validator-cor
 jsr305             = { module = "com.google.code.findbugs:jsr305", version = "3.0.2" }
 slf4j-nop          = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
+room-runtime       = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-compiler      = { module = "androidx.room:room-compiler", version.ref = "room" }
+room-rxjava3       = { module = "androidx.room:room-rxjava3", version.ref = "room" }
+room-testing       = { module = "androidx.room:room-testing", version.ref = "room" }
+rxjava             = { module = "io.reactivex.rxjava3:rxjava", version.ref = "rxjava" }
+rxandroid          = { module = "io.reactivex.rxjava3:rxandroid", version.ref = "rxandroid" }
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidxAnnotation" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

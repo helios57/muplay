@@ -573,6 +573,13 @@ public class ArchitectureTest {
    * @javax.annotation.processing.Generated} itself. This is the exact same carve-out the root
    * {@code build.gradle}'s NullAway {@code excludedPaths} setting (any path under a {@code
    * build/generated} directory) already makes for the same reason.
+   *
+   * <p>Room's annotation processor (added in the {@code :core:database} module) generates the same
+   * kind of unfixable, regenerated-every-build public code — {@code MuPlayDatabase_Impl}, {@code
+   * MediaProgressDao_Impl}, and their private helper inner classes — but marks none of it with a
+   * class-level annotation the way Dagger/Hilt do, so it needs a structural signal instead. See
+   * {@link #isRoomGeneratedImplementation} for exactly what proves a class is Room's output rather
+   * than hand-written.
    */
   @Test
   public void everyPublicSignatureHasNullabilityAnnotations() {
@@ -674,7 +681,8 @@ public class ArchitectureTest {
     for (JavaClass current = javaClass; ; ) {
       if (current.isAnnotatedWith(DAGGER_GENERATED)
           || current.isAnnotatedWith(HILT_GENERATED_ENTRY_POINT)
-          || current.isAnnotatedWith(HILT_COMPONENT_TREE_DEPS)) {
+          || current.isAnnotatedWith(HILT_COMPONENT_TREE_DEPS)
+          || isRoomGeneratedImplementation(current)) {
         return true;
       }
       Optional<JavaClass> enclosing = current.getEnclosingClass();
@@ -683,6 +691,45 @@ public class ArchitectureTest {
       }
       current = enclosing.get();
     }
+  }
+
+  private static final String ROOM_DATABASE_ANNOTATION = "androidx.room.Database";
+  private static final String ROOM_DAO_ANNOTATION = "androidx.room.Dao";
+
+  /**
+   * True if {@code javaClass} is Room's own generated implementation of a {@code @Database} or
+   * {@code @Dao} type, rather than hand-written code that merely resembles one.
+   *
+   * <p>Unlike Dagger/Hilt (see {@link #isGeneratedCode}'s three markers above), Room's annotation
+   * processor puts no class-level marker annotation on the implementation classes it writes —
+   * confirmed via {@code javap -v} on this project's own compiled {@code MuPlayDatabase_Impl} and
+   * {@code MediaProgressDao_Impl}: no class annotation at all, only {@code
+   * androidx.annotation.NonNull}/{@code Nullable} on individual members, Room's own nullability
+   * vocabulary rather than this project's JSR-305 one (see the {@code androidxAnnotation} entry in
+   * {@code gradle/libs.versions.toml}) — which is exactly why those members would otherwise trip
+   * this rule despite already being genuinely, correctly annotated. With no marker annotation to
+   * check, this instead requires two structural facts to hold together, so a hand-written class
+   * cannot satisfy it by accident: the exact, fixed suffix Room's processor always uses for the one
+   * class it generates directly for a given {@code @Database}/{@code @Dao} type ({@code
+   * «Type»_Impl} — nested helper classes such as {@code MediaProgressDao_Impl$1} carry no suffix of
+   * their own and are instead reached via {@link #isGeneratedCode}'s enclosing-class walk), <em>and</em>
+   * that the class actually extends a {@code @Database}-annotated class or implements a {@code
+   * @Dao}-annotated interface — not merely a name coincidence.
+   */
+  private static boolean isRoomGeneratedImplementation(JavaClass javaClass) {
+    if (!javaClass.getName().endsWith("_Impl")) {
+      return false;
+    }
+    Optional<JavaClass> superclass = javaClass.getRawSuperclass();
+    if (superclass.isPresent() && superclass.get().isAnnotatedWith(ROOM_DATABASE_ANNOTATION)) {
+      return true;
+    }
+    for (JavaClass implementedInterface : javaClass.getRawInterfaces()) {
+      if (implementedInterface.isAnnotatedWith(ROOM_DAO_ANNOTATION)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

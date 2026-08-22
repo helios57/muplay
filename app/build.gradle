@@ -35,6 +35,13 @@ tasks.withType(Test).configureEach {
 
 dependencies {
   implementation project(':core:network')
+  // ArchitectureTest#classImportCoversEveryModuleTheBansMustReach discovers :core:database from
+  // the filesystem and fails loudly if none of its classes reach this test's class import — the
+  // same reason :testing is pulled in below. Without this line, :core:database's production code
+  // (MuPlayDatabase, MediaProgressEntity, MediaProgressDao) would never appear on :app's classpath
+  // and the System.currentTimeMillis/Thread.sleep bans, and the nullability-annotation rule, would
+  // be silently vacuous for it.
+  implementation project(':core:database')
   implementation libs.hilt.android
   annotationProcessor libs.hilt.compiler
   testImplementation libs.junit
