@@ -18,6 +18,21 @@ android {
     targetCompatibility JavaVersion.VERSION_17
   }
 }
+
+// ArchitectureTest (:app's only unit test class today) scans the filesystem directly with
+// Files.walk rather than declaring its true inputs (every source file in the repo) to Gradle, so
+// a .kt file appearing after a warm local build would not invalidate testDebugUnitTest's
+// UP-TO-DATE cache -- Gradle only knows about this task's declared classpath/output, not the
+// files ArchitectureTest happens to read at runtime. Since noModuleAppliesTheKotlinPluginExplicitly
+// cannot catch AGP's own built-in Kotlin support (see its Javadoc), the filesystem-level bans
+// (noKotlinSourceFilesExist, noKotlinFilesExistAnywhere) in this same task are now the *sole*
+// guard against Kotlin actually compiling -- a stale UP-TO-DATE pass here is not an acceptable
+// local-dev shortcut for the project's hardest constraint. CI is unaffected: it always checks out
+// a fresh workspace, so this task runs there regardless of this setting.
+tasks.withType(Test).configureEach {
+  outputs.upToDateWhen { false }
+}
+
 dependencies {
   implementation project(':core:network')
   implementation libs.hilt.android

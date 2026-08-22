@@ -6,7 +6,10 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import com.tngtech.archunit.core.domain.JavaAnnotation;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaCodeUnit;
 import com.tngtech.archunit.core.domain.JavaConstructor;
+import com.tngtech.archunit.core.domain.JavaMethod;
+import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.domain.JavaParameter;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -17,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -59,18 +63,33 @@ public class ArchitectureTest {
   }
 
   /**
-   * The project is Java-only. A stray Kotlin plugin must fail the build.
+   * Catches an explicit, textual Kotlin plugin application — {@code id
+   * 'org.jetbrains.kotlin.android'}, {@code apply plugin: 'kotlin-android'}, and the like — typed
+   * into a build script by a future contributor.
    *
-   * <p>Matches every Gradle <em>build</em> script regardless of extension — {@code build.gradle}
-   * and {@code build.gradle.kts} alike — not just files named exactly {@code build.gradle}. A
-   * {@code build.gradle.kts} is itself banned outright by {@link #noKotlinFilesExistAnywhere}
-   * (any {@code .kts} file anywhere fails the build), but this scan is deliberately independent
-   * defense-in-depth: it must keep catching a Kotlin plugin application by content, in every
-   * build script Gradle would actually execute, even if that separate blanket ban were ever
-   * weakened or bypassed.
+   * <p><b>This is not, and cannot be, a guarantee that no Kotlin plugin is applied.</b> AGP
+   * 9.3.1's own built-in Kotlin support applies a real Kotlin Gradle Plugin to every Android
+   * module in this project regardless of what any build script says: confirmed empirically via
+   * {@code ./gradlew :core:network:properties} (reports {@code kotlin.plugin.loaded.in.projects}
+   * and a {@code KotlinAndroidProjectExtension}) and {@code ./gradlew :core:network:tasks --all}
+   * (lists {@code compileDebugKotlin}, {@code compileDebugUnitTestKotlin}, {@code
+   * compileDebugAndroidTestKotlin} on both {@code :app} and {@code :core:network}). A {@code .kt}
+   * file dropped into {@code core/network/src/main/kotlin/} compiles and produces a {@code
+   * .class} via {@code compileDebugKotlin} with zero build-script changes — verified directly by
+   * doing exactly that during this fix wave. No text scan of any build script, including this
+   * one, can see or prevent that, because AGP applies its Kotlin support programmatically, not
+   * through a plugin id or {@code apply} statement any grep-like scan would match.
+   *
+   * <p>The actual, load-bearing guarantee that Kotlin cannot compile in this repository is the
+   * filesystem-level ban on {@code .kt} source files ({@link #noKotlinSourceFilesExist}) and
+   * {@code .kts} scripts ({@link #noKotlinFilesExistAnywhere}) below — with no Kotlin source to
+   * compile, AGP's built-in Kotlin support has nothing to do, registered tasks and all. This rule
+   * remains as one more layer of defense-in-depth against the narrower case it can actually
+   * catch (a deliberate, explicit plugin declaration), not as a substitute for that filesystem
+   * ban and not as evidence Kotlin cannot compile here.
    */
   @Test
-  public void noModuleAppliesTheKotlinPlugin() throws IOException {
+  public void noModuleAppliesTheKotlinPluginExplicitly() throws IOException {
     Path root = findRepoRoot();
     List<Path> buildFiles;
     try (Stream<Path> walk = Files.walk(root, 6)) {
@@ -114,9 +133,9 @@ public class ArchitectureTest {
    * "No Kotlin anywhere" (the project's hardest constraint — see the plan's global constraints)
    * is not just about {@code .kt} source files: a {@code build.gradle.kts}, a {@code
    * settings.gradle.kts}, or any other {@code .kts} script is Kotlin too, and {@link
-   * #noModuleAppliesTheKotlinPlugin} above only inspects files that look like Gradle build
-   * scripts — it would not, on its own, catch some other stray {@code .kts} file (a init script,
-   * a precompiled script plugin, anything) that never happens to match {@code
+   * #noModuleAppliesTheKotlinPluginExplicitly} above only inspects files that look like Gradle
+   * build scripts — it would not, on its own, catch some other stray {@code .kts} file (a init
+   * script, a precompiled script plugin, anything) that never happens to match {@code
    * build.gradle(.kts)}. This is the blanket backstop: any {@code .kts} file anywhere in the repo
    * fails the build outright, independent of what it's named or what it contains.
    */
@@ -147,25 +166,26 @@ public class ArchitectureTest {
 
   @Test
   public void modelModuleDoesNotDependOnAndroid() {
-    // :core:model has no domain classes yet at this bootstrap stage (Task 1 only produces module
-    // structure), so ArchUnit's default failOnEmptyShould would otherwise reject this rule for
-    // matching zero classes. allowEmptyShould(true) is scoped to this one rule only — it does not
-    // relax the other rules in this file — and the rule engages for real the moment the first
-    // class lands in app.muplay.model.
+    // allowEmptyShould(true) was justified at bootstrap (Task 1: :core:model had no domain
+    // classes yet, so this rule matched zero classes and ArchUnit's default failOnEmptyShould
+    // would have rejected it as vacuous). :core:model now has four classes (LibraryRole,
+    // MusicLibrary, ServerCapabilities, SubsonicCredentials), so the relaxation is stale — this
+    // was the only ArchUnit relaxation in this file, and the Definition of Done bans them.
+    // Removed; the rule below now fails loudly (not vacuously) if it ever matches zero classes
+    // again, same as every other scanning rule in this file.
     noClasses()
         .that()
         .resideInAPackage("app.muplay.model..")
         .should()
         .dependOnClassesThat()
         .resideInAnyPackage("android..", "androidx..")
-        .allowEmptyShould(true)
         .check(CLASSES);
   }
 
   /**
    * Enumerates this repo's Gradle modules by walking the filesystem for {@code build.gradle}
-   * files (excluding the root project's own), mirroring how {@link #noModuleAppliesTheKotlinPlugin}
-   * already finds them.
+   * files (excluding the root project's own), mirroring how {@link
+   * #noModuleAppliesTheKotlinPluginExplicitly} already finds them.
    *
    * <p>This — not a {@code settings.gradle} parse — is what actually determines the module list
    * {@link #classImportCoversEveryModuleTheBansMustReach} checks {@link #CLASSES} against. An
@@ -474,6 +494,178 @@ public class ArchitectureTest {
       if (annotation.getRawType().getFullName().startsWith(JACKSON_ANNOTATION_PACKAGE_PREFIX)) {
         return true;
       }
+    }
+    return false;
+  }
+
+  private static final String NONNULL = "javax.annotation.Nonnull";
+  private static final String NULLABLE = "javax.annotation.Nullable";
+
+  /**
+   * Enforces the project's Java-specific discipline convention (spec §10: "{@code
+   * @Nullable}/{@code @NonNull} coverage on public API") mechanically rather than by review:
+   * every public method and constructor on a public class under {@code app.muplay} must carry a
+   * JSR-305 {@code @Nonnull} or {@code @Nullable} annotation on each reference-typed parameter,
+   * and on its return type if that return type is itself a reference type. Primitives (including
+   * {@code void} — confirmed empirically that {@code JavaClass.isPrimitive()} is {@code true} for
+   * a {@code void} return) need no annotation; there is nothing nullable about them.
+   *
+   * <p><b>NullAway alone does not catch an omission here.</b> {@code app.muplay} is a NullAway
+   * {@code AnnotatedPackages} package (see the root {@code build.gradle}'s {@code
+   * option('NullAway:AnnotatedPackages', 'app.muplay')}), and inside an annotated package an
+   * <em>unannotated</em> reference-typed parameter or return is treated as implicitly {@code
+   * @Nonnull} by convention — it compiles clean either way, annotation present or not. That gap
+   * is exactly how {@code SubsonicErrorException}'s constructor parameter, {@code
+   * SubsonicCredentials#toString()}'s return, and {@code SubsonicResponseException}'s protected
+   * constructor parameter went unannotated in review after review until this rule was added
+   * specifically to close it.
+   *
+   * <p>Scope is deliberately "public class + public member," not merely "public member": {@code
+   * SubsonicApi}'s methods are bytecode-public (every interface method is, whether or not the
+   * interface itself is declared {@code public}), but the interface itself is package-private, so
+   * nothing outside this package can ever call them — annotating Retrofit's dynamically
+   * implemented interface would police an API surface that was never actually public.
+   *
+   * <p>Two narrow, unavoidable exemptions — see {@link #isCompilerSynthesizedExemptMember} —
+   * for members the compiler generates with no annotation site of their own, and which are
+   * indistinguishable in bytecode from a hand-written override or redeclaration of the identical
+   * signature (neither is marked {@code ACC_SYNTHETIC}, confirmed via {@code javap -v} on this
+   * project's own compiled classes): a record's {@code equals(Object)}/{@code hashCode()}/{@code
+   * toString()}, and an enum's {@code values()}/{@code valueOf(String)}.
+   *
+   * <p>A third exemption, for a different reason: Dagger/Hilt's annotation processor generates
+   * real, compiled, public classes into this same {@code app.muplay} package (alongside {@code
+   * MuPlayApplication} — see {@code DaggerMuPlayApplication_HiltComponents_SingletonC} and
+   * friends under {@code build/generated/}), which this test's {@code
+   * ClassFileImporter().importPackages("app.muplay")} therefore imports and scans exactly like
+   * hand-written code. Nobody edits that code — it is regenerated from scratch on every build —
+   * so a missing annotation there is not a fixable defect this rule should report. Every class
+   * with a checkable public member (a reference-typed parameter or return) that Dagger/Hilt
+   * currently generates for this app is marked, directly or on an enclosing class, with one of
+   * three bytecode-visible annotations — see {@link #isGeneratedCode} for exactly which, and why
+   * not simply {@code @javax.annotation.processing.Generated} itself. This is the exact same
+   * carve-out the root {@code build.gradle}'s NullAway {@code excludedPaths} setting (any path
+   * under a {@code build/generated} directory) already makes for the same reason.
+   */
+  @Test
+  public void everyPublicSignatureHasNullabilityAnnotations() {
+    List<JavaClass> publicClasses =
+        CLASSES.stream()
+            .filter(c -> c.getModifiers().contains(JavaModifier.PUBLIC))
+            .filter(c -> !isGeneratedCode(c))
+            .collect(Collectors.toList());
+    assertWithFailureMessage(
+        !publicClasses.isEmpty(),
+        "Found zero public classes under app.muplay — this rule is scanning the wrong thing,"
+            + " not verifying anything.");
+
+    for (JavaClass javaClass : publicClasses) {
+      for (JavaConstructor constructor : javaClass.getConstructors()) {
+        if (constructor.getModifiers().contains(JavaModifier.PUBLIC)) {
+          assertParametersAnnotated(constructor);
+        }
+      }
+      for (JavaMethod method : javaClass.getMethods()) {
+        if (!method.getModifiers().contains(JavaModifier.PUBLIC)) {
+          continue;
+        }
+        if (isCompilerSynthesizedExemptMember(javaClass, method)) {
+          continue;
+        }
+        assertParametersAnnotated(method);
+        JavaClass returnType = method.getRawReturnType();
+        if (!returnType.isPrimitive()) {
+          assertWithFailureMessage(
+              method.isAnnotatedWith(NONNULL) || method.isAnnotatedWith(NULLABLE),
+              method.getFullName()
+                  + "'s return type ("
+                  + returnType.getName()
+                  + ") is missing a @Nonnull/@Nullable annotation. NullAway alone will not catch"
+                  + " this: an unannotated reference return inside app.muplay's NullAway"
+                  + " AnnotatedPackages scope compiles clean as an implicit @Nonnull, which is"
+                  + " exactly how this class of omission survives to here undetected.");
+        }
+      }
+    }
+  }
+
+  private static void assertParametersAnnotated(JavaCodeUnit member) {
+    for (JavaParameter parameter : member.getParameters()) {
+      if (parameter.getRawType().isPrimitive()) {
+        continue;
+      }
+      assertWithFailureMessage(
+          parameter.isAnnotatedWith(NONNULL) || parameter.isAnnotatedWith(NULLABLE),
+          member.getFullName()
+              + "'s parameter #"
+              + parameter.getIndex()
+              + " ("
+              + parameter.getRawType().getName()
+              + ") is missing a @Nonnull/@Nullable annotation.");
+    }
+  }
+
+  // The standard javax.annotation.processing.Generated that every one of Hilt's generated
+  // top-level types in this project also carries (confirmed by reading their generated source
+  // under app/build/generated/**) is deliberately *not* checked here: it is
+  // @Retention(RetentionPolicy.SOURCE) per its own javadoc, so javac strips it before it ever
+  // reaches a .class file — confirmed empirically with `javap -v` on this project's own compiled
+  // MuPlayApplication_GeneratedInjector.class, which shows no trace of it. An ArchUnit rule reads
+  // bytecode, so a SOURCE-retention annotation is invisible to it no matter what. These three are
+  // the markers actually present in the .class files this project currently generates (same
+  // `javap -v` check, on every class Hilt currently generates for this app) — one per generator
+  // that produces a public member with a reference-typed parameter or return that this rule would
+  // otherwise flag.
+  private static final String DAGGER_GENERATED = "dagger.internal.DaggerGenerated";
+  private static final String HILT_GENERATED_ENTRY_POINT = "dagger.hilt.internal.GeneratedEntryPoint";
+  private static final String HILT_COMPONENT_TREE_DEPS =
+      "dagger.hilt.internal.componenttreedeps.ComponentTreeDeps";
+
+  /**
+   * True if {@code javaClass} or any class it is nested in carries one of the markers above.
+   * Walking the enclosing-class chain matters because Dagger marks only the top-level generated
+   * type (e.g. {@code DaggerMuPlayApplication_HiltComponents_SingletonC}) — a nested type it
+   * generates inside that one (e.g. its {@code Builder}) carries no marker of its own, only its
+   * enclosing class does.
+   */
+  private static boolean isGeneratedCode(JavaClass javaClass) {
+    for (JavaClass current = javaClass; ; ) {
+      if (current.isAnnotatedWith(DAGGER_GENERATED)
+          || current.isAnnotatedWith(HILT_GENERATED_ENTRY_POINT)
+          || current.isAnnotatedWith(HILT_COMPONENT_TREE_DEPS)) {
+        return true;
+      }
+      Optional<JavaClass> enclosing = current.getEnclosingClass();
+      if (enclosing.isEmpty()) {
+        return false;
+      }
+      current = enclosing.get();
+    }
+  }
+
+  /**
+   * See {@link #everyPublicSignatureHasNullabilityAnnotations}'s Javadoc for why these two cases,
+   * specifically, are exempt rather than fixed by annotating them.
+   */
+  private static boolean isCompilerSynthesizedExemptMember(JavaClass javaClass, JavaMethod method) {
+    int paramCount = method.getParameters().size();
+    if (javaClass.isRecord()) {
+      boolean isObjectOverride =
+          switch (method.getName()) {
+            case "equals" -> paramCount == 1;
+            case "hashCode", "toString" -> paramCount == 0;
+            default -> false;
+          };
+      if (isObjectOverride) {
+        return true;
+      }
+    }
+    if (javaClass.isEnum()) {
+      return switch (method.getName()) {
+        case "values" -> paramCount == 0;
+        case "valueOf" -> paramCount == 1;
+        default -> false;
+      };
     }
     return false;
   }
