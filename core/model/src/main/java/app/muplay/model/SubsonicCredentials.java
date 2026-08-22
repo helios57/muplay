@@ -25,6 +25,7 @@ public record SubsonicCredentials(
 
   /** Never log credentials. */
   @Override
+  @Nonnull
   public String toString() {
     return "SubsonicCredentials{" + username + "@" + baseUrl + "}";
   }

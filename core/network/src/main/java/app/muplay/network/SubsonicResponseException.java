@@ -1,6 +1,7 @@
 package app.muplay.network;
 
 import java.io.IOException;
+import javax.annotation.Nonnull;
 
 /**
  * Base type for "the server responded, and the response itself signals failure" — as opposed to
@@ -23,7 +24,7 @@ public abstract sealed class SubsonicResponseException extends IOException
   // treats warnings as errors) since IOException implements Serializable.
   private static final long serialVersionUID = 1L;
 
-  protected SubsonicResponseException(String message) {
+  protected SubsonicResponseException(@Nonnull String message) {
     super(message);
   }
 }
