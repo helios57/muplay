@@ -16,6 +16,17 @@ import com.atlassian.oai.validator.model.SimpleResponse
  * Note the spec requires `type`, `serverVersion` and `openSubsonic` on every response — fields a
  * legacy (non-OpenSubsonic) Subsonic server would not send. Validating against it therefore asserts
  * OpenSubsonic compliance, which is deliberate for a Navidrome client.
+ *
+ * Scope boundary, deliberate rather than an oversight: [assertValid] always sends
+ * `Content-Type: application/json` and can only validate a response the spec itself describes with
+ * an `application/json` media type. Seven of the vendored spec's 87 paths — `/rest/download`,
+ * `/rest/getAvatar`, `/rest/getCaptions`, `/rest/getCoverArt`, `/rest/getTranscodeStream`,
+ * `/rest/hls.m3u8`, `/rest/stream` — declare no `application/json` response at all (binary media,
+ * `application/octet-stream`, `text/plain`, `application/vnd.apple.mpegurl`, ...). Those endpoints
+ * are not JSON-fixture-shaped in the first place, so there is nothing for a JSON-fixture oracle
+ * like this one to validate against for them regardless of this class's own choices; a fixture test
+ * for one of those endpoints needs a different kind of oracle (e.g. asserting the raw byte stream
+ * or content headers), not this one.
  */
 object OpenApiFixtureValidator {
 
@@ -80,16 +91,22 @@ object OpenApiFixtureValidator {
    *   guess at the path. An unknown path fails loudly, naming the path in the failure message,
    *   rather than silently passing.
    * @param jsonBody the full response body, e.g. `{"subsonic-response":{...}}`.
+   * @param method the HTTP verb whose response schema to validate against, defaulting to `GET`
+   *   since nearly every OpenSubsonic endpoint is `GET`-only. One vendored path,
+   *   `/rest/getTranscodeDecision`, declares only a `post` operation and no `get` at all — passing
+   *   [Request.Method.POST] is how a caller validates that one. The default keeps every existing
+   *   two-argument call site unaffected.
    */
-  fun assertValid(endpointPath: String, jsonBody: String) {
+  fun assertValid(endpointPath: String, jsonBody: String, method: Request.Method = Request.Method.GET) {
     val response =
       SimpleResponse.Builder.ok()
         .withContentType("application/json")
         .withBody(jsonBody)
         .build()
-    val report = validator.validateResponse(endpointPath, Request.Method.GET, response)
+    val report = validator.validateResponse(endpointPath, method, response)
     if (report.hasErrors()) {
-      throw AssertionError("Response does not match the OpenSubsonic spec for $endpointPath:\n$report")
+      val displayPath = endpointPath.ifBlank { "<blank endpointPath>" }
+      throw AssertionError("Response does not match the OpenSubsonic spec for $displayPath:\n$report")
     }
   }
 }

@@ -1,5 +1,6 @@
 package app.muplay.testing
 
+import com.atlassian.oai.validator.model.Request
 import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -70,5 +71,24 @@ class OpenApiFixtureValidatorTest {
     assertThatThrownBy { OpenApiFixtureValidator.assertValid(unknownPath, validPing) }
       .isInstanceOf(AssertionError::class.java)
       .hasMessageContaining(unknownPath)
+  }
+
+  // /rest/getTranscodeDecision declares only a `post` operation in the vendored spec — no `get` at
+  // all — so this is also the regression test for the `method` parameter: if assertValid ignored
+  // it and always validated against GET, this would fail loudly ("GET operation not allowed on
+  // path ..."), not pass vacuously. The body below is minimal but genuinely conforming: the
+  // response schema wraps a "transcodeDecision" object whose only required fields are the booleans
+  // "canDirectPlay" and "canTranscode" (read from the spec's TranscodeDecision schema, not
+  // guessed), and the wrapper object declares no other properties, so no other keys are added.
+  @Test
+  fun `accepts a POST-only endpoint when the method is passed explicitly`() {
+    val validTranscodeDecision = """{"transcodeDecision":{"canDirectPlay":true,"canTranscode":false}}"""
+    assertThatCode {
+      OpenApiFixtureValidator.assertValid(
+        "/rest/getTranscodeDecision",
+        validTranscodeDecision,
+        Request.Method.POST,
+      )
+    }.doesNotThrowAnyException()
   }
 }
