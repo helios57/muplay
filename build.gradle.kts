@@ -11,8 +11,56 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
 // the coverage floor table, and the one project-specific test task `:core:network` needs for a
 // real Navidrome container.
 
+// Kept in sync with `Testing.kt`'s identical constant by hand, not by import: `build-logic` is
+// included only via `pluginManagement.includeBuild` (see settings.gradle.kts), which exposes its
+// *plugins* (by id) to every project but not its Kotlin source, so this root script genuinely
+// cannot `import` a constant declared inside it. Searching the repo for
+// `LIVE_NAVIDROME_TEST_TASK_NAME` finds both declarations; searching for the bare string
+// `"liveNavidromeTest"` would not have found `Testing.kt`'s `if (name != "liveNavidromeTest")`
+// carve-out before this constant existed, which is exactly the drift risk a rename on either side
+// used to carry silently.
+val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
+
 /**
- * Branch-coverage floors, keyed by project path, enforced by every module's own
+ * One coverage floor: [counter] ("BRANCH" or "LINE") must reach [minimum] as a `COVEREDRATIO`, at
+ * the granularity [element] names, restricted to [includes]/[excludes] class-name patterns when
+ * given non-empty — see [coverageFloors]'s own doc for why a single module can carry more than one
+ * of these, and the three JaCoCo/Gradle gotchas this class's own properties exist to route around:
+ *
+ * 1. **`includes`/`excludes` on an [element] `"BUNDLE"` rule silently do nothing.** Measured
+ *    empirically (see task-7-report.md for the exact commands): a `"BUNDLE"` rule with
+ *    `excludes = listOf("app.muplay.setup.SetupScreenKt")` still evaluated the module's *entire*,
+ *    unfiltered class set — it reported the same ratio, and passed at the same floors, as an
+ *    identical rule with no `excludes` at all, all the way up to a minimum of `1.00`. Every rule
+ *    below that needs to scope to specific classes uses `element = "CLASS"` instead, confirmed to
+ *    filter correctly — the trade-off is that a `"CLASS"`-element rule evaluates [minimum]
+ *    separately against *each* matched class (every one must individually clear it), not as one
+ *    blended aggregate across all of them.
+ * 2. **An `includes`/`excludes` property that is assigned an empty list is not the same as one
+ *    left unset.** Explicitly assigning `emptyList()` — which is what a naive
+ *    `includes = floor.includes` does when `floor.includes` is itself empty — is read as "match
+ *    zero classes" (a vacuous, always-passing rule), not "no restriction". The registration code
+ *    below only assigns `includes`/`excludes` when the corresponding list is non-empty, leaving
+ *    the property at its own real default otherwise.
+ * 3. **A literal `$` in a class-name pattern never matches anything** (e.g.
+ *    `"app.muplay.setup.SetupViewModel$1"`, the exact binary name of a compiled nested/lambda
+ *    class) — every rule below that needs one uses a `*` wildcard across that position instead
+ *    (`"app.muplay.setup.SetupViewModel*1"`), which does match. The evidence points to the pattern
+ *    being compiled through a regex engine without the `$` being escaped first, where it reads as
+ *    the end-of-string anchor rather than a literal dollar sign — consistent with JaCoCo's own
+ *    reporting for a rule that *did* match displaying the class as `SetupViewModel.1` (dot, not
+ *    dollar).
+ */
+data class CoverageFloor(
+  val counter: String,
+  val minimum: BigDecimal,
+  val element: String = "BUNDLE",
+  val includes: List<String> = emptyList(),
+  val excludes: List<String> = emptyList(),
+)
+
+/**
+ * Coverage floors, keyed by project path, enforced by every module's own
  * `jacocoTestCoverageVerification` task (Tier 1's coverage-gate step — see the "Coverage gate"
  * step in `.github/workflows/pr.yml`, and `Jacoco.kt` in build-logic for the mechanism this table
  * supplies the numbers for: which classes/execution-data a module's task reads is decided there;
@@ -20,51 +68,143 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
  * once per module).
  *
  * Every number below is **measured** from a real `jacocoTestReport` run
- * (`./gradlew jacocoTestReport` per module — see task-7-report.md for the exact transcript),
- * rounded down a little from the exact figure so a routine, no-behaviour-change refactor does not
- * flip the gate red on noise — never an invented round number, and never a number the check
- * mathematically cannot fail at. (This project has shipped exactly that second defect once
- * already: a Java-era coverage table carried an entry of `0.00` — `ratio < floor` can never be
- * true when `floor` is `0.00`, since a ratio can never be negative, so that "floor" could never
- * fail regardless of how coverage actually moved.)
+ * (`./gradlew jacocoTestReport` per module — see task-7-report.md for the exact transcript and
+ * the round of code review that produced the BRANCH/LINE split below), rounded down a little from
+ * the exact figure so a routine, no-behaviour-change refactor does not flip the gate red on
+ * noise — never an invented round number, and never a number the check mathematically cannot fail
+ * at. (This project has shipped exactly that second defect once already: a Java-era coverage
+ * table carried an entry of `0.00` — `ratio < floor` can never be true when `floor` is `0.00`,
+ * since a ratio can never be negative, so that "floor" could never fail regardless of how
+ * coverage actually moved.)
  *
- * `:core:model`, `:core:network` and `:core:testing` measure **100%** today — 10/10, 30/30 and
- * 6/6 real branches respectively — and get the full 90% target immediately. Every gap Task 7 found
- * in them was closable from the JVM alone, so it was closed rather than excused: see
- * `ServerCapabilitiesTest` (both `supports` overloads were previously untested inside
- * `:core:model` itself — `:core:network`'s `CapabilityNegotiatorTest` exercises them too, but
- * coverage is measured per module, and execution from a *different* module's test task never
- * counts here), `SubsonicClientTest`'s new non-compliant-response and no-trailing-slash-baseUrl
- * tests, and `OpenApiFixtureValidatorTest`'s new `readSpec`/blank-path tests.
+ * **Why some modules get more than one entry, at different counters.** BRANCH coverage measures
+ * the wrong thing for `@Composable` code: the Compose compiler inserts real, JaCoCo-visible
+ * branches into every composable's own body (`$changed`/`$dirty` recomposition-skip checks,
+ * `getDefaultsInvalid()` guards, per-call-site skip logic) that only execute when something
+ * actually *composes* the function — a real UI, not a plain JVM unit test, can do that. A round
+ * of code review on this task decompiled the two Compose-bearing modules directly rather than
+ * reasoning about them: `:core:designsystem`'s `MuPlayTheme` composable body contains **zero**
+ * author-written conditionals (every one of its missing branches is Compose codegen); of
+ * `:feature:setup`'s `SetupScreenKt` branches, roughly 5-6 correspond to author-written
+ * conditionals (`isConnecting`, the `when (uiState)` cascade) and the rest are the same synthetic
+ * codegen. `generatedCodeExcludes` (`Jacoco.kt`) cannot fix this: it filters at class/file
+ * granularity, and these synthetic branches are woven *inside the same method body* as the
+ * developer's own `if`/`when` — JaCoCo has no Compose-aware filter to separate them.
  *
- * `:feature:setup` (9/109 real branches, ~8.26%) and `:core:designsystem` (2/30, ~6.67%) measure
- * far below 90% — not because logic that could be JVM-tested was left untested (their own
- * ViewModel / failure-to-message / colour-scheme-selection logic already is, at 100%: see
- * `SetupViewModelTest`, `SetupFailureReasonTest`, `ThemeTest`), but because the rest of both
- * modules is `@Composable` function bodies. The Compose compiler inserts real, measurable branches
- * into every composable (`$changed`/`$dirty` recomposition-skip checks) that only execute when
- * something actually composes the function — a real UI, not a plain JVM unit test, can do that.
- * The two floors below are the real measured numbers, not zero and not invented; **Task 8 raises
- * both to 0.90** once instrumented (emulator) coverage — which this project's
- * `mergedExecutionData` (`Jacoco.kt`) already merges in the moment it exists — starts actually
- * exercising these bodies.
+ * So: **non-UI code keeps the original BRANCH rule** (that is where logic lives, and it is
+ * genuinely JVM-testable), and **files containing `@Composable` declarations get a LINE rule
+ * instead** — "did this UI code actually run" is a question a real composition (an emulator
+ * journey, Task 8) can actually answer; branch coverage there would just be measuring the Compose
+ * compiler, not this project's own work. Where a module has *both* kinds of code, it gets more
+ * than one entry — never one blended rule that would hide a UI-only regression behind a
+ * healthy-looking ViewModel average, or vice versa.
  *
- * `:app` has **no entry at all** here, deliberately, and that absence is not the same thing as a
- * `0.00` floor: every one of its 18 measured branches is Compose codegen too (`MainActivity`,
- * `MuPlayApp`, `MuPlayApplication` and `SetupRoute` contain no `if`/`when`/`?:`/`&&`/`||` of their
- * own at all — confirmed by inspection and by the measured number), so its *entire* measured
- * branch coverage is 0/18 today, from JVM tests alone, with nothing left to extract the way
- * `colorSchemeFor`/`toMessage` were. A `0.00` floor here would be exactly the unfireable gate this
- * project has already shipped once before; any floor above `0.00` would fail immediately against a
- * module with nothing actually wrong with it. Neither is honest, so `:app` simply has no floor
- * until Task 8 gives it real, non-Compose-only execution data to measure one against.
+ * - **`:core:model`, `:core:network`, `:core:testing`** — no `@Composable` code at all (none of
+ *   the three modules even applies the Compose convention plugin). Unchanged: a single `"BUNDLE"`-
+ *   element BRANCH rule (an aggregate across the whole module — correct here, since there is
+ *   nothing to separate it from), measuring 100% today (10/10, 30/30, 6/6 real branches) against
+ *   the full 0.90 target. Every gap Task 7 found in them was closable from the JVM alone, so it
+ *   was closed rather than excused: see `ServerCapabilitiesTest`, `SubsonicClientTest`'s new
+ *   non-compliant-response and no-trailing-slash-baseUrl tests, and
+ *   `OpenApiFixtureValidatorTest`'s new `readSpec`/blank-path tests.
+ *
+ * - **`:feature:setup`** — three `"CLASS"`-element BRANCH rules, one per non-`@Composable` class
+ *   this module has (`SetupScreenKt`, the one Composable file, has no rule of its own — see next
+ *   paragraph). Not one aggregate rule across all three: their measured ratios are different
+ *   enough (100%, 60%, 87.5%) that a single blended floor would either sit so low it protects
+ *   none of them individually, or so high the weakest one could never have passed it honestly.
+ *   `SetupViewModel` (2/2, floor 0.90): `connect`'s own branches (the `InvalidUrl` check, the
+ *   catch-clause dispatch), fully covered. `SetupViewModel$1` (3/5, floor 0.55): the compiled
+ *   *default* `ping` constructor parameter's lambda class — two new `SetupViewModelTest` cases
+ *   (a real refused connection, then a real `MockWebServer` success) closed 3 of its originally-5
+ *   missing branches; the 2 still missing (`SetupViewModel.kt` lines 38-39, inside this same
+ *   compiled class) are, on the evidence, the Kotlin-compiler-generated "invalid continuation
+ *   state" safety branches every suspend lambda's `invokeSuspend` carries — structurally
+ *   unreachable from any legitimate call site, the same *kind* of compiler-owned gap BRANCH
+ *   coverage has for Compose, just from the coroutines compiler plugin instead. `SetupFailureReasonKt`
+ *   (7/8, floor 0.85): `toMessage`'s `when`-cascade, `SetupFailureReasonTest` covers all three
+ *   members plus both sides of `Rejected`'s `detail` null/non-null branch; the one branch still
+ *   missing is an artifact of how a `when` with no `else` over a sealed interface compiles, not an
+ *   uncovered case. No LINE entry for this module: `SetupScreenKt` itself measures a real
+ *   0/54 = 0.00% (no JVM test touches an uninvoked composable's own body at all, unlike
+ *   `:core:designsystem` below), and `0.00` is exactly the unfireable floor this project must not
+ *   ship again — Task 8 raises this to a real, floorable LINE number once its emulator journey
+ *   actually composes `SetupScreen`.
+ *
+ * - **`:core:designsystem`** — one `"CLASS"`-element LINE rule, scoped to `ThemeKt` (0.652,
+ *   floor 0.63) — the file holding both `colorSchemeFor` and the `MuPlayTheme` composable (Kotlin
+ *   compiles every top-level function in one `.kt` file into one class, so JaCoCo cannot separate
+ *   the two at class granularity; isolating `colorSchemeFor`'s own already-100%-covered 2 branches
+ *   would need JaCoCo's METHOD-element scoping, materially riskier machinery — untested by this
+ *   task — for a slice that is already fully covered and immaterial to the gate, so not pursued).
+ *   `colorSchemeFor` and `MuPlayTheme`'s own body are not what supplies most of that 0.652 —
+ *   `LightColorScheme`/`DarkColorScheme`'s multi-line `lightColorScheme(...)`/`darkColorScheme(...)`
+ *   initializers run as a side effect of the `ThemeKt` class simply being *loaded* (by
+ *   `ThemeTest`), independent of `MuPlayTheme` itself ever being composed. No BRANCH entry: the
+ *   only branches in this module are `colorSchemeFor`'s 2 (already 100% covered) and there is no
+ *   way to gate them in isolation, per the paragraph above; `ColorKt`/`TypeKt` (this module's
+ *   other two files) contain no `@Composable` declarations and no branches of their own to gate
+ *   either way.
+ *
+ * **`:app` has no entry at all here**, deliberately, and that absence is not the same thing as a
+ * `0.00` floor. Every one of its 18 measured branches, and effectively all of its measured lines
+ * (1/21 — the sole covered line is `MuPlayApplication`'s own trivial body, from
+ * `MuPlayApplicationTest`), is Compose/DI wiring (`MainActivity`, `MuPlayApp`, `MuPlayApplication`,
+ * `SetupRoute` contain no `if`/`when`/`?:`/`&&`/`||` of their own at all). A `0.00` floor at
+ * either counter would be exactly the unfireable gate this project has already shipped once
+ * before; any floor above `0.00` would fail immediately against a module with nothing actually
+ * wrong with it. Neither is honest, so `:app` simply has no entry until Task 8 gives it real,
+ * non-Compose-only execution data to measure one against — see the loud, per-module
+ * `logger.warn` below for why an absence like this is never silent.
  */
-val branchCoverageFloors = mapOf(
-  ":core:model" to BigDecimal("0.90"),
-  ":core:network" to BigDecimal("0.90"),
-  ":core:testing" to BigDecimal("0.90"),
-  ":feature:setup" to BigDecimal("0.08"),
-  ":core:designsystem" to BigDecimal("0.06"),
+val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
+  ":core:model" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+  ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+  ":core:testing" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+  // See coverageFloors's own doc above for why three CLASS-element rules, not one BUNDLE rule.
+  ":feature:setup" to listOf(
+    // 2/2 -- SetupViewModel.connect's own branches (InvalidUrl check, catch-clause dispatch) are
+    // fully covered by SetupViewModelTest.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.setup.SetupViewModel"),
+    ),
+    // 3/5 -- the compiled default `ping` constructor parameter's lambda class. Two rounds of new
+    // SetupViewModelTest cases (a real refused connection, then a real MockWebServer success)
+    // closed 3 of its originally-5 missing branches; the 2 still missing are, on the evidence
+    // (SetupViewModel.kt lines 38-39, inside this same compiled class), the Kotlin-compiler
+    // -generated "invalid continuation state" safety branches every suspend lambda's
+    // `invokeSuspend` carries -- structurally unreachable from any legitimate call site, the same
+    // *kind* of compiler-owned gap BRANCH coverage has for Compose, just from the coroutines
+    // compiler plugin instead of the Compose one.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.55"),
+      includes = listOf("app.muplay.setup.SetupViewModel*1"),
+    ),
+    // 7/8 -- SetupFailureReason.toMessage's when-cascade; SetupFailureReasonTest covers all three
+    // members plus both sides of Rejected's detail null/non-null branch. The one branch still
+    // missing is an artifact of how a `when` over a sealed interface with no `else` compiles, not
+    // a reachable path SetupFailureReasonTest is missing a case for.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.setup.SetupFailureReasonKt"),
+    ),
+  ),
+  // See coverageFloors's own doc above for the exact measurement and why CLASS-element.
+  ":core:designsystem" to listOf(
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.63"),
+      includes = listOf("app.muplay.designsystem.theme.ThemeKt"),
+    ),
+  ),
 )
 
 subprojects {
@@ -84,21 +224,49 @@ subprojects {
   // (`configureAndroidJacocoReport`/`configureAndroidJacocoCoverageVerification` explicitly depend
   // on `testDebugUnitTest`); this makes every module's report *and* verification task depend on
   // its own `test` lifecycle task the same way, generically, rather than trusting invocation order
-  // (CI step ordering, or a developer's own command) to always happen to run tests first.
+  // (CI step ordering, or a developer's own command) to always happen to run tests first. Verified
+  // across all six modules, not just the one (`:core:model`) the bug first surfaced in: every
+  // module's `jacocoTestCoverageVerification` task graph includes its own `test` task.
   tasks.withType<JacocoReport>().configureEach { dependsOn("test") }
   tasks.withType<JacocoCoverageVerification>().configureEach {
     dependsOn("test")
 
-    val floor = branchCoverageFloors[project.path] ?: return@configureEach
+    val floors = coverageFloors[project.path]
+    if (floors.isNullOrEmpty()) {
+      // Loud, not silent: a module simply absent from `coverageFloors` used to fail this
+      // `return`/no-op with no signal at all — `:app` was fine because it is documented above,
+      // but nothing stopped (and nothing announced) a *future* module landing in
+      // `settings.gradle.kts` with no floor and no comment explaining why. This does not fail the
+      // build — an ungated module is a real, sometimes-correct state (see `:app`'s own case) — it
+      // just makes sure nobody has to go looking for the gap.
+      logger.warn(
+        "COVERAGE: ${project.path} has no entry in `coverageFloors` (root build.gradle.kts) " +
+          "-- its branch/line coverage is completely unenforced in Tier 1. If that is " +
+          "deliberate, document why there (see :app's own entry there for the precedent); if " +
+          "not, add a measured floor.",
+      )
+      return@configureEach
+    }
+
     violationRules {
       isFailOnViolation = true
-      rule {
-        // `element` defaults to "BUNDLE" — the whole module's aggregate ratio, which is what a
-        // per-module floor means here, not a per-class one.
-        limit {
-          counter = "BRANCH"
-          value = "COVEREDRATIO"
-          minimum = floor
+      floors.forEach { floor ->
+        rule {
+          element = floor.element
+          // Only assigned when non-empty: JaCoCo/Gradle treats an *explicitly assigned* empty
+          // `includes`/`excludes` list as "match zero classes" (a vacuous, always-passing rule),
+          // not as "no restriction" -- confirmed empirically while proving this rule can fail (see
+          // task-7-report.md): an unconditional `includes = floor.includes` with
+          // `floor.includes == emptyList()` silently evaluated over zero classes and passed at
+          // *any* minimum, including 0.99 against a module measuring 0.11. Leaving the property
+          // untouched (its own unset default) is what makes "no restriction" actually mean that.
+          if (floor.includes.isNotEmpty()) includes = floor.includes
+          if (floor.excludes.isNotEmpty()) excludes = floor.excludes
+          limit {
+            counter = floor.counter
+            value = "COVEREDRATIO"
+            minimum = floor.minimum
+          }
         }
       }
     }
@@ -116,6 +284,10 @@ subprojects {
 // `dependencies {}` (`ConventionTest` enforces it), so a one-off task like this belongs at the
 // root, next to the coverage floor table it is policy alongside, not mechanism inside
 // build-logic (nothing here is reusable machinery a second module would ever need).
+//
+// `LIVE_NAVIDROME_TEST_TASK_NAME` (`Testing.kt`) is the shared constant that keeps this task's own
+// name and `configureJUnit5`'s carve-out for it from drifting apart — see that constant's own doc
+// for the exact failure a plain string literal on each side already caused once.
 project(":core:network") {
   // `afterEvaluate`, not a bare `project(...) { }` body: this root script's own evaluation runs
   // before `:core:network`'s build.gradle.kts applies `muplay.jvm.library` (the plugin that
@@ -135,7 +307,7 @@ project(":core:network") {
     // `Test` task has no such extension of its own; only the project does).
     val testSourceSet = the<SourceSetContainer>()["test"]
 
-    tasks.register<Test>("liveNavidromeTest") {
+    tasks.register<Test>(LIVE_NAVIDROME_TEST_TASK_NAME) {
       group = "verification"
       description = "Runs LiveNavidromeTest (the \"live\"-tagged tests only) against a real " +
         "Navidrome container on localhost:4533 -- see ci/navidrome.compose.yml. Run by the " +

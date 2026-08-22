@@ -15,6 +15,8 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -141,6 +143,66 @@ class SetupViewModelTest {
     viewModel.viewModelScope.cancel()
 
     assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Connecting)
+  }
+
+  // Every other test above injects a fake `ping`, so SetupViewModel's *default* constructor
+  // parameter -- a real `SubsonicClient(credentials).ping()` call -- never actually runs; that
+  // gap is exactly what surfaced as `SetupViewModel$1` (the compiled default-lambda class) sitting
+  // at 0% in Task 7's per-module coverage measurement. This exercises the real default wiring
+  // end-to-end, pointed at a real but immediately-refused TCP port (127.0.0.1:1, a reserved port
+  // nothing ever listens on) rather than a real Navidrome container: a refused connection fails
+  // fast and deterministically -- no live server, no timeout, no flakiness -- while still routing
+  // through the genuine `SubsonicClient` + Retrofit + OkHttp stack this seam exists to bypass in
+  // every other test.
+  @Test
+  fun `the default ping wiring performs a real network call that surfaces as Unreachable`() = runTest {
+    val viewModel = SetupViewModel()
+
+    viewModel.uiState.test {
+      assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
+
+      viewModel.connect("http://127.0.0.1:1", "alice", "sesame")
+      assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
+      assertThat(awaitItem()).isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
+    }
+  }
+
+  // Companion to the test above: this exercises the default wiring's *success* path -- the
+  // other half of SetupViewModel$1's own compiled state machine that a refused-connection test
+  // alone cannot reach (a suspend lambda's dispatch differs between "resumed with a value" and
+  // "resumed with an exception"). Real socket, real Retrofit/OkHttp stack, same MockWebServer
+  // stance core/network's SubsonicClientTest documents -- not a fake standing in for the network.
+  @Test
+  fun `the default ping wiring performs a real network call that succeeds`() = runTest {
+    val server = MockWebServer()
+    server.start()
+    server.enqueue(
+      MockResponse.Builder()
+        .code(200)
+        .addHeader("Content-Type", "application/json")
+        .body(
+          """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
+            """"serverVersion":"0.63.2","openSubsonic":true}}""",
+        )
+        .build(),
+    )
+
+    try {
+      val viewModel = SetupViewModel()
+
+      viewModel.uiState.test {
+        assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
+
+        viewModel.connect(server.url("/").toString(), "alice", "sesame")
+        assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
+
+        val success = awaitItem()
+        assertThat(success).isInstanceOf(SetupUiState.Success::class.java)
+        assertThat((success as SetupUiState.Success).serverInfo.type).isEqualTo("navidrome")
+      }
+    } finally {
+      server.close()
+    }
   }
 
   private fun failIfCalled(): suspend (SubsonicCredentials) -> ServerInfo =

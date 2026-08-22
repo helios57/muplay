@@ -24,4 +24,9 @@ dependencies {
 
   testImplementation(libs.coroutines.test)
   testImplementation(libs.turbine)
+  // Backs the one SetupViewModelTest that exercises the *default* ping wiring's success path
+  // (SetupViewModel$1, the compiled default-lambda class) against a real socket rather than a
+  // fake -- the same MockWebServer-is-real-enough stance core/network's SubsonicClientTest
+  // itself documents.
+  testImplementation(libs.okhttp.mockwebserver)
 }

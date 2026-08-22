@@ -13,9 +13,9 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
 /**
  * JaCoCo, applied uniformly to every module now so it is configured once instead of drifting
  * across the ten modules still to come. This wires collection and reporting; it does **not** set
- * a coverage floor — `jacocoTestCoverageVerification`'s branch-coverage minimums are policy, set
- * once for every module from root `build.gradle.kts`'s `branchCoverageFloors` map (Task 7), not
- * duplicated here.
+ * a coverage floor — `jacocoTestCoverageVerification`'s BRANCH/LINE minimums are policy, set
+ * once for every module from root `build.gradle.kts`'s `coverageFloors` map (Task 7 -- extended
+ * to a per-counter, per-module split during that same task's review), not duplicated here.
  *
  * Applying the `jacoco` plugin alone already instruments every `Test` task project-wide (Android
  * unit test tasks included, since they are `Test` tasks too), so execution data is captured
@@ -194,7 +194,7 @@ internal fun Project.configureAndroidJacocoReport(commonExtension: CommonExtensi
  *
  * Registers no `violationRules` here: this is *mechanism* only (which classes, which execution
  * data). The *policy* — which modules get a floor at all, and what number — lives in root
- * `build.gradle.kts`'s `branchCoverageFloors` map, applied generically to every
+ * `build.gradle.kts`'s `coverageFloors` map, applied generically to every
  * `JacocoCoverageVerification` task project-wide (JVM-auto-registered or this one) so it is
  * expressed once instead of once per module, and so a module simply absent from that map is
  * visibly and deliberately un-gated rather than gated by an empty/invented rule.
@@ -205,7 +205,7 @@ internal fun Project.configureAndroidJacocoCoverageVerification(commonExtension:
   tasks.register("jacocoTestCoverageVerification", JacocoCoverageVerification::class.java) {
     group = "verification"
     description = "Fails the build if this module's branch coverage drops below its floor " +
-      "-- see root build.gradle.kts's branchCoverageFloors."
+      "-- see root build.gradle.kts's coverageFloors."
 
     val debugUnitTest = tasks.named("testDebugUnitTest", Test::class.java)
     dependsOn(debugUnitTest)
