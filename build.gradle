@@ -15,30 +15,21 @@ plugins {
 // real tests are added over Plans 2+, and jacocoTestCoverageVerification below (wired into the PR
 // gate) fails the build if a change lets a module's branch coverage fall below the floor recorded
 // here for it. New :core:* modules have no entry until someone measures and adds one.
+//
+// :core:database is this project's first module with a test that actually runs under
+// @RunWith(RobolectricTestRunner.class), and that first exposed a real JaCoCo/Robolectric gap:
+// Robolectric loads classes through its own instrumenting classloader
+// (org.robolectric.internal.bytecode.SandboxClassLoader), which JaCoCo's execution-data collector
+// records as classes with no resolvable code location and silently drops from the coverage model —
+// so a genuinely, thoroughly exercised test still measured 0/46 branches covered. See the
+// `includeNoLocationClasses`/`excludes` block on the shared `tasks.withType(Test)` configuration
+// below: that is the actual, documented fix (not a workaround), and every :core:* module's
+// jacocoTestReport now benefits from it, not just this one's. With it, :core:database measures a
+// real 22/46 branches ≈ 47.83% — recorded below, truncated the same way as every other entry.
 ext.coreBranchCoverageBaseline = [
     ':core:model'   : 0.25d,
     ':core:network' : 0.90d,
-    // :core:database's MediaProgressDaoTest genuinely exercises every DAO method (upsert, find,
-    // findAll) via a real in-memory Room database and passes 4/4 — but its own
-    // `./gradlew :core:database:jacocoTestReport` output records 0/46 branches covered (report.xml:
-    // every one of Room's generated MuPlayDatabase_Impl/MediaProgressDao_Impl branches, and even
-    // MediaProgressEntity's own constructor, show missed with zero covered). This is not a dead or
-    // undertested module: it is a documented JaCoCo/Robolectric incompatibility — Robolectric loads
-    // application classes through its own sandboxed classloader
-    // (org.robolectric.internal.bytecode.SandboxClassLoader), which the JaCoCo agent's standard
-    // classloader-instrumentation hook never sees, so nothing executed inside a
-    // @RunWith(RobolectricTestRunner.class) test is ever recorded as covered regardless of how
-    // thoroughly it is actually exercised (see e.g. robolectric/robolectric#5575 and multiple
-    // long-standing "Jacoco shows 0% for Robolectric tests" reports; no supported one-line Gradle
-    // fix exists as of this commit). :core:database is this project's first module with an actual
-    // Robolectric-run test, so this is the first time that gap has surfaced here. 0.00 is the
-    // honestly measured floor, not an invented placeholder — it is recorded, not skipped, precisely
-    // so this ratchet stays enforced (still fails loudly if the module's total branch count regresses
-    // to zero, i.e. goes completely untested) — but note this floor cannot rise through added test
-    // coverage alone while this JaCoCo/Robolectric gap persists; investigate the gap itself (e.g. an
-    // offline-instrumentation JaCoCo mode) before assuming a future PR's low number here is a real
-    // regression.
-    ':core:database': 0.00d,
+    ':core:database': 0.47d,
 ]
 
 subprojects {
@@ -147,6 +138,20 @@ subprojects {
       maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
       forkEvery = 100
       maxHeapSize = '4g'
+      // Robolectric loads application/test classes through its own instrumenting classloader
+      // (org.robolectric.internal.bytecode.SandboxClassLoader / InstrumentingClassLoader), which
+      // JaCoCo's execution-data collector records as classes with no resolvable code location --
+      // by default JaCoCo drops those from the coverage model entirely, which is why a
+      // @RunWith(RobolectricTestRunner.class) test that genuinely executes and passes can still
+      // show 0 covered branches/lines for every class it touched. includeNoLocationClasses below
+      // is the documented fix: it tells JaCoCo to keep such classes in the model instead of
+      // discarding them. excludes = ['jdk.internal.*'] is not optional alongside it on JDK 11+:
+      // without it the test JVM crashes attempting to instrument JDK internals pulled in via
+      // includeNoLocationClasses's wider net, rather than failing cleanly.
+      jacoco {
+        includeNoLocationClasses = true
+        excludes = ['jdk.internal.*']
+      }
     }
 
     // The core 'jacoco' plugin only auto-registers a task literally named 'jacocoTestReport' when
@@ -311,6 +316,20 @@ subprojects {
           }
         }
         tasks.named('check').configure { dependsOn tasks.named('jacocoTestCoverageVerification') }
+      } else if (project.path.startsWith(':core:')) {
+        // Visible without anyone opening this file: a :core:* module with no
+        // coreBranchCoverageBaseline entry -- whether newly added and not yet measured, or
+        // deliberately excluded because JaCoCo cannot currently measure it meaningfully (a real
+        // possibility -- see the includeNoLocationClasses comment above for the one such gap this
+        // project has already hit and fixed) -- gets no jacocoTestCoverageVerification task at
+        // all, so `check`/`build` stays green with zero enforcement and zero signal. A build-time
+        // warning is the minimum needed so that silence reads as "nobody has looked at this yet,"
+        // not as "this module is covered."
+        logger.warn(
+            "${project.path} has no JaCoCo branch-coverage baseline in coreBranchCoverageBaseline" +
+                ' (root build.gradle) -- its coverage is unmeasured and jacocoTestCoverageVerification' +
+                " is not enforced for it. Measure it (./gradlew ${project.path}:jacocoTestReport)" +
+                ' and add an entry, or record why it is deliberately excluded.')
       }
     }
   }
