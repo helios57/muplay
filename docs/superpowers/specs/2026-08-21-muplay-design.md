@@ -552,11 +552,12 @@ No `ACCESS_FINE_LOCATION`, no `NEARBY_WIFI_DEVICES`, no `WAKE_LOCK`.
 **Corrected by spike S1**
 (`docs/superpowers/spikes/2026-08-21-s1-local-network-permission.md`): the
 gate is triggered by the **app's declared `targetSdkVersion`, not the
-device's API level** — confirmed on a real API 37 (Android 17) device by
-running the identical code with only `targetSdk` changed: a `targetSdk 36`
-build reaches a same-subnet address with no permission at all, while a
-`targetSdk 37` build on the *same device* is blocked. Code must not gate this
-on `Build.VERSION.SDK_INT >= 37` (a runtime check of the device); the correct
+device's API level** — confirmed on an API 37 (Android 17) emulator (AVD
+`muplay37`, not a physical device — see below for what that leaves
+unconfirmed) by running the identical code with only `targetSdk` changed: a
+`targetSdk 36` build reaches a same-subnet address with no permission at all,
+while a `targetSdk 37` build on the *same emulator* is blocked. Code must not
+gate this on `Build.VERSION.SDK_INT >= 37` (a runtime check of the device); the correct
 framing is "we are built with `targetSdk >= 37`," a compile-time fact. **Since
 this project's `targetSdk` is 36 (see Global Constraints), this permission is
 currently inert and does not need to be declared today** — it only becomes
@@ -640,8 +641,20 @@ state on the item. No webhooks (they need a reachable server).
 ```
 
 **Java 17**, `sourceCompatibility`/`targetCompatibility` 17, with desugaring for
-`java.time`. **No Kotlin plugin is applied to any module** — that is enforced by
-a build check, not convention, so a stray dependency cannot reintroduce it.
+`java.time`. **No Kotlin source exists anywhere in the repository** — that is
+enforced by a build check (an ArchUnit rule that fails if any `.kt`/`.kts` file
+is found), not convention, so a stray dependency cannot reintroduce it. This is
+weaker than "no Kotlin plugin is applied," which is not actually true: AGP
+9.3.1's own built-in Kotlin support applies a real Kotlin Gradle Plugin to
+every Android module regardless of what any build script says (confirmed
+empirically — `compileDebugKotlin` and friends are registered on `:app` and
+`:core:network` with zero Kotlin-related text in either module's
+`build.gradle`), so a `.kt` file placed in the right directory would compile
+with no build-script change at all. The filesystem-level source ban is what
+actually stops Kotlin from compiling here; a build-script text scan for a
+Kotlin plugin declaration is at best defense-in-depth against one narrower
+case (an explicit, textual plugin application) and was never, on its own, the
+real guarantee.
 
 | Concern | Choice | Why |
 |---|---|---|
@@ -654,7 +667,7 @@ a build check, not convention, so a stray dependency cannot reintroduce it.
 | DI | **Hilt** | Full Java support; Google's recommendation |
 | Database | **Room 2.8.x** | Room 3 is **Kotlin-codegen-only** — Java rules it out, independently of it being 7 weeks old |
 | HTTP client | **OkHttp 5** + Retrofit 3 | Java-friendly |
-| JSON | **Moshi** (reflection-free, codegen) | kotlinx.serialization is Kotlin-only |
+| JSON | **Jackson** (databind, explicit `@JsonCreator` per record) | Moshi cannot deserialise Java records |
 | Images | **Glide** | Coil 3 is Kotlin-first |
 | Phone HTTP server | **Embedded Jetty** | See §6 |
 | Background work | WorkManager | Java API is first-class |
@@ -716,7 +729,7 @@ code *does*, not what it *should*.
 
 | Job | Content |
 |---|---|
-| Static | detekt, ktlint, ArchUnit |
+| Static | Checkstyle, ArchUnit (detekt/ktlint are Kotlin-only and banned) |
 | Unit | mappers, token derivation, queue logic, resume maths with injected `java.time.Clock` |
 | **Playback goldens** | `PlaybackOutput` + dump files; `ShadowAudioTrack` byte-compare for gapless; silence-skip frame counts; chapter assertion on the M4B fixture |
 | **Session** | Browse tree and all `onPlaybackResumption` cases — under Robolectric, since they only need `Bundle`/`MediaItem`. `isAutomotiveController` branching tests Auto with no car. |
