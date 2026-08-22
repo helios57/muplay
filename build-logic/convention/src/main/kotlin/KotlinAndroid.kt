@@ -28,4 +28,5 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
   configureJUnit5()
   configureJacoco()
   configureAndroidJacocoReport(commonExtension)
+  configureAndroidJacocoCoverageVerification(commonExtension)
 }

@@ -294,6 +294,73 @@ class SubsonicClientTest {
     assertThat(extensions).containsExactly(entry("futureExtension", emptyList()))
   }
 
+  // --- Defensive handling of a non-compliant server, and buildApi's own trailing-slash edge case
+  //     (Task 7's real, measured branch-coverage floor is what surfaced every gap below — each one
+  //     is a genuine, previously-untested path in SubsonicClient's own code, not a synthetic
+  //     exercise added purely to move a number.) -------------------------------------------------
+
+  // The OpenSubsonic spec requires "type"/"serverVersion"/"version"/"openSubsonic" on every
+  // response (see SubsonicResponseBody's own doc), so OpenApiFixtureValidator would (correctly)
+  // reject a captured fixture missing them — this body is deliberately synthetic and non-compliant,
+  // the same pattern the two "status failed ..." tests above already use, to prove SubsonicClient's
+  // own defensive fallbacks (orEmpty()/?:) rather than assume every real server honours the spec.
+  @Test
+  fun `ping tolerates a non-compliant response missing every optional field`() = runTest {
+    enqueue("""{"subsonic-response":{"status":"ok"}}""")
+
+    val info = client.ping()
+
+    assertThat(info.type).isEmpty()
+    assertThat(info.serverVersion).isEmpty()
+    assertThat(info.apiVersion).isEmpty()
+    assertThat(info.isOpenSubsonic).isFalse()
+  }
+
+  // "musicFolders" absent entirely (as opposed to present but empty) is a stronger claim than the
+  // spec makes about a compliant getMusicFolders response, but SubsonicClient's own `?.` chain
+  // treats it the same as "no folders" rather than throwing an NPE — this proves that fallback
+  // directly, synthetic and non-compliant for the same reason as the test above.
+  @Test
+  fun `getMusicFolders tolerates a response missing the musicFolders object entirely`() = runTest {
+    enqueue(
+      """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.63.2","openSubsonic":true}}""",
+    )
+
+    val libraries = client.getMusicFolders()
+
+    assertThat(libraries).isEmpty()
+  }
+
+  // Same defensive fallback as the two tests above, for getOpenSubsonicExtensions's own orEmpty().
+  @Test
+  fun `getOpenSubsonicExtensions tolerates a response missing the extensions field entirely`() = runTest {
+    enqueue(
+      """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.63.2","openSubsonic":true}}""",
+    )
+
+    val extensions = client.getOpenSubsonicExtensions()
+
+    assertThat(extensions).isEmpty()
+  }
+
+  // Every other test in this class builds its client from MockWebServer's own server.url("/"),
+  // which HttpUrl always normalizes with a trailing slash — so buildApi's own
+  // `if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"` branch had only ever taken its "already
+  // has one" path. A real user-entered server URL (this project's own SetupViewModel takes one
+  // directly, with no normalization of its own) very often will not have a trailing slash, so this
+  // is a real path, not a contrived one.
+  @Test
+  fun `ping succeeds when baseUrl has no trailing slash`() = runTest {
+    enqueue(fixture(PING_SUCCESS_FIXTURE))
+    val noTrailingSlashUrl = server.url("/").toString().removeSuffix("/")
+    val clientWithoutTrailingSlash =
+      SubsonicClient(SubsonicCredentials(noTrailingSlashUrl, "alice", "sesame"))
+
+    val info = clientWithoutTrailingSlash.ping()
+
+    assertThat(info.type).isEqualTo("navidrome")
+  }
+
   private companion object {
     const val PING_SUCCESS_FIXTURE = "ping-success.json"
     const val PING_FAILED_FIXTURE = "ping-failed-wrong-credentials.json"

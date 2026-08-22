@@ -50,7 +50,7 @@ object OpenApiFixtureValidator {
   private val validator: OpenApiInteractionValidator by lazy { buildValidator() }
 
   private fun buildValidator(): OpenApiInteractionValidator =
-    OpenApiInteractionValidator.createForInlineApiSpecification(readSpec())
+    OpenApiInteractionValidator.createForInlineApiSpecification(readSpec(SPEC_RESOURCE))
       // The spec composes every response schema via allOf (e.g. SubsonicSuccessResponse =
       // SubsonicBaseResponse + an inline {status} extension). Without this flag, the validator
       // checks each allOf branch against the *whole* instance independently, so a field declared
@@ -75,10 +75,17 @@ object OpenApiFixtureValidator {
       .withResolveCombinators(true)
       .build()
 
-  private fun readSpec(): String {
+  // `internal`, not `private`, and takes the resource path as a parameter rather than reading
+  // SPEC_RESOURCE directly: [buildValidator] still always passes SPEC_RESOURCE (the real vendored
+  // spec never moves), but the missing-resource branch below is otherwise unreachable from a test
+  // — the spec resource is always genuinely present on this module's own classpath, and there is no
+  // other seam to make it disappear without this parameter. See OpenApiFixtureValidatorTest's
+  // `readSpec throws for a resource that is not on the classpath` for what this exists to prove:
+  // a missing vendored spec fails loudly and specifically, not as a bare NPE somewhere downstream.
+  internal fun readSpec(resourcePath: String): String {
     val stream =
-      OpenApiFixtureValidator::class.java.getResourceAsStream(SPEC_RESOURCE)
-        ?: throw IllegalStateException("Vendored spec not found on classpath: $SPEC_RESOURCE")
+      OpenApiFixtureValidator::class.java.getResourceAsStream(resourcePath)
+        ?: throw IllegalStateException("Vendored spec not found on classpath: $resourcePath")
     return stream.use { it.readBytes().toString(Charsets.UTF_8) }
   }
 

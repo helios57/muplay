@@ -1,4 +1,9 @@
 name: PR
+
+# Triggers on `master` — this repository's actual default branch (`git branch -a` / GitHub both
+# confirm it). The Java implementation's version of this file triggered on `main`, a branch that
+# does not exist here, so it silently never ran on any push — a gate that cannot fire is worse than
+# no gate. Do not "fix" this back to `main` without first checking the default branch again.
 on:
   pull_request:
   push:
@@ -9,7 +14,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
+  # Fast, cheap build-hygiene checks first: `ConventionTest` guards the build itself (no module
+  # configuring android/kotlin blocks directly, no mock framework on any classpath, no kapt — see
+  # its own doc), and `lint` is AGP's own static analysis across every Android module. Neither
+  # needs a JVM test run or a container, so this is the cheapest possible thing to fail on.
+  static-analysis:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -17,38 +26,127 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: zulu
-          java-version: 17
+          java-version: 21
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Architecture rules
-        run: ./gradlew :app:testDebugUnitTest --tests '*ArchitectureTest*'
+      - name: Convention rules
+        run: ./gradlew :app:testDebugUnitTest --tests '*ConventionTest*'
 
-      - name: Static analysis
-        run: ./gradlew checkstyleMain checkstyleTest
+      - name: Android Lint
+        run: ./gradlew lint
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: static-analysis-reports
+          path: |
+            **/build/reports/tests/**
+            **/build/reports/lint-results*
+
+  # Every JVM test across every module (`./gradlew test` — the lifecycle task every module,
+  # Android or plain java-library, exposes; for the Android modules it already resolves to exactly
+  # `testDebugUnitTest`, so this one task covers all six modules with no per-module enumeration to
+  # keep in sync), plus the 90%-branch-floor coverage gate. `LiveNavidromeTest` (core/network) is
+  # excluded here — it is tagged "live" and needs the real container the `live-navidrome` job below
+  # starts; see `Testing.kt`'s `configureJUnit5`.
+  unit-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Unit tests
-        # Not `testDebugUnitTest`: that task only exists on the two Android modules (:app,
-        # :core:network). :core:model and :testing are plain java-library modules, whose unit
-        # test task is named plain `test` — `testDebugUnitTest` alone would silently never run
-        # ServerCapabilitiesTest or OpenApiFixtureValidatorTest. `test` is the lifecycle task
-        # every module (Android or java-library) exposes, and for the Android modules it already
-        # resolves to exactly `testDebugUnitTest` (there is no release unit test variant in this
-        # project), so this covers all four modules with no change in scope for :app/:core:network.
         run: ./gradlew test
 
-      - name: Coverage
+      - name: Coverage report
         run: ./gradlew jacocoTestReport
 
       - name: Coverage gate
-        # Ratchet floor per :core:* module — see coreBranchCoverageBaseline in the root
-        # build.gradle. Fails the build if branch coverage drops below its recorded baseline.
+        # Branch-coverage floors, one per module — see branchCoverageFloors in root
+        # build.gradle.kts for the exact, measured number behind each module and why. Every floor
+        # there is real and can fail; a module absent from that map (:app, today) is deliberately
+        # ungated rather than given a floor that cannot fail either.
         run: ./gradlew jacocoTestCoverageVerification
 
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-reports
+          name: unit-integration-reports
           path: |
             **/build/reports/tests/**
-            **/build/reports/checkstyle/**
+            **/build/reports/jacoco/**
+
+  # Runs LiveNavidromeTest (core/network) against a real, pinned deluan/navidrome:0.63.2 container
+  # — not a fixture, not MockWebServer. Docker is not an emulator: the container starts in 5-11s
+  # (measured), well inside this job's own 10-minute budget, so anything whose subject is genuinely
+  # Navidrome's own behaviour (does a wrong password actually get rejected? do the two libraries
+  # ci/configure-libraries.sh wires up actually come back with those names?) is proven here, live,
+  # rather than deferred to Task 8's emulator tier or left resting on a captured-fixture stand-in.
+  live-navidrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Start Navidrome
+        run: docker compose -f ci/navidrome.compose.yml up -d --wait
+
+      - name: Configure libraries
+        # Library 1 is pinned to its mount path and cannot be renamed-by-repointing or deleted —
+        # this drives Navidrome's native REST API to rename it "Music" and create the second
+        # "Audiobooks" library, then waits for both to finish scanning. See the script's own header
+        # comment for the full, empirically-confirmed explanation.
+        run: ./ci/configure-libraries.sh
+
+      - name: Live Navidrome tests
+        run: ./gradlew :core:network:liveNavidromeTest
+
+      - name: Stop Navidrome
+        if: always()
+        run: docker compose -f ci/navidrome.compose.yml down -v
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-navidrome-reports
+          path: core/network/build/reports/tests/liveNavidromeTest/**
+
+  # "Contract": every fixture validated against the vendored OpenSubsonic OpenAPI spec (see
+  # docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md's own test-tier table). That oracle
+  # -- OpenApiFixtureValidator -- and its own test suite live entirely in :core:testing, so this
+  # job's one purpose is proving the oracle itself is sound, isolated from the much larger
+  # unit+integration run so a drift in the vendored spec's meaning is visible as its own failing
+  # gate, not buried inside a 70-plus-test run covering five other modules too.
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: OpenAPI fixture contract tests
+        run: ./gradlew :core:testing:test
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: contract-reports
+          path: core/testing/build/reports/tests/**

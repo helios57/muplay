@@ -80,6 +80,28 @@ class OpenApiFixtureValidatorTest {
   // response schema wraps a "transcodeDecision" object whose only required fields are the booleans
   // "canDirectPlay" and "canTranscode" (read from the spec's TranscodeDecision schema, not
   // guessed), and the wrapper object declares no other properties, so no other keys are added.
+  // A blank endpointPath is also an "unknown path" to the validator (the spec has no "" key), so
+  // this hits the same rejection as the named-unknown-path test above, but exercises assertValid's
+  // own `endpointPath.ifBlank { "<blank endpointPath>" }` fallback for the failure message —
+  // without it, the message would silently name nothing at all rather than saying so explicitly.
+  @Test
+  fun `rejects a blank endpoint path, naming it explicitly rather than blank`() {
+    assertThatThrownBy { OpenApiFixtureValidator.assertValid("", validPing) }
+      .isInstanceOf(AssertionError::class.java)
+      .hasMessageContaining("<blank endpointPath>")
+  }
+
+  // readSpec is the one seam OpenApiFixtureValidator exposes purely so this path — a genuinely
+  // missing vendored spec — can be proven to fail loudly and specifically, rather than staying an
+  // unreachable branch forever: the real spec resource this module ships is always present, so
+  // there is no other way to make getResourceAsStream return null.
+  @Test
+  fun `readSpec throws for a resource that is not on the classpath`() {
+    assertThatThrownBy { OpenApiFixtureValidator.readSpec("/openapi/does-not-exist.json") }
+      .isInstanceOf(IllegalStateException::class.java)
+      .hasMessageContaining("/openapi/does-not-exist.json")
+  }
+
   @Test
   fun `accepts a POST-only endpoint when the method is passed explicitly`() {
     val validTranscodeDecision = """{"transcodeDecision":{"canDirectPlay":true,"canTranscode":false}}"""
