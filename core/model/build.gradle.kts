@@ -3,5 +3,5 @@ plugins {
 }
 
 dependencies {
-  // Nothing yet: data classes and sealed interfaces only, added starting Task 2.
+  // Still nothing: data classes and sealed interfaces only, with no dependency of their own.
 }
