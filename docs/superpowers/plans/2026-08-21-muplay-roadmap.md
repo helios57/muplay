@@ -74,7 +74,11 @@ Copied verbatim from the spec. Every task in every plan inherits these.
   cannot decode it and Navidrome mislabels it as `audio/ogg`.
 - Media3 cache keys derive from the **track ID alone** via `setCustomCacheKey`.
 - Book positions are **local only**. No server sync.
-- **PR gate ≤ 10 minutes with no emulator.** Emulator work is nightly.
+- **Two-tier merge gate, both tiers required.** Tier 1 (static, unit,
+  integration against a real Navidrome container) stays ≤ 10 minutes with no
+  emulator, for fast feedback. **Tier 2 runs emulator end-to-end journeys against
+  a real Navidrome and must be green to merge** — it is not nightly and not
+  optional. Quality outranks gate speed; nothing is dropped for being slow.
 - Goldens are recorded as **separate bot commits**, never in the same commit as
   the change they justify.
 - **Branch coverage ≥ 90% on every `:core:*` module**, and on every module added

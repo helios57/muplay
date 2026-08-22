@@ -722,8 +722,11 @@ code *does*, not what it *should*.
 4. **Goldens are recorded as separate bot commits**, never in the same commit as
    the change.
 5. **Write the test first, from the spec** — for Subsonic, the spec exists.
-6. **Budget the suite.** Past ~10 minutes the iteration loop degrades and humans
-   merge on red. Speed is a correctness property.
+6. **Budget the fast tier.** Past ~10 minutes the iteration loop degrades and
+   humans merge on red, so tier 1 stays under 10 minutes. That is a budget on
+   *feedback latency*, never a licence to skip a test: anything that does not
+   fit moves to tier 2, which is also required to merge. Nothing is dropped for
+   being slow.
 7. **No mock frameworks.** Mockito, MockK, EasyMock and PowerMock are banned
    from the dependency graph, enforced by a build check. A test whose assertion
    is satisfied by a mock returning what it was told to return proves nothing
@@ -757,7 +760,13 @@ use Navidrome. A fixture recorded from a container and replayed is weaker
 evidence than the container itself, and the container is now cheap enough that
 there is no excuse.
 
-### PR gate — ≤ 10 minutes, no emulator
+### The merge gate — two tiers, both required
+
+Quality is the first priority; speed is a convenience layered on top of it. The
+gate is split so cheap failures surface in minutes, but **both tiers must be
+green to merge.** Tier 2 is not nightly, not advisory, and not skippable.
+
+#### Tier 1 — fast feedback, ≤ 10 minutes, no emulator
 
 | Job | Content |
 |---|---|
@@ -770,6 +779,25 @@ there is no excuse.
 | **Cast** | In-process fake renderer on `127.0.0.1:0` — SOAPACTION quoting, DIDL escaping round-trip, `protocolInfo` vs served `Content-Type`, renderer GETs the advertised URL, Range → 206/416/HEAD |
 | Screenshot | **Roborazzi** on Views (`captureRoboImage()` works on any `View`), sharded, phone/tablet × light/dark |
 | Coverage | **JaCoCo** branch coverage on `:core:*` — **hard floor of 90%**, generated code excluded (Kover is Kotlin-oriented) |
+
+#### Tier 2 — emulator end-to-end, required to merge
+
+Runs on a real Android emulator (API 37, hardware-accelerated via KVM) against a
+real pinned Navidrome container. This is the tier that proves the app works
+rather than that its parts type-check together — and it is where the D8 record
+bug was caught, which every unit test in the suite had missed.
+
+| Journey | What it proves |
+|---|---|
+| **First run** | Enter server URL and credentials → `ping` → `getMusicFolders` → tag each library Music or Audiobooks. The flow the whole app depends on. |
+| **Browse** | Artists, albums, tracks render from the local mirror; cover art loads; search returns results. |
+| **Library-scoped shuffle** | Shuffle the Music library repeatedly and assert **no audiobook ever appears**. The headline feature, and only a real server with two libraries can prove it. |
+| **Playback** | Press play, audio actually renders, notification and lock-screen controls respond, playback survives backgrounding. |
+| **The resume journey** | Play a book, leave it mid-chapter, play music, come back — the book resumes at the **exact** position. This is the user's original complaint, expressed as a test. |
+| **Cast** | Discover and stream to a renderer across the three network scenarios. |
+| **Auto / Wear** | Browse tree and playback controls from the car and watch surfaces. |
+
+Tier 2 grows with each plan. A plan is not done until its journeys are in it.
 
 Java is an advantage across this table rather than a tax: Media3's test utilities,
 Robolectric, JUnit 4, Espresso, ArchUnit and Truth are all Java-native,
