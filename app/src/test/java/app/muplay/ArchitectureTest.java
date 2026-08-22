@@ -8,6 +8,7 @@ import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
 import com.tngtech.archunit.core.domain.JavaConstructor;
+import com.tngtech.archunit.core.domain.JavaMember;
 import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.domain.JavaParameter;
@@ -504,48 +505,74 @@ public class ArchitectureTest {
   /**
    * Enforces the project's Java-specific discipline convention (spec §10: "{@code
    * @Nullable}/{@code @NonNull} coverage on public API") mechanically rather than by review:
-   * every public method and constructor on a public class under {@code app.muplay} must carry a
-   * JSR-305 {@code @Nonnull} or {@code @Nullable} annotation on each reference-typed parameter,
-   * and on its return type if that return type is itself a reference type. Primitives (including
-   * {@code void} — confirmed empirically that {@code JavaClass.isPrimitive()} is {@code true} for
-   * a {@code void} return) need no annotation; there is nothing nullable about them.
+   * every public or protected method and constructor on a public class under {@code app.muplay}
+   * must carry a JSR-305 {@code @Nonnull} or {@code @Nullable} annotation on each reference-typed
+   * parameter, and on its return type if that return type is itself a reference type. Primitives
+   * (including {@code void} — confirmed empirically that {@code JavaClass.isPrimitive()} is
+   * {@code true} for a {@code void} return) need no annotation; there is nothing nullable about
+   * them.
+   *
+   * <p>A protected member is in scope only when its declaring class is not {@code final}. A
+   * subclass author consumes a protected member of a non-final public class exactly like a public
+   * one — it is real, callable API surface — but a protected member of a {@code final} class can
+   * never be inherited (no subclass of a {@code final} class can exist), so it is exactly as
+   * unreachable from outside the package as a private or package-private member, and is skipped
+   * for the same reason those are.
    *
    * <p><b>NullAway alone does not catch an omission here.</b> {@code app.muplay} is a NullAway
    * {@code AnnotatedPackages} package (see the root {@code build.gradle}'s {@code
    * option('NullAway:AnnotatedPackages', 'app.muplay')}), and inside an annotated package an
    * <em>unannotated</em> reference-typed parameter or return is treated as implicitly {@code
-   * @Nonnull} by convention — it compiles clean either way, annotation present or not. That gap
-   * is exactly how {@code SubsonicErrorException}'s constructor parameter, {@code
+   * @Nonnull} by convention — it compiles clean either way, annotation present or not. That gap is
+   * exactly how {@code SubsonicErrorException}'s constructor parameter, {@code
    * SubsonicCredentials#toString()}'s return, and {@code SubsonicResponseException}'s protected
    * constructor parameter went unannotated in review after review until this rule was added
-   * specifically to close it.
+   * specifically to close it. (A later review found that the rule as first written still missed
+   * the latter two: it visited only {@code public} members, so {@code
+   * SubsonicResponseException}'s {@code protected} constructor was never looked at, and its
+   * record-override exemption matched {@code SubsonicCredentials#toString()} by name and arity
+   * alone, without checking whether that specific method was actually compiler-generated — see
+   * {@link #isCompilerGeneratedRecordMember} for the fix.)
    *
-   * <p>Scope is deliberately "public class + public member," not merely "public member": {@code
-   * SubsonicApi}'s methods are bytecode-public (every interface method is, whether or not the
-   * interface itself is declared {@code public}), but the interface itself is package-private, so
-   * nothing outside this package can ever call them — annotating Retrofit's dynamically
-   * implemented interface would police an API surface that was never actually public.
+   * <p>Scope is deliberately "public class + public/protected member," not merely "public
+   * member": {@code SubsonicApi}'s methods are bytecode-public (every interface method is,
+   * whether or not the interface itself is declared {@code public}), but the interface itself is
+   * package-private, so nothing outside this package can ever call them — annotating Retrofit's
+   * dynamically implemented interface would police an API surface that was never actually public.
    *
-   * <p>Two narrow, unavoidable exemptions — see {@link #isCompilerSynthesizedExemptMember} —
-   * for members the compiler generates with no annotation site of their own, and which are
-   * indistinguishable in bytecode from a hand-written override or redeclaration of the identical
-   * signature (neither is marked {@code ACC_SYNTHETIC}, confirmed via {@code javap -v} on this
-   * project's own compiled classes): a record's {@code equals(Object)}/{@code hashCode()}/{@code
-   * toString()}, and an enum's {@code values()}/{@code valueOf(String)}.
+   * <p>Three narrow exemptions — see {@link #isCompilerSynthesizedExemptMember}:
    *
-   * <p>A third exemption, for a different reason: Dagger/Hilt's annotation processor generates
-   * real, compiled, public classes into this same {@code app.muplay} package (alongside {@code
-   * MuPlayApplication} — see {@code DaggerMuPlayApplication_HiltComponents_SingletonC} and
-   * friends under {@code build/generated/}), which this test's {@code
-   * ClassFileImporter().importPackages("app.muplay")} therefore imports and scans exactly like
-   * hand-written code. Nobody edits that code — it is regenerated from scratch on every build —
-   * so a missing annotation there is not a fixable defect this rule should report. Every class
-   * with a checkable public member (a reference-typed parameter or return) that Dagger/Hilt
-   * currently generates for this app is marked, directly or on an enclosing class, with one of
-   * three bytecode-visible annotations — see {@link #isGeneratedCode} for exactly which, and why
-   * not simply {@code @javax.annotation.processing.Generated} itself. This is the exact same
-   * carve-out the root {@code build.gradle}'s NullAway {@code excludedPaths} setting (any path
-   * under a {@code build/generated} directory) already makes for the same reason.
+   * <ul>
+   *   <li>An enum's {@code values()}/{@code valueOf(String)}. These are always
+   *       compiler-generated with no annotation site of their own: {@code javac} refuses to
+   *       compile a hand-written method of that name and arity inside an enum body at all
+   *       (confirmed empirically — {@code public static E[] values() { ... }} written inside an
+   *       enum fails with "method values() is already defined in enum E"), so there is no
+   *       hand-written case this exemption could wrongly swallow.
+   *   <li>A record's {@code equals(Object)}/{@code hashCode()}/{@code toString()}, but
+   *       <em>only</em> the specific method that is actually compiler-generated, not merely
+   *       every method with that name and arity — a record is free to override any of the three
+   *       by hand (as {@code SubsonicCredentials#toString()} does, to keep the password out of
+   *       logs), and a hand-written override must still be checked. Neither case is marked
+   *       {@code ACC_SYNTHETIC} (confirmed via {@code javap -v} on this project's own compiled
+   *       classes), so that flag can't be used to tell them apart; {@link
+   *       #isCompilerGeneratedRecordMember} explains what bytecode signal is used instead.
+   *   <li>Dagger/Hilt-generated classes — for a different reason, see the next paragraph.
+   * </ul>
+   *
+   * <p>Dagger/Hilt's annotation processor generates real, compiled, public classes into this same
+   * {@code app.muplay} package (alongside {@code MuPlayApplication} — see {@code
+   * DaggerMuPlayApplication_HiltComponents_SingletonC} and friends under {@code
+   * build/generated/}), which this test's {@code ClassFileImporter().importPackages("app.muplay")}
+   * therefore imports and scans exactly like hand-written code. Nobody edits that code — it is
+   * regenerated from scratch on every build — so a missing annotation there is not a fixable
+   * defect this rule should report. Every class with a checkable public member (a reference-typed
+   * parameter or return) that Dagger/Hilt currently generates for this app is marked, directly or
+   * on an enclosing class, with one of three bytecode-visible annotations — see {@link
+   * #isGeneratedCode} for exactly which, and why not simply {@code
+   * @javax.annotation.processing.Generated} itself. This is the exact same carve-out the root
+   * {@code build.gradle}'s NullAway {@code excludedPaths} setting (any path under a {@code
+   * build/generated} directory) already makes for the same reason.
    */
   @Test
   public void everyPublicSignatureHasNullabilityAnnotations() {
@@ -560,13 +587,14 @@ public class ArchitectureTest {
             + " not verifying anything.");
 
     for (JavaClass javaClass : publicClasses) {
+      boolean isNonFinal = !javaClass.getModifiers().contains(JavaModifier.FINAL);
       for (JavaConstructor constructor : javaClass.getConstructors()) {
-        if (constructor.getModifiers().contains(JavaModifier.PUBLIC)) {
+        if (isApiSurfaceMember(constructor, isNonFinal)) {
           assertParametersAnnotated(constructor);
         }
       }
       for (JavaMethod method : javaClass.getMethods()) {
-        if (!method.getModifiers().contains(JavaModifier.PUBLIC)) {
+        if (!isApiSurfaceMember(method, isNonFinal)) {
           continue;
         }
         if (isCompilerSynthesizedExemptMember(javaClass, method)) {
@@ -587,6 +615,20 @@ public class ArchitectureTest {
         }
       }
     }
+  }
+
+  /**
+   * True if {@code member} (a constructor or method already known to belong to a public class) is
+   * part of that class's externally consumable API surface: {@code public} unconditionally, or
+   * {@code protected} when {@code declaringClassIsNonFinal} — see {@link
+   * #everyPublicSignatureHasNullabilityAnnotations}'s Javadoc for why a {@code protected} member
+   * of a {@code final} class does not qualify. Private and package-private members never qualify.
+   */
+  private static boolean isApiSurfaceMember(JavaMember member, boolean declaringClassIsNonFinal) {
+    if (member.getModifiers().contains(JavaModifier.PUBLIC)) {
+      return true;
+    }
+    return declaringClassIsNonFinal && member.getModifiers().contains(JavaModifier.PROTECTED);
   }
 
   private static void assertParametersAnnotated(JavaCodeUnit member) {
@@ -644,20 +686,20 @@ public class ArchitectureTest {
   }
 
   /**
-   * See {@link #everyPublicSignatureHasNullabilityAnnotations}'s Javadoc for why these two cases,
+   * See {@link #everyPublicSignatureHasNullabilityAnnotations}'s Javadoc for why these cases,
    * specifically, are exempt rather than fixed by annotating them.
    */
   private static boolean isCompilerSynthesizedExemptMember(JavaClass javaClass, JavaMethod method) {
     int paramCount = method.getParameters().size();
     if (javaClass.isRecord()) {
-      boolean isObjectOverride =
+      boolean isObjectOverrideSignature =
           switch (method.getName()) {
             case "equals" -> paramCount == 1;
             case "hashCode", "toString" -> paramCount == 0;
             default -> false;
           };
-      if (isObjectOverride) {
-        return true;
+      if (isObjectOverrideSignature) {
+        return isCompilerGeneratedRecordMember(javaClass, method);
       }
     }
     if (javaClass.isEnum()) {
@@ -668,6 +710,69 @@ public class ArchitectureTest {
       };
     }
     return false;
+  }
+
+  /**
+   * Distinguishes a record's compiler-generated {@code equals(Object)}/{@code hashCode()}/{@code
+   * toString()} from a hand-written override of the identical name and arity — {@code
+   * isObjectOverrideSignature} in {@link #isCompilerSynthesizedExemptMember} only proves
+   * {@code candidate} has the right name and parameter count, not that the compiler actually
+   * generated this particular method, and {@code SubsonicCredentials#toString()} is exactly such
+   * a hand-written case: it deliberately overrides the generated {@code toString()} so credentials
+   * are never logged.
+   *
+   * <p>Bytecode carries no {@code ACC_SYNTHETIC} flag on either case (confirmed via {@code
+   * javap -v} on this project's own compiled classes) — but it does carry line numbers, and those
+   * differ in a way that is provable, not merely conventional. {@code javap -l -p} on {@code
+   * SubsonicCredentials.class} shows every implicitly generated member — {@code hashCode()},
+   * {@code equals(Object)}, and all three accessors {@code baseUrl()}/{@code username()}/{@code
+   * password()} — sharing the exact same {@code LineNumberTable} entry, line 6: the line of the
+   * record's own header, {@code "public record SubsonicCredentials("}. That is what javac does
+   * with a member it manufactures out of thin air with no body of its own to point at: it
+   * attributes the generated code to the declaration line. The hand-written {@code toString()} on
+   * that same class instead starts at line 30, the line of its own {@code return} statement — the
+   * same behavior any ordinary hand-written method has. {@code javap -l -p} on {@code
+   * MusicFolderList.class} (a record that overrides none of the three) confirms the same pattern
+   * the other way: {@code toString()}, {@code hashCode()}, {@code equals(Object)}, and its
+   * accessor all sit on line 14, the record's header line, because all four really are
+   * compiler-generated there.
+   *
+   * <p>So: {@code candidate} is compiler-generated if and only if some other constructor or
+   * method declared directly on the same class reports the identical source line — in ordinary,
+   * one-member-per-declaration formatting (which this project uses throughout, and which a
+   * formatter would refuse to un-do), two independently hand-written members never legitimately
+   * share one line, so a shared line number is itself the proof. The search deliberately excludes
+   * other {@code equals}/{@code hashCode}/{@code toString} methods as corroborators — two
+   * hand-written overrides among the three should never be able to vouch for each other — and
+   * relies on component accessors (present for any record with at least one component, which
+   * covers every record in this codebase) plus the canonical constructor (covering the
+   * pathological zero-component case) instead.
+   */
+  private static boolean isCompilerGeneratedRecordMember(JavaClass javaClass, JavaMethod candidate) {
+    int candidateLine = candidate.getSourceCodeLocation().getLineNumber();
+    if (candidateLine <= 0) {
+      // No line-number debug info to compare — cannot prove compiler-generation, so don't exempt.
+      // (This project always compiles with debug info; this is a safety net, not an expected path.)
+      return false;
+    }
+    for (JavaConstructor constructor : javaClass.getConstructors()) {
+      if (constructor.getSourceCodeLocation().getLineNumber() == candidateLine) {
+        return true;
+      }
+    }
+    for (JavaMethod sibling : javaClass.getMethods()) {
+      if (isRecordObjectOverrideName(sibling.getName())) {
+        continue; // Never let equals/hashCode/toString corroborate one another.
+      }
+      if (sibling.getSourceCodeLocation().getLineNumber() == candidateLine) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean isRecordObjectOverrideName(String methodName) {
+    return methodName.equals("equals") || methodName.equals("hashCode") || methodName.equals("toString");
   }
 
   @Test
