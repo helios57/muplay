@@ -27,5 +27,5 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
 
   configureJUnit5()
   configureJacoco()
-  configureAndroidJacocoReport()
+  configureAndroidJacocoReport(commonExtension)
 }
