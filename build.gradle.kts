@@ -59,7 +59,7 @@ val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
  *    by replacing *both* `/` and `$` with `.` before a pattern ever sees it, so the class is
  *    presented to the matcher as `SetupViewModel.1` — a string that no longer contains a `$` at
  *    all, which a pattern containing one can therefore never match. The `*` wildcard works because
- *    the `.*` it becomes absorbs that literal `.` in the transformed name; [warnUngatedClasses]'s
+ *    the `.*` it becomes absorbs that literal `.` in the transformed name; [UngatedClassChecker]'s
  *    own `wildcardToRegex`/qualified-name conversion below replicates both of these exactly.
  */
 data class CoverageFloor(
@@ -87,6 +87,16 @@ data class CoverageFloor(
  * table carried an entry of `0.00` — `ratio < floor` can never be true when `floor` is `0.00`,
  * since a ratio can never be negative, so that "floor" could never fail regardless of how
  * coverage actually moved.)
+ *
+ * That same family of defect has one further shape, which choosing the *number* cannot prevent
+ * because it is a property of what a floor matches rather than of its minimum: a floor whose
+ * entire matched class set carries zero counters of that floor's own kind passes at every minimum,
+ * silently, because the resulting `0/0` COVEREDRATIO is `NaN` and JaCoCo returns "no violation"
+ * for `NaN` outright. Nothing in this table can rule that out in advance, so it is detected after
+ * the fact instead, on every verification run, by [UngatedClassChecker.warnVacuousFloors] below —
+ * see that function's own doc for the decompiled evidence. It is also why the deliberate
+ * zero-branch riders on two of the `:feature:setup` entries below stay safe: they ride *alongside*
+ * classes that do have branches, so the floors carrying them still gate something real.
  *
  * **Why some modules get more than one entry, at different counters.** BRANCH coverage measures
  * the wrong thing for `@Composable` code: the Compose compiler inserts real, JaCoCo-visible
@@ -245,14 +255,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
  * even after every `Task`/`Provider` reference elsewhere in this function had already been
  * replaced with a plain `File` (see the comment on `reportXmlFile` below, and task-7-report.md
  * for the full sequence). A genuine Kotlin `object` is its own independent, stateless class --
- * calling `UngatedClassChecker.warnUngatedClasses(...)` from `doLast { }` references only that
+ * calling `UngatedClassChecker.warnUngatedCoverage(...)` from `doLast { }` references only that
  * object's own singleton, never this script, which the configuration cache serializes fine.
  */
 object UngatedClassChecker {
   /**
+   * How many matched class names a vacuous-floor warning spells out before it summarises the rest.
+   * A `"BUNDLE"`-element floor matches every class in its module, so an uncapped list would bury
+   * the sentence that matters under a wall of names whenever such a floor goes vacuous.
+   */
+  private const val MAX_NAMED_CLASSES_PER_WARNING = 6
+
+  /**
    * A JaCoCo `includes`/`excludes` glob pattern (`*` = any sequence, everything else literal) as a
    * [Regex]. Reimplements enough of `org.jacoco.core.analysis.WildcardMatcher` to answer "would this
-   * pattern match that class" from plain Kotlin, for [warnUngatedClasses]'s own use — not to
+   * pattern match that class" from plain Kotlin, for [matchesFloor]'s own use — not to
    * duplicate JaCoCo's actual rule evaluation (that stays entirely inside the real `violationRules`
    * block below; this is a read-only, best-effort check to decide whether to print a warning, never
    * something a build's pass/fail depends on).
@@ -267,7 +284,7 @@ object UngatedClassChecker {
    * `includes`/`excludes` (those properties have no effect at that element), and a `"CLASS"`-element
    * rule covers a class only if it matches at least one `includes` pattern (or `includes` is empty)
    * and no `excludes` pattern. [qualifiedClassName] must already be in JaCoCo's own "qualified" form
-   * (binary name with both `/` and `$` replaced by `.` — see [warnUngatedClasses]), the same form
+   * (binary name with both `/` and `$` replaced by `.` — see [parseClassCoverage]), the same form
    * `includes`/`excludes` patterns are matched against.
    */
   private fun matchesFloor(qualifiedClassName: String, floor: CoverageFloor): Boolean {
@@ -278,39 +295,44 @@ object UngatedClassChecker {
   }
 
   /**
-   * Finding 2 recurring one level down: `coverageFloors` gates modules, and a module simply absent
-   * from it now warns loudly (see the `logger.warn` below) — but a module *present* in the table can
-   * still contain a class none of its own rules actually cover (`:feature:setup` is in the table,
-   * `SetupScreenKt` — 94 branches, 54 lines, 0% on both — is covered by none of its three `"CLASS"`
-   * -element rules, and the only signal that fact carried before this function existed was prose in
-   * `coverageFloors`'s own doc comment). Reads [xmlFile] (the `jacocoTestReport` task's own XML
-   * output for this module — `dependsOn("jacocoTestReport")` below means it is present for any
-   * ordinary invocation, but `./gradlew ... -x jacocoTestReport` against a module that has never
-   * built one can still hand this a path that does not exist) and warns, by name and measured
-   * coverage, for every class [floors] does not cover. Never *fails* the build: a genuinely-uncovered
-   * class can be the right call today (`.00%` is unfireable for the same reason a `0.00` floor is —
-   * see `coverageFloors`'s own doc), the same way an absent module is; the point is that none of this
-   * is ever silent — including the missing-report case itself, which is not "nothing to warn about".
-   *
-   * Classes with zero measured branches *and* zero measured lines (`SetupUiState.Idle` and similar
-   * plain `data object`s) are skipped: there is nothing in them for any rule to gate, so flagging
-   * them would only be noise on every run.
+   * One `<class>` element of a `jacocoTestReport` XML report, reduced to what the two checks below
+   * need from it: its name in both forms JaCoCo uses, and its own `missed`/`covered` figures keyed
+   * by counter type (`"BRANCH"`, `"LINE"`, `"INSTRUCTION"`, ...). A counter type the class carries
+   * no `<counter>` element for reads back as `0` — which is the honest answer, and the exact case
+   * [warnVacuousFloors] exists to notice.
    */
-  fun warnUngatedClasses(modulePath: String, xmlFile: File, floors: List<CoverageFloor>, logger: Logger) {
-    if (!xmlFile.isFile) {
-      // Loud, not a quiet `return`: an absent report reads exactly like "nothing to warn about" to
-      // anyone who has not read this function's own source, which is the same silent-gate shape
-      // this entire mechanism was built to close. `-P`/`-x`-style invocations that skip
-      // `jacocoTestReport` are the one way `dependsOn` below cannot guarantee this file exists.
-      logger.warn(
-        "COVERAGE: $modulePath's jacocoTestReport XML ($xmlFile) does not exist -- the " +
-          "ungated-class check could not run at all. If jacocoTestReport was deliberately " +
-          "skipped (e.g. -x jacocoTestReport), this module's per-class coverage is unverified " +
-          "this run; run jacocoTestReport first to restore it.",
-      )
-      return
-    }
+  private class ClassCoverage(
+    /** JaCoCo's `name` attribute verbatim, e.g. `app/muplay/setup/SetupViewModel$1`. */
+    val binaryName: String,
+    /** [binaryName] in JaCoCo's "qualified" form — both `/` and `$` replaced by `.`. */
+    val qualifiedName: String,
+    private val missedByCounter: Map<String, Int>,
+    private val coveredByCounter: Map<String, Int>,
+  ) {
+    /** This class's own covered count for [counter]. */
+    fun covered(counter: String): Int = coveredByCounter[counter] ?: 0
 
+    /** This class's own `missed + covered` total for [counter] — the denominator of COVEREDRATIO. */
+    fun total(counter: String): Int = (missedByCounter[counter] ?: 0) + covered(counter)
+  }
+
+  /**
+   * Every `<class>` element in [xmlFile] (a module's own `jacocoTestReport` XML output), parsed
+   * once so both checks below read the same figures instead of walking the document twice.
+   *
+   * Assigns per counter type rather than accumulating, deliberately: `getElementsByTagName` returns
+   * every *descendant* of a `<class>`, which includes each of its `<method>` elements' own
+   * counters, so accumulating would double-count. JaCoCo's report DTD declares
+   * `<!ELEMENT class (method*, counter*)>` (read out of `org/jacoco/report/xml/report.dtd` in
+   * `org.jacoco.report-0.8.12.jar`), so a class's own totals are always the *last* counters in its
+   * own subtree and last-assignment-wins leaves exactly them in place — confirmed against this
+   * project's real reports (`:feature:setup`'s `SetupViewModel` element: four `<method>` children,
+   * then six `<counter>` children). Nor can a method-level counter leak in for a type the class
+   * itself does not report, since a class node's counters are the aggregate of its own methods' —
+   * also checked across every report this project produces: no `<method>` carries a counter type
+   * absent from its enclosing `<class>`.
+   */
+  private fun parseClassCoverage(xmlFile: File): List<ClassCoverage> {
     val factory = DocumentBuilderFactory.newInstance()
     // JaCoCo's own XML report declares a DOCTYPE pointing at its DTD on jacoco.org; parsing must
     // never depend on fetching that over the network (offline dev machines, and CI runners with no
@@ -321,39 +343,178 @@ object UngatedClassChecker {
     val document = factory.newDocumentBuilder().parse(xmlFile)
 
     val classNodes = document.getElementsByTagName("class")
+    val classes = mutableListOf<ClassCoverage>()
     for (i in 0 until classNodes.length) {
       val classElement = classNodes.item(i) as Element
       val binaryName = classElement.getAttribute("name") // e.g. app/muplay/setup/SetupScreenKt
-      val qualifiedName = binaryName.replace('/', '.').replace('$', '.')
-      if (floors.any { matchesFloor(qualifiedName, it) }) continue
-
-      var branchMissed = 0
-      var branchCovered = 0
-      var lineMissed = 0
-      var lineCovered = 0
+      val missedByCounter = mutableMapOf<String, Int>()
+      val coveredByCounter = mutableMapOf<String, Int>()
       val counterNodes = classElement.getElementsByTagName("counter")
       for (j in 0 until counterNodes.length) {
         val counterElement = counterNodes.item(j) as Element
-        val missed = counterElement.getAttribute("missed").toInt()
-        val covered = counterElement.getAttribute("covered").toInt()
-        when (counterElement.getAttribute("type")) {
-          "BRANCH" -> { branchMissed = missed; branchCovered = covered }
-          "LINE" -> { lineMissed = missed; lineCovered = covered }
-        }
+        val counterType = counterElement.getAttribute("type")
+        missedByCounter[counterType] = counterElement.getAttribute("missed").toInt()
+        coveredByCounter[counterType] = counterElement.getAttribute("covered").toInt()
       }
-      val branchTotal = branchMissed + branchCovered
-      val lineTotal = lineMissed + lineCovered
-      if (branchTotal == 0 && lineTotal == 0) continue
-
-      val branchSummary = if (branchTotal > 0) "branch $branchCovered/$branchTotal" else "branch n/a"
-      val lineSummary = if (lineTotal > 0) "line $lineCovered/$lineTotal" else "line n/a"
-      logger.warn(
-        "COVERAGE: $modulePath's $binaryName is not covered by any rule in `coverageFloors` " +
-          "(root build.gradle.kts) -- measured $branchSummary, $lineSummary. If that is " +
-          "deliberate (a genuinely 0%-covered Composable file, say), no action needed; if a rule " +
-          "should cover this class and does not, its includes/excludes pattern is probably wrong.",
+      classes += ClassCoverage(
+        binaryName = binaryName,
+        qualifiedName = binaryName.replace('/', '.').replace('$', '.'),
+        missedByCounter = missedByCounter,
+        coveredByCounter = coveredByCounter,
       )
     }
+    return classes
+  }
+
+  /**
+   * Finding 2 recurring one level down: `coverageFloors` gates modules, and a module simply absent
+   * from it now warns loudly (see the `logger.warn` below) — but a module *present* in the table can
+   * still contain a class none of its own rules actually cover (`:feature:setup` is in the table,
+   * `SetupScreenKt` — 94 branches, 54 lines, 0% on both — is covered by none of its three `"CLASS"`
+   * -element rules, and the only signal that fact carried before this function existed was prose in
+   * `coverageFloors`'s own doc comment). Warns, by name and measured coverage, for every class
+   * [floors] does not cover. Never *fails* the build: a genuinely-uncovered class can be the right
+   * call today (`.00%` is unfireable for the same reason a `0.00` floor is — see `coverageFloors`'s
+   * own doc), the same way an absent module is; the point is that none of this is ever silent.
+   *
+   * Classes with zero measured branches *and* zero measured lines (`SetupUiState.Idle` and similar
+   * plain `data object`s) are skipped: there is nothing in them for any rule to gate, so flagging
+   * them would only be noise on every run.
+   */
+  private fun warnUngatedClasses(
+    modulePath: String,
+    classes: List<ClassCoverage>,
+    floors: List<CoverageFloor>,
+    logger: Logger,
+  ) {
+    for (classCoverage in classes) {
+      if (floors.any { matchesFloor(classCoverage.qualifiedName, it) }) continue
+
+      val branchTotal = classCoverage.total("BRANCH")
+      val lineTotal = classCoverage.total("LINE")
+      if (branchTotal == 0 && lineTotal == 0) continue
+
+      val branchSummary =
+        if (branchTotal > 0) "branch ${classCoverage.covered("BRANCH")}/$branchTotal" else "branch n/a"
+      val lineSummary =
+        if (lineTotal > 0) "line ${classCoverage.covered("LINE")}/$lineTotal" else "line n/a"
+      logger.warn(
+        "COVERAGE: $modulePath's ${classCoverage.binaryName} is not covered by any rule in " +
+          "`coverageFloors` (root build.gradle.kts) -- measured $branchSummary, $lineSummary. If " +
+          "that is deliberate (a genuinely 0%-covered Composable file, say), no action needed; if " +
+          "a rule should cover this class and does not, its includes/excludes pattern is probably " +
+          "wrong.",
+      )
+    }
+  }
+
+  /**
+   * [floor] rendered for a warning message — every field that identifies which entry of
+   * `coverageFloors` is being talked about. `excludes` is printed only when it is non-empty, since
+   * an empty one is both the overwhelmingly common case and a no-op.
+   */
+  private fun describeFloor(floor: CoverageFloor): String = buildString {
+    append("(counter=${floor.counter}, minimum=${floor.minimum}, element=${floor.element}")
+    append(", includes=${floor.includes}")
+    if (floor.excludes.isNotEmpty()) append(", excludes=${floor.excludes}")
+    append(")")
+  }
+
+  /**
+   * The same finding one level *inside* a gated class set: a floor whose matched classes have no
+   * counters of the floor's own kind gates nothing at all, and JaCoCo will never say so.
+   *
+   * `org.jacoco.report.check.Limit.check` reads its rule's `COVEREDRATIO` and, when that value is
+   * `NaN`, returns `null` — JaCoCo's own encoding of "no violation" — *before* it ever compares
+   * against `minimum`. `CounterImpl.getCoveredRatio` computes that ratio as
+   * `covered / (missed + covered)`, so a matched set carrying zero counters of the rule's kind
+   * yields `0.0 / 0.0` = `NaN`. Such a rule therefore passes at *every* minimum, silently, under
+   * every invocation mode — categorically unlike untested code, whose ratio is a real `0.0` and
+   * fails loudly. Both facts were read straight out of the bytecode (`javap -c` on
+   * `org.jacoco.report`/`org.jacoco.core`, byte-identical in 0.8.12 — the version
+   * `libs.versions.toml` pins and `configureJacoco` sets as `toolVersion` — and in 0.8.14), not
+   * inferred from JaCoCo's documentation.
+   *
+   * That NaN path is *deliberately* load-bearing in `coverageFloors` today: the `SetupUiState` /
+   * `SetupFailureReason` riders carry no branches of their own and pass through it on every single
+   * run. Which is exactly why this checks per **floor** and never per zero-total class — a
+   * per-class warning would fire on those riders on every run and be trained away as noise, and a
+   * warning nobody reads is a warning that is not there. A floor is doing its job as long as *at
+   * least one* class it matches has a nonzero total for **that floor's own `counter`**: not the
+   * other counter (a BRANCH floor over branchless-but-line-rich classes still gates nothing), and
+   * not "either of them".
+   *
+   * Warns, never fails, for the same reason nothing else in this object fails: a floor with nothing
+   * to gate can be the right call today. What must never happen is that a floor which *used* to
+   * gate something stops, and reads exactly like a passing one while it does.
+   */
+  private fun warnVacuousFloors(
+    modulePath: String,
+    classes: List<ClassCoverage>,
+    floors: List<CoverageFloor>,
+    logger: Logger,
+  ) {
+    for (floor in floors) {
+      // A "BUNDLE"-element floor matches every class in the module unconditionally (see
+      // `matchesFloor`), so this aggregates over the whole module for those, which is exactly what
+      // JaCoCo's own BUNDLE rule measures.
+      val matched = classes.filter { matchesFloor(it.qualifiedName, floor) }
+      if (matched.sumOf { it.total(floor.counter) } > 0) continue
+
+      val matchedNames = matched.map { it.binaryName }.sorted()
+      val shownNames = matchedNames.take(MAX_NAMED_CLASSES_PER_WARNING)
+      val elided = matchedNames.size - shownNames.size
+      val shownSummary = shownNames.joinToString(", ") + (if (elided > 0) ", +$elided more" else "")
+      val matchedSummary = when (matchedNames.size) {
+        0 -> "it matches no class in this module at all"
+        1 -> "the one class it matches ($shownSummary) has zero ${floor.counter} counters"
+        else -> "all ${matchedNames.size} classes it matches ($shownSummary) have zero " +
+          "${floor.counter} counters"
+      }
+      logger.warn(
+        "COVERAGE: $modulePath's floor ${describeFloor(floor)} in `coverageFloors` (root " +
+          "build.gradle.kts) currently enforces nothing: $matchedSummary, so the floor's own " +
+          "${floor.counter} total across everything it matches is 0. JaCoCo reports no violation " +
+          "for it and never will, at this or any other minimum -- its COVEREDRATIO is " +
+          "covered/(missed+covered), which is NaN when the total is 0, and `Limit.check` returns " +
+          "\"no violation\" outright for NaN (see `warnVacuousFloors` in this file for the " +
+          "decompiled evidence). Not a build failure -- a floor with nothing to gate can be " +
+          "deliberate -- but a floor that has *lost* what it used to gate is indistinguishable " +
+          "from one that never had any, so: if this is meant to gate real ${floor.counter} " +
+          "coverage, that coverage is gone; if it is not, say so where the floor is declared.",
+      )
+    }
+  }
+
+  /**
+   * Warns about both shapes of silently-ungated coverage a module in `coverageFloors` can carry: a
+   * class no floor covers ([warnUngatedClasses]) and a floor that covers only classes with nothing
+   * of its own counter to measure ([warnVacuousFloors]). Reads [xmlFile] — the `jacocoTestReport`
+   * task's own XML output for this module; `dependsOn("jacocoTestReport")` below means it is
+   * present for any ordinary invocation, but `./gradlew ... -x jacocoTestReport` against a module
+   * that has never built one can still hand this a path that does not exist.
+   *
+   * Neither check ever fails the build, and the missing-report case is not treated as "nothing to
+   * warn about" either — see each function's own doc.
+   */
+  fun warnUngatedCoverage(modulePath: String, xmlFile: File, floors: List<CoverageFloor>, logger: Logger) {
+    if (!xmlFile.isFile) {
+      // Loud, not a quiet `return`: an absent report reads exactly like "nothing to warn about" to
+      // anyone who has not read this function's own source, which is the same silent-gate shape
+      // this entire mechanism was built to close. `-P`/`-x`-style invocations that skip
+      // `jacocoTestReport` are the one way `dependsOn` below cannot guarantee this file exists.
+      logger.warn(
+        "COVERAGE: $modulePath's jacocoTestReport XML ($xmlFile) does not exist -- neither the " +
+          "ungated-class check nor the vacuous-floor check could run at all. If jacocoTestReport " +
+          "was deliberately skipped (e.g. -x jacocoTestReport), this module's per-class coverage " +
+          "is unverified this run; run jacocoTestReport first to restore it.",
+      )
+      return
+    }
+
+    val classes = parseClassCoverage(xmlFile)
+    warnUngatedClasses(modulePath, classes, floors, logger)
+    warnVacuousFloors(modulePath, classes, floors, logger)
   }
 }
 
@@ -400,7 +561,7 @@ subprojects {
       // and on every plain run, vanished on every reuse run. Task *execution* still happens on a
       // cache hit (the cache skips reconfiguring, not rerunning), so moving this into `doLast` and
       // forcing the task to never be UP-TO-DATE-skippable either (the same fix
-      // `warnUngatedClasses` below already needed, for the identical underlying reason) is what
+      // `warnUngatedCoverage` below already needed, for the identical underlying reason) is what
       // makes it survive both paths a warning can otherwise go silent on.
       outputs.upToDateWhen { false }
       doLast {
@@ -414,7 +575,7 @@ subprojects {
       return@configureEach
     }
 
-    // Ensures a fresh XML report always exists for `warnUngatedClasses` below to read, whatever
+    // Ensures a fresh XML report always exists for `warnUngatedCoverage` below to read, whatever
     // order tasks were invoked in (the CI workflow already runs "Coverage report" before
     // "Coverage gate" as separate steps, but this makes that guaranteed rather than assumed).
     dependsOn("jacocoTestReport")
@@ -471,7 +632,7 @@ subprojects {
     }
 
     doLast {
-      UngatedClassChecker.warnUngatedClasses(modulePath, reportXmlFile, floors, logger)
+      UngatedClassChecker.warnUngatedCoverage(modulePath, reportXmlFile, floors, logger)
     }
   }
 }
