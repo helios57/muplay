@@ -2,6 +2,8 @@
 build/
 local.properties
 .superpowers/
+# Harness state, like .superpowers/ above -- written by the tooling, never by the project.
+.claude/scheduled_tasks.lock
 *.iml
 .idea/
 *.hprof

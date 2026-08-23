@@ -161,8 +161,12 @@ private fun Project.debugClassesFileTree(commonExtension: CommonExtension): Prov
  * task-execution time (this project has always relied on that: a module with zero tests still
  * runs `jacocoTestReport` successfully, over an empty execution-data set). So a plain
  * `./gradlew jacocoTestReport` with no emulator run behind it still works — it just measures the
- * JVM half, which is why the coverage *gate* runs in the one CI job that has both halves (see
- * `.github/workflows/e2e.yml`).
+ * JVM half. That is also the line the coverage *gate* is split along: `jacocoTestCoverageVerification`
+ * evaluates the whole floor table and therefore runs in the one CI job that has both halves
+ * (`.github/workflows/e2e.yml`), while `jacocoJvmCoverageVerification` evaluates the subset that
+ * needs no device — over JVM execution data only, never this merged set — and runs in
+ * `.github/workflows/pr.yml` and in `check`. Both tasks are configured from root
+ * `build.gradle.kts`; see `coverageFloors` there.
  */
 private fun Project.mergedExecutionData(debugUnitTest: Provider<Test>): List<Provider<out Any>> {
   val instrumented = rootProject.allprojects.map { anyProject ->
@@ -195,6 +199,14 @@ private const val CONNECTED_TEST_TASK_NAME = "connectedDebugAndroidTest"
  * declaring the task as an *input* would do the same. `mustRunAfter` constrains order only when
  * both tasks are already in the graph, so a plain `./gradlew jacocoTestReport` still runs with no
  * emulator anywhere in sight — it simply measures the JVM half.
+ *
+ * One residual local footgun this does not close, deliberately: run *only*
+ * `jacocoTestCoverageVerification` after deleting a test, and the previous emulator run's `.ec`
+ * still credits the coverage that test used to provide. It is bounded — JaCoCo matches execution
+ * data to classes by class id, so a *changed* class loses its old data and the floor fires — and
+ * it cannot happen in CI, where `gradle/actions/setup-gradle` caches `~/.gradle` and never the
+ * project build directory, so every run starts with no `.ec` at all. Closing it would mean making
+ * the report depend on a device.
  *
  * Every project's, not just this one's, for the same reason [mergedExecutionData] reads every
  * project's `.ec`: the module that owns the `androidTest` source set is not the module whose code

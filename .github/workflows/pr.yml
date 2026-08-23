@@ -59,13 +59,8 @@ jobs:
   # needs the real container the `live-navidrome` job below starts; see `Testing.kt`'s
   # `configureJUnit5`.
   #
-  # No coverage step here, deliberately, and this is not a weakening of Tier 1. `coverageFloors`
-  # (root build.gradle.kts) is measured against `Jacoco.kt`'s *merged* JVM + instrumented
-  # execution data, and Task 8 gave the Compose-bearing classes real LINE floors that only the
-  # emulator journey can reach. A gate run here, with the instrumented half absent, would measure
-  # those classes at 0% and fail every run — so `jacocoTestReport`/`jacocoTestCoverageVerification`
-  # run in `.github/workflows/e2e.yml` instead, which is the one job where both halves of the
-  # merge exist. That workflow is required to merge exactly like this one.
+  # Plus the half of the coverage table this tier can honestly evaluate — see the step's own
+  # comment below for where the line falls and why.
   unit-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,6 +75,22 @@ jobs:
       - name: Unit tests
         run: ./gradlew test
 
+      - name: Coverage gate (JVM floors)
+        # Every floor in `coverageFloors` (root build.gradle.kts) that can be measured without an
+        # emulator: all the BRANCH floors — `:core:model`, `:core:network`, `:core:testing` and
+        # `:feature:setup`'s three. Measured, and provably able to fail: deleting a
+        # `SetupFailureReasonTest` case drops `SetupFailureReasonKt` to 0.00 against its 0.85 and
+        # this step goes red.
+        #
+        # Not the whole table. The three LINE floors (`:app`, `:core:designsystem`,
+        # `:feature:setup`'s `SetupScreenKt`) exist over `@Composable` code, which only executes
+        # inside a real composition, so with no instrumented data they measure ~0% and would fail
+        # every run here. Those are enforced by `jacocoTestCoverageVerification` in
+        # `.github/workflows/e2e.yml`, which is required to merge exactly like this workflow. The
+        # task below says out loud, per module, how many floors it enforced and how many it left
+        # to that one — a tier that skipped half the table silently would be worse than no gate.
+        run: ./gradlew jacocoJvmCoverageVerification
+
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -87,6 +98,7 @@ jobs:
           name: unit-integration-reports
           path: |
             **/build/reports/tests/**
+            **/build/reports/jacoco/**
 
   # Runs LiveNavidromeTest (core/network) against a real, pinned deluan/navidrome:0.63.2 container
   # — not a fixture, not MockWebServer. Docker is not an emulator: the container starts in 5-11s

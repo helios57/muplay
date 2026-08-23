@@ -23,6 +23,14 @@ jobs:
     # An emulator boot plus a full debug + androidTest assembly is the bulk of this; 45 minutes is
     # slack over the measured local run, not a target.
     timeout-minutes: 45
+    # The AVD coordinates, written once. Every step below reads them from here, and
+    # `ConventionTest`'s "the emulator coordinates cannot drift" asserts they equal
+    # `ci/prepare-emulator.sh`'s own declarations — the same shape as the
+    # `LIVE_NAVIDROME_TEST_TASK_NAME` sync this project already enforces rather than trusting.
+    env:
+      EMULATOR_API_LEVEL: "37.0"
+      EMULATOR_TARGET: google_apis
+      EMULATOR_ARCH: x86_64
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -51,14 +59,67 @@ jobs:
         # header comment.
         run: ./ci/configure-libraries.sh
 
+      # The emulator action interpolates `api-level`/`target`/`arch` verbatim into
+      # `platforms;android-<api-level>` and `system-images;android-<api-level>;<target>;<arch>`
+      # and hands them to `sdkmanager`. A value that does not name a real package therefore fails
+      # deep inside the action, at AVD creation, with an error that does not say which string was
+      # wrong — which is exactly how `api-level: 37` (no such package; only 37.0/37.1/37.2-beta*
+      # exist) shipped once. This resolves both strings against Google's live repository first, so
+      # a bad coordinate fails here, by name, in seconds.
+      #
+      # `ConventionTest` separately holds these three values equal to `ci/prepare-emulator.sh`'s
+      # own declarations, so the workflow and the local run cannot drift apart; this step is what
+      # catches them being wrong *together*.
+      - name: Resolve SDK packages
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          available="$("$sdkmanager" --list)"
+          status=0
+          platform="platforms;android-$EMULATOR_API_LEVEL"
+          image="system-images;android-$EMULATOR_API_LEVEL;$EMULATOR_TARGET;$EMULATOR_ARCH"
+          for pkg in "$platform" "$image"; do
+            # An exact match on the whole first column, not `grep -F`: `sdkmanager --list` prints
+            # `  <package> | <rev> | <description> | <path>`, and a substring test passes
+            # `platforms;android-37` against the line for `platforms;android-37.0` -- i.e. it
+            # would have waved through the exact value this step exists to reject. Verified by
+            # running this step locally with both values.
+            #
+            # A here-string rather than a pipe into the matcher, for the same reason `grep -q`
+            # would be wrong here: an early-exiting matcher SIGPIPEs its writer, which under
+            # `pipefail` makes the pipeline non-zero and inverts the test.
+            matches_exactly='{ name = $1; gsub(/^[ \t]+|[ \t]+$/, "", name); if (name == pkg) found = 1 }
+                             END { exit !found }'
+            if awk -F'|' -v pkg="$pkg" "$matches_exactly" <<< "$available"; then
+              echo "ok: $pkg"
+            else
+              echo "::error::'$pkg' is not a package Google publishes. Check api-level/target/arch"
+              echo "::error::in this workflow and the matching declarations in ci/prepare-emulator.sh"
+              status=1
+            fi
+          done
+          exit "$status"
+
       - name: First-run journey
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          # API 37 / google_apis / x86_64 — the same image as the local `muplay37` AVD this test
-          # was developed against, so a failure here is reproducible locally with one command.
-          api-level: 37
-          target: google_apis
-          arch: x86_64
+          # `37.0`, not `37`: there is no `platforms;android-37` or
+          # `system-images;android-37;google_apis;x86_64` — API 36 has a bare alias, API 37 does
+          # not. Held equal to `ci/prepare-emulator.sh`'s own declarations by `ConventionTest`,
+          # and resolved against Google's repository by the step above.
+          #
+          # `system-image-api-level` defaults to `api-level` when unset; stated explicitly so the
+          # two cannot be read as independently choosable.
+          api-level: ${{ env.EMULATOR_API_LEVEL }}
+          system-image-api-level: ${{ env.EMULATOR_API_LEVEL }}
+          target: ${{ env.EMULATOR_TARGET }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          # Pinned, like `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator
+          # 37.1.11 — the build the Minigbm workaround below was measured against. Without this
+          # the action installs whatever the stable channel offers on the day, and the one thing
+          # this gate cannot afford is a silently-changing emulator underneath a workaround for an
+          # emulator bug.
+          emulator-build: "15917651"
           # Headless, no audio device, and swiftshader for GL: a CI runner has no display, no
           # sound card and no GPU. `-no-snapshot` keeps every run from a clean boot rather than a
           # saved image whose state nothing in this repository controls.
@@ -84,15 +145,12 @@ jobs:
             ./ci/prepare-emulator.sh
             ./gradlew :app:connectedDebugAndroidTest
 
-      # Coverage lives here, not in pr.yml's `unit-integration` job, because this is the only job
-      # where the execution data is complete. `Jacoco.kt`'s `mergedExecutionData` merges JVM
-      # (`testDebugUnitTest`) and instrumented (`connectedDebugAndroidTest`) `.ec` data, and the
-      # floors in root `build.gradle.kts`'s `coverageFloors` are measured against that merge —
-      # every Compose-bearing class's LINE floor is reachable only because the journey above
-      # actually composed it. Running the gate anywhere the instrumented half is missing would
-      # fail those floors at ~0%, so it runs where both halves exist. `jacocoTestReport` pulls in
-      # each module's own `test` task, so the JVM half is produced here rather than assumed from
-      # another job's workspace.
+      # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
+      # — which only exists here, after the journey above. Tier 1 already enforced the subset that
+      # needs no device (`jacocoJvmCoverageVerification`, see pr.yml); this task is a superset of
+      # that one, so the fast gate having passed is never taken as licence to skip anything.
+      # `jacocoTestReport` pulls in each module's own `test` task, so the JVM half is produced
+      # here rather than assumed from another job's workspace.
       - name: Coverage report
         run: ./gradlew jacocoTestReport
 

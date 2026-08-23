@@ -2,6 +2,7 @@ import java.io.File
 import java.math.BigDecimal
 import javax.xml.parsers.DocumentBuilderFactory
 import org.gradle.api.logging.Logger
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
@@ -71,12 +72,51 @@ data class CoverageFloor(
 )
 
 /**
- * Coverage floors, keyed by project path, enforced by every module's own
- * `jacocoTestCoverageVerification` task (Tier 1's coverage-gate step — see the "Coverage gate"
- * step in `.github/workflows/pr.yml`, and `Jacoco.kt` in build-logic for the mechanism this table
- * supplies the numbers for: which classes/execution-data a module's task reads is decided there;
- * whether a given module has a floor at all, and what it is, is decided here, once, rather than
- * once per module).
+ * The task that enforces only the floors a plain JVM test run can measure — Tier 1's coverage
+ * gate (`.github/workflows/pr.yml`), and part of `check`. Registered below, alongside the
+ * `jacocoTestCoverageVerification` task it is a strict subset of.
+ */
+val JVM_COVERAGE_VERIFICATION_TASK_NAME = "jacocoJvmCoverageVerification"
+
+/**
+ * The task that enforces the *whole* table, against merged JVM + instrumented execution data —
+ * Tier 2's coverage gate (`.github/workflows/e2e.yml`). Registered by the `java`/`kotlin.jvm` +
+ * `jacoco` plugin combination for JVM modules and by `Jacoco.kt` for Android ones; named here
+ * only so the two tasks' relationship is expressed rather than spelled out twice.
+ */
+val FULL_COVERAGE_VERIFICATION_TASK_NAME = "jacocoTestCoverageVerification"
+
+/**
+ * Whether [floor] can be enforced without an emulator, i.e. whether it belongs to Tier 1's
+ * [JVM_COVERAGE_VERIFICATION_TASK_NAME] as well as to the full gate.
+ *
+ * **Derived from the counter, not declared per entry**, because in this table the counter *is*
+ * the statement of which kind of code a floor covers (see [coverageFloors]'s own doc): a LINE
+ * floor exists here only where the code is `@Composable`, and `@Composable` code only executes
+ * inside a real composition — an emulator. A BRANCH floor exists only over non-UI code, which the
+ * JVM runs perfectly well. Nothing restates the table.
+ *
+ * The evidence, not the reasoning, is what settled this. Deleting the instrumented `.ec` and
+ * running the whole build fails exactly the three LINE floors (`:app`, `:core:designsystem`,
+ * `:feature:setup`'s `SetupScreenKt`) and passes every BRANCH floor in the table, including all
+ * three of `:feature:setup`'s.
+ *
+ * Getting this predicate wrong fails in the safe direction. A BRANCH floor that turned out to
+ * need instrumented data would fail Tier 1 loudly rather than pass quietly; a LINE floor that did
+ * not need it is still enforced, just by Tier 2 alone.
+ */
+fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = floor.counter == "BRANCH"
+
+/**
+ * Coverage floors, keyed by project path. Enforced by two tasks, one a strict subset of the other:
+ * `jacocoTestCoverageVerification` evaluates **every** entry against merged JVM + instrumented
+ * execution data (Tier 2 — the "Coverage gate" step in `.github/workflows/e2e.yml`), and
+ * [JVM_COVERAGE_VERIFICATION_TASK_NAME] evaluates only the entries
+ * [isEnforceableWithoutAnEmulator] selects, against JVM execution data alone (Tier 1 — the
+ * "Coverage gate (JVM floors)" step in `.github/workflows/pr.yml`, and `check`). See `Jacoco.kt`
+ * in build-logic for the mechanism this table supplies the numbers for: which
+ * classes/execution-data a module's task reads is decided there; whether a given module has a
+ * floor at all, and what it is, is decided here, once, rather than once per module.
  *
  * Every number below is **measured** from a real `jacocoTestReport` run
  * (`./gradlew jacocoTestReport` per module — see task-7-report.md for the exact transcript and
@@ -129,10 +169,11 @@ data class CoverageFloor(
  *   non-compliant-response and no-trailing-slash-baseUrl tests, and
  *   `OpenApiFixtureValidatorTest`'s new `readSpec`/blank-path tests.
  *
- * - **`:feature:setup`** — three `"CLASS"`-element BRANCH rules, one per non-`@Composable` class
- *   this module has (`SetupScreenKt`, the one Composable file, has no rule of its own — see next
- *   paragraph). Not one aggregate rule across all three: their measured ratios are different
- *   enough (100%, 60%, 87.5%) that a single blended floor would either sit so low it protects
+ * - **`:feature:setup`** — four `"CLASS"`-element rules: three BRANCH, one per non-`@Composable`
+ *   class here that has branches of its own, and one LINE over `SetupScreenKt`, this module's one
+ *   Composable file (described at the end of this entry). The three BRANCH rules are not one
+ *   aggregate rule across all three: their measured ratios are different enough (100%, 60%,
+ *   87.5%) that a single blended floor would either sit so low it protects
  *   none of them individually, or so high the weakest one could never have passed it honestly.
  *   `SetupViewModel` (2/2, floor 0.90): `connect`'s own branches (the `InvalidUrl` check, the
  *   catch-clause dispatch), fully covered. `SetupViewModel$1` and `SetupViewModel$2` (3/5 each,
@@ -142,11 +183,10 @@ data class CoverageFloor(
  *   Kotlin-compiler-generated "invalid continuation state" safety branches every suspend lambda's
  *   `invokeSuspend` carries — structurally unreachable from any legitimate call site, the same
  *   *kind* of compiler-owned gap BRANCH coverage has for Compose, just from the coroutines
- *   compiler plugin instead. `SetupFailureReasonKt`
- *   (7/8, floor 0.85): `toMessage`'s `when`-cascade, `SetupFailureReasonTest` covers all three
- *   members plus both sides of `Rejected`'s `detail` null/non-null branch; the one branch still
- *   missing is an artifact of how a `when` with no `else` over a sealed interface compiles, not an
- *   uncovered case.
+ *   compiler plugin instead. `SetupFailureReasonKt` (7/8, floor 0.85): `toMessage`'s
+ *   `when`-cascade, `SetupFailureReasonTest` covers all three members plus both sides of
+ *   `Rejected`'s `detail` null/non-null branch; the one branch still missing is an artifact of how
+ *   a `when` with no `else` over a sealed interface compiles, not an uncovered case.
  *
  *   And, from Task 8, a fourth rule of a different counter: `SetupScreenKt` LINE (55/57 =
  *   **0.9649**, floor 0.90). Task 7 could not gate this class at all — from the JVM alone it
@@ -176,7 +216,13 @@ data class CoverageFloor(
  *
  * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
  *   aggregate rule in this table, and the one place where that is the right shape rather than a
- *   compromise. Task 7 deliberately left this module with no entry at all: from the JVM alone it
+ *   compromise — with one cost, stated here rather than only in a report: `matchesFloor` below
+ *   returns `true` unconditionally for a `"BUNDLE"`-element floor, so **no class in `:app` can
+ *   ever be reported by `warnUngatedClasses`**. That is acceptable only while every class here is
+ *   the same kind of wiring; the moment `:app` grows code with logic of its own, this entry has to
+ *   become `"CLASS"`-element rules (and take on the synthetic-class exclusion that motivated
+ *   `"BUNDLE"` in the first place). Task 7 deliberately left this module with no entry at all:
+ *   from the JVM alone it
  *   measured 1/21 lines (only `MuPlayApplication`'s own body, via `MuPlayApplicationTest`), and
  *   both available numbers were dishonest — `0.00` is the unfireable floor this project has
  *   already shipped once, and anything above it would have failed a module with nothing wrong with
@@ -573,6 +619,55 @@ object UngatedClassChecker {
 }
 
 
+/**
+ * The one message [JVM_COVERAGE_VERIFICATION_TASK_NAME] prints, kept in a genuine Kotlin `object`
+ * for exactly the reason [UngatedClassChecker]'s own doc gives: a script-level `private fun`
+ * called from inside `doLast { }` captures the whole script object, which the configuration cache
+ * refuses to serialize.
+ *
+ * Its job is the standing rule that no tier may silently skip its own half. `check` and Tier 1
+ * run a *subset* of the coverage table, and a subset that says nothing is indistinguishable from
+ * the whole thing to anyone reading a green build.
+ */
+object CoverageTierNotice {
+  /**
+   * Says what this run of the JVM-only gate did and did not evaluate for [modulePath].
+   *
+   * `warn` when it enforced nothing at all — a verification task with no rules passes at every
+   * minimum and is exactly the shape of unfireable gate this project has shipped once already, so
+   * it must never look like a pass on its own. `lifecycle` (still on by default, still visible in
+   * CI logs) when it enforced something and merely left the rest to Tier 2, because that is the
+   * normal, designed state and a warning nobody can act on is a warning that stops being read.
+   */
+  fun reportTierSplit(modulePath: String, enforced: Int, deferred: Int, logger: Logger) {
+    val total = enforced + deferred
+    val where = "the full `jacocoTestCoverageVerification`, which needs the instrumented " +
+      "execution data only the emulator journey produces (.github/workflows/e2e.yml)"
+    when {
+      total == 0 ->
+        logger.warn(
+          "COVERAGE: $modulePath has no coverage floor at all, so this task enforced nothing. " +
+            "See `coverageFloors` in root build.gradle.kts.",
+        )
+      enforced == 0 ->
+        logger.warn(
+          "COVERAGE: $modulePath -- this task enforced 0 of its $total coverage floors: every " +
+            "one of them needs an emulator, and is enforced by $where instead. This task " +
+            "passing says nothing about $modulePath's coverage.",
+        )
+      deferred > 0 ->
+        logger.lifecycle(
+          "COVERAGE: $modulePath -- this task enforced $enforced of its $total coverage " +
+            "floors; the rest are left to $where.",
+        )
+      else ->
+        logger.lifecycle(
+          "COVERAGE: $modulePath -- this task enforced all $total of its coverage floors.",
+        )
+    }
+  }
+}
+
 subprojects {
   // `tasks.withType(...).configureEach { }` applies whenever a task of that type is registered —
   // before or after this line runs — so this is safe regardless of whether a given module's task
@@ -595,17 +690,23 @@ subprojects {
   // module's `jacocoTestCoverageVerification` task graph includes its own `test` task.
   tasks.withType<JacocoReport>().configureEach { dependsOn("test") }
   tasks.withType<JacocoCoverageVerification>().configureEach {
+    // The JVM-only gate is a `JacocoCoverageVerification` too, so it would otherwise be handed
+    // the whole table and the merged execution data by this very block. It is configured on its
+    // own terms further down, from the task this one produces.
+    if (name == JVM_COVERAGE_VERIFICATION_TASK_NAME) return@configureEach
+
     dependsOn("test")
 
     val floors = coverageFloors[project.path]
     val modulePath = project.path
     if (floors.isNullOrEmpty()) {
       // Loud, not silent: a module simply absent from `coverageFloors` used to fail this
-      // `return`/no-op with no signal at all — `:app` was fine because it is documented above,
-      // but nothing stopped (and nothing announced) a *future* module landing in
-      // `settings.gradle.kts` with no floor and no comment explaining why. This does not fail the
-      // build — an ungated module is a real, sometimes-correct state (see `:app`'s own case) — it
-      // just makes sure nobody has to go looking for the gap.
+      // `return`/no-op with no signal at all — `:app` was the documented case when this was
+      // written, and nothing stopped (or announced) a *future* module landing in
+      // `settings.gradle.kts` with no floor and no comment explaining why. Every module has a
+      // measured floor today, `:app` included, so this warning fires for nothing right now; it
+      // exists for the next module to arrive. It does not fail the build — an ungated module is a
+      // real, sometimes-correct state — it just makes sure nobody has to go looking for the gap.
       //
       // `doLast` + `outputs.upToDateWhen { false }`, not a bare `logger.warn` call right here at
       // configuration time (an earlier version of this code did exactly that): configuration-cache
@@ -621,9 +722,10 @@ subprojects {
       doLast {
         logger.warn(
           "COVERAGE: $modulePath has no entry in `coverageFloors` (root build.gradle.kts) " +
-            "-- its branch/line coverage is completely unenforced in Tier 1. If that is " +
-            "deliberate, document why there (see :app's own entry there for the precedent); if " +
-            "not, add a measured floor.",
+            "-- its branch and line coverage is unenforced in both tiers, by this task and by " +
+            "`$JVM_COVERAGE_VERIFICATION_TASK_NAME` alike. If that is deliberate, say so at that " +
+            "table -- every entry there documents the choices behind its own numbers, including " +
+            "the counters it deliberately does not gate; if not, add a measured floor.",
         )
       }
       return@configureEach
@@ -689,6 +791,76 @@ subprojects {
       UngatedClassChecker.warnUngatedCoverage(modulePath, reportXmlFile, floors, logger)
     }
   }
+
+  // Tier 1's half of the gate. Registered only where the full task exists (every module applies
+  // `jacoco` through a convention plugin, but `plugins.withId` keeps that a fact rather than an
+  // assumption), and derived from it rather than restating any of it: same classes, same source
+  // dirs, the same execution data minus the instrumented half, and the subset of the same floor
+  // list that `isEnforceableWithoutAnEmulator` selects.
+  //
+  // Why a second task rather than a flag on the first: a `-P`-switched gate is one typo away from
+  // silently evaluating the wrong half, and the two genuinely differ in their *inputs*, not only
+  // in which rules they apply — this one must not be able to pass on execution data a developer's
+  // last emulator run happened to leave on disk.
+  plugins.withId("jacoco") {
+    val floors = coverageFloors[project.path].orEmpty()
+    val jvmFloors = floors.filter(::isEnforceableWithoutAnEmulator)
+    val deferredFloorCount = floors.size - jvmFloors.size
+    val modulePath = project.path
+
+    val jvmVerification = tasks.register<JacocoCoverageVerification>(JVM_COVERAGE_VERIFICATION_TASK_NAME) {
+      group = "verification"
+      description = "Fails if a coverage floor that needs no emulator drops below its minimum " +
+        "-- the Tier 1 subset of jacocoTestCoverageVerification. See root build.gradle.kts."
+
+      dependsOn("test")
+
+      // Read here, inside the registration block, so it runs at realization time: `.get()`
+      // realizes the full task, which applies the `configureEach` above to it first, so what is
+      // copied below is the fully configured value rather than an empty default.
+      val fullVerification =
+        tasks.named(FULL_COVERAGE_VERIFICATION_TASK_NAME, JacocoCoverageVerification::class.java).get()
+      classDirectories.setFrom(fullVerification.classDirectories)
+      sourceDirectories.setFrom(fullVerification.sourceDirectories)
+      // `.ec` is what AGP's on-device agent writes and what `Jacoco.kt`'s glob collects; the JVM
+      // agent writes `.exec` (verified on disk: `build/jacoco/testDebugUnitTest.exec` and
+      // `build/outputs/code_coverage/.../coverage.ec`). Filtering on the format's own extension
+      // rather than on a directory name means this and `Jacoco.kt` share no literal that could
+      // drift apart.
+      executionData.setFrom(fullVerification.executionData.filter { file -> !file.name.endsWith(".ec") })
+
+      // Same reason as the full task's: a cached UP-TO-DATE run would skip `doLast` and print no
+      // tier notice, which is the silent-skip failure this whole mechanism exists to prevent.
+      outputs.upToDateWhen { false }
+
+      violationRules {
+        isFailOnViolation = true
+        jvmFloors.forEach { floor ->
+          rule {
+            element = floor.element
+            // See the identical lines on the full task above: an explicitly-assigned empty
+            // includes/excludes means "match zero classes", not "no restriction".
+            if (floor.includes.isNotEmpty()) includes = floor.includes
+            if (floor.excludes.isNotEmpty()) excludes = floor.excludes
+            limit {
+              counter = floor.counter
+              value = "COVEREDRATIO"
+              minimum = floor.minimum
+            }
+          }
+        }
+      }
+
+      doLast {
+        CoverageTierNotice.reportTierSplit(modulePath, jvmFloors.size, deferredFloorCount, logger)
+      }
+    }
+
+    // Into `check`, unlike the full task, which cannot run without a device. This is what makes
+    // the fast floors enforced by a plain `./gradlew build` rather than only by a CI step -- the
+    // gap the review found when `check --dry-run` listed no jacoco task at all.
+    tasks.named("check").configure { dependsOn(jvmVerification) }
+  }
 }
 
 // `:core:network`'s `LiveNavidromeTest` needs a real Navidrome container listening on
@@ -738,6 +910,51 @@ project(":core:network") {
       useJUnitPlatform {
         includeTags("live")
       }
+    }
+  }
+}
+
+// `:app`'s `ConventionTest` guards the build by *reading files* — every module build file, every
+// build-logic source, the version catalogue, `.github/workflows/e2e.yml` and
+// `ci/prepare-emulator.sh`. None of those are inputs of the task that runs it, so Gradle had no
+// reason to re-run it when one of them changed: editing a workflow and running
+// `./gradlew :app:testDebugUnitTest --tests '*ConventionTest*'` reported UP-TO-DATE and passed,
+// with the injected violation still in the file. Confirmed by injection, twice, before this block
+// existed — which makes it the same shape of defect as a coverage floor that cannot fail, and the
+// reason a convention rule that scans a file must declare that file.
+//
+// Registered here, not in `app/build.gradle.kts`: every module build file contains only
+// `plugins {}` and `dependencies {}` (`ConventionTest` itself enforces that), so a one-off like
+// this belongs at the root alongside the `liveNavidromeTest` registration above.
+//
+// The patterns deliberately mirror what `ConventionTest` actually walks. If a future rule there
+// starts reading something outside this set, it will silently stop being re-run — so extend this
+// list in the same commit.
+//
+// `tasks.withType<Test>().configureEach` with a name check, not `afterEvaluate { tasks.named(...) }`:
+// AGP registers `testDebugUnitTest` from its own variant callbacks, which run *after* this
+// project's `afterEvaluate` — that spelling failed outright with "Task with name
+// 'testDebugUnitTest' not found in project ':app'". `configureEach` applies to a task registered
+// before or after this line, the same reason `Jacoco.kt` and the `subprojects` block above use it.
+project(":app") {
+  tasks.withType<Test>().configureEach {
+    if (name == "testDebugUnitTest") {
+      val scannedByConventionTest = rootProject.fileTree(rootProject.projectDir) {
+        include("**/build.gradle.kts")
+        include("build-logic/**/*.kt")
+        include("build-logic/**/*.kts")
+        include("gradle/libs.versions.toml")
+        include(".github/workflows/*.yml")
+        include("ci/*.sh")
+        exclude("**/build/**")
+        exclude("**/.git/**")
+        exclude("**/.gradle/**")
+      }
+      inputs.files(scannedByConventionTest)
+        .withPropertyName("filesScannedByConventionTest")
+        // RELATIVE, not ABSOLUTE: the content and repository-relative path are what the rules
+        // assert on, so a checkout at a different absolute path must still hit the build cache.
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     }
   }
 }

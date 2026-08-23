@@ -176,6 +176,60 @@ class ConventionTest {
   }
 
   @Test
+  fun `the emulator coordinates in e2e yml and prepare-emulator sh cannot drift apart`() {
+    // Tier 2's AVD is named by three strings that must agree in two files: the job `env:` block in
+    // .github/workflows/e2e.yml (which the `reactivecircus/android-emulator-runner` step reads)
+    // and `ci/prepare-emulator.sh`'s own `readonly` declarations (which it checks the *running*
+    // device against). Nothing but this test stops them drifting -- and the drift is not
+    // hypothetical: this gate shipped once with `api-level: 37` while the script's own header
+    // already said `system-images;android-37.0;...`. There is no `platforms;android-37` or
+    // `system-images;android-37;google_apis;x86_64` package (API 36 has a bare alias, API 37 does
+    // not), so the job could not create an AVD at all -- a required gate that had never run.
+    //
+    // Same shape as the LIVE_NAVIDROME_TEST_TASK_NAME assertion above, for the same reason: a
+    // comment asking two files to be kept in sync is not a mechanism.
+    val workflow = File(repoRoot(), ".github/workflows/e2e.yml").readText()
+    val script = File(repoRoot(), "ci/prepare-emulator.sh").readText()
+
+    listOf("EMULATOR_API_LEVEL", "EMULATOR_TARGET", "EMULATOR_ARCH").forEach { name ->
+      val fromWorkflow = Regex("""^\s*$name:\s*"?([^"\s#]+)"?\s*$""", RegexOption.MULTILINE)
+        .find(workflow)?.groupValues?.get(1)
+      val fromScript = Regex("""^readonly $name=([^\s#]+)\s*$""", RegexOption.MULTILINE)
+        .find(script)?.groupValues?.get(1)
+
+      // A pattern that stops matching either declaration must fail here too, not silently compare
+      // two nulls as equal -- the same principle as the very first test in this class.
+      assertThat(fromWorkflow).describedAs("$name in .github/workflows/e2e.yml").isNotNull()
+      assertThat(fromScript).describedAs("$name in ci/prepare-emulator.sh").isNotNull()
+      assertThat(fromWorkflow).describedAs("$name: e2e.yml vs ci/prepare-emulator.sh")
+        .isEqualTo(fromScript)
+    }
+
+    // ...and the action's own inputs must actually read those variables. Without this the `env:`
+    // block above could sit there agreeing with the script perfectly while the step it is supposed
+    // to feed passes a hardcoded literal, which is precisely the defect this test exists to catch.
+    //
+    // Whole-line matches, not `contains`: `system-image-api-level: ${{ env.EMULATOR_API_LEVEL }}`
+    // *contains* the string `api-level: ${{ env.EMULATOR_API_LEVEL }}`, so a substring assertion
+    // passes a workflow whose `api-level:` was replaced by a literal. Confirmed by injection --
+    // the substring form did exactly that.
+    mapOf(
+      "api-level" to "EMULATOR_API_LEVEL",
+      "system-image-api-level" to "EMULATOR_API_LEVEL",
+      "target" to "EMULATOR_TARGET",
+      "arch" to "EMULATOR_ARCH",
+    ).forEach { (input, variable) ->
+      val line = Regex(
+        """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",
+        RegexOption.MULTILINE,
+      )
+      assertThat(line.containsMatchIn(workflow))
+        .describedAs("e2e.yml must pass `$input:` as \${'$'}{{ env.$variable }}, not a literal")
+        .isTrue()
+    }
+  }
+
+  @Test
   fun `no module or convention plugin uses kapt`() {
     // A word-boundary-aware pattern, not a bare substring: this convention plugins' own comments
     // legitimately explain *why* kapt is banned ("Hilt via KSP, never kapt") without using it, and

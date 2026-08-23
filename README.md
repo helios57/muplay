@@ -4,7 +4,8 @@ An Android music **and audiobook** player for [Navidrome](https://www.navidrome.
 and other Subsonic/OpenSubsonic servers, with **Sonos and DLNA casting**.
 
 > **Status: under construction.** The foundation and Subsonic client are done and
-> tested. It does not play audio yet — see [Roadmap](#roadmap).
+> tested — the app connects to a real server and lists its libraries. It does not
+> play audio yet; see [Roadmap](#roadmap).
 
 ## Why
 
@@ -23,13 +24,17 @@ Nothing existing does all four of these at once:
 
 ## Design
 
-- **[Design spec](docs/superpowers/specs/2026-08-21-muplay-design.md)** — the
-  full concept: architecture, Navidrome integration, casting, audiobooks,
+- **[Design spec](docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md)** —
+  the full concept: architecture, Navidrome integration, casting, audiobooks,
   testing strategy, risks.
-- **[Roadmap](docs/superpowers/plans/2026-08-21-muplay-roadmap.md)** — seven
-  plans in dependency order.
+- **[Roadmap](docs/superpowers/plans/2026-08-22-muplay-kotlin-roadmap.md)** —
+  seven plans in dependency order.
 - **[Spike findings](docs/superpowers/spikes/)** — empirical answers to the
   questions the design rested on.
+
+There is an earlier Java design and roadmap in the same directories, dated
+`2026-08-21`. Both are **superseded** and kept only for history; the Java
+implementation is tagged `java-prototype`.
 
 ## Roadmap
 
@@ -48,7 +53,7 @@ Nothing existing does all four of these at once:
 Requires JDK 21 and the Android SDK (`compileSdk 37`).
 
 ```bash
-./gradlew build     # compile + all unit tests
+./gradlew build     # compile, all unit tests, Lint, and the JVM coverage floors
 ./gradlew test      # unit tests only
 ```
 
@@ -57,13 +62,13 @@ Requires JDK 21 and the Android SDK (`compileSdk 37`).
 Both must be green to merge. Neither is nightly and neither is advisory.
 
 - **Tier 1** ([`pr.yml`](.github/workflows/pr.yml)) — under ten minutes, no
-  emulator: convention rules, Android Lint, the release-manifest check, every
-  JVM test, the OpenAPI fixture contract tests, and `LiveNavidromeTest` against
-  a pinned Navidrome container.
+  emulator: convention rules, Android Lint, the release-manifest check, every JVM
+  test, the coverage floors that need no device, the OpenAPI fixture contract
+  tests, and `LiveNavidromeTest` against a pinned Navidrome container.
 - **Tier 2** ([`e2e.yml`](.github/workflows/e2e.yml)) — the first-run journey on
-  a real API 37 emulator against that same real container, plus the coverage
-  gate (the floors are measured against merged JVM + instrumented execution
-  data, so this is the one job where both halves exist).
+  a real API 37 emulator against that same real container, plus the rest of the
+  coverage table: the floors over `@Composable` code, which only a real
+  composition can exercise.
 
 Running Tier 2 locally needs the container, an emulator, and one prepare step:
 
@@ -72,25 +77,42 @@ docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-librar
 "$ANDROID_HOME"/emulator/emulator -avd muplay37 \
   -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot \
   -feature Minigbm -prop qemu.hardware.gralloc=minigbm &
-./ci/prepare-emulator.sh          # waits for boot, checks gralloc, adb reverse
+./ci/prepare-emulator.sh          # waits for boot, checks the device, adb reverse
 ./gradlew :app:connectedDebugAndroidTest
 ./gradlew jacocoTestReport jacocoTestCoverageVerification
 ```
 
 The two `minigbm` flags are not optional — see
-[`ci/prepare-emulator.sh`](ci/prepare-emulator.sh) for the crash they avoid.
+[`ci/prepare-emulator.sh`](ci/prepare-emulator.sh) for the emulator/system-image
+crash they avoid, and note that the script refuses to run without them.
 
 ## Project conventions
 
-- **Java 17 only. No Kotlin**, anywhere, including build logic. Enforced by
-  ArchUnit rules, not convention.
-- `@Nonnull`/`@Nullable` on every public signature; NullAway fails the build.
-- Records for DTOs and domain models; sealed interfaces for state and results.
-- Every Jackson-deserialised record carries an explicit `@JsonCreator` — D8
-  strips record reflection metadata below `minSdk 33`, which breaks Jackson
-  silently on-device while unit tests stay green.
+- **Kotlin only**, anywhere, including build logic. Every module applies its
+  plugins through a convention plugin in
+  [`build-logic/`](build-logic/convention/src/main/kotlin); a module's own
+  `build.gradle.kts` carries `plugins {}`, `dependencies {}` and nothing else
+  except its own identity (`namespace`, `applicationId`, `versionCode`,
+  `versionName`). [`ConventionTest`](app/src/test/kotlin/app/muplay/ConventionTest.kt)
+  enforces that allow-list rather than leaving it to habit.
+- **No mock frameworks.** Real collaborators first, then hand-written fakes.
+  `ConventionTest` scans the catalogue, every module build file and every
+  build-logic source for Mockito/MockK/EasyMock/PowerMock.
+- **KSP, never kapt.** Also enforced by `ConventionTest`.
+- **JUnit 5 and AssertJ** for JVM tests; Turbine for `Flow` assertions. On-device
+  Compose tests are JUnit 4, which `AndroidJUnitRunner` and
+  `createAndroidComposeRule` make unavoidable and which costs nothing here.
+- Sealed interfaces for state and results; data classes for DTOs and domain
+  models, serialised with kotlinx.serialization.
+- **Coverage floors are measured, never invented, and must be able to fail.**
+  Branch coverage for non-UI code, line coverage for `@Composable` code — the
+  Compose compiler emits synthetic branches inside author method bodies that no
+  test can reach. The table, every number's derivation, and the split between the
+  two tiers live in [`build.gradle.kts`](build.gradle.kts).
 - Response fixtures are validated against a vendored copy of the OpenSubsonic
   OpenAPI spec, so response-shape assertions have an external oracle.
+- Anything the spec gets wrong is corrected **in the spec**, not worked around in
+  code.
 
 ## Licence
 
