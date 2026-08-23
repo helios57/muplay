@@ -135,24 +135,76 @@ private fun Project.debugClassesFileTree(commonExtension: CommonExtension): Prov
 }
 
 /**
- * This module's merged JVM + instrumented execution data. Today (Task 7) only the first of the two
- * globs below ever matches anything — Task 8 is what starts producing instrumented
- * (`connectedDebugAndroidTest`) coverage under the build's `outputs/code_coverage` directory;
- * wiring the merge in now, rather than only adding it once Task 8 exists, is what let Task 7 ship
- * the 90% branch floor as a floor that already accounts for both execution sources instead of
- * needing a second, disruptive rewrite of this file later. A `fileTree` glob over a directory that
- * does not exist yet — as `outputs/code_coverage` does not, before Task 8 — simply contributes no
- * files; Gradle's own
- * JaCoCo report/verification tasks already tolerate execution-data entries that do not exist at
- * task-execution time (this project has always relied on that: a module with zero tests still runs
- * `jacocoTestReport` successfully today, over an empty execution-data set).
+ * This module's merged JVM + instrumented execution data: its own `testDebugUnitTest` `.exec`
+ * file, plus **every** `.ec` file the build's instrumented (`connectedDebugAndroidTest`) run
+ * produced, from any module.
+ *
+ * "From any module" is not defensive over-reach, it is the only correct answer. Instrumented
+ * execution data is written by whichever module owns the `androidTest` source set — `:app`, and
+ * only `:app`, today — into *that* module's `build/outputs/code_coverage/`. But the process it
+ * records is the whole debug APK, which contains `:feature:setup`'s and `:core:designsystem`'s
+ * classes too. A module that only globbed its own build directory would therefore see nothing of
+ * a journey that exercised its own code: exactly the case for `SetupScreenKt`, composed for real
+ * by `FirstRunJourneyTest`, whose execution data lands under `:app`. JaCoCo matches execution
+ * data to classes by class id, not by which module's directory the data sat in, so handing every
+ * module the same `.ec` files is safe — a module's report still only counts the classes its own
+ * `classDirectories` names (see [debugClassesFileTree]).
+ *
+ * Read through `rootProject.allprojects` rather than by globbing paths under `rootDir`: it asks
+ * Gradle where each project's build directory actually is instead of assuming `<project>/build`.
+ * Safe to evaluate here because every caller invokes this from inside a `tasks.register(...) { }`
+ * configuration block, which runs at task-realization time — long after `settings.gradle.kts` has
+ * created every project.
+ *
+ * A `fileTree` glob over a directory that does not exist contributes no files, and Gradle's own
+ * JaCoCo report/verification tasks already tolerate execution-data entries that are absent at
+ * task-execution time (this project has always relied on that: a module with zero tests still
+ * runs `jacocoTestReport` successfully, over an empty execution-data set). So a plain
+ * `./gradlew jacocoTestReport` with no emulator run behind it still works — it just measures the
+ * JVM half, which is why the coverage *gate* runs in the one CI job that has both halves (see
+ * `.github/workflows/e2e.yml`).
  */
-private fun Project.mergedExecutionData(debugUnitTest: Provider<Test>) = listOf(
-  debugUnitTest.map { it.extensions.getByType(JacocoTaskExtension::class.java).destinationFile },
-  layout.buildDirectory.dir("outputs/code_coverage").map { dir ->
-    dir.asFileTree.matching(PatternSet().include("**/*.ec"))
-  },
-)
+private fun Project.mergedExecutionData(debugUnitTest: Provider<Test>): List<Provider<out Any>> {
+  val instrumented = rootProject.allprojects.map { anyProject ->
+    anyProject.layout.buildDirectory.dir("outputs/code_coverage").map { dir ->
+      dir.asFileTree.matching(PatternSet().include("**/*.ec"))
+    }
+  }
+  return listOf(
+    debugUnitTest.map { it.extensions.getByType(JacocoTaskExtension::class.java).destinationFile },
+  ) + instrumented
+}
+
+/** The AGP task that runs a module's instrumented tests on a device and pulls their `.ec` back. */
+private const val CONNECTED_TEST_TASK_NAME = "connectedDebugAndroidTest"
+
+/**
+ * Every `connectedDebugAndroidTest` task in the build, as an *ordering* constraint only.
+ *
+ * `outputs/code_coverage` is that task's own declared `@OutputDirectory`, and
+ * [mergedExecutionData] reads it. Gradle notices, and asking for both in one invocation
+ * (`./gradlew :app:connectedDebugAndroidTest jacocoTestReport`) fails outright with "Task
+ * ':app:jacocoTestReport' uses this output of task ':app:connectedDebugAndroidTest' without
+ * declaring an explicit or implicit dependency" — reproduced directly, which is how this function
+ * came to exist. Splitting the two into separate invocations dodges it, and
+ * `.github/workflows/e2e.yml` does run them as separate steps, but a gate that only works when
+ * nobody combines the commands is a trap, not a design.
+ *
+ * `mustRunAfter`, which Gradle's own message lists as a valid resolution, is the right one of the
+ * three it offers: `dependsOn` would make every `jacocoTestReport` require a connected device, and
+ * declaring the task as an *input* would do the same. `mustRunAfter` constrains order only when
+ * both tasks are already in the graph, so a plain `./gradlew jacocoTestReport` still runs with no
+ * emulator anywhere in sight — it simply measures the JVM half.
+ *
+ * Every project's, not just this one's, for the same reason [mergedExecutionData] reads every
+ * project's `.ec`: the module that owns the `androidTest` source set is not the module whose code
+ * the run covers. `tasks.names` is a name lookup that does not realize tasks, so projects without
+ * an instrumented test task are skipped without being forced to create one.
+ */
+private fun Project.connectedTestTasks(): List<Any> =
+  rootProject.allprojects
+    .filter { it.tasks.names.contains(CONNECTED_TEST_TASK_NAME) }
+    .map { it.tasks.named(CONNECTED_TEST_TASK_NAME) }
 
 /**
  * Registers a `jacocoTestReport` task for the `debug` unit tests of an Android module — the one
@@ -183,6 +235,7 @@ internal fun Project.configureAndroidJacocoReport(commonExtension: CommonExtensi
     classDirectories.setFrom(debugClassesFileTree(commonExtension))
     sourceDirectories.setFrom(files("$projectDir/src/main/kotlin", "$projectDir/src/main/java"))
     executionData.setFrom(mergedExecutionData(debugUnitTest))
+    mustRunAfter(connectedTestTasks())
   }
 }
 
@@ -213,5 +266,6 @@ internal fun Project.configureAndroidJacocoCoverageVerification(commonExtension:
     classDirectories.setFrom(debugClassesFileTree(commonExtension))
     sourceDirectories.setFrom(files("$projectDir/src/main/kotlin", "$projectDir/src/main/java"))
     executionData.setFrom(mergedExecutionData(debugUnitTest))
+    mustRunAfter(connectedTestTasks())
   }
 }

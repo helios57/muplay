@@ -35,6 +35,14 @@ jobs:
       - name: Android Lint
         run: ./gradlew lint
 
+      - name: Release manifest
+        # `usesCleartextTraffic` exists in this repository only in `app/src/debug/
+        # AndroidManifest.xml`, for the Tier 2 journey's plain-HTTP container. This proves it does
+        # not reach the *merged* release manifest — the artifact that actually ships, and the one
+        # a dependency's own manifest could inject it into. See `verifyReleaseManifest` in
+        # AndroidApplicationConventionPlugin.
+        run: ./gradlew :app:verifyReleaseManifest
+
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -47,9 +55,17 @@ jobs:
   # Every JVM test across every module (`./gradlew test` — the lifecycle task every module,
   # Android or plain java-library, exposes; for the Android modules it already resolves to exactly
   # `testDebugUnitTest`, so this one task covers all six modules with no per-module enumeration to
-  # keep in sync), plus the 90%-branch-floor coverage gate. `LiveNavidromeTest` (core/network) is
-  # excluded here — it is tagged "live" and needs the real container the `live-navidrome` job below
-  # starts; see `Testing.kt`'s `configureJUnit5`.
+  # keep in sync). `LiveNavidromeTest` (core/network) is excluded here — it is tagged "live" and
+  # needs the real container the `live-navidrome` job below starts; see `Testing.kt`'s
+  # `configureJUnit5`.
+  #
+  # No coverage step here, deliberately, and this is not a weakening of Tier 1. `coverageFloors`
+  # (root build.gradle.kts) is measured against `Jacoco.kt`'s *merged* JVM + instrumented
+  # execution data, and Task 8 gave the Compose-bearing classes real LINE floors that only the
+  # emulator journey can reach. A gate run here, with the instrumented half absent, would measure
+  # those classes at 0% and fail every run — so `jacocoTestReport`/`jacocoTestCoverageVerification`
+  # run in `.github/workflows/e2e.yml` instead, which is the one job where both halves of the
+  # merge exist. That workflow is required to merge exactly like this one.
   unit-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -64,16 +80,6 @@ jobs:
       - name: Unit tests
         run: ./gradlew test
 
-      - name: Coverage report
-        run: ./gradlew jacocoTestReport
-
-      - name: Coverage gate
-        # Branch-coverage floors, one per module — see branchCoverageFloors in root
-        # build.gradle.kts for the exact, measured number behind each module and why. Every floor
-        # there is real and can fail; a module absent from that map (:app, today) is deliberately
-        # ungated rather than given a floor that cannot fail either.
-        run: ./gradlew jacocoTestCoverageVerification
-
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -81,7 +87,6 @@ jobs:
           name: unit-integration-reports
           path: |
             **/build/reports/tests/**
-            **/build/reports/jacoco/**
 
   # Runs LiveNavidromeTest (core/network) against a real, pinned deluan/navidrome:0.63.2 container
   # — not a fixture, not MockWebServer. Docker is not an emulator: the container starts in 5-11s

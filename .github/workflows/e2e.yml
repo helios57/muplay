@@ -1,0 +1,113 @@
+name: E2E
+
+# Tier 2. **Required to merge** — not nightly, not advisory. It is the only tier that runs the
+# app itself: a real debug APK, on a real emulator, against the same real Navidrome container
+# Tier 1's `live-navidrome` job uses. Same triggers as `.github/workflows/pr.yml` (see that file's
+# own note on why `master`, not `main`) so both tiers gate the same events.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Slower than every Tier 1 job put together, and deliberately kept: this is the tier that proves
+  # the first-run journey actually works end to end, and it is also the only source of
+  # *instrumented* coverage data in this build. Both of those are load-bearing — see the coverage
+  # steps at the bottom of this job.
+  first-run-journey:
+    runs-on: ubuntu-latest
+    # An emulator boot plus a full debug + androidTest assembly is the bulk of this; 45 minutes is
+    # slack over the measured local run, not a target.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Without this the emulator falls back to software CPU emulation and the job takes long
+      # enough to hit its own timeout. GitHub's Linux runners expose /dev/kvm but leave it
+      # root-only; this is the standard udev rule from android-emulator-runner's own README.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Start Navidrome
+        run: docker compose -f ci/navidrome.compose.yml up -d --wait
+
+      - name: Configure libraries
+        # Renames Navidrome's pinned library 1 to "Music", creates "Audiobooks", and waits for
+        # both to finish scanning. FirstRunJourneyTest asserts on exactly those two names, so this
+        # step is what the journey's final assertion is a contract *on* — see the script's own
+        # header comment.
+        run: ./ci/configure-libraries.sh
+
+      - name: First-run journey
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          # API 37 / google_apis / x86_64 — the same image as the local `muplay37` AVD this test
+          # was developed against, so a failure here is reproducible locally with one command.
+          api-level: 37
+          target: google_apis
+          arch: x86_64
+          # Headless, no audio device, and swiftshader for GL: a CI runner has no display, no
+          # sound card and no GPU. `-no-snapshot` keeps every run from a clean boot rather than a
+          # saved image whose state nothing in this repository controls.
+          #
+          # `-feature Minigbm -prop qemu.hardware.gralloc=minigbm` is **required**, not tuning:
+          # without it this emulator + system-image pair aborts SurfaceFlinger and system_server
+          # on every CPU read of a graphics buffer, which happens at every activity teardown, and
+          # the run dies with "INSTRUMENTATION_ABORTED: System has crashed". The full crash
+          # signature, the evidence, and the reason it is delivered as a boot flag are in
+          # `ci/prepare-emulator.sh`'s own header — which also fails fast if the device it is
+          # handed does not have it.
+          emulator-options: >-
+            -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
+            -camera-back none -camera-front none
+            -feature Minigbm -prop qemu.hardware.gralloc=minigbm
+          # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
+          # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
+          # `adb reverse` that makes `http://localhost:4533` inside the emulator reach the
+          # container started above. A missing reverse forward does not fail loudly — the app's
+          # connection attempt simply times out — so this is not something to leave to a separate
+          # step that could be reordered away from the test.
+          script: |
+            ./ci/prepare-emulator.sh
+            ./gradlew :app:connectedDebugAndroidTest
+
+      # Coverage lives here, not in pr.yml's `unit-integration` job, because this is the only job
+      # where the execution data is complete. `Jacoco.kt`'s `mergedExecutionData` merges JVM
+      # (`testDebugUnitTest`) and instrumented (`connectedDebugAndroidTest`) `.ec` data, and the
+      # floors in root `build.gradle.kts`'s `coverageFloors` are measured against that merge —
+      # every Compose-bearing class's LINE floor is reachable only because the journey above
+      # actually composed it. Running the gate anywhere the instrumented half is missing would
+      # fail those floors at ~0%, so it runs where both halves exist. `jacocoTestReport` pulls in
+      # each module's own `test` task, so the JVM half is produced here rather than assumed from
+      # another job's workspace.
+      - name: Coverage report
+        run: ./gradlew jacocoTestReport
+
+      - name: Coverage gate
+        run: ./gradlew jacocoTestCoverageVerification
+
+      - name: Stop Navidrome
+        if: always()
+        run: docker compose -f ci/navidrome.compose.yml down -v
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-reports
+          path: |
+            app/build/reports/androidTests/**
+            **/build/reports/jacoco/**

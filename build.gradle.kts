@@ -135,48 +135,69 @@ data class CoverageFloor(
  *   enough (100%, 60%, 87.5%) that a single blended floor would either sit so low it protects
  *   none of them individually, or so high the weakest one could never have passed it honestly.
  *   `SetupViewModel` (2/2, floor 0.90): `connect`'s own branches (the `InvalidUrl` check, the
- *   catch-clause dispatch), fully covered. `SetupViewModel$1` (3/5, floor 0.55): the compiled
- *   *default* `ping` constructor parameter's lambda class — two new `SetupViewModelTest` cases
- *   (a real refused connection, then a real `MockWebServer` success) closed 3 of its originally-5
- *   missing branches; the 2 still missing (`SetupViewModel.kt` lines 38-39, inside this same
- *   compiled class) are, on the evidence, the Kotlin-compiler-generated "invalid continuation
- *   state" safety branches every suspend lambda's `invokeSuspend` carries — structurally
- *   unreachable from any legitimate call site, the same *kind* of compiler-owned gap BRANCH
- *   coverage has for Compose, just from the coroutines compiler plugin instead. `SetupFailureReasonKt`
+ *   catch-clause dispatch), fully covered. `SetupViewModel$1` and `SetupViewModel$2` (3/5 each,
+ *   floor 0.55): the compiled *default* `ping` and `fetchLibraries` constructor parameters'
+ *   lambda classes — `SetupViewModelTest`'s real-refused-connection and real-`MockWebServer`
+ *   cases close 3 of each one's 5 branches; the 2 still missing in each are, on the evidence, the
+ *   Kotlin-compiler-generated "invalid continuation state" safety branches every suspend lambda's
+ *   `invokeSuspend` carries — structurally unreachable from any legitimate call site, the same
+ *   *kind* of compiler-owned gap BRANCH coverage has for Compose, just from the coroutines
+ *   compiler plugin instead. `SetupFailureReasonKt`
  *   (7/8, floor 0.85): `toMessage`'s `when`-cascade, `SetupFailureReasonTest` covers all three
  *   members plus both sides of `Rejected`'s `detail` null/non-null branch; the one branch still
  *   missing is an artifact of how a `when` with no `else` over a sealed interface compiles, not an
- *   uncovered case. No LINE entry for this module: `SetupScreenKt` itself measures a real
- *   0/54 = 0.00% (no JVM test touches an uninvoked composable's own body at all, unlike
- *   `:core:designsystem` below), and `0.00` is exactly the unfireable floor this project must not
- *   ship again — Task 8 raises this to a real, floorable LINE number once its emulator journey
- *   actually composes `SetupScreen`.
+ *   uncovered case.
  *
- * - **`:core:designsystem`** — one `"CLASS"`-element LINE rule, scoped to `ThemeKt` (0.652,
- *   floor 0.63) — the file holding both `colorSchemeFor` and the `MuPlayTheme` composable (Kotlin
- *   compiles every top-level function in one `.kt` file into one class, so JaCoCo cannot separate
- *   the two at class granularity; isolating `colorSchemeFor`'s own already-100%-covered 2 branches
- *   would need JaCoCo's METHOD-element scoping, materially riskier machinery — untested by this
- *   task — for a slice that is already fully covered and immaterial to the gate, so not pursued).
- *   `colorSchemeFor` and `MuPlayTheme`'s own body are not what supplies most of that 0.652 —
- *   `LightColorScheme`/`DarkColorScheme`'s multi-line `lightColorScheme(...)`/`darkColorScheme(...)`
- *   initializers run as a side effect of the `ThemeKt` class simply being *loaded* (by
- *   `ThemeTest`), independent of `MuPlayTheme` itself ever being composed. No BRANCH entry: the
- *   only branches in this module are `colorSchemeFor`'s 2 (already 100% covered) and there is no
- *   way to gate them in isolation, per the paragraph above; `ColorKt`/`TypeKt` (this module's
- *   other two files) contain no `@Composable` declarations and no branches of their own to gate
- *   either way.
+ *   And, from Task 8, a fourth rule of a different counter: `SetupScreenKt` LINE (55/57 =
+ *   **0.9649**, floor 0.90). Task 7 could not gate this class at all — from the JVM alone it
+ *   measured a real 0/54, and `0.00` is exactly the unfireable floor this project must not ship
+ *   again. `FirstRunJourneyTest` composes the screen for real on an emulator, down both terminal
+ *   states (a successful connect, and a rejection from the real server), which is what makes a
+ *   real floor possible. The 2 lines still missing both belong to the `private` `SetupScreen`
+ *   overload (2 missed / 49 covered on its own method counter): its declaration line and the
+ *   closing brace of its `when (uiState)` block. What sits on those two lines was not decompiled,
+ *   so nothing is claimed about it beyond one thing the report does rule out — this class carries
+ *   no `SetupScreen$default` method at all, so it is not an uninvoked defaulted-parameter bridge.
+ *   The BRANCH counter for the same class stands at 60/94 and is deliberately not gated, per the
+ *   ruling above.
  *
- * **`:app` has no entry at all here**, deliberately, and that absence is not the same thing as a
- * `0.00` floor. Every one of its 18 measured branches, and effectively all of its measured lines
- * (1/21 — the sole covered line is `MuPlayApplication`'s own trivial body, from
- * `MuPlayApplicationTest`), is Compose/DI wiring (`MainActivity`, `MuPlayApp`, `MuPlayApplication`,
- * `SetupRoute` contain no `if`/`when`/`?:`/`&&`/`||` of their own at all). A `0.00` floor at
- * either counter would be exactly the unfireable gate this project has already shipped once
- * before; any floor above `0.00` would fail immediately against a module with nothing actually
- * wrong with it. Neither is honest, so `:app` simply has no entry until Task 8 gives it real,
- * non-Compose-only execution data to measure one against — see the loud, per-module
- * `logger.warn` below for why an absence like this is never silent.
+ * - **`:core:designsystem`** — one `"CLASS"`-element LINE rule at the full `0.90`, covering all
+ *   three of this module's classes, each measuring **1.0000** (`ThemeKt` 23/23, `ColorKt` 12/12,
+ *   `TypeKt` 13/13). Task 7 could only gate `ThemeKt`, at `0.63` against a measured 0.652, because
+ *   from the JVM alone nothing ever *composed* `MuPlayTheme` — the covered lines were only
+ *   `LightColorScheme`/`DarkColorScheme`'s initializers running as a side effect of `ThemeTest`
+ *   loading the class — and `TypeKt`/`ColorKt` sat at 0/13 and 12/12 with no rule at all. Task 8's
+ *   emulator journey composes `MuPlayTheme` for real (`MainActivity` wraps the whole app in it),
+ *   which is what closes all three. Still no BRANCH entry: the module's 30 measured branches are
+ *   30 - 2 = 28 Compose codegen inside `MuPlayTheme`'s own body plus `colorSchemeFor`'s own 2
+ *   (100% covered from `ThemeTest`), and there is no class-granular way to gate the latter alone
+ *   — that would need JaCoCo's METHOD-element scoping, materially riskier machinery for a slice
+ *   already fully covered.
+ *
+ * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
+ *   aggregate rule in this table, and the one place where that is the right shape rather than a
+ *   compromise. Task 7 deliberately left this module with no entry at all: from the JVM alone it
+ *   measured 1/21 lines (only `MuPlayApplication`'s own body, via `MuPlayApplicationTest`), and
+ *   both available numbers were dishonest — `0.00` is the unfireable floor this project has
+ *   already shipped once, and anything above it would have failed a module with nothing wrong with
+ *   it. Task 8's journey supplies the real data: `MainActivity` 5/5, `MuPlayAppKt` 10/10,
+ *   `SetupRoute` 2/2, `MuPlayApplication` 1/1.
+ *
+ *   `"BUNDLE"`, not `"CLASS"`, for one specific reason. Every class in this module is the same
+ *   *kind* of code — Compose/DI wiring, LINE-measured — so an aggregate here cannot hide a
+ *   regression of a different kind behind a healthy average, which is the only thing the
+ *   CLASS-element rules elsewhere in this table exist to prevent. What a `"CLASS"` rule at 0.90
+ *   *would* do is fail on `MuPlayAppKt$MuPlayApp$$inlined$entryProvider$default$1` — a
+ *   compiler-inlined synthetic holding one line, measuring 0/1, that no test can reach and no
+ *   author-written code corresponds to. Excluding it by pattern is possible but leaves a
+ *   permanent, unfixable ungated-class warning on every run (see [UngatedClassChecker]'s own doc
+ *   on why a warning nobody can act on is worse than none). The BUNDLE rule covers it, still
+ *   fails on anything real: dropping `MainActivity` alone takes the module to 15/21 = 0.714.
+ *
+ *   No BRANCH entry for `:app`, and that absence is the ruling above, not an oversight: its 18
+ *   measured branches are entirely `MuPlayAppKt`'s Compose codegen (`MainActivity`,
+ *   `MuPlayApplication` and `SetupRoute` contain no `if`/`when`/`?:`/`&&`/`||` of their own at
+ *   all), so a BRANCH floor here would measure the Compose compiler.
  */
 val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":core:model" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
@@ -199,19 +220,28 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.setup.SetupUiState*",
       ),
     ),
-    // 3/5 -- the compiled default `ping` constructor parameter's lambda class. Two rounds of new
-    // SetupViewModelTest cases (a real refused connection, then a real MockWebServer success)
-    // closed 3 of its originally-5 missing branches; the 2 still missing are, on the evidence
-    // (SetupViewModel.kt lines 38-39, inside this same compiled class), the Kotlin-compiler
-    // -generated "invalid continuation state" safety branches every suspend lambda's
-    // `invokeSuspend` carries -- structurally unreachable from any legitimate call site, the same
-    // *kind* of compiler-owned gap BRANCH coverage has for Compose, just from the coroutines
-    // compiler plugin instead of the Compose one.
+    // 3/5 each -- the compiled default `ping` (SetupViewModel$1) and `fetchLibraries`
+    // (SetupViewModel$2) constructor parameters' lambda classes. SetupViewModelTest's
+    // real-refused-connection and real-MockWebServer cases close 3 of each one's 5 branches; the
+    // 2 still missing in each are, on the evidence, the Kotlin-compiler-generated "invalid
+    // continuation state" safety branches every suspend lambda's `invokeSuspend` carries --
+    // structurally unreachable from any legitimate call site, the same *kind* of compiler-owned
+    // gap BRANCH coverage has for Compose, just from the coroutines compiler plugin instead of
+    // the Compose one. A CLASS-element rule holds each matched class to the minimum separately,
+    // so listing both here gates both individually rather than blending them.
+    //
+    // `SetupViewModel*1` also matches `SetupViewModel$connect$1` (the compiled `connect` coroutine
+    // body, `SetupViewModel.connect.1` once qualified), which carries no branches of its own --
+    // harmless, since a CLASS-element rule over a zero-counter class yields NaN and JaCoCo reports
+    // no violation, and it keeps that class from showing up as ungated.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.55"),
-      includes = listOf("app.muplay.setup.SetupViewModel*1"),
+      includes = listOf(
+        "app.muplay.setup.SetupViewModel*1",
+        "app.muplay.setup.SetupViewModel*2",
+      ),
     ),
     // 7/8 -- SetupFailureReason.toMessage's when-cascade; SetupFailureReasonTest covers all three
     // members plus both sides of Rejected's detail null/non-null branch. The one branch still
@@ -230,16 +260,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.setup.SetupFailureReason*",
       ),
     ),
+    // 55/57 = 0.9649 LINE -- the one Compose-bearing file in this module, gated on LINE rather
+    // than BRANCH per the ruling in this table's own doc. Reachable only because Task 8's
+    // FirstRunJourneyTest composes SetupScreen for real on an emulator, down both of its terminal
+    // states; from the JVM alone this same class measures 0/54. The 2 lines still missing are the
+    // private SetupScreen overload's declaration line and its `when` block's closing brace -- see
+    // coverageFloors's own doc above for what is and is not known about them. Its 60/94 BRANCH is
+    // deliberately left ungated: Compose codegen, not author logic.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.setup.SetupScreenKt"),
+    ),
   ),
-  // See coverageFloors's own doc above for the exact measurement and why CLASS-element.
+  // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
+  // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
+  // composes MuPlayTheme (MainActivity wraps the whole app in it). Task 7 could only gate ThemeKt,
+  // at 0.63, and left the other two with no rule at all.
   ":core:designsystem" to listOf(
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
-      minimum = BigDecimal("0.63"),
-      includes = listOf("app.muplay.designsystem.theme.ThemeKt"),
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.designsystem.theme.ThemeKt",
+        "app.muplay.designsystem.theme.ColorKt",
+        "app.muplay.designsystem.theme.TypeKt",
+      ),
     ),
   ),
+  // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
+  // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
+  // why there is no BRANCH entry.
+  ":app" to listOf(CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"))),
 )
 
 /**

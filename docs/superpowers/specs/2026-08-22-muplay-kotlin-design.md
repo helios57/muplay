@@ -460,13 +460,23 @@ Tier 2 grows with each plan. **A plan is not done until its journeys are in it.*
 - **Kover cannot collect instrumented coverage** — its own docs say so. Since
   device coverage is required, coverage is **JaCoCo**, merging `testDebugUnitTest`
   and `connectedDebugAndroidTest` execution data into one figure per module. This
-  is also what NIA does.
+  is also what NIA does. Because the merged figure needs both halves, the coverage
+  gate runs in **Tier 2**, where the instrumented half exists — running it in
+  Tier 1 would measure Compose UI at ~0% and fail every UI floor.
 - **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin
   is `0.0.1-alpha16` and Canary-only. Screenshots come from `captureToImage()`
   inside the emulator suite, with a small golden-diff helper — no new framework.
 - Turbine for Flow assertions; `kotlinx-coroutines-test` for time control.
-- **Coverage floor: 90% branch**, generated code excluded, enforced per module and
-  failing the build. A floor that cannot fail is worse than none.
+- **Coverage floor: 90%**, generated code excluded, enforced per module and
+  failing the build. The *metric* differs by kind of code: **branch** for non-UI
+  code, **line** for Compose UI. Branch coverage over `@Composable` code measures
+  the Compose compiler, not this project — decompiling showed `MuPlayTheme`'s body
+  carries 28 branches from zero author-written conditionals, and ~94 of
+  `SetupScreenKt`'s 100 are `$changed`/`$dirty` bitmask tests and skip logic
+  emitted *inside* the author's own method bodies, where no class-level exclusion
+  can reach them. Every floor is measured from a real run, never invented, and
+  **must be able to fail**: a floor of `0.00`, or one whose matched classes carry
+  no counters of its own kind, passes at every minimum and gates nothing.
 
 ---
 

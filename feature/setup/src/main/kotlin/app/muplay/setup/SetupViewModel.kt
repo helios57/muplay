@@ -2,6 +2,7 @@ package app.muplay.setup
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.muplay.model.MusicLibrary
 import app.muplay.model.ServerInfo
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
@@ -15,28 +16,41 @@ import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
- * Drives the first-run setup screen: takes a server URL, username and password, calls `ping`, and
- * reports success or a typed failure as [uiState].
+ * Drives the first-run setup screen: takes a server URL, username and password, calls `ping` then
+ * `getMusicFolders`, and reports success or a typed failure as [uiState].
  *
- * [ping] is the seam that makes this class testable without a mock framework or a real network
- * call: a plain suspend function, defaulted to a real [SubsonicClient.ping] call, that
- * [SetupViewModelTest] replaces with a hand-written fake lambda per test. `SubsonicClient` itself
+ * [ping] and [fetchLibraries] are the seams that make this class testable without a mock framework
+ * or a real network call: plain suspend functions, defaulted to real [SubsonicClient] calls, that
+ * [SetupViewModelTest] replaces with hand-written fake lambdas per test. `SubsonicClient` itself
  * cannot be faked directly — it is a concrete, non-open class whose primary constructor already
- * builds a real Retrofit instance (see its own documentation) — so the seam sits one level up,
- * at exactly the one call [connect] needs.
+ * builds a real Retrofit instance (see its own documentation) — so each seam sits one level up,
+ * at exactly the two calls [connect] needs.
+ *
+ * Two independent lambdas rather than one that returns both halves: keeping [ping]'s signature
+ * exactly as it was means every existing test, and every existing call site, still says what it
+ * meant. The cost is that the two defaults build a [SubsonicClient] each — two `Retrofit`
+ * instances per connect attempt, on a flow a user runs once. `SubsonicClient` holds no per-call
+ * state worth sharing (its one shared object, the `SecureRandom` behind salt generation, is
+ * already a companion-level singleton), so this is a small allocation cost, not a correctness or
+ * connection-reuse one.
  *
  * No repository, use-case, or domain layer sits between this ViewModel and [SubsonicClient]:
  * per this project's constraints, `core/network`'s client already *is* the entry point to data.
  *
  * `@JvmOverloads` is not decorative here: [SetupScreen] constructs this ViewModel with the plain
  * `viewModel()` composable, no custom factory. That default factory instantiates a ViewModel via
- * a genuine zero-argument JVM constructor found through reflection — a Kotlin constructor with a
- * defaulted parameter compiles to a single constructor plus a synthetic `$default` bridge, not a
- * real no-arg overload, so without `@JvmOverloads` that reflective lookup fails at runtime.
+ * a genuine zero-argument JVM constructor found through reflection — a Kotlin constructor with
+ * defaulted parameters compiles to a single constructor plus a synthetic `$default` bridge, not a
+ * real no-arg overload, so without `@JvmOverloads` that reflective lookup fails at runtime. It is
+ * `FirstRunJourneyTest` that actually proves this end to end: that journey reaches the real screen
+ * through `viewModel()` on a real device, which no JVM test in this module can do.
  */
 class SetupViewModel @JvmOverloads constructor(
   private val ping: suspend (SubsonicCredentials) -> ServerInfo = { credentials ->
     SubsonicClient(credentials).ping()
+  },
+  private val fetchLibraries: suspend (SubsonicCredentials) -> List<MusicLibrary> = { credentials ->
+    SubsonicClient(credentials).getMusicFolders()
   },
 ) : ViewModel() {
 
@@ -48,9 +62,14 @@ class SetupViewModel @JvmOverloads constructor(
    * A blank or malformed URL is rejected synchronously, before [ping] is ever called — see
    * [SetupUiState.Failure] with [SetupFailureReason.InvalidUrl].
    *
-   * Otherwise moves to [SetupUiState.Connecting] and, once [ping] settles, to exactly one of:
-   * - [SetupUiState.Success], if it returned.
-   * - [SetupUiState.Failure] with [SetupFailureReason.Rejected], if it threw
+   * Otherwise moves to [SetupUiState.Connecting] and, once [ping] and then [fetchLibraries]
+   * settle, to exactly one of:
+   * - [SetupUiState.Success], if both returned — carrying the server's identity *and* its
+   *   libraries. [fetchLibraries] runs only after [ping] has succeeded, and its failure is a
+   *   failure of the whole attempt: a setup that cannot list a single library has not produced
+   *   anything the user can go on to browse, and reporting it as a `Success` with an empty list
+   *   would be indistinguishable from a server that genuinely has none.
+   * - [SetupUiState.Failure] with [SetupFailureReason.Rejected], if either threw
    *   [SubsonicErrorException] (a Subsonic-level error, e.g. wrong credentials) or
    *   [SubsonicHttpException] (an unsuccessful HTTP status) — the server answered, on purpose.
    * - [SetupUiState.Failure] with [SetupFailureReason.Unreachable] for anything else — a
@@ -71,7 +90,8 @@ class SetupViewModel @JvmOverloads constructor(
     viewModelScope.launch {
       val credentials = SubsonicCredentials(trimmedUrl, username, password)
       _uiState.value = try {
-        SetupUiState.Success(ping(credentials))
+        val serverInfo = ping(credentials)
+        SetupUiState.Success(serverInfo, fetchLibraries(credentials))
       } catch (e: SubsonicErrorException) {
         SetupUiState.Failure(SetupFailureReason.Rejected(code = e.code, detail = e.message))
       } catch (e: SubsonicHttpException) {

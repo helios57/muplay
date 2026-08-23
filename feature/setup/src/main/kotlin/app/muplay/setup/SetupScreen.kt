@@ -22,13 +22,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * The first-run setup screen: a server URL, username and password, and a Connect button that
- * reports [SetupUiState] back to the user. Deliberately thin — the only branching this file owns
- * is which `Text`/`Composable` to render for a given [SetupUiState], which genuinely needs
- * Compose to exercise and is left for Task 8's emulator journey; [SetupViewModel] carries the
- * state-machine logic, and the failure-to-message mapping lives in `SetupFailureReason.toMessage`
- * precisely so it does *not* need Compose or an emulator to test. `viewModel()` uses the
- * platform's default factory, which is able to construct [SetupViewModel] because every one of
- * its constructor parameters is defaulted.
+ * reports [SetupUiState] back to the user — including, on success, the name of every library the
+ * server returned. Deliberately thin — the only branching this file owns is which
+ * `Text`/`Composable` to render for a given [SetupUiState], which genuinely needs Compose to
+ * exercise and is covered by `FirstRunJourneyTest` on a real emulator (Tier 2); [SetupViewModel]
+ * carries the state-machine logic, and the failure-to-message mapping lives in
+ * `SetupFailureReason.toMessage` precisely so it does *not* need Compose or an emulator to test.
+ * `viewModel()` uses the platform's default factory, which is able to construct [SetupViewModel]
+ * because every one of its constructor parameters is defaulted.
  */
 @Composable
 fun SetupScreen(modifier: Modifier = Modifier, viewModel: SetupViewModel = viewModel()) {
@@ -96,11 +97,20 @@ private fun SetupScreen(
 
     when (uiState) {
       is SetupUiState.Idle, is SetupUiState.Connecting -> Unit
-      is SetupUiState.Success ->
+      is SetupUiState.Success -> {
         Text(
           text = "Connected to ${uiState.serverInfo.type} ${uiState.serverInfo.serverVersion}",
           color = MaterialTheme.colorScheme.primary,
         )
+        // Each library's own name, one Text per library, exactly as the server reported them.
+        // No empty-state branch and no role label: `SetupUiState.Success.libraries` is what
+        // `getMusicFolders` returned (see its own doc), and what a library is *for* is not in
+        // that response at all. Turning this list into something the user picks from is the next
+        // plan's job; this task only has to show that the connection reached real server state.
+        uiState.libraries.forEach { library ->
+          Text(text = library.name, style = MaterialTheme.typography.bodyLarge)
+        }
+      }
       is SetupUiState.Failure ->
         Text(
           text = uiState.reason.toMessage(),

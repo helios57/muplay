@@ -45,16 +45,40 @@ Nothing existing does all four of these at once:
 
 ## Building
 
-Requires JDK 17+ and the Android SDK (`compileSdk 37`).
+Requires JDK 21 and the Android SDK (`compileSdk 37`).
 
 ```bash
 ./gradlew build     # compile + all unit tests
 ./gradlew test      # unit tests only
 ```
 
-The PR gate runs in under ten minutes with **no emulator**. Emulator and
-real-server work runs nightly against a pinned Navidrome container — see
-[`.github/workflows`](.github/workflows).
+### The merge gate — two tiers, both required
+
+Both must be green to merge. Neither is nightly and neither is advisory.
+
+- **Tier 1** ([`pr.yml`](.github/workflows/pr.yml)) — under ten minutes, no
+  emulator: convention rules, Android Lint, the release-manifest check, every
+  JVM test, the OpenAPI fixture contract tests, and `LiveNavidromeTest` against
+  a pinned Navidrome container.
+- **Tier 2** ([`e2e.yml`](.github/workflows/e2e.yml)) — the first-run journey on
+  a real API 37 emulator against that same real container, plus the coverage
+  gate (the floors are measured against merged JVM + instrumented execution
+  data, so this is the one job where both halves exist).
+
+Running Tier 2 locally needs the container, an emulator, and one prepare step:
+
+```bash
+docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
+"$ANDROID_HOME"/emulator/emulator -avd muplay37 \
+  -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot \
+  -feature Minigbm -prop qemu.hardware.gralloc=minigbm &
+./ci/prepare-emulator.sh          # waits for boot, checks gralloc, adb reverse
+./gradlew :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+```
+
+The two `minigbm` flags are not optional — see
+[`ci/prepare-emulator.sh`](ci/prepare-emulator.sh) for the crash they avoid.
 
 ## Project conventions
 

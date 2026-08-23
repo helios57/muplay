@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay. The one thing it adds is cleartext HTTP, which the Tier 2 emulator
+  journey (.github/workflows/e2e.yml, FirstRunJourneyTest) needs: the local Navidrome container
+  from ci/navidrome.compose.yml serves plain HTTP on port 4533, reached from the emulator over
+  `adb reverse tcp:4533 tcp:4533` as http://localhost:4533.
+
+  Debug-only, deliberately: MuPlay in production talks to a public HTTPS Navidrome, and
+  `usesCleartextTraffic="true"` in the release manifest would silently opt the shipped app out of
+  Android's network security defaults for every host. The release manifest is checked, not
+  assumed: the `verifyReleaseManifest` task (AndroidApplicationConventionPlugin, wired into
+  `check`) reads AGP's own *merged* release manifest through the Variant API and fails the build
+  if the attribute appears in it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application android:usesCleartextTraffic="true" />
+</manifest>

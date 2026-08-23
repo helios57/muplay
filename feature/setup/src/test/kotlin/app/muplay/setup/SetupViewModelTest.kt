@@ -2,6 +2,8 @@ package app.muplay.setup
 
 import androidx.lifecycle.viewModelScope
 import app.cash.turbine.test
+import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
 import app.muplay.model.ServerInfo
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicErrorException
@@ -24,9 +26,11 @@ import org.junit.jupiter.api.Test
 
 /**
  * TDD against a hand-written fake for the Subsonic client — no mock framework, no real network.
- * [SetupViewModel]'s `ping` constructor parameter is the seam: a plain suspend function, faked
- * per test with a lambda that returns canned data or throws the exact exception type
- * [SetupViewModel.connect] is supposed to distinguish. Turbine asserts the exact [SetupUiState]
+ * [SetupViewModel]'s `ping` and `fetchLibraries` constructor parameters are the seams: plain
+ * suspend functions, faked per test with lambdas that return canned data or throw the exact
+ * exception type [SetupViewModel.connect] is supposed to distinguish — including a lambda that
+ * fails the test outright if it is called at all, which is how the ordering between the two is
+ * asserted. Turbine asserts the exact [SetupUiState]
  * sequence a `connect()` call produces, in particular that [SetupUiState.Connecting] is a real,
  * separately observable state and not skipped straight to the terminal one.
  *
@@ -59,10 +63,13 @@ class SetupViewModelTest {
   @Test
   fun `a successful ping moves from Connecting to Success, not straight to the terminal state`() = runTest {
     val readyToRespond = CompletableDeferred<Unit>()
-    val viewModel = SetupViewModel(ping = {
-      readyToRespond.await()
-      SERVER_INFO
-    })
+    val viewModel = SetupViewModel(
+      ping = {
+        readyToRespond.await()
+        SERVER_INFO
+      },
+      fetchLibraries = { LIBRARIES },
+    )
 
     viewModel.uiState.test {
       assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
@@ -71,7 +78,7 @@ class SetupViewModelTest {
       assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
 
       readyToRespond.complete(Unit)
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Success(SERVER_INFO))
+      assertThat(awaitItem()).isEqualTo(SetupUiState.Success(SERVER_INFO, LIBRARIES))
     }
   }
 
@@ -167,13 +174,15 @@ class SetupViewModelTest {
     }
   }
 
-  // Companion to the test above: this exercises the default wiring's *success* path -- the
-  // other half of SetupViewModel$1's own compiled state machine that a refused-connection test
-  // alone cannot reach (a suspend lambda's dispatch differs between "resumed with a value" and
-  // "resumed with an exception"). Real socket, real Retrofit/OkHttp stack, same MockWebServer
-  // stance core/network's SubsonicClientTest documents -- not a fake standing in for the network.
+  // Companion to the test above: this exercises *both* default lambdas' success path -- the other
+  // half of each compiled state machine that a refused-connection test alone cannot reach (a
+  // suspend lambda's dispatch differs between "resumed with a value" and "resumed with an
+  // exception"). Real socket, real Retrofit/OkHttp stack, same MockWebServer stance
+  // core/network's SubsonicClientTest documents -- not a fake standing in for the network. Two
+  // responses are enqueued because a successful connect makes two calls, `ping` then
+  // `getMusicFolders`, in that order.
   @Test
-  fun `the default ping wiring performs a real network call that succeeds`() = runTest {
+  fun `the default ping and library wiring performs real network calls that succeed`() = runTest {
     val server = MockWebServer()
     server.start()
     server.enqueue(
@@ -183,6 +192,17 @@ class SetupViewModelTest {
         .body(
           """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
             """"serverVersion":"0.63.2","openSubsonic":true}}""",
+        )
+        .build(),
+    )
+    server.enqueue(
+      MockResponse.Builder()
+        .code(200)
+        .addHeader("Content-Type", "application/json")
+        .body(
+          """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
+            """"serverVersion":"0.63.2","openSubsonic":true,"musicFolders":{"musicFolder":""" +
+            """[{"id":1,"name":"Music"},{"id":2,"name":"Audiobooks"}]}}}""",
         )
         .build(),
     )
@@ -199,10 +219,57 @@ class SetupViewModelTest {
         val success = awaitItem()
         assertThat(success).isInstanceOf(SetupUiState.Success::class.java)
         assertThat((success as SetupUiState.Success).serverInfo.type).isEqualTo("navidrome")
+        assertThat(success.libraries).isEqualTo(LIBRARIES)
       }
     } finally {
       server.close()
     }
+  }
+
+  // The assertion Task 8's emulator journey makes on-device ("both seeded libraries are listed by
+  // name"), made here at the state-machine level: Success is not reached from `ping` alone, it
+  // carries what `getMusicFolders` returned, in order.
+  @Test
+  fun `a successful connect reports the server's libraries alongside its identity`() = runTest {
+    val viewModel = SetupViewModel(ping = { SERVER_INFO }, fetchLibraries = { LIBRARIES })
+
+    viewModel.connect(VALID_URL, "alice", "sesame")
+
+    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Success(SERVER_INFO, LIBRARIES))
+  }
+
+  // The libraries call is part of connecting, not an optional extra afterwards: a server that
+  // answers `ping` but rejects `getMusicFolders` has not produced a usable setup, so it must
+  // report the rejection rather than a Success carrying no libraries -- which would be
+  // indistinguishable from a server that genuinely has none.
+  @Test
+  fun `a server that answers ping but rejects getMusicFolders reports the rejection`() = runTest {
+    val viewModel = SetupViewModel(
+      ping = { SERVER_INFO },
+      fetchLibraries = { throw SubsonicErrorException(50, "User is not authorized") },
+    )
+
+    viewModel.connect(VALID_URL, "alice", "sesame")
+
+    assertThat(viewModel.uiState.value).isEqualTo(
+      SetupUiState.Failure(SetupFailureReason.Rejected(code = 50, detail = "User is not authorized")),
+    )
+  }
+
+  // Ordering, not just presence: `fetchLibraries` must not run when `ping` already failed. A
+  // fake that fails the test if called is the whole assertion here.
+  @Test
+  fun `libraries are not fetched when ping itself fails`() = runTest {
+    val viewModel = SetupViewModel(
+      ping = { throw SubsonicErrorException(40, "Wrong username or password") },
+      fetchLibraries = { credentials -> error("getMusicFolders must not be called for $credentials") },
+    )
+
+    viewModel.connect(VALID_URL, "alice", "wrong")
+
+    assertThat(viewModel.uiState.value).isEqualTo(
+      SetupUiState.Failure(SetupFailureReason.Rejected(code = 40, detail = "Wrong username or password")),
+    )
   }
 
   private fun failIfCalled(): suspend (SubsonicCredentials) -> ServerInfo =
@@ -215,6 +282,15 @@ class SetupViewModelTest {
       serverVersion = "0.63.2 (be10f89c)",
       apiVersion = "1.16.1",
       isOpenSubsonic = true,
+    )
+
+    // The two libraries ci/configure-libraries.sh seeds into the real container, with the role
+    // SubsonicClient.getMusicFolders actually returns: the Subsonic response carries nothing that
+    // says what a folder is *for*, so everything is UNASSIGNED here. Inferring MUSIC/AUDIOBOOKS
+    // from a name is a later plan's problem, deliberately not this one's.
+    val LIBRARIES = listOf(
+      MusicLibrary(id = 1, name = "Music", role = LibraryRole.UNASSIGNED),
+      MusicLibrary(id = 2, name = "Audiobooks", role = LibraryRole.UNASSIGNED),
     )
   }
 }
