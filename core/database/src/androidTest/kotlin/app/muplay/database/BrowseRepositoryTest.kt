@@ -207,17 +207,26 @@ class BrowseRepositoryTest {
    */
   @Test
   fun searchEscapesTheCallersOwnWildcards() = runTest {
+    // A decoy chosen so it only distinguishes escaped from unescaped: query "A%Z", unescaped,
+    // becomes the LIKE pattern "%A%Z%" -- which, because a bare "%" matches any run of
+    // characters including none, also matches "AxyzZ Marker" (A ... Z with something between).
+    // Escaped correctly it becomes "%A\%Z%" ESCAPE '\\', which requires the literal substring
+    // "A%Z" and matches only the first row. `"50% Off"` / `"Totally unrelated"` (the fixture this
+    // replaced) could not actually tell the two behaviours apart: neither pattern shape changes
+    // which of *that* pair matches, so the mutation this test exists to catch (deleting the
+    // three `.replace(...)` calls) passed it silently -- caught only by attacking the assertion
+    // directly, per this task's own standard.
     dao.replaceLibraryContents(
       1,
       emptyList(),
       emptyList(),
       listOf(
-        song("s1", "50% Off", 1, albumId = "al1"),
-        song("s2", "Totally unrelated", 1, albumId = "al1"),
+        song("s1", "A%Z Marker", 1, albumId = "al1"),
+        song("s2", "AxyzZ Marker", 1, albumId = "al1"),
       ),
     )
 
-    assertThat(repository.search(1, "50%", 10).songs.map { it.title }).containsExactly("50% Off")
+    assertThat(repository.search(1, "A%Z", 10).songs.map { it.title }).containsExactly("A%Z Marker")
   }
 
   @Test
