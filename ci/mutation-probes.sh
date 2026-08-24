@@ -136,10 +136,12 @@ PROBES = [
      "the cover art url forwards whichever art id and size it is given", 1),
 
     # ---- N-1, round 2: the stamp -- the sole source of Album/Song/Artist.libraryId -----------
+    # 1 -> 2 in round 5: order/getAlbumList2-multi (N4-1b) also asserts this stamp on the same
+    # command, over the new multi-album fixture, so this mutation now reddens that test too.
     ("stamp/getAlbumList2", CLIENT,
      "return body.albumList2?.album.orEmpty().map { it.toAlbum(musicFolderId) }",
      "return body.albumList2?.album.orEmpty().map { it.toAlbum(2) }",
-     "getAlbumList2 stamps every album with the library it was scoped to", 1),
+     "getAlbumList2 stamps every album with the library it was scoped to", 2),
     ("stamp/getAlbum", CLIENT,
      "album = album.toAlbum(musicFolderId),\n      songs = album.song.map { it.toSong(musicFolderId) },",
      "album = album.toAlbum(7),\n      songs = album.song.map { it.toSong(7) },",
@@ -161,13 +163,17 @@ PROBES = [
     # a field that was asserted at NO value at all -- because the full sweep is ~22 minutes and its
     # transcript is in task-3-report.md. If a mapper is rewritten, run that sweep again; these three
     # only prove the class of defect is still detected.
+    # 2 -> 3 in round 5: order/getAlbumList2-multi (N4-1b) also asserts coverArtId on the new
+    # album, so this mutation now reddens that test too.
     ("field/Album.coverArtId", CLIENT,
      "    coverArtId = coverArt,\n    songCount = songCount,",
      '    coverArtId = "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51",\n    songCount = songCount,',
-     "search3 maps every artist, album and song field from the second library", 2),
+     "search3 maps every artist, album and song field from the second library", 3),
+    # 1 -> 2 in round 5: the new N4-2/N4-3 absence test also asserts a default albumCount over a
+    # body that omits it, so this mutation now reddens that test too.
     ("field/Artist.albumCount", CLIENT,
      "    albumCount = albumCount,", "    albumCount = 1,",
-     "every album and song field the seeded container cannot vary is still read from the body", 1),
+     "every album and song field the seeded container cannot vary is still read from the body", 2),
     ("field/Song.albumId", CLIENT,
      "    albumId = albumId,\n    albumName = album,",
      '    albumId = "7orvCZZyWRqsduCdqXoguY",\n    albumName = album,',
