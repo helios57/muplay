@@ -52,14 +52,16 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test` -- three plain JVM invocations -- and `failures()` globs
-# both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
-# `core/*/build/test-results/testDebugUnitTest/` (`:core:database`, an Android module's JVM-tier
-# results directory). `:core:database` genuinely does carry JVM test source
-# (`KeystoreCipherTest`, six tests -- its cryptographic contract needs no device) and `run_suite()`
-# now runs it; an earlier version of this comment said `:core:database` "has no JVM test source at
-# all", which was false and was corrected on a re-review that ran `KeystoreCipherTest` itself and
-# found it green today.
+# :core:model:test :core:database:test :feature:setup:test` -- four plain JVM invocations (a third
+# module, `:feature:setup`, joined in Task 8's review round 1: `SetupViewModel` is a plain
+# ViewModel with hand-written fakes for its two Android-backed collaborators, so its own logic
+# needs no device either) -- and `failures()` globs both `core/*/build/test-results/test/`
+# (`:core:network`, `:core:model`) and `*/build/test-results/testDebugUnitTest/`
+# (`:core:database`, `:feature:setup` -- both Android modules' JVM-tier results directory).
+# `:core:database` genuinely does carry JVM test source (`KeystoreCipherTest`, six tests -- its
+# cryptographic contract needs no device) and `run_suite()` now runs it; an earlier version of
+# this comment said `:core:database` "has no JVM test source at all", which was false and was
+# corrected on a re-review that ran `KeystoreCipherTest` itself and found it green today.
 #
 # What genuinely cannot run here is the *instrumented* tier: `LibraryRepository`, `LibraryDao` and
 # everything else that needs Room's real SQLite need a device, and their results land under
@@ -105,6 +107,7 @@ CLIENT = "core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt"
 AUTH = "core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt"
 TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
 MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
+SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -260,6 +263,52 @@ PROBES = [
     ("default/ArtistBody.albumCount", MODEL,
      "  val albumCount: Int = 0,", "  val albumCount: Int = 99,",
      "absent optional fields default rather than degrading a null into an empty string", 1),
+
+    # ---- Task 8 / review round 1 (task-8-report.md, task-8-review.md): SetupViewModel ----------
+    # Every one of these hardcodes or drops a value one constant could satisfy, on the class whose
+    # own doc calls its role field "the only value in the entire system that distinguishes a book
+    # from a song". N-1's own two production mutants (a hardcoded role in the @Inject constructor's
+    # anonymous SetupLibrarySink, and the two FilterChip role literals swapped) are deliberately
+    # NOT here: this runner is JVM-only (see this file's own header), and both of those mutants
+    # pass every JVM test unchanged -- they are caught only on the emulator, by
+    # completingEveryTagReachesReadyAndShowsSetupComplete's read-back, and are recorded in
+    # task-8-report.md instead, the same way this header already documents for every other
+    # instrumented-tier defect this project has found.
+    ("setup/cancellation-rethrow", SETUP_VM,
+     "      } catch (e: CancellationException) {\n        throw e\n      } catch (e: Exception) {",
+     "      } catch (e: Exception) {",
+     "a cancelled connection is never reported as a failure", 1),
+    ("setup/setRole-nullguard", SETUP_VM,
+     "      serverInfo?.let { _uiState.value = tagging(it) }",
+     "      _uiState.value = tagging(serverInfo!!)",
+     "setting a role before any connection has succeeded stores it but touches no screen state", 1),
+    ("setup/tagging-emptylist", SETUP_VM,
+     "      canContinue = current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED },",
+     "      canContinue = current.none { it.role == LibraryRole.UNASSIGNED },",
+     "a server with no libraries at all has nothing to continue past", 1),
+    ("setup/continueToLibrary-emptylist", SETUP_VM,
+     "      if (current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED }) {\n        _uiState.value = SetupUiState.Ready",
+     "      if (current.none { it.role == LibraryRole.UNASSIGNED }) {\n        _uiState.value = SetupUiState.Ready",
+     "continuing with no libraries at all does nothing", 1),
+    ("setup/setRole-id-passthrough", SETUP_VM,
+     "      libraries.setRole(musicFolderId, role)\n      serverInfo?.let",
+     "      libraries.setRole(1, role)\n      serverInfo?.let",
+     "tagging every library is what unlocks continuing", 1),
+    ("setup/setRole-role-passthrough", SETUP_VM,
+     "      libraries.setRole(musicFolderId, role)\n      serverInfo?.let",
+     "      libraries.setRole(musicFolderId, LibraryRole.MUSIC)\n      serverInfo?.let",
+     "tagging every library is what unlocks continuing", 1),
+    ("setup/connect-order", SETUP_VM,
+     "        credentials.save(entered)\n        libraries.refreshFromServer()",
+     "        libraries.refreshFromServer()\n        credentials.save(entered)",
+     "credentials are stored before the libraries are fetched", 1),
+    ("setup/connect-trim", SETUP_VM,
+     "    val trimmedUrl = serverUrl.trim()", "    val trimmedUrl = serverUrl",
+     "the server url is trimmed before it is stored", 1),
+    ("setup/tagging-serverinfo-field", SETUP_VM,
+     "      serverInfo = info,\n      libraries = current,",
+     '      serverInfo = info.copy(serverVersion = "9.9.9"),\n      libraries = current,',
+     "a successful connect saves the credentials and lists the libraries for tagging", 1),
 ]
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's
@@ -294,7 +343,7 @@ def apply(path, old, new):
 
 
 def revert():
-    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL], check=True)
+    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, SETUP_VM], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
@@ -317,6 +366,7 @@ JVM_TEST_RESULT_DIRS = {
     "core/network": "test",
     "core/model": "test",
     "core/database": "testDebugUnitTest",
+    "feature/setup": "testDebugUnitTest",
 }
 
 
@@ -332,7 +382,8 @@ def failures():
 
 
 def run_suite():
-    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test", ":core:database:test"],
+    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test", ":core:database:test",
+                    ":feature:setup:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return failures()
 
