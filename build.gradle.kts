@@ -400,6 +400,38 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // `:core:database` (Plan 2 Task 1). One CLASS-element LINE rule covering all three classes that
+  // report counters, each measuring 1.0000 (MuPlayDatabase 1/1, DataModule 3/3,
+  // MediaProgressEntity 9/9) against a 0.90 floor.
+  //
+  // LINE and not BRANCH, and this is a measurement rather than a preference: the module contains
+  // no author-written conditional at all -- an @Entity data class, an abstract @Database, a @Dao
+  // interface and two Hilt providers -- so the report carries no BRANCH counter for any of them.
+  // A BRANCH rule here would match classes with a zero counter total, which JaCoCo passes
+  // silently through `Limit.check`'s `isNaN` branch at every minimum. That is the vacuous floor
+  // `warnVacuousFloors` exists to catch, and adding one deliberately would be absurd.
+  //
+  // `MediaProgressDao` has no rule because it has no counters: it is an interface, and Room's
+  // generated `MediaProgressDao_Impl` is excluded as generated code (`Jacoco.kt`'s
+  // `**/*_Impl*.*`) by the same argument the Hilt exclusions rest on.
+  //
+  // `requiresInstrumentedData`: Room needs the Android framework's SQLite and Robolectric is
+  // banned project-wide, so every test in this module is instrumented. From a plain
+  // `./gradlew :core:database:test` all three classes measure 0 -- the module has no JVM tests at
+  // all -- so this floor is Tier 2's alone and Tier 1 must say so rather than pass quietly.
+  ":core:database" to listOf(
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.MuPlayDatabase",
+        "app.muplay.database.di.DataModule",
+        "app.muplay.database.entity.MediaProgressEntity",
+      ),
+      requiresInstrumentedData = true,
+    ),
+  ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
   // composes MuPlayTheme (MainActivity wraps the whole app in it). Task 7 could only gate ThemeKt,
@@ -836,6 +868,32 @@ object CoverageGateNotice {
     }
 
     val presentExecutionData = executionData.filter { it.exists() }
+    if (presentExecutionData.isEmpty() && evaluatedFloors.isEmpty() && deferredTo != null) {
+      // Skipped, but this gate was owed nothing: every one of this module's floors needs
+      // instrumented data, so the tier below has no rule of its own to evaluate whether execution
+      // data exists or not. `:core:database` is the first module in this shape -- Room needs the
+      // Android framework's SQLite and Robolectric is banned project-wide, so it has no JVM tests
+      // at all and never will.
+      //
+      // Split out from the general no-data branch below deliberately. That branch says "usually
+      // this means the module's tests did not run or no longer exist", which for a module in this
+      // shape is both wrong and permanent: it would fire on every Tier 1 build forever. This
+      // project has already ruled, when deciding how to warn about vacuous floors, that a warning
+      // which fires constantly becomes noise and takes the mechanism down with it. The state is
+      // still announced -- silence is never the answer here -- but it is announced as the
+      // unremarkable fact it is, and it still names the gate that does the work.
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
+        "COVERAGE: $modulePath -- $verificationTaskName had nothing to evaluate: all " +
+          "${allFloors.size} of its coverage floors need instrumented execution data, and this " +
+          "module has no JVM tests to produce any. They are enforced by $deferredTo instead. " +
+          "This is the expected steady state for a module tested only on a device, not a " +
+          "missing-test warning; if this module ever gains a JVM test, its floors should be " +
+          "re-measured and any that no longer need an emulator moved into this tier.",
+      )
+      return
+    }
     if (presentExecutionData.isEmpty()) {
       // The state this whole task exists for. Nothing below can be said honestly: no rule was
       // evaluated and no report was produced, so the module's floors are simply unchecked this
@@ -1283,6 +1341,10 @@ project(":app") {
     if (name == "testDebugUnitTest") {
       val scannedByConventionTest = rootProject.fileTree(rootProject.projectDir) {
         include("**/build.gradle.kts")
+        // Read by ConventionTest's `every Gradle project has a coverage floor` rule, which
+        // compares settings.gradle.kts's includes against coverageFloors's keys. Nothing else in
+        // this fileTree matches it -- `**/build.gradle.kts` does not.
+        include("settings.gradle.kts")
         include("build-logic/**/*.kt")
         include("build-logic/**/*.kts")
         include("gradle/libs.versions.toml")

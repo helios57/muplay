@@ -315,4 +315,27 @@ class ConventionTest {
       assertThat(kaptUsage.containsMatchIn(it.readText())).describedAs(it.path).isFalse()
     }
   }
+  @Test
+  fun `every Gradle project has a coverage floor`() {
+    // A module absent from `coverageFloors` is un-gated, and the build's own warning for it has
+    // been shown to vanish under `--configuration-cache` reuse (Plan 1's sixth silent-gate
+    // instance). A test that reads both files is invocation-mode-independent, so it cannot.
+    val settings = File(repoRoot(), "settings.gradle.kts").readText()
+    val rootBuild = File(repoRoot(), "build.gradle.kts").readText()
+
+    val includedProjects = Regex("""^include\("(:[^"]+)"\)""", RegexOption.MULTILINE)
+      .findAll(settings).map { it.groupValues[1] }.toList()
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(includedProjects).describedAs("projects included by settings.gradle.kts").isNotEmpty()
+
+    val floored = Regex("""^\s*"(:[^"]+)" to listOf\(""", RegexOption.MULTILINE)
+      .findAll(rootBuild).map { it.groupValues[1] }.toList()
+    assertThat(floored).describedAs("entries in coverageFloors").isNotEmpty()
+
+    assertThat(includedProjects)
+      .describedAs("every module needs a measured floor in `coverageFloors` (build.gradle.kts)")
+      .allMatch { it in floored }
+  }
+
 }

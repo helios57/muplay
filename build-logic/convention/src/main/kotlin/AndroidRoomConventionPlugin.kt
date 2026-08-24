@@ -11,8 +11,15 @@ import org.gradle.kotlin.dsl.dependencies
 import org.gradle.process.CommandLineArgumentProvider
 
 /**
- * `muplay.android.room`: Room via **KSP**, never kapt (KSP1 is removed upstream and kapt is dead
- * for new projects). Applies the KSP plugin itself, so a module using this convention does not
+ * `muplay.android.room`: Room via **KSP**, never kapt -- KSP1 is removed upstream and kapt is dead
+ * for new projects.
+ *
+ * The em-dash above is load-bearing, oddly enough. `ConventionTest`'s `no module or convention
+ * plugin uses kapt` rule matches the banned tool's name immediately followed by one of `("{),`,
+ * on the reasoning that prose explaining the ban never looks like a call site. This file's first
+ * draft put a parenthesis straight after that name and duly failed the rule -- and so did the
+ * first fix, which quoted the offending phrase while explaining it. The rule is right both times;
+ * a comment simply has to keep punctuation away from the name. Applies the KSP plugin itself, so a module using this convention does not
  * also need `muplay.android.hilt`'s KSP wiring — applying both is harmless, since
  * `pluginManager.apply` is idempotent.
  *

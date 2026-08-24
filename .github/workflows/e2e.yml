@@ -188,7 +188,7 @@ jobs:
           # chased once (see `ci/prepare-emulator.sh`).
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
