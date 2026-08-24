@@ -1,8 +1,17 @@
 package app.muplay.network
 
+import app.muplay.model.AlbumListType
 import app.muplay.model.LibraryRole
 import app.muplay.model.SubsonicCredentials
+import app.muplay.network.model.SubsonicEnvelope
+import app.muplay.network.model.SubsonicResponseBody
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -73,5 +82,161 @@ class LiveNavidromeTest {
 
     assertThat(libraries.map { it.name }).containsExactlyInAnyOrder("Music", "Audiobooks")
     assertThat(libraries).allMatch { it.role == LibraryRole.UNASSIGNED }
+  }
+
+  // --- the scoping trap, measured against the server rather than argued from the type ----------
+  //
+  // `SubsonicSource` takes `musicFolderId` as a non-null `Int` because Navidrome silently ignores
+  // a value it cannot parse and widens the answer to every library. Until these four tests, that
+  // sentence was a *comment*: the type stops today's callers producing a bad value, but it says
+  // nothing about what the server does when one arrives, and it cannot notice if Navidrome's
+  // behaviour changes under us. Everything below therefore goes around `SubsonicClient` entirely
+  // and issues raw HTTP -- which is also the only way to send a value the type forbids.
+
+  @Test
+  fun `a valid musicFolderId really does scope getAlbumList2 to that library`() = runTest {
+    // The control. Without it the three tests after this one would be consistent with a server
+    // that ignores `musicFolderId` altogether, and "widens the scope" would be unfalsifiable.
+    assertThat(albumNames(scopedAlbumList(MUSIC_LIBRARY_ID.toString()))).containsExactly("Test Album")
+    assertThat(albumNames(scopedAlbumList(AUDIOBOOKS_LIBRARY_ID.toString())))
+      .containsExactly("Test Book")
+  }
+
+  @Test
+  fun `a non-numeric or empty musicFolderId is silently ignored and widens the scope`() = runTest {
+    // The trap itself. `status: "ok"`, a perfectly parseable body, and *both* libraries in it --
+    // there is no runtime signal of any kind that the scope the caller asked for was discarded.
+    listOf("abc", "1abc", "").forEach { ignored ->
+      val body = scopedAlbumList(ignored)
+
+      assertThat(body.status).describedAs("status for musicFolderId=%s", ignored).isEqualTo("ok")
+      assertThat(body.error).describedAs("error for musicFolderId=%s", ignored).isNull()
+      assertThat(albumNames(body))
+        .describedAs("albums for musicFolderId=%s", ignored)
+        .containsExactlyInAnyOrder("Test Album", "Test Book")
+    }
+  }
+
+  @Test
+  fun `an unknown but numeric musicFolderId fails closed with error 70`() = runTest {
+    // The other half of the rule, and the reason the parameter can safely be an `Int`: a value
+    // that *parses* is validated, so the failure mode an `Int` can still produce is a loud one.
+    listOf("99", "0", "-1").forEach { unknown ->
+      val body = scopedAlbumList(unknown)
+
+      assertThat(body.status).describedAs("status for musicFolderId=%s", unknown).isEqualTo("failed")
+      assertThat(body.error?.code).describedAs("error code for musicFolderId=%s", unknown).isEqualTo(70)
+    }
+  }
+
+  @Test
+  fun `a non-numeric musicFolderId puts an audiobook chapter into the music shuffle`() = runTest {
+    // The user-visible failure this whole application exists to prevent, reproduced end to end:
+    // ask the server to shuffle the *music* library with an unparseable scope and it hands back
+    // the audiobook as well, indistinguishable from a song (Navidrome types every media file
+    // `"type": "music"`). The `Test Book.m4b` is a 15-second stand-in for chapter 14 of a novel.
+    val scoped = songTitles(randomSongs(MUSIC_LIBRARY_ID.toString()))
+    val leaked = songTitles(randomSongs("abc"))
+
+    assertThat(scoped).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
+    assertThat(leaked).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3", "Test Book")
+    assertThat(leaked).describedAs("the audiobook, inside a music shuffle").contains("Test Book")
+  }
+
+  @Test
+  fun `both AlbumListType wire values are types this server implements`() = runTest {
+    // `AlbumListType`'s two wire values are a protocol contract with this server, and `NEWEST` is
+    // sent by nothing in the build yet -- so nothing else would notice a typo in it until a user
+    // hit the browse screen. Navidrome answers an unimplemented `type` with a *failure*, which is
+    // what makes this a real check rather than a spelling exercise: the assertion below is that
+    // the server accepted the string, not that the string equals itself.
+    AlbumListType.entries.forEach { type ->
+      val body = albumList(mapOf("type" to type.wireValue, "size" to "500",
+                                 "musicFolderId" to MUSIC_LIBRARY_ID.toString()))
+
+      assertThat(body.status).describedAs("status for type=%s", type.wireValue).isEqualTo("ok")
+      assertThat(body.error).describedAs("error for type=%s", type.wireValue).isNull()
+    }
+  }
+
+  @Test
+  fun `a misspelt album list type is rejected by the real server`() = runTest {
+    // The negative control for the test above, and the measurement behind `AlbumListType`'s own
+    // KDoc. Recorded because the KDoc used to claim error code 10 ("required parameter missing"):
+    // the real answer is code 0, `"type 'nEwEsT_typo' not implemented"`.
+    val body = albumList(mapOf("type" to "nEwEsT_typo", "size" to "500",
+                               "musicFolderId" to MUSIC_LIBRARY_ID.toString()))
+
+    assertThat(body.status).isEqualTo("failed")
+    assertThat(body.error?.code).isEqualTo(0)
+    assertThat(body.error?.message).contains("not implemented")
+  }
+
+  // --- raw Subsonic, deliberately not through SubsonicClient -----------------------------------
+
+  private fun scopedAlbumList(musicFolderId: String): SubsonicResponseBody =
+    albumList(
+      mapOf(
+        "type" to AlbumListType.ALPHABETICAL_BY_NAME.wireValue,
+        "size" to "500",
+        "musicFolderId" to musicFolderId,
+      ),
+    )
+
+  private fun albumList(params: Map<String, String>): SubsonicResponseBody =
+    rawCommand("getAlbumList2", params)
+
+  private fun randomSongs(musicFolderId: String): SubsonicResponseBody =
+    rawCommand("getRandomSongs", mapOf("size" to "500", "musicFolderId" to musicFolderId))
+
+  private fun albumNames(body: SubsonicResponseBody): List<String> =
+    body.albumList2?.album.orEmpty().map { it.name }
+
+  private fun songTitles(body: SubsonicResponseBody): List<String> =
+    body.randomSongs?.song.orEmpty().map { it.title }
+
+  /**
+   * One Subsonic GET, built and authenticated **here** rather than through [SubsonicClient].
+   *
+   * Two reasons, both load-bearing. First, the values these tests must send — `"abc"`, `""` — are
+   * exactly the ones `SubsonicSource`'s `Int` parameter makes unrepresentable, so there is no way
+   * to ask the question through the client. Second, the subject of every assertion above is *the
+   * server*: routing them through our own auth and our own mappers would let a change in this
+   * codebase re-colour a measurement of Navidrome's behaviour. The token is computed from
+   * [MessageDigest] and `v`/`c`/`f` are literals, for the same reason `BrowseEndpointsTest` does
+   * not read them from `SubsonicAuth`.
+   *
+   * Only the response *DTOs* are shared, and only as a JSON reader — no client logic runs.
+   */
+  private fun rawCommand(command: String, params: Map<String, String>): SubsonicResponseBody {
+    val salt = "0123456789abcdef"
+    val url = "$baseUrl/rest/$command".toHttpUrl().newBuilder()
+      .addQueryParameter("u", "admin")
+      .addQueryParameter("t", md5Hex("testpass" + salt))
+      .addQueryParameter("s", salt)
+      .addQueryParameter("v", "1.16.1")
+      .addQueryParameter("c", "MuPlay")
+      .addQueryParameter("f", "json")
+      .apply { params.forEach { (name, value) -> addQueryParameter(name, value) } }
+      .build()
+
+    val body = OkHttpClient().newCall(Request.Builder().url(url).build()).execute().use { response ->
+      assertThat(response.code).describedAs("HTTP status for %s", url.encodedPath).isEqualTo(200)
+      checkNotNull(response.body) { "empty body from $url" }.string()
+    }
+    return json.decodeFromString<SubsonicEnvelope>(body).subsonicResponse
+  }
+
+  private fun md5Hex(input: String): String =
+    MessageDigest.getInstance("MD5")
+      .digest(input.toByteArray(StandardCharsets.UTF_8))
+      .joinToString(separator = "") { byte -> "%02x".format(byte) }
+
+  private companion object {
+    /** The ids `ci/configure-libraries.sh` produces: library 1 is "Music", library 2 "Audiobooks". */
+    const val MUSIC_LIBRARY_ID = 1
+    const val AUDIOBOOKS_LIBRARY_ID = 2
+
+    val json = Json { ignoreUnknownKeys = true }
   }
 }
