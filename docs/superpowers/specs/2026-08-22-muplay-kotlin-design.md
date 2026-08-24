@@ -32,7 +32,11 @@ that. It is justified by scoped shuffle, audiobook resume and Sonos.
 ## 2. Constraints
 
 - **Kotlin 2.4.10**, JDK 21 toolchain. **Jetpack Compose** for all app UI.
-- Licence **MIT**. No GPL code may be copied; all prior art is architecture-only.
+- Licence **MIT**. No GPL code may be copied; all prior art is architecture-only. **This binds
+  every plan and every task, whether or not a given plan restates it in its own constraints** —
+  said here because one plan's constraints omit the clause, and a reader who checks the plan rather
+  than the spec would find no mention of it in the very plan that vendored third-party material.
+  Voice and AntennaPod are read for *architecture*; not a line of either is copied.
 - `compileSdk 37`, `targetSdk 36`, `minSdk 26`.
   > Play requires **API 36 for new apps and updates from 2026-08-31**.
 - **Navidrome ≥ 0.62.0** (≥ 0.58.0 for multi-library).
@@ -63,12 +67,19 @@ data class MediaProgress(
   @PrimaryKey val mediaId: String,  // stable server id, never a rowid
   val positionMs: Long,
   val isFinished: Boolean,
-  val lastPlayedAt: Instant,
+  val lastPlayedAtEpochMs: Long,    // epoch millis, from an injected java.time.Clock
   val speed: Float,                 // per-item
   val skipSilence: Boolean,         // per-item
   val gainDb: Float,                // per-item
 )
 ```
+
+> **Corrected against the implementation.** This block used to type the timestamp
+> `lastPlayedAt: Instant`. The column is, and always was, epoch-millis `Long` — every plan chose
+> `java.time.Clock` for a stated reason (native at `minSdk 26`, no desugaring, no extra
+> dependency), `kotlinx-datetime` is not in `libs.versions.toml`, and §9's stack table has been
+> corrected to match. A spec that types a column one way while the code types it another is a spec
+> that will be believed by whoever writes the next migration.
 
 Music and audiobooks are **two pointer lists over one progress table**. Switching
 from a book to music touches no progress row. Nothing about queue membership may
@@ -115,8 +126,16 @@ concept: `getMusicFolders` once at setup, then the user tags each library Music
 or Audiobooks. **Never infer the role from the library's name** — "Hörbücher" is
 not "Audiobooks", and a wrong guess silently poisons shuffle scope.
 
-`musicFolderId` is honoured on `getAlbumList2`, `getStarred2`,
-**`getRandomSongs`**, `getSongsByGenre`, `search2`/`search3`.
+Navidrome honours `musicFolderId` on `getAlbumList2`, `getStarred2`, **`getRandomSongs`**,
+`getSongsByGenre` and `search2`/`search3`. That is a statement about the *server*, and this
+paragraph used to read like an instruction to this client. It is not one: **MuPlay calls
+`getAlbumList2`, `getRandomSongs`, `getAlbum` and `search3`, and no others.**
+
+`getStarred2` and `getSongsByGenre` are resolved here the same way `getIndexes` and `getArtists`
+are below — by stating the decision rather than leaving the reader to infer one. **Favourites and
+browse-by-genre are not v1 features**, on the phone or in the car, so neither endpoint has a
+caller. They are a natural second-release addition and nothing in the client's design forecloses
+them: the scoped-request rule below is what they would need, and it is already structural.
 
 > **Trap, corrected against a live `deluan/navidrome:0.63.2` while writing Plan 2 —
 > the earlier wording had this backwards, and it matters because scoping is the
@@ -227,6 +246,13 @@ otherwise a failed sync is never retried and the mirror stays permanently stale.
 Navidrome never exposes chapters. Media3 1.11.0 (2026-08-05) added native chapter
 extraction for Nero `chpl`, QuickTime `chap` and Matroska, so the client can read
 what the server cannot see.
+
+> **Matroska is out of scope for v1, and that is a decision rather than an oversight.** The test
+> corpus is M4B only — `chpl` and `chap`, faststart and non-faststart — because that is what the
+> audiobook world ships. Media3 would extract `.mka` chapters too, but nothing here would have
+> exercised that path, and an untested branch presented as a supported format is the kind of claim
+> this document exists to avoid making. If an `.mka` audiobook ever needs to work, the change is a
+> fixture and an assertion, not a design.
 
 **Verified by spike S3, on a real emulator:**
 
@@ -365,10 +391,19 @@ core/media         Media3, MuPlayer, MediaLibraryService, cache
 core/cast          UPnP/Sonos + the range-serving proxy + discovery
 core/designsystem  theme, Compose components
 core/testing       fakes, fixtures, the OpenAPI validator
-feature/*          library, player, book, search, settings, cast picker
+feature/*          library (browse + search + shuffle), player, book, settings, cast picker
 integrations/*     bindery, lidarr
 app                wiring + E2E journeys
 ```
+
+> **Two corrections to that list.** It named **`feature/search`** as its own module; search is
+> three calls and one text field over the same mirror the browse screen already reads, so it was
+> consolidated into `:feature:library` — a decision, not a gap. And it named **`feature/settings`**
+> while no plan created it, which Plan 7 stated in as many words before routing around it with an
+> overflow menu item; it is now owned by **Plan 2**, which owns library roles, because the thing a
+> user most needs it for is re-tagging a library they tagged wrong. Until that landed, a single
+> mis-tap on the first-run screen permanently poisoned library-scoped shuffle with no route back
+> except clearing app data — which also destroys every audiobook position.
 
 `build-logic/convention` holds Gradle convention plugins applied by id from the
 version catalogue — no copy-pasted build scripts. This is Now in Android's
@@ -389,7 +424,7 @@ pattern and it is the thing that keeps ten modules consistent.
 | Images | **Coil 3** | 3.5.0 |
 | Async | Coroutines + Flow | 1.11.0 |
 | DI | **Hilt via KSP** | 2.60.x |
-| Time | `kotlinx-datetime` / injected `Clock` | — |
+| Time | **injected `java.time.Clock`**. `kotlinx-datetime` was listed as an alternative here and is **not** adopted — it is absent from `libs.versions.toml`, and `java.time` is native at `minSdk 26` with no desugaring. §3's schema block has been corrected to match | — |
 | Background | WorkManager — **named here but NOT adopted: absent from `libs.versions.toml`.** No plan currently requires it; add it to the catalogue in the plan that first needs it, and do not assume it is available. | — |
 
 `media3-ui-compose` matters more than its line in the table suggests: it supplies
@@ -468,7 +503,24 @@ it will assert what the code *does* rather than what it *should*.
    emulator; the container starts in 5–11 s, so this belongs in the fast tier.
 3. **Fakes, never mock frameworks.** Google's own guidance, and NIA ships none.
    A test satisfied by a mock returning what it was told returns no information.
-4. **Golden files** for playback dumps and chapter assertions.
+4. **A measurement, never a golden file.** This countermeasure used to read *"golden files for
+   playback dumps and chapter assertions"*. Both halves have been replaced by something strictly
+   stronger, and the first replacement is **required** by this section's own correction below:
+   `PlaybackOutput`, `CapturingRenderersFactory` and `DumpFileAsserts` live in `media3-test-utils`,
+   need an Android runtime, and reach the JVM only through the Robolectric variant §2 and §10 ban.
+   The second is a judgement worth keeping: **a file recording what Media3 returned last time is
+   not an oracle** — it agrees with the code by construction, including when the code is wrong,
+   which is exactly the failure this list of countermeasures exists to prevent.
+
+   What is actually done:
+
+   - **Playback** is measured as real PCM. A `TeeAudioProcessor` upstream of the `AudioTrack`
+     captures what a real decoder produced on a real emulator, and the assertions are arithmetic
+     over those bytes — frame counts, the longest run of silence across a queue, amplitude ratios.
+     It works on the `-no-audio` CI emulator because the capture is upstream of the sound card.
+   - **Chapters** are checked against an **independent** oracle. `ci/probe-chapters.sh` runs
+     `ffprobe` over the same file, so the assertion compares Media3's answer to a *different
+     program's* answer rather than to a recording of Media3's previous one.
 5. **Write the test first, from the spec** — for Subsonic, the spec exists.
 
 ### The test hierarchy
@@ -563,11 +615,23 @@ code no plan had yet written.
   entry, no `.editorconfig`. What exists, and what the row now says, is Android Lint plus
   `ConventionTest` plus the release-manifest check. The codebase is uniformly formatted today by
   discipline alone, which is exactly what the convention-plugin layer exists because it does *not*
-  survive ten modules and seven plans, so adding a formatter is worth doing — but the spec must
-  not claim it before it is there.
-- **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin
-  is `0.0.1-alpha16` and Canary-only. Screenshots come from `captureToImage()`
-  inside the emulator suite, with a small golden-diff helper — no new framework.
+  survive ten modules and seven plans. This bullet used to end *"so adding a formatter is worth
+  doing"*, which read as a scheduled intention; nobody schedules it and it is **deferred past v1**,
+  deliberately. Adopting one is a repository-wide reformat, and with seven plans in flight over the
+  same files that is a merge conflict in every one of them for a benefit — consistent formatting —
+  that the project currently has anyway. The right moment is after the last plan lands, and it is a
+  one-commit change then. Until it happens the spec must not claim it, and the Tier 1 "Static" row
+  above says what actually runs.
+- **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin is
+  `0.0.1-alpha16` and Canary-only. This bullet used to go on to say that *"screenshots come from
+  `captureToImage()` inside the emulator suite, with a small golden-diff helper"*. **No such helper
+  exists, no plan schedules one, and nothing is screenshot-tested** — so that sentence described a
+  safety net that was not there, which is worse than an admitted gap. **Visual regression testing
+  is a stated non-goal for v1** (§11), for the same reason countermeasure 4 above rejects golden
+  files: a stored image records what the renderer did last time, agrees with the layout by
+  construction including when the layout is wrong, and this project has no design reference to diff
+  against. What Tier 2 does assert is that named strings are *displayed* — which catches a view
+  that vanished, and does not catch one that moved.
 - Turbine for Flow assertions; `kotlinx-coroutines-test` for time control.
 - **Coverage floor: 90%**, generated code excluded, enforced per module and
   failing the build. The *metric* differs by kind of code: **branch** for non-UI
@@ -584,11 +648,29 @@ code no plan had yet written.
 
 ## 11. Non-goals
 
+Everything here is **stated** rather than merely absent. An unstated omission is a bug nobody knows
+about; a stated one is a decision somebody can argue with.
+
 - Server-side progress sync.
 - Offline downloads in v1 (designed for, deferred).
 - Compose Multiplatform. Nothing indicates it matters for an Android-only app.
 - Video.
 - Chromecast. Sonos and DLNA are the requirement.
+- **Favourites and browse-by-genre** — so `getStarred2` and `getSongsByGenre` have no caller (§4).
+  A natural second release; nothing in the client forecloses it.
+- **Matroska (`.mka`) audiobooks** — the corpus is M4B, and Media3's Matroska chapter path would go
+  untested (§5).
+- **Visual regression testing.** No screenshot suite and no golden-diff helper: a stored image
+  agrees with the layout by construction, including when the layout is wrong, and there is no design
+  reference to diff against (§10).
+- **A code formatter** (ktlint / detekt / spotless) before the last plan lands. Deferred, not
+  rejected — the reason is merge cost across seven in-flight plans, and it is a one-commit change
+  afterwards (§10).
+- **Album-gain ReplayGain mode, and loudness analysis of any kind.** The client applies the gain a
+  file's own tags carry (§4), preferring track gain and falling back to album gain only for a file
+  that carries no track gain; there is no album-versus-track choice for the user to make, because
+  the queue this levels is a library-scoped shuffle, which has no album to be consistent within.
+  Nothing here *measures* loudness, and an untagged file plays unchanged.
 
 ---
 

@@ -644,10 +644,12 @@ import androidx.room.PrimaryKey
  * Nothing about queue membership belongs in this table. If you find yourself adding a
  * `queuePosition` or `isInQueue` column, the design has been inverted.
  *
- * [lastPlayedAtEpochMs] is milliseconds since the epoch rather than an `Instant`: spec §3 writes
- * the field as an `Instant`, but nothing in this plan writes this table, so adding a
- * `kotlinx-datetime` dependency and a Room type converter for a column no code sets would be
- * speculative. The plan that starts writing progress converts at its own boundary.
+ * [lastPlayedAtEpochMs] is milliseconds since the epoch, written from an injected
+ * `java.time.Clock` by the plan that starts writing progress. Spec §3's schema block used to type
+ * this field `lastPlayedAt: Instant`; **the spec has been corrected to match this column**, and
+ * §9's stack table no longer offers `kotlinx-datetime` as an alternative — `java.time` is native
+ * at `minSdk 26`, needs no desugaring and needs no Room type converter. Do not reintroduce an
+ * `Instant` here on the strength of an older reading of the spec.
  */
 @Entity(tableName = "media_progress")
 data class MediaProgressEntity(
