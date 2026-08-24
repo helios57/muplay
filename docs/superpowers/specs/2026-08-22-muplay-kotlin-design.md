@@ -486,8 +486,6 @@ Quality outranks gate speed. Both tiers must be green to merge.
 | Unit + integration | mappers, token derivation, queue logic, resume maths |
 | Live server | JVM tests against the **pinned Navidrome container** |
 | Contract | the OpenAPI **oracle itself** — `OpenApiFixtureValidator` and its own suite, over inline JSON. It validates no committed fixture: the fixture `assertValid` calls live in `:core:network`'s tests and run in Unit + integration |
-| Playback goldens | `PlaybackOutput` dumps; gapless byte-compare; chapter assertions on the M4B fixture |
-| Session | browse tree and `onPlaybackResumption`; `isAutomotiveController` branching |
 | Cast | in-process fake renderer on `127.0.0.1:0` — SOAPACTION quoting, DIDL escaping round-trip, `protocolInfo` vs served `Content-Type`, Range → 206/416/HEAD |
 
 **Tier 2 — emulator end-to-end, required to merge**
@@ -499,12 +497,29 @@ Real API 37 emulator, hardware-accelerated, against a real Navidrome.
 | First run | URL + credentials → `ping` → `getMusicFolders` → tag each library |
 | Browse | artists, albums, tracks, cover art, search |
 | **Library-scoped shuffle** | shuffle Music repeatedly, assert **no audiobook ever appears** |
-| Playback | audio renders, notification and lock screen respond, survives backgrounding |
+| Playback | audio renders — PCM captured by a `TeeAudioProcessor` upstream of the `AudioTrack`, so it works on the `-no-audio` CI emulator — gapless measured in frames, notification and lock screen respond, survives backgrounding |
 | **The resume journey** | play a book, leave mid-chapter, play music, return — the book resumes **exactly**. The original complaint, as a test. |
 | Cast | discover and stream to a renderer |
 | Auto / Wear | browse tree and controls from car and watch surfaces |
 
 Tier 2 grows with each plan. **A plan is not done until its journeys are in it.**
+
+#### A correction worth keeping — two Tier 1 rows that could never have fired
+
+This table previously placed **Playback goldens** and **Session** in Tier 1. Neither
+could ever have run there. `PlaybackOutput`, `CapturingRenderersFactory` and
+`DumpFileAsserts` live in `media3-test-utils`, need an Android runtime, and reach the
+JVM only through `media3-test-utils-robolectric` — which §2 and §10 of this same
+document ban. A `MediaSession` likewise needs an Android runtime. Both rows named a
+gate that would have reported success by never running, which is the exact defect
+class §10's countermeasures exist to prevent, sitting inside the countermeasures
+section itself.
+
+Playback verification moves to Tier 2 by the technique named in the journey table
+above. The Session row is deleted outright rather than moved: all three of its
+subjects — the browse tree, `onPlaybackResumption` and `isAutomotiveController`
+branching — belong to the Auto/Wear and resume plans, so it was asserting a gate over
+code no plan had yet written.
 
 ### Tooling notes that are not obvious
 
