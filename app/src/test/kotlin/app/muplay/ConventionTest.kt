@@ -316,6 +316,38 @@ class ConventionTest {
     }
   }
   @Test
+  fun `verifyReleaseManifest forbids networkSecurityConfig as well as usesCleartextTraffic`() {
+    // Static companion to the manual red-then-green run recorded in
+    // .superpowers/sdd/2026-08-24-muplay-k02-library-browse/manifest-gate-report.md: that run
+    // proves the *task* fails on a real merged manifest; this proves the *declaration* that feeds
+    // it cannot silently lose an entry on some future edit (e.g. a refactor of
+    // configureReleaseManifestVerification that rewrites the listOf(...) call) without this suite
+    // catching it, the same way the LIVE_NAVIDROME_TEST_TASK_NAME and emulator-coordinates tests
+    // above guard their own hand-synced values.
+    //
+    // networkSecurityConfig is the other way a manifest can permit cleartext HTTP in release
+    // besides usesCleartextTraffic="true": a <network-security-config> XML resource can set
+    // cleartextTrafficPermitted="true" at the base level or inside any <domain-config>. Nothing in
+    // this repo references it today, but Plan 6 (casting) adds an on-device HTTP proxy and LAN
+    // renderers that speak plain HTTP -- exactly the feature whose author reaches for it.
+    val pluginFile = File(
+      repoRoot(),
+      "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
+    )
+    val forbiddenAttributesArgs = Regex("""forbiddenAttributes\.set\(listOf\(([^)]*)\)\)""")
+      .find(pluginFile.readText())
+      ?.groupValues
+      ?.get(1)
+
+    // A pattern that stops matching the declaration must fail here too, not silently treat a
+    // missing match as "nothing to check" -- the same principle as the very first test in this
+    // class.
+    assertThat(forbiddenAttributesArgs).describedAs(pluginFile.path).isNotNull()
+    assertThat(forbiddenAttributesArgs).contains("\"usesCleartextTraffic\"")
+    assertThat(forbiddenAttributesArgs).contains("\"networkSecurityConfig\"")
+  }
+
+  @Test
   fun `every Gradle project has a coverage floor`() {
     // A module absent from `coverageFloors` is un-gated, and the build's own warning for it has
     // been shown to vanish under `--configuration-cache` reuse (Plan 1's sixth silent-gate

@@ -41,10 +41,13 @@ abstract class VerifyMergedManifestTask : DefaultTask() {
     val found = forbiddenAttributes.get().filter { text.contains(it) }
     if (found.isNotEmpty()) {
       throw GradleException(
-        "$manifest contains ${found.joinToString(", ")}, which must never reach this variant's " +
-          "merged manifest. If a debug-only source manifest is the source (see " +
-          "app/src/debug/AndroidManifest.xml), it has leaked; if a library dependency declares " +
-          "it, override it with tools:remove rather than shipping it.",
+        "$manifest contains ${found.joinToString(", ")}, which permits cleartext HTTP and must " +
+          "never reach this variant's merged manifest. If a debug-only source manifest is the " +
+          "source (see app/src/debug/AndroidManifest.xml), it has leaked; if a library " +
+          "dependency declares it, override it with tools:remove rather than shipping it. If " +
+          "release genuinely needs one of these attributes, that is a deliberate decision to " +
+          "make in this task's forbiddenAttributes list (AndroidApplicationConventionPlugin.kt), " +
+          "not a manifest edit that slips past this check unnoticed.",
       )
     }
   }
