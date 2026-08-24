@@ -59,5 +59,9 @@ gradlePlugin {
       id = "muplay.android.hilt"
       implementationClass = "AndroidHiltConventionPlugin"
     }
+    register("androidRoom") {
+      id = "muplay.android.room"
+      implementationClass = "AndroidRoomConventionPlugin"
+    }
   }
 }

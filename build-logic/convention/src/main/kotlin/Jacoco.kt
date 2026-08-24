@@ -219,6 +219,13 @@ private val generatedCodeExcludes = listOf(
   "**/Dagger*.*",
   "**/dagger/hilt/**",
   "**/hilt_aggregated_deps/**",
+  // Room's KSP output. `MuPlayDatabase_Impl` and every `<Dao>_Impl` land inside this module's
+  // own namespace package, so `debugClassesFileTree`'s namespace-scoped include picks them up
+  // and no existing pattern removes them. They are generated code by exactly the same argument
+  // the Hilt patterns above rest on: gating them would be gating Room's code generator, and
+  // their branch count (nullable-column reads, cursor index lookups) would swamp this module's
+  // own logic in every ratio.
+  "**/*_Impl*.*",
   "**/ComposableSingletons\$*.*",
 )
 
