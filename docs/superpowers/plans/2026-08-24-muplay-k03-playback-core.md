@@ -5393,7 +5393,11 @@ git commit -m "test(media): gapless measured in PCM frames, and the analyser tha
   - `class MuPlayer(player: Player, resumePolicy: ResumePolicy) : ForwardingPlayer`
   - `class ProgressWriter(player: Player, dao: MediaProgressDao, clock: Clock, scope: CoroutineScope)`
     with `fun start()`, `suspend fun write(mediaId: String, positionMs: Long, finished: Boolean)`,
-    `fun flushBlocking()`, `companion object { const val TICK_MS = 5_000L }`
+    `fun flushBlocking()`, `companion object { const val TICK_MS = 5_000L;
+    const val DEFAULT_SPEED = 1.0f; const val DEFAULT_GAIN_DB = 0.0f }`.
+    All three constants are declared by this task's own code (see Step 6) and **the two defaults are
+    consumed by name from Plan 4** — the read-modify-write uses them for a row that does not exist
+    yet, and the audiobook plan reads them as the values a book starts from.
   - `MediaModule` provides `@Singleton java.time.Clock`
 
 **Forward requirement recorded by Plan 6 (casting) — do not design it out.** When playback moves
@@ -7233,7 +7237,10 @@ git commit -m "feat(player): Compose player and mini player over a MediaControll
 **Interfaces:**
 - Consumes: every visible label from Task 9 (`PLAY_LABEL`, `PAUSE_LABEL`, `NEXT_LABEL`,
   `PREVIOUS_LABEL`, `NOTHING_PLAYING_LABEL`), Plan 2 Task 10's `reachLibraryScreen` helper and its
-  label constants, `PlaybackConnection.sessionToken(context)` (Task 5),
+  label constants, **`MuPlaybackService.sessionToken(context)`** (Task 5 — it is the *service*'s
+  companion, not `PlaybackConnection`'s; `PlaybackConnection` calls it, which is where the wrong
+  name came from. Plan 4 Task 10 and Plan 6 Task 11 both build journeys on this symbol, so it is
+  worth getting right here),
   `PlaybackNotification.CHANNEL_ID` (Task 5).
 - Produces: Tier 2 journey `PlaybackJourneyTest`; the completed `coverageFloors` entries for
   `:core:media` and `:feature:player`; the spec corrections listed in Step 5.
