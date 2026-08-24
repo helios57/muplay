@@ -4591,3 +4591,3709 @@ add field. The zero-default fallback is a real branch -- ValidId requires an id 
 ```
 
 ---
+
+## Task 6: Lidarr — submitting the add, and proving the body carried the right identifier
+
+**Files:**
+- Modify: `LidarrApi.kt`, `LidarrSource.kt`, `LidarrClient.kt`
+- Create: `integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt`
+- Create: `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrAddPayloadTest.kt`
+- Create: `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrSubmitTest.kt`
+- Modify: `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes: `LidarrAlbumCandidate.raw`, `LidarrAddTargets` (Task 5)
+- Produces:
+  - `object LidarrAddPayload` with
+    `build(candidate: LidarrAlbumCandidate, targets: LidarrAddTargets, searchNow: Boolean): JsonObject`
+  - `sealed interface LidarrAddOutcome` with `data class Added(val albumId: Int)`,
+    `data object AlreadyAdded`, `data class Rejected(val failures: List<LidarrValidationFailure>)`
+  - `LidarrSource` gains
+    `suspend fun submitAlbum(candidate, targets, searchNow: Boolean): LidarrAddOutcome` and
+    `suspend fun findAddedAlbumId(foreignAlbumId: String): Int?`
+
+### This is the task the whole plan exists to get right
+
+Spec §8 says, of Lidarr: *"`POST /api/v1/album` payload is unverified against a live instance."*
+That sentence is the reason this task is written the way it is. Here is what the payload actually
+is, and every claim carries its source.
+
+**Required by `AlbumController`'s `PostValidator` (`src/Lidarr.Api.V1/Albums/AlbumController.cs`):**
+
+```csharp
+PostValidator.RuleFor(s => s.ForeignAlbumId).NotEmpty().SetValidator(albumExistsValidator);
+PostValidator.RuleFor(s => s.Artist).NotNull();
+PostValidator.RuleFor(s => s.Artist.ForeignArtistId).NotEmpty().When(s => s.Artist != null);
+PostValidator.RuleFor(s => s.Artist.QualityProfileId).Cascade(CascadeMode.Stop)
+    .ValidId().SetValidator(qualityProfileExistsValidator).When(s => s.Artist != null);
+PostValidator.RuleFor(s => s.Artist.MetadataProfileId).Cascade(CascadeMode.Stop)
+    .ValidId().SetValidator(metadataProfileExistsValidator).When(s => s.Artist != null);
+PostValidator.RuleFor(s => s.Artist.RootFolderPath)
+    .IsValidPath().SetValidator(rootFolderExistsValidator)
+    .When(s => s.Artist != null && s.Artist.Path.IsNullOrWhiteSpace());
+```
+
+So: `foreignAlbumId`, plus a **nested `artist`** carrying `foreignArtistId`, `qualityProfileId`
+(> 0, exists), `metadataProfileId` (> 0, exists) and — when the artist has no `path` — a valid
+`rootFolderPath`. **The nested artist's requirements apply whether or not the artist already
+exists**: the validators are unconditional on the object's presence, not on the artist being new.
+
+**`openapi.json` declares none of this.** It is Swashbuckle-generated, does not encode
+FluentValidation, lists **zero** required fields anywhere, and documents the POST response as
+`200` when the code returns `201` (`RestController.Created` → `CreatedAtAction`). A client written
+from the published spec gets this task wrong in two places. That is why this plan does not vendor
+it as an oracle the way `:core:testing` vendors the OpenSubsonic one — an oracle that is wrong
+about the crux is worse than no oracle, and this project's own spec §10 already records that
+principle for the two Navidrome divergences.
+
+### Three traps, in descending order of how quietly they fail
+
+**Trap 1 — `searchForMissingAlbums` silently cancels `searchForNewAlbum`.**
+`src/NzbDrone.Core/Music/Services/AddAlbumService.cs`:
+
+```csharp
+// if adding and searching for artist, don't trigger album specific search
+if (artist.AddOptions?.SearchForMissingAlbums ?? false)
+{ album.AddOptions.SearchForNewAlbum = false; }
+```
+
+A payload that sets both gets a 201, a monitored album, and **no search** — so nothing is ever
+downloaded and nothing anywhere says why. There is an open upstream issue on exactly this
+(Lidarr #5012). This client always sends `artist.addOptions.searchForMissingAlbums = false`, and
+`LidarrAddPayloadTest` asserts it — the single most important assertion in this task.
+
+**Trap 2 — `AddAlbumOptions` has no `monitor` and no `monitored` field.**
+`src/NzbDrone.Core/Music/Model/AddAlbumOptions.cs` is `{ AddType, SearchForNewAlbum }`. The
+`monitor` enum belongs to the **artist's** `addOptions`
+(`AddArtistOptions : MonitoringOptions`). Putting `monitor` on the album's `addOptions` is silently
+ignored — `PropertyNameCaseInsensitive` binding drops unknown members without complaint. And
+`addType` is overwritten server-side to `Manual` on every album POST, so sending it is noise.
+
+**Trap 3 — a duplicate add is a `400`, not a `409`, and is only identifiable by its message.**
+`AlbumExistsValidator`'s template is the literal string `"This album has already been added."`
+There is no code, no field, nothing structural. `LidarrAddOutcome.AlreadyAdded` is derived by
+matching that message, which is fragile and is documented as fragile — if a Lidarr release rewords
+it, this degrades to `Rejected` showing the user the raw validation text, which is the safe
+direction.
+
+### The assertion that this plan's brief singles out
+
+> *"a test asserting a request was **submitted** rather than that its body carried the right
+> identifier"*
+
+`assertThat(server.requestCount).isEqualTo(1)` is satisfied by a client that POSTs `{}`.
+**Every submit test below reads the recorded request's body, parses it as JSON, and asserts the
+specific field — at two different values.** `LidarrAddPayloadTest` does the same on the payload
+builder without a server at all, which is where the exhaustive per-field coverage lives.
+
+- [ ] **Step 1: Write the failing payload test (pure JVM, no HTTP)**
+
+`integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrAddPayloadTest.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * The exact JSON this client asks Lidarr to add.
+ *
+ * A pure test over a pure function, with no server in it, because this is where every field
+ * belongs under a microscope. The plan's brief names the failure this guards against by name: *a
+ * test asserting a request was submitted rather than that its body carried the right identifier.*
+ */
+class LidarrAddPayloadTest {
+
+  private val json = Json
+
+  private fun candidate(
+    albumId: String = "album-mbid",
+    artistId: String = "artist-mbid",
+    extra: String = "",
+  ): LidarrAlbumCandidate {
+    val raw = json.parseToJsonElement(
+      """
+      {"foreignAlbumId":"$albumId","title":"An album","monitored":false,
+       "unmodelledAlbumField":"survive me"$extra,
+       "artist":{"foreignArtistId":"$artistId","artistName":"An artist","id":0,
+                 "unmodelledArtistField":"survive me too"}}
+      """.trimIndent(),
+    ).jsonObject
+    return LidarrAlbumCandidate(
+      foreignAlbumId = albumId, title = "An album", disambiguation = null, albumType = null,
+      releaseDate = null, remoteCoverUrl = null, artistName = "An artist",
+      foreignArtistId = artistId, alreadyAdded = false, raw = raw,
+    )
+  }
+
+  private fun targets(
+    path: String = "/music", quality: Int = 2, metadata: Int = 3,
+    monitor: String = "all", newItems: String = "none",
+  ) = LidarrAddTargets(path, quality, metadata, monitor, newItems)
+
+  private fun build(
+    candidate: LidarrAlbumCandidate = candidate(),
+    targets: LidarrAddTargets = targets(),
+    searchNow: Boolean = true,
+  ): JsonObject = LidarrAddPayload.build(candidate, targets, searchNow)
+
+  @Test
+  fun `the album identifier on the body is the one that was asked for`() {
+    // Two observations. A payload builder that hardcoded the id passes neither this nor any
+    // downstream test, and this is the exact assertion the plan's brief singles out.
+    assertThat(build(candidate(albumId = "mbid-a"))["foreignAlbumId"]!!.jsonPrimitive.content)
+      .isEqualTo("mbid-a")
+    assertThat(build(candidate(albumId = "mbid-b"))["foreignAlbumId"]!!.jsonPrimitive.content)
+      .isEqualTo("mbid-b")
+  }
+
+  @Test
+  fun `the nested artist identifier is the one that was asked for`() {
+    assertThat(build(candidate(artistId = "art-a"))["artist"]!!.jsonObject["foreignArtistId"]!!
+      .jsonPrimitive.content).isEqualTo("art-a")
+    assertThat(build(candidate(artistId = "art-b"))["artist"]!!.jsonObject["foreignArtistId"]!!
+      .jsonPrimitive.content).isEqualTo("art-b")
+  }
+
+  @Test
+  fun `every field the lookup sent that this client does not model survives`() {
+    // The reason `raw` exists. `openapi.json` declares no field required, so the only complete
+    // statement of what Lidarr wants is what Lidarr sent -- and a payload rebuilt from typed
+    // fields silently drops the rest.
+    val body = build()
+
+    assertThat(body["unmodelledAlbumField"]!!.jsonPrimitive.content).isEqualTo("survive me")
+    assertThat(body["artist"]!!.jsonObject["unmodelledArtistField"]!!.jsonPrimitive.content)
+      .isEqualTo("survive me too")
+  }
+
+  @Test
+  fun `the three add targets are written onto the nested artist`() {
+    // Two values each, so none of the three can be a constant.
+    val a = build(targets = targets(path = "/music", quality = 2, metadata = 3))["artist"]!!.jsonObject
+    val b = build(targets = targets(path = "/archive", quality = 20, metadata = 30))["artist"]!!.jsonObject
+
+    assertThat(a["rootFolderPath"]!!.jsonPrimitive.content).isEqualTo("/music")
+    assertThat(b["rootFolderPath"]!!.jsonPrimitive.content).isEqualTo("/archive")
+    assertThat(a["qualityProfileId"]!!.jsonPrimitive.int).isEqualTo(2)
+    assertThat(b["qualityProfileId"]!!.jsonPrimitive.int).isEqualTo(20)
+    assertThat(a["metadataProfileId"]!!.jsonPrimitive.int).isEqualTo(3)
+    assertThat(b["metadataProfileId"]!!.jsonPrimitive.int).isEqualTo(30)
+  }
+
+  @Test
+  fun `both monitored flags are set, because an unmonitored album is never fetched`() {
+    val body = build()
+
+    assertThat(body["monitored"]!!.jsonPrimitive.boolean).isTrue()
+    assertThat(body["artist"]!!.jsonObject["monitored"]!!.jsonPrimitive.boolean).isTrue()
+    // ...and the lookup element's own `monitored: false` was overwritten, not merged around.
+    assertThat(build(candidate())["monitored"]!!.jsonPrimitive.boolean).isTrue()
+  }
+
+  @Test
+  fun `the monitor options come from the targets, on the artist and not on the album`() {
+    val a = build(targets = targets(monitor = "all", newItems = "none"))["artist"]!!.jsonObject
+    val b = build(targets = targets(monitor = "first", newItems = "all"))["artist"]!!.jsonObject
+
+    assertThat(a["addOptions"]!!.jsonObject["monitor"]!!.jsonPrimitive.content).isEqualTo("all")
+    assertThat(b["addOptions"]!!.jsonObject["monitor"]!!.jsonPrimitive.content).isEqualTo("first")
+    assertThat(a["monitorNewItems"]!!.jsonPrimitive.content).isEqualTo("none")
+    assertThat(b["monitorNewItems"]!!.jsonPrimitive.content).isEqualTo("all")
+  }
+
+  /**
+   * **Trap 2.** `AddAlbumOptions` is `{ AddType, SearchForNewAlbum }` — there is no `monitor` and
+   * no `monitored` on it. Lidarr binds JSON case-insensitively and drops unknown members without
+   * complaint, so a `monitor` placed here would be accepted and ignored, which is the quietest
+   * possible way to be wrong.
+   */
+  @Test
+  fun `the album's addOptions carries only searchForNewAlbum`() {
+    val addOptions = build()["addOptions"]!!.jsonObject
+
+    assertThat(addOptions.keys).containsExactly("searchForNewAlbum")
+  }
+
+  @Test
+  fun `searchForNewAlbum is whatever the caller asked for`() {
+    assertThat(build(searchNow = true)["addOptions"]!!.jsonObject["searchForNewAlbum"]!!
+      .jsonPrimitive.boolean).isTrue()
+    assertThat(build(searchNow = false)["addOptions"]!!.jsonObject["searchForNewAlbum"]!!
+      .jsonPrimitive.boolean).isFalse()
+  }
+
+  /**
+   * **Trap 1, and the most important assertion in this task.**
+   *
+   * `AddAlbumService`: `if (artist.AddOptions?.SearchForMissingAlbums ?? false)
+   * { album.AddOptions.SearchForNewAlbum = false; }`. A payload that sets both gets a 201, a
+   * monitored album, and no search at all — nothing is downloaded and nothing says why. Upstream
+   * issue Lidarr #5012.
+   *
+   * Asserted at **both** values of `searchNow`, because the interaction is only visible when the
+   * caller asked for a search.
+   */
+  @Test
+  fun `the artist never asks for a missing-albums search, which would cancel the album search`() {
+    for (searchNow in listOf(true, false)) {
+      val artistAddOptions = build(searchNow = searchNow)["artist"]!!.jsonObject["addOptions"]!!.jsonObject
+      assertThat(artistAddOptions["searchForMissingAlbums"]!!.jsonPrimitive.boolean)
+        .describedAs("searchForMissingAlbums with searchNow=%s", searchNow)
+        .isFalse()
+    }
+  }
+
+  @Test
+  fun `addType is not sent, because the server overwrites it on every album post`() {
+    // `AddAlbumService` sets `album.AddOptions.AddType = AlbumAddType.Manual` unconditionally.
+    // Sending it is noise that reads like a decision.
+    assertThat(build()["addOptions"]!!.jsonObject).doesNotContainKey("addType")
+  }
+
+  /**
+   * An artist already in this Lidarr comes back from lookup with a real `path`. `AlbumController`
+   * applies the `rootFolderPath` rule only `When(s.Artist.Path.IsNullOrWhiteSpace())`, so leaving
+   * an existing path alone is correct — the artist keeps the folder it already lives in.
+   */
+  @Test
+  fun `an existing artist's own path is left alone`() {
+    val existing = candidate().let { c ->
+      c.copy(
+        raw = Json.parseToJsonElement(
+          """{"foreignAlbumId":"m","artist":{"foreignArtistId":"a","id":7,"path":"/music/An artist"}}""",
+        ).jsonObject,
+      )
+    }
+
+    val artist = LidarrAddPayload.build(existing, targets(), searchNow = true)["artist"]!!.jsonObject
+
+    assertThat(artist["path"]!!.jsonPrimitive.content).isEqualTo("/music/An artist")
+    // `rootFolderPath` is still written: it is harmless when `path` is set (the validator skips
+    // its rule) and required when it is not, and branching here would add an untestable-in-
+    // isolation decision to a builder that has no business making it.
+    assertThat(artist["rootFolderPath"]!!.jsonPrimitive.content).isEqualTo("/music")
+  }
+
+  @Test
+  fun `a candidate whose raw element has no artist object still produces a valid nested artist`() {
+    // Defensive but reachable: `toCandidate` requires `artist.foreignArtistId` to exist, so this
+    // shape cannot come from `lookupAlbums` -- but `LidarrAddPayload` is a public object and a
+    // caller could construct a candidate by hand. It must not produce a body with no `artist`,
+    // which Lidarr rejects with a validation error about a null artist.
+    val hand = LidarrAlbumCandidate(
+      foreignAlbumId = "m", title = "t", disambiguation = null, albumType = null,
+      releaseDate = null, remoteCoverUrl = null, artistName = "n", foreignArtistId = "a",
+      alreadyAdded = false, raw = Json.parseToJsonElement("""{"foreignAlbumId":"m"}""").jsonObject,
+    )
+
+    val artist = LidarrAddPayload.build(hand, targets(), searchNow = true)["artist"]!!.jsonObject
+
+    assertThat(artist["foreignArtistId"]!!.jsonPrimitive.content).isEqualTo("a")
+    assertThat(artist["artistName"]!!.jsonPrimitive.content).isEqualTo("n")
+  }
+}
+```
+
+- [ ] **Step 2: Write the failing submit test**
+
+`integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrSubmitTest.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import app.muplay.integrations.BaseUrlResult
+import app.muplay.integrations.CleartextPolicy
+import app.muplay.integrations.IntegrationBaseUrl
+import app.muplay.integrations.IntegrationCredentials
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
+import mockwebserver3.junit5.StartStop
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * The add, over a real socket.
+ *
+ * The subject is the **body that went out** and the **outcome that came back**. A test that
+ * asserted only that a request was made would be satisfied by a client POSTing `{}` — the exact
+ * failure this plan's brief names.
+ */
+class LidarrSubmitTest {
+
+  @StartStop private val server = MockWebServer()
+
+  private fun client(): LidarrClient {
+    val url = IntegrationBaseUrl.parse(server.url("/").toString(), CleartextPolicy.Allowed)
+    return LidarrClient(IntegrationCredentials.Lidarr((url as BaseUrlResult.Valid).url, "k"))
+  }
+
+  private fun nextRequest(): RecordedRequest =
+    checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)) { "the client sent no request" }
+
+  /**
+   * The recorded request's body as JSON.
+   *
+   * `mockwebserver3` 5.5.0 exposes the body as an Okio buffer; use whatever accessor that version
+   * actually has (`request.body.utf8()` at the time of writing) rather than assuming this one —
+   * Step 3 is where you find out, and a compile error is the cheapest possible way to.
+   */
+  private fun bodyOf(request: RecordedRequest): JsonObject =
+    Json.parseToJsonElement(request.body.utf8()).jsonObject
+
+  private fun candidate(albumId: String, artistId: String) = LidarrAlbumCandidate(
+    foreignAlbumId = albumId, title = "An album", disambiguation = null, albumType = null,
+    releaseDate = null, remoteCoverUrl = null, artistName = "An artist",
+    foreignArtistId = artistId, alreadyAdded = false,
+    raw = Json.parseToJsonElement(
+      """{"foreignAlbumId":"$albumId","artist":{"foreignArtistId":"$artistId","artistName":"An artist"}}""",
+    ).jsonObject,
+  )
+
+  private val targets = LidarrAddTargets("/music", 2, 3, "all", "none")
+
+  @Test
+  fun `the add is a POST to api v1 album with a json content type`() = runTest {
+    server.enqueue(MockResponse.Builder().code(201).body("""{"id":42}""").build())
+
+    client().submitAlbum(candidate("m", "a"), targets, searchNow = true)
+
+    val request = nextRequest()
+    assertThat(request.method).isEqualTo("POST")
+    assertThat(request.url.encodedPath).isEqualTo("/api/v1/album")
+    assertThat(request.headers["Content-Type"]).contains("application/json")
+    // The key is still a header on a mutation, and still not on the URL.
+    assertThat(request.headers["X-Api-Key"]).isEqualTo("k")
+    assertThat(request.url.toString()).doesNotContain("apikey")
+  }
+
+  /**
+   * **The assertion the plan's brief singles out.** Not "a request was submitted": the body, read
+   * back, parsed, and its identifier asserted — at two values, so a hardcoded id fails.
+   */
+  @Test
+  fun `the body carries the identifier that was asked for, not a constant`() = runTest {
+    server.enqueue(MockResponse.Builder().code(201).body("""{"id":1}""").build())
+    client().submitAlbum(candidate("mbid-a", "art-a"), targets, searchNow = true)
+    val first = bodyOf(nextRequest())
+    assertThat(first["foreignAlbumId"]!!.jsonPrimitive.content).isEqualTo("mbid-a")
+    assertThat(first["artist"]!!.jsonObject["foreignArtistId"]!!.jsonPrimitive.content)
+      .isEqualTo("art-a")
+
+    server.enqueue(MockResponse.Builder().code(201).body("""{"id":2}""").build())
+    client().submitAlbum(candidate("mbid-b", "art-b"), targets, searchNow = true)
+    val second = bodyOf(nextRequest())
+    assertThat(second["foreignAlbumId"]!!.jsonPrimitive.content).isEqualTo("mbid-b")
+    assertThat(second["artist"]!!.jsonObject["foreignArtistId"]!!.jsonPrimitive.content)
+      .isEqualTo("art-b")
+  }
+
+  @Test
+  fun `a 201 yields the album id from the response body`() = runTest {
+    // Two ids, so `Added(albumId)` cannot be a constant. This id is what every status poll in
+    // Task 7 correlates on -- getting it from the wrong place, or fixing it, breaks every later
+    // status update silently.
+    server.enqueue(MockResponse.Builder().code(201).body("""{"id":42,"title":"An album"}""").build())
+    assertThat(client().submitAlbum(candidate("m", "a"), targets, true))
+      .isEqualTo(LidarrAddOutcome.Added(albumId = 42))
+
+    server.enqueue(MockResponse.Builder().code(201).body("""{"id":99,"title":"An album"}""").build())
+    assertThat(client().submitAlbum(candidate("m", "a"), targets, true))
+      .isEqualTo(LidarrAddOutcome.Added(albumId = 99))
+  }
+
+  /**
+   * A duplicate add is a **400**, not a 409, and the only thing distinguishing it from any other
+   * validation failure is the message string `"This album has already been added."`
+   * (`AlbumExistsValidator.GetDefaultMessageTemplate`). Fragile, and treated as fragile: a
+   * reworded message degrades to `Rejected`, which shows the user the raw text, rather than to a
+   * wrong claim.
+   */
+  @Test
+  fun `an already-added album is its own outcome, not a rejection`() = runTest {
+    server.enqueue(
+      MockResponse.Builder().code(400)
+        .body("""[{"propertyName":"ForeignAlbumId","errorMessage":"This album has already been added."}]""")
+        .build(),
+    )
+
+    assertThat(client().submitAlbum(candidate("m", "a"), targets, true))
+      .isEqualTo(LidarrAddOutcome.AlreadyAdded)
+  }
+
+  @Test
+  fun `any other validation failure is a rejection carrying every failure`() = runTest {
+    server.enqueue(
+      MockResponse.Builder().code(400)
+        .body(
+          """
+          [{"propertyName":"Artist.QualityProfileId","errorMessage":"Quality profile does not exist"},
+           {"propertyName":"Artist.RootFolderPath","errorMessage":"Root folder does not exist"}]
+          """.trimIndent(),
+        )
+        .build(),
+    )
+
+    val outcome = client().submitAlbum(candidate("m", "a"), targets, true)
+
+    assertThat(outcome).isInstanceOf(LidarrAddOutcome.Rejected::class.java)
+    // The exact mapped lists, in order: `hasSize(2)` alone would be satisfied by two copies of
+    // one failure, and the dotted PascalCase property name is what tells a user *which* setting
+    // is wrong.
+    val rejected = outcome as LidarrAddOutcome.Rejected
+    assertThat(rejected.failures.map { it.propertyName })
+      .containsExactly("Artist.QualityProfileId", "Artist.RootFolderPath")
+    assertThat(rejected.failures.map { it.errorMessage })
+      .containsExactly("Quality profile does not exist", "Root folder does not exist")
+  }
+
+  @Test
+  fun `a 401 on the add is still an unauthorized failure and not an outcome`() = runTest {
+    // Losing authentication is not a thing the user can act on from the request screen the way a
+    // validation failure is, so it keeps propagating as an exception rather than becoming a
+    // fourth outcome nobody handles specifically.
+    server.enqueue(MockResponse.Builder().code(401).build())
+
+    val thrown = runCatching { client().submitAlbum(candidate("m", "a"), targets, true) }
+      .exceptionOrNull()
+    assertThat(thrown).isInstanceOf(LidarrUnauthorizedException::class.java)
+  }
+
+  @Test
+  fun `an already-added album can be found again by its foreign id`() = runTest {
+    // `AlreadyAdded` carries no id, so status polling needs a way back to one. `GET /api/v1/album`
+    // takes `foreignAlbumId`, and two observations prove the parameter is passed through.
+    server.enqueue(MockResponse.Builder().code(200).body("""[{"id":7,"foreignAlbumId":"m"}]""").build())
+    assertThat(client().findAddedAlbumId("m")).isEqualTo(7)
+    val first = nextRequest().url
+    assertThat(first.encodedPath).isEqualTo("/api/v1/album")
+    assertThat(first.queryParameter("foreignAlbumId")).isEqualTo("m")
+
+    server.enqueue(MockResponse.Builder().code(200).body("""[{"id":8,"foreignAlbumId":"n"}]""").build())
+    assertThat(client().findAddedAlbumId("n")).isEqualTo(8)
+    assertThat(nextRequest().url.queryParameter("foreignAlbumId")).isEqualTo("n")
+  }
+
+  @Test
+  fun `an album that is not there yields null rather than an invented id`() = runTest {
+    server.enqueue(MockResponse.Builder().code(200).body("[]").build())
+    assertThat(client().findAddedAlbumId("missing")).isNull()
+  }
+}
+```
+
+- [ ] **Step 3: Run both to verify they fail**
+
+Run: `./gradlew :integrations:lidarr:test`
+Expected: FAIL — `Unresolved reference: LidarrAddPayload`, `submitAlbum`. **If `request.body.utf8()`
+does not compile**, fix `bodyOf` to whatever `mockwebserver3` 5.5.0 exposes and record the real
+accessor in the task report.
+
+- [ ] **Step 4: Implement the payload builder**
+
+`integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+
+/**
+ * Builds the body for `POST /api/v1/album`.
+ *
+ * **Decorates the lookup element rather than rebuilding it**, which is exactly what Lidarr's own
+ * UI does (`frontend/src/Utilities/Album/getNewAlbum.js`) and what its own integration tests do.
+ * `openapi.json` declares zero required fields — it is Swashbuckle-generated and does not encode
+ * the FluentValidation rules the controller actually enforces — so the only complete statement of
+ * what Lidarr wants is what Lidarr sent.
+ */
+object LidarrAddPayload {
+
+  fun build(
+    candidate: LidarrAlbumCandidate,
+    targets: LidarrAddTargets,
+    searchNow: Boolean,
+  ): JsonObject {
+    val artist = buildJsonObject {
+      // Every field the lookup gave us for this artist, first. Anything this client does not
+      // model rides along untouched.
+      (candidate.raw["artist"] as? JsonObject)?.forEach { (key, value) -> put(key, value) }
+      // Then identity, restated from the typed view so a hand-built candidate still produces a
+      // usable body, and so `PostValidator.RuleFor(s => s.Artist.ForeignArtistId).NotEmpty()`
+      // cannot fail on an element whose nested object was missing.
+      put("foreignArtistId", candidate.foreignArtistId)
+      put("artistName", candidate.artistName)
+      // Then the three the controller validates. `rootFolderPath` is written unconditionally:
+      // its rule applies only `When(s.Artist.Path.IsNullOrWhiteSpace())`, so it is harmless on an
+      // artist that already has a path and required on one that does not.
+      put("qualityProfileId", targets.qualityProfileId)
+      put("metadataProfileId", targets.metadataProfileId)
+      put("rootFolderPath", targets.rootFolderPath)
+      put("monitored", true)
+      put("monitorNewItems", targets.newItemMonitorOption)
+      put(
+        "addOptions",
+        buildJsonObject {
+          put("monitor", targets.monitorOption)
+          put("monitored", true)
+          // **Never true.** `AddAlbumService`: if the artist asks for a missing-albums search,
+          // the server silently sets `album.addOptions.searchForNewAlbum = false` -- so the album
+          // is added, monitored, and never searched for, with nothing reported. Upstream issue
+          // Lidarr #5012.
+          put("searchForMissingAlbums", false)
+        },
+      )
+    }
+
+    return buildJsonObject {
+      candidate.raw.forEach { (key, value) -> put(key, value) }
+      put("foreignAlbumId", candidate.foreignAlbumId)
+      // An unmonitored album is never fetched, whatever the search flag says.
+      put("monitored", true)
+      put("artist", artist)
+      put(
+        "addOptions",
+        buildJsonObject {
+          // `AddAlbumOptions` is `{ AddType, SearchForNewAlbum }` and nothing else. `addType` is
+          // overwritten server-side to Manual on every album POST, so it is not sent; a `monitor`
+          // here would be bound case-insensitively, ignored, and look like a decision.
+          put("searchForNewAlbum", searchNow)
+        },
+      )
+    }
+  }
+}
+```
+
+- [ ] **Step 5: Implement the outcome, the API methods and the client methods**
+
+Append to `LidarrSource.kt`:
+
+```kotlin
+/**
+ * What happened when Lidarr was asked to add an album.
+ *
+ * A sealed result rather than "success or exception", because [AlreadyAdded] is a **normal**
+ * outcome — a user asking twice, or asking for something a housemate already added — and Lidarr
+ * reports it as a 400 indistinguishable in status from a real configuration error. Forcing the
+ * caller to handle all three is the point.
+ */
+sealed interface LidarrAddOutcome {
+
+  /** Lidarr created the album. [albumId] is what every later status poll correlates on. */
+  data class Added(val albumId: Int) : LidarrAddOutcome
+
+  /**
+   * Lidarr already has it.
+   *
+   * Derived by **matching the message string** `"This album has already been added."`
+   * (`AlbumExistsValidator`), because a duplicate add is a 400 with no code and nothing structural
+   * to key on. If a Lidarr release rewords it this becomes [Rejected] and the user sees the raw
+   * validation text — degraded, never wrong.
+   */
+  data object AlreadyAdded : LidarrAddOutcome
+
+  /** Lidarr refused. [failures] carry dotted PascalCase property names such as `Artist.QualityProfileId`. */
+  data class Rejected(val failures: List<LidarrValidationFailure>) : LidarrAddOutcome
+}
+```
+
+and to the `LidarrSource` interface:
+
+```kotlin
+  /**
+   * Asks Lidarr to add [candidate], filed according to [targets].
+   *
+   * [searchNow] becomes `addOptions.searchForNewAlbum`. Note that the artist's own
+   * `searchForMissingAlbums` is always sent as `false`, because a `true` there makes the server
+   * silently cancel the album search — see [LidarrAddPayload].
+   */
+  suspend fun submitAlbum(
+    candidate: LidarrAlbumCandidate,
+    targets: LidarrAddTargets,
+    searchNow: Boolean,
+  ): LidarrAddOutcome
+
+  /** The database id of an already-added album, by its MusicBrainz id, or `null` if it is not there. */
+  suspend fun findAddedAlbumId(foreignAlbumId: String): Int?
+```
+
+`LidarrApi.kt`:
+
+```kotlin
+  @POST("api/v1/album")
+  suspend fun addAlbum(@Body body: JsonObject): Response<JsonObject>
+
+  @GET("api/v1/album")
+  suspend fun albumsByForeignId(@Query("foreignAlbumId") foreignAlbumId: String): Response<List<JsonObject>>
+```
+
+with `import retrofit2.http.POST`, `retrofit2.http.Body`, `kotlinx.serialization.json.JsonObject`.
+
+`LidarrClient.kt`:
+
+```kotlin
+  override suspend fun submitAlbum(
+    candidate: LidarrAlbumCandidate,
+    targets: LidarrAddTargets,
+    searchNow: Boolean,
+  ): LidarrAddOutcome =
+    try {
+      val created = call { api.addAlbum(LidarrAddPayload.build(candidate, targets, searchNow)) }
+      // `RestController.Created` re-fetches the persisted resource, so the id here is the real
+      // database id -- not the synthetic counter `/api/v1/search` assigns.
+      LidarrAddOutcome.Added(
+        albumId = (created["id"] as? JsonPrimitive)?.content?.toIntOrNull()
+          ?: throw LidarrHttpException(201),
+      )
+    } catch (e: LidarrValidationException) {
+      if (e.isAlreadyAdded) LidarrAddOutcome.AlreadyAdded else LidarrAddOutcome.Rejected(e.failures)
+    }
+
+  override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? =
+    call { api.albumsByForeignId(foreignAlbumId) }
+      .firstNotNullOfOrNull { (it["id"] as? JsonPrimitive)?.content?.toIntOrNull() }
+```
+
+> **A 201 with no `id` is a `LidarrHttpException(201)`, deliberately.** Returning
+> `Added(albumId = 0)` would put a row in the request store that every later status poll looks up
+> under an id no album has — the silent-wrong-answer class. A loud failure on a response that
+> should never happen is the right trade.
+
+- [ ] **Step 6: Run, measure, probe**
+
+Run: `./gradlew :integrations:lidarr:test`
+Expected: PASS. Re-measure the module floor and update `coverageFloors`.
+
+`ci/mutation-probes.sh`:
+
+```python
+LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
+```
+
+```python
+    # ---- Plan 7: the add payload -- the crux, and the one the spec called unverified ----------
+    ("integrations/lidarr-add-foreignAlbumId", LIDARR_PAYLOAD,
+     'put("foreignAlbumId", candidate.foreignAlbumId)', 'put("foreignAlbumId", "mbid-a")',
+     "the body carries the identifier that was asked for, not a constant", 2),
+    ("integrations/lidarr-add-foreignArtistId", LIDARR_PAYLOAD,
+     'put("foreignArtistId", candidate.foreignArtistId)', 'put("foreignArtistId", "art-a")',
+     "the nested artist identifier is the one that was asked for", 2),
+    # Trap 1: the mutation that produces a 201 and no download, with nothing reported anywhere.
+    ("integrations/lidarr-searchForMissingAlbums", LIDARR_PAYLOAD,
+     'put("searchForMissingAlbums", false)', 'put("searchForMissingAlbums", true)',
+     "the artist never asks for a missing-albums search, which would cancel the album search", 1),
+    ("integrations/lidarr-searchForNewAlbum", LIDARR_PAYLOAD,
+     'put("searchForNewAlbum", searchNow)', 'put("searchForNewAlbum", true)',
+     "searchForNewAlbum is whatever the caller asked for", 1),
+    ("integrations/lidarr-add-qualityProfileId", LIDARR_PAYLOAD,
+     'put("qualityProfileId", targets.qualityProfileId)', 'put("qualityProfileId", 2)',
+     "the three add targets are written onto the nested artist", 1),
+```
+
+**The `2` on the first two probes is a measurement, not a guess** — those mutations redden both
+`LidarrAddPayloadTest`'s field test and `LidarrSubmitTest`'s body test. Run the probe and use the
+number it reports; if it disagrees with `2`, the count is out of date, not the code (read the
+script's header, which says exactly this).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add integrations/lidarr ci/mutation-probes.sh build.gradle.kts
+git commit -m "feat(lidarr): the add payload, established from Lidarr's own validators
+
+Spec section 8 said this payload was unverified. It now has a source for every field:
+AlbumController's PostValidator for what is required, AddAlbumOptions for what the album's
+addOptions may contain, and Lidarr's own getNewAlbum.js for the decorate-the-lookup-element
+strategy. openapi.json is not used as an oracle -- it is Swashbuckle-generated, declares zero
+required fields and documents a 200 where the code returns 201.
+
+The assertion that matters: every submit test reads the recorded body back, parses it, and
+asserts the identifier at two values. artist.addOptions.searchForMissingAlbums is pinned
+false, because a true there makes the server silently cancel the album search (Lidarr #5012)
+-- a 201, a monitored album, and no download, with nothing reported anywhere."
+```
+
+---
+
+## Task 7: Lidarr — what happened to the request, mapped from a state nobody may invent
+
+**Files:**
+- Modify: `LidarrApi.kt`, `LidarrDto.kt`, `LidarrSource.kt`, `LidarrClient.kt`
+- Create: `integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt`
+- Create: `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapperTest.kt`
+- Create: `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrQueueTest.kt`
+- Create: `integrations/lidarr/src/test/resources/fixtures/lidarr/queue-downloading.json`
+- Modify: `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes: `RequestStatus` (Task 3), `LidarrSource` (Tasks 4–6)
+- Produces:
+  - `data class LidarrQueueItem(albumId: Int?, artistId: Int?, sizeBytes: Double, sizeLeftBytes: Double, trackedDownloadState: String, trackedDownloadStatus: String, errorMessage: String?)`
+  - `data class LidarrAlbumProgress(trackFileCount: Int, totalTrackCount: Int)` with
+    `val isComplete: Boolean`
+  - `object LidarrStatusMapper` with
+    `map(queueItem: LidarrQueueItem?, progress: LidarrAlbumProgress?): RequestStatus` and
+    `percentComplete(item: LidarrQueueItem): Int?`
+  - `LidarrSource` gains `suspend fun queue(): List<LidarrQueueItem>` and
+    `suspend fun albumProgress(albumId: Int): LidarrAlbumProgress?`
+
+### The state values, quoted rather than guessed
+
+Lidarr's queue record carries **two** state-ish fields and they are not equally usable.
+
+- **`status`** is `model.Status.FirstCharToLower()` — a lower-cased download-client status whose
+  full value set is not enumerated anywhere this plan could find. **This client does not branch on
+  it.** Branching on a set you cannot enumerate means an `else` arm that is a guess.
+- **`trackedDownloadState`** *is* enumerated, in the OpenAPI document's own enum:
+  `downloading | downloadFailed | downloadFailedPending | importBlocked | importPending |
+  importing | importFailed | imported | ignored`. Nine values, and this client maps all nine.
+- **`trackedDownloadStatus`** is `ok | warning | error` — carried through into the failure message
+  but never the sole basis for a decision, because a `warning` on an item that is still downloading
+  is not a failure.
+
+`LidarrStatusMapperTest` asserts **all nine, as one exact mapped list**. A mapper observed on one
+status is a mapper that has not been tested — this project's rule 2, applied to the field that
+decides what the user is told about their request.
+
+### Why the album's own statistics outrank the queue
+
+`AlbumStatisticsResource` carries `trackFileCount` and `totalTrackCount`. **Files on disk is a
+stronger fact than a download client's opinion**, and it is the only one that survives the queue
+item disappearing — which it does, immediately after import. A poller that read only the queue
+would watch an item vanish and have no idea whether it succeeded.
+
+So the order is: complete statistics → `Imported`; else a queue item → its state; else
+`Requested`. `percentOfTracks` is deliberately **not** used: it is a `double` on a 0–100 scale, not
+0–1, and a client that assumed the other one shows 0.73% forever. `trackFileCount ==
+totalTrackCount` is arithmetic on two integers and cannot be got backwards.
+
+**`Imported` is not `Arrived`.** Lidarr saying the files are on disk is not Navidrome having
+scanned them. Task 9 is the code that closes that gap, and collapsing the two here would put a
+"play it" button on a row that navigates nowhere.
+
+- [ ] **Step 1: Write the failing mapper test (pure JVM)**
+
+`integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapperTest.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import app.muplay.integrations.RequestStatus
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * Lidarr's nine tracked-download states, mapped onto the five this app shows.
+ *
+ * All nine, as one exact list. A status mapper observed on one status is not tested — and the
+ * consequence of getting one wrong is a user told their download failed when it is running, or
+ * told it is running forever when it failed.
+ */
+class LidarrStatusMapperTest {
+
+  private fun item(
+    state: String,
+    size: Double = 100.0,
+    sizeLeft: Double = 25.0,
+    status: String = "ok",
+    error: String? = null,
+  ) = LidarrQueueItem(
+    albumId = 1, artistId = 2, sizeBytes = size, sizeLeftBytes = sizeLeft,
+    trackedDownloadState = state, trackedDownloadStatus = status, errorMessage = error,
+  )
+
+  /** The full `trackedDownloadState` enum, in the order the OpenAPI document declares it. */
+  private val allStates = listOf(
+    "downloading", "downloadFailed", "downloadFailedPending", "importBlocked",
+    "importPending", "importing", "importFailed", "imported", "ignored",
+  )
+
+  @Test
+  fun `every tracked download state maps to a status, and no two failures are conflated`() {
+    val mapped = allStates.map { LidarrStatusMapper.map(item(it), progress = null) }
+
+    // The exact list. `allMatch { it is RequestStatus }` would be vacuously satisfied by nine
+    // copies of `Requested`, which is precisely the shape this project has shipped.
+    assertThat(mapped).containsExactly(
+      RequestStatus.Downloading(percentComplete = 75),
+      RequestStatus.Failed("the download failed"),
+      RequestStatus.Failed("the download failed"),
+      RequestStatus.Failed("Lidarr could not import the files"),
+      RequestStatus.Downloading(percentComplete = 75),
+      RequestStatus.Downloading(percentComplete = 75),
+      RequestStatus.Failed("Lidarr could not import the files"),
+      RequestStatus.Imported,
+      RequestStatus.Failed("Lidarr was told to ignore this download"),
+    )
+  }
+
+  @Test
+  fun `a failure message from lidarr replaces the generic one`() {
+    // Two observations, so the message is not a constant -- and the whole value of surfacing it
+    // is that "no files found in the release" tells the user something the generic text cannot.
+    assertThat(LidarrStatusMapper.map(item("importFailed", error = "no audio files found"), null))
+      .isEqualTo(RequestStatus.Failed("no audio files found"))
+    assertThat(LidarrStatusMapper.map(item("downloadFailed", error = "tracker rejected"), null))
+      .isEqualTo(RequestStatus.Failed("tracker rejected"))
+    // A blank message is not a message.
+    assertThat(LidarrStatusMapper.map(item("downloadFailed", error = "  "), null))
+      .isEqualTo(RequestStatus.Failed("the download failed"))
+  }
+
+  /**
+   * An unrecognised state means a Lidarr newer than this client. The item is in the queue, so
+   * *something* is happening; `Downloading` is the only claim its mere presence supports.
+   * Reporting `Failed` would be a guess that reads as a fact.
+   */
+  @Test
+  fun `a state this client does not know still reports progress rather than a verdict`() {
+    assertThat(LidarrStatusMapper.map(item("somethingNewInLidarr4"), null))
+      .isEqualTo(RequestStatus.Downloading(percentComplete = 75))
+  }
+
+  @Test
+  fun `the percentage is computed from size and sizeleft, at more than one value`() {
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 100.0, sizeLeft = 25.0)))
+      .isEqualTo(75)
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 200.0, sizeLeft = 50.0)))
+      .isEqualTo(75)
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 100.0, sizeLeft = 90.0)))
+      .isEqualTo(10)
+  }
+
+  @Test
+  fun `a zero-size item has an unknown percentage rather than a divide by zero`() {
+    // Lidarr's own queue sort guards this identically: `q.Size == 0 ? 0 : ...`.
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 0.0, sizeLeft = 0.0)))
+      .isNull()
+  }
+
+  @Test
+  fun `a percentage outside zero to one hundred is clamped rather than shown`() {
+    // `sizeleft` can exceed `size` briefly while a download client re-reports. A progress bar at
+    // -14% is a bug the user sees.
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 100.0, sizeLeft = 114.0)))
+      .isEqualTo(0)
+    assertThat(LidarrStatusMapper.percentComplete(item("downloading", size = 100.0, sizeLeft = -5.0)))
+      .isEqualTo(100)
+  }
+
+  /**
+   * Files on disk beat the queue. This is what makes a poll correct after the queue item has
+   * vanished, which it does the moment an import finishes.
+   */
+  @Test
+  fun `complete statistics report Imported even while a queue item still exists`() {
+    val progress = LidarrAlbumProgress(trackFileCount = 10, totalTrackCount = 10)
+
+    assertThat(LidarrStatusMapper.map(item("downloading"), progress)).isEqualTo(RequestStatus.Imported)
+    assertThat(LidarrStatusMapper.map(queueItem = null, progress = progress))
+      .isEqualTo(RequestStatus.Imported)
+  }
+
+  @Test
+  fun `incomplete statistics do not report Imported`() {
+    // Two observations of the same comparison, either side of the boundary.
+    val partial = LidarrAlbumProgress(trackFileCount = 9, totalTrackCount = 10)
+
+    assertThat(LidarrStatusMapper.map(null, partial)).isEqualTo(RequestStatus.Requested)
+    assertThat(LidarrStatusMapper.map(item("downloading"), partial))
+      .isEqualTo(RequestStatus.Downloading(percentComplete = 75))
+  }
+
+  @Test
+  fun `an album with no tracks yet is not complete, however many files it has`() {
+    // `totalTrackCount == 0` means Lidarr has not fetched the track list. `0 >= 0` would read as
+    // "fully downloaded" and put a play button on an empty album.
+    assertThat(LidarrStatusMapper.map(null, LidarrAlbumProgress(0, 0)))
+      .isEqualTo(RequestStatus.Requested)
+  }
+
+  @Test
+  fun `nothing in the queue and nothing on disk is still Requested`() {
+    // The state a monitored album sits in between being added and a release being found. It is
+    // not a failure and it is not progress.
+    assertThat(LidarrStatusMapper.map(queueItem = null, progress = null))
+      .isEqualTo(RequestStatus.Requested)
+  }
+}
+```
+
+- [ ] **Step 2: Write the failing queue/progress test**
+
+`integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrQueueTest.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import app.muplay.integrations.BaseUrlResult
+import app.muplay.integrations.CleartextPolicy
+import app.muplay.integrations.IntegrationBaseUrl
+import app.muplay.integrations.IntegrationCredentials
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.test.runTest
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
+import mockwebserver3.junit5.StartStop
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+class LidarrQueueTest {
+
+  @StartStop private val server = MockWebServer()
+
+  private fun client(): LidarrClient {
+    val url = IntegrationBaseUrl.parse(server.url("/").toString(), CleartextPolicy.Allowed)
+    return LidarrClient(IntegrationCredentials.Lidarr((url as BaseUrlResult.Valid).url, "k"))
+  }
+
+  private fun nextRequest(): RecordedRequest =
+    checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)) { "the client sent no request" }
+
+  private fun json(body: String) =
+    MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(body).build()
+
+  /**
+   * The queue is paged with a **default `pageSize` of 10** (`PagingResource.cs`). A client that
+   * accepted the default would stop seeing its own request the moment the user had eleven things
+   * downloading, and would report `Requested` forever with nothing wrong anywhere.
+   *
+   * `includeUnknownArtistItems=true` matters for the same reason: items whose artist Lidarr cannot
+   * resolve are **hidden by default**, and an album added seconds ago is exactly the case where
+   * the artist may not be resolved yet.
+   */
+  @Test
+  fun `the queue is asked for a page big enough to contain the answer`() = runTest {
+    server.enqueue(json("""{"page":1,"pageSize":100,"totalRecords":0,"records":[]}"""))
+
+    client().queue()
+
+    val url = nextRequest().url
+    assertThat(url.encodedPath).isEqualTo("/api/v1/queue")
+    assertThat(url.queryParameter("pageSize")).isEqualTo("100")
+    assertThat(url.queryParameter("includeUnknownArtistItems")).isEqualTo("true")
+  }
+
+  @Test
+  fun `every queue record field is read from its own record`() = runTest {
+    server.enqueue(
+      json(
+        """
+        {"page":1,"pageSize":100,"totalRecords":2,"records":[
+          {"id":1,"albumId":11,"artistId":21,"size":100.0,"sizeleft":25.0,
+           "trackedDownloadState":"downloading","trackedDownloadStatus":"ok"},
+          {"id":2,"albumId":12,"artistId":22,"size":400.0,"sizeleft":0.0,
+           "trackedDownloadState":"importFailed","trackedDownloadStatus":"error",
+           "errorMessage":"no audio files found"}
+        ]}
+        """.trimIndent(),
+      ),
+    )
+
+    val items = client().queue()
+
+    // Exact mapped lists, in order. Order is the server's, and a poller correlating by index
+    // rather than by albumId would be broken by a reorder -- so the order is pinned too.
+    assertThat(items.map { it.albumId }).containsExactly(11, 12)
+    assertThat(items.map { it.artistId }).containsExactly(21, 22)
+    assertThat(items.map { it.sizeBytes }).containsExactly(100.0, 400.0)
+    assertThat(items.map { it.sizeLeftBytes }).containsExactly(25.0, 0.0)
+    assertThat(items.map { it.trackedDownloadState }).containsExactly("downloading", "importFailed")
+    assertThat(items.map { it.trackedDownloadStatus }).containsExactly("ok", "error")
+    assertThat(items.map { it.errorMessage }).containsExactly(null, "no audio files found")
+  }
+
+  /**
+   * `sizeleft` is lower-case `l`. Lidarr's `QueueResource` declares `Sizeleft`, which the
+   * camelCase policy renders `sizeleft` and **not** `sizeLeft`. A client reading `sizeLeft` gets
+   * the kotlinx default of 0.0 on every record and shows every download at 100% forever.
+   */
+  @Test
+  fun `sizeleft is read from the lower-case field lidarr actually sends`() = runTest {
+    server.enqueue(
+      json(
+        """{"records":[{"albumId":1,"size":100.0,"sizeleft":40.0,"sizeLeft":999.0,
+             "trackedDownloadState":"downloading","trackedDownloadStatus":"ok"}]}""",
+      ),
+    )
+
+    assertThat(client().queue().single().sizeLeftBytes).isEqualTo(40.0)
+  }
+
+  @Test
+  fun `an absent records array is an empty queue, not a failure`() = runTest {
+    // A queue with nothing in it is the normal case, and `WhenWritingNull` means the array can be
+    // omitted entirely.
+    server.enqueue(json("""{"page":1,"pageSize":100,"totalRecords":0}"""))
+    assertThat(client().queue()).isEmpty()
+  }
+
+  @Test
+  fun `album progress is fetched by id and read from the statistics object`() = runTest {
+    server.enqueue(json("""{"id":42,"statistics":{"trackFileCount":7,"totalTrackCount":10}}"""))
+    val first = client().albumProgress(42)
+    assertThat(nextRequest().url.encodedPath).isEqualTo("/api/v1/album/42")
+    assertThat(first).isEqualTo(LidarrAlbumProgress(trackFileCount = 7, totalTrackCount = 10))
+
+    // Two observations of the path *and* of both fields.
+    server.enqueue(json("""{"id":43,"statistics":{"trackFileCount":3,"totalTrackCount":3}}"""))
+    val second = client().albumProgress(43)
+    assertThat(nextRequest().url.encodedPath).isEqualTo("/api/v1/album/43")
+    assertThat(second).isEqualTo(LidarrAlbumProgress(trackFileCount = 3, totalTrackCount = 3))
+  }
+
+  @Test
+  fun `an album with no statistics object yields null rather than a zeroed progress`() = runTest {
+    // `LidarrAlbumProgress(0, 0)` and "we do not know" are different facts, and the mapper treats
+    // the first as "not complete", which is only correct if it really was reported.
+    server.enqueue(json("""{"id":42}"""))
+    assertThat(client().albumProgress(42)).isNull()
+  }
+
+  @Test
+  fun `an album that is gone yields null rather than throwing`() = runTest {
+    // A user can delete an album in Lidarr while MuPlay still has a request row for it. A 404
+    // here is a normal answer to "how is this going", not an error to surface.
+    server.enqueue(MockResponse.Builder().code(404).build())
+    assertThat(client().albumProgress(42)).isNull()
+  }
+}
+```
+
+- [ ] **Step 3: Run both to verify they fail**
+
+Run: `./gradlew :integrations:lidarr:test`
+Expected: FAIL — `Unresolved reference: LidarrStatusMapper`, `queue`.
+
+- [ ] **Step 4: Implement the DTOs, API and models**
+
+`LidarrDto.kt` gains:
+
+```kotlin
+/**
+ * One page of Lidarr's queue. `records` is nullable because `WhenWritingNull` omits an empty one.
+ */
+@Serializable
+internal data class QueuePageBody(
+  val page: Int = 0,
+  val pageSize: Int = 0,
+  val totalRecords: Int = 0,
+  val records: List<QueueRecordBody>? = null,
+)
+
+/**
+ * **`sizeleft`, lower-case `l`.** `QueueResource` declares `Sizeleft`, and the camelCase policy
+ * renders that `sizeleft` — not `sizeLeft`. Reading the wrong one silently yields `0.0` on every
+ * record, which shows every download at 100%.
+ */
+@Serializable
+internal data class QueueRecordBody(
+  val id: Int = 0,
+  val albumId: Int? = null,
+  val artistId: Int? = null,
+  val size: Double = 0.0,
+  val sizeleft: Double = 0.0,
+  val trackedDownloadState: String? = null,
+  val trackedDownloadStatus: String? = null,
+  val errorMessage: String? = null,
+)
+
+@Serializable
+internal data class AlbumWithStatisticsBody(
+  val id: Int = 0,
+  val statistics: AlbumStatisticsBody? = null,
+)
+
+@Serializable
+internal data class AlbumStatisticsBody(
+  val trackFileCount: Int = 0,
+  val totalTrackCount: Int = 0,
+)
+```
+
+`LidarrApi.kt`:
+
+```kotlin
+  @GET("api/v1/queue")
+  suspend fun queue(
+    @Query("pageSize") pageSize: Int,
+    @Query("includeUnknownArtistItems") includeUnknownArtistItems: Boolean,
+  ): Response<QueuePageBody>
+
+  @GET("api/v1/album/{id}")
+  suspend fun album(@Path("id") id: Int): Response<AlbumWithStatisticsBody>
+```
+
+with `import retrofit2.http.Path`.
+
+Append to `LidarrSource.kt`:
+
+```kotlin
+/**
+ * One item in Lidarr's download queue.
+ *
+ * The queue is a **live merge** of the download client's queue and pending releases, so `id` is
+ * not durable across polls — every correlation in this app is on [albumId].
+ */
+data class LidarrQueueItem(
+  val albumId: Int?,
+  val artistId: Int?,
+  val sizeBytes: Double,
+  val sizeLeftBytes: Double,
+  /** One of nine enumerated values; see [LidarrStatusMapper] for all of them. */
+  val trackedDownloadState: String,
+  /** `ok`, `warning` or `error`. Never the sole basis for a verdict. */
+  val trackedDownloadStatus: String,
+  val errorMessage: String?,
+)
+
+/**
+ * How much of an album Lidarr actually has on disk.
+ *
+ * Deliberately **not** `percentOfTracks`, which is a `double` on a **0-100** scale rather than
+ * 0-1: a client that assumed the other convention shows 0.73% forever. Two integers compared is
+ * arithmetic nobody can get backwards.
+ */
+data class LidarrAlbumProgress(val trackFileCount: Int, val totalTrackCount: Int) {
+  /** `false` when Lidarr has not fetched the track list yet — `0 >= 0` is not "complete". */
+  val isComplete: Boolean get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount
+}
+```
+
+and to the interface:
+
+```kotlin
+  /** Everything currently downloading or importing, in Lidarr's own order. */
+  suspend fun queue(): List<LidarrQueueItem>
+
+  /** How much of [albumId] is on disk, or `null` if Lidarr does not know or no longer has it. */
+  suspend fun albumProgress(albumId: Int): LidarrAlbumProgress?
+```
+
+- [ ] **Step 5: Implement the mapper and the client methods**
+
+`integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt`:
+
+```kotlin
+package app.muplay.integrations.lidarr
+
+import app.muplay.integrations.RequestStatus
+import kotlin.math.roundToInt
+
+/**
+ * Turns what Lidarr says into what this app shows.
+ *
+ * A pure object with no HTTP in it, so every branch is Tier-1 enforceable — the same argument
+ * `LidarrAddTargets` and Plan 3's `StreamRetryPolicy` make.
+ *
+ * **Branches on `trackedDownloadState` and never on `status`.** `status` is
+ * `model.Status.FirstCharToLower()` — a download-client status whose complete value set is not
+ * enumerated anywhere this plan could establish, and branching on a set you cannot enumerate means
+ * an `else` arm that is a guess presented as a fact. `trackedDownloadState` is declared as a
+ * nine-member enum in Lidarr's own OpenAPI document, and all nine are handled below.
+ */
+object LidarrStatusMapper {
+
+  private val IN_PROGRESS = setOf("downloading", "importPending", "importing")
+  private val DOWNLOAD_FAILED = setOf("downloadFailed", "downloadFailedPending")
+  private val IMPORT_FAILED = setOf("importFailed", "importBlocked")
+
+  /**
+   * [progress] outranks [queueItem]: files on disk is a stronger fact than a download client's
+   * opinion, and it is the only one that survives the queue item vanishing — which happens the
+   * moment an import completes.
+   *
+   * Returns [RequestStatus.Imported], never [RequestStatus.Arrived]: Lidarr having the files is
+   * not Navidrome having scanned them, and collapsing the two would put a "play it" button on a
+   * row that navigates nowhere.
+   */
+  fun map(queueItem: LidarrQueueItem?, progress: LidarrAlbumProgress?): RequestStatus {
+    if (progress?.isComplete == true) return RequestStatus.Imported
+    if (queueItem == null) return RequestStatus.Requested
+    val detail = queueItem.errorMessage?.takeIf { it.isNotBlank() }
+    return when (queueItem.trackedDownloadState) {
+      "imported" -> RequestStatus.Imported
+      "ignored" -> RequestStatus.Failed(detail ?: "Lidarr was told to ignore this download")
+      in DOWNLOAD_FAILED -> RequestStatus.Failed(detail ?: "the download failed")
+      in IMPORT_FAILED -> RequestStatus.Failed(detail ?: "Lidarr could not import the files")
+      in IN_PROGRESS -> RequestStatus.Downloading(percentComplete(queueItem))
+      // A state this client does not know means a Lidarr newer than this build. The item is in
+      // the queue, so something is happening -- which is the only claim its presence supports.
+      // Reporting a failure here would be a guess that reads as a verdict.
+      else -> RequestStatus.Downloading(percentComplete(queueItem))
+    }
+  }
+
+  /**
+   * `1 - sizeleft/size`, as a whole percentage, or `null` when the size is unknown.
+   *
+   * Lidarr does not send a percentage; its own queue sort computes this the same way, with the
+   * same zero guard (`q.Size == 0 ? 0 : 100 - (q.Sizeleft / q.Size * 100)`). Clamped because a
+   * download client can briefly report `sizeleft` above `size` or below zero, and a progress bar
+   * at -14% is a bug the user sees.
+   */
+  fun percentComplete(item: LidarrQueueItem): Int? {
+    if (item.sizeBytes <= 0.0) return null
+    val done = (item.sizeBytes - item.sizeLeftBytes) / item.sizeBytes
+    return (done * 100).roundToInt().coerceIn(0, 100)
+  }
+}
+```
+
+`LidarrClient.kt`:
+
+```kotlin
+  override suspend fun queue(): List<LidarrQueueItem> =
+    call { api.queue(pageSize = QUEUE_PAGE_SIZE, includeUnknownArtistItems = true) }
+      .records
+      .orEmpty()
+      .map { record ->
+        LidarrQueueItem(
+          albumId = record.albumId,
+          artistId = record.artistId,
+          sizeBytes = record.size,
+          sizeLeftBytes = record.sizeleft,
+          trackedDownloadState = record.trackedDownloadState.orEmpty(),
+          trackedDownloadStatus = record.trackedDownloadStatus.orEmpty(),
+          errorMessage = record.errorMessage,
+        )
+      }
+
+  override suspend fun albumProgress(albumId: Int): LidarrAlbumProgress? =
+    // A 404 is a normal answer to "how is this going" for an album the user deleted in Lidarr
+    // while MuPlay still holds a request row for it. Anything else still propagates.
+    try {
+      call { api.album(albumId) }.statistics
+        ?.let { LidarrAlbumProgress(it.trackFileCount, it.totalTrackCount) }
+    } catch (e: LidarrHttpException) {
+      if (e.status == 404) null else throw e
+    }
+```
+
+and in the companion:
+
+```kotlin
+    /**
+     * `PagingResource` defaults `pageSize` to **10**. A client that accepted that would stop
+     * seeing its own request as soon as the user had eleven things downloading, and would report
+     * `Requested` forever with nothing wrong anywhere.
+     */
+    private const val QUEUE_PAGE_SIZE = 100
+```
+
+- [ ] **Step 6: Run, measure, probe**
+
+Run: `./gradlew :integrations:lidarr:test`
+Expected: PASS. Re-measure the module floor.
+
+`ci/mutation-probes.sh`:
+
+```python
+LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
+```
+
+```python
+    ("integrations/lidarr-status-imported", LIDARR_STATUS,
+     '"imported" -> RequestStatus.Imported', '"imported" -> RequestStatus.Requested',
+     "every tracked download state maps to a status, and no two failures are conflated", 1),
+    ("integrations/lidarr-status-progress-beats-queue", LIDARR_STATUS,
+     "if (progress?.isComplete == true) return RequestStatus.Imported",
+     "if (false) return RequestStatus.Imported",
+     "complete statistics report Imported even while a queue item still exists", 1),
+    ("integrations/lidarr-progress-zero-tracks", LIDARR_STATUS.replace(
+        "LidarrStatusMapper.kt", "LidarrSource.kt"),
+     "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
+     "get() = trackFileCount >= totalTrackCount",
+     "an album with no tracks yet is not complete, however many files it has", 1),
+    ("integrations/lidarr-queue-sizeleft", LIDARR_CLIENT,
+     "sizeLeftBytes = record.sizeleft,", "sizeLeftBytes = 0.0,",
+     "sizeleft is read from the lower-case field lidarr actually sends", 1),
+    ("integrations/lidarr-queue-pagesize", LIDARR_CLIENT,
+     "private const val QUEUE_PAGE_SIZE = 100", "private const val QUEUE_PAGE_SIZE = 10",
+     "the queue is asked for a page big enough to contain the answer", 1),
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add integrations/lidarr ci/mutation-probes.sh build.gradle.kts
+git commit -m "feat(lidarr): request status from a state set that is actually enumerated
+
+Branches on trackedDownloadState (nine values, declared as an enum in Lidarr's own OpenAPI
+document) and never on `status`, whose value set this plan could not establish -- branching
+on a set you cannot enumerate means an else arm that is a guess. All nine are asserted as one
+exact mapped list.
+
+The album's own trackFileCount/totalTrackCount outranks the queue, because files on disk is
+the only fact that survives the queue item vanishing at import. percentOfTracks is
+deliberately unused: it is 0-100, not 0-1, and the wrong assumption shows 0.73% forever.
+Imported is not Arrived -- Navidrome has not scanned anything yet."
+```
+
+---
+
+## Task 8: `:integrations:bindery` — asking for a book, where asking *is* acquiring
+
+**Files:**
+- Create: `integrations/bindery/build.gradle.kts`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyApi.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyDto.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyException.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyAuthInterceptor.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderySource.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyClient.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderySourceProvider.kt`
+- Create: `integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/di/BinderyModule.kt`
+- Create: `integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/BinderyAuthTest.kt`
+- Create: `integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/BinderySearchTest.kt`
+- Create: `integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/BinderySubmitTest.kt`
+- Create: `integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/BinderyStatusMapperTest.kt`
+- Create: `integrations/bindery/src/test/resources/fixtures/bindery/*.json`
+- Modify: `integrations/core/.../IntegrationCredentials.kt` — the `Bindery` member
+- Modify: `integrations/core/.../IntegrationCredentialStore.kt` — its two `when` arms
+- Modify: `settings.gradle.kts`, `build.gradle.kts`, `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes: `IntegrationBaseUrl`, `IntegrationCredentialStore`, `RequestStatus`
+- Produces:
+  - `IntegrationCredentials.Bindery(baseUrl: IntegrationBaseUrl, apiKey: String)`
+  - `data class BinderyServer(version: String)`
+  - `data class BinderyBookCandidate(foreignBookId: String, title: String, authorName: String, foreignAuthorId: String?, asin: String?, coverUrl: String?, raw: JsonObject)`
+  - `data class BinderyBook(id: String, foreignBookId: String, title: String, status: String)`
+  - `enum class BinderyMediaType(val wireValue: String) { EBOOK("ebook"), AUDIOBOOK("audiobook"), BOTH("both") }`
+  - `sealed interface BinderyException`; `BinderyUnauthorizedException`,
+    `BinderyHttpException(status: Int)`, `BinderyMessageException(status: Int, message: String)`
+  - `object BinderyStatusMapper` with `map(status: String): RequestStatus`
+  - `interface BinderySource` with `health()`, `searchBooks(term)`, `submitBook(candidate, mediaType, searchOnAdd)`, `books(status: String?)`
+  - `class BinderySourceProvider` with `suspend fun current(): BinderySource?`
+
+### Read this before writing a line: the spec is wrong about what Bindery is
+
+Spec §8 says *"**Bindery** — request audiobooks from inside the app"*, listed beside Lidarr under
+"Optional integrations", with the framing that both are **request** services. That framing is
+wrong, and it was established by reading Bindery's own source rather than its README:
+
+**Bindery is a Readarr replacement — an acquisition automation tool.** There is no
+request/approval concept in it: there are no request or approve routes in its router (the only
+`approve` is an *import review* queue), and none on its roadmap. **Adding a book *is* acquiring
+it.** There is nobody to approve anything, because the person adding the book owns the server.
+
+This plan therefore models **acquisition, not approval**, and that is a deliberate decision rather
+than a simplification:
+
+- There is no `Pending approval` state, because Bindery has none. Inventing one would be a state
+  machine the server does not have, displayed to a user as if it did.
+- The verb in the UI is *"Ask Bindery for this"*, and what happens next is that Bindery goes and
+  gets it. For a single self-hosted user those are the same act, and the thing spec §8 wanted —
+  "request audiobooks from inside the app" — is satisfied.
+- Task 11 corrects spec §8's wording, because a design decision that lives only in a plan is one
+  the next spec reader will make differently.
+
+**Three unrelated projects are called Bindery.** The one this plan means is
+**`github.com/vavallee/bindery`** — MIT, ~408 stars, actively developed, **v1.32.1 (2026-08-20)**,
+Docker image `ghcr.io/vavallee/bindery`, default port **8787**. Not `evanbrooks/bindery` (browser
+book layout, archived 2023) and not `jarynclouatre/bindery` (an e-book format converter, and
+confusingly the only "Bindery" in awesome-selfhosted). Write this into the module's own KDoc: the
+next person to look it up will find the wrong one first.
+
+### The API, and exactly how confident this plan is in each part
+
+| Fact | Confidence |
+|---|---|
+| Base path `/api/v1`; auth header `X-Api-Key` | **Established** from source |
+| `?apikey=` works on GET/HEAD/OPTIONS only and is **rejected on mutations** | **Established** from source |
+| The API key is **instance-wide and always treated as admin** (`middleware.go`); the users table has **no `api_key` column** across all 75 migrations, so the README's "per-account API key" claim is false | **Established** from source |
+| `GET /api/v1/health`, unauthenticated → `{"status":"ok","version":"…"}` | **Established** from source |
+| `GET /api/v1/search/book?term=…` → a **bare array**. The docs say `?q=` and are **wrong** — the handler reads `term` | **Established** from source; *the 400 on `?q=` was read, not run* |
+| `POST /api/v1/author/book` (undocumented) → **201**. Body: `foreignBookId` (required), `foreignAuthorId`, `authorName`, `searchOnAdd`, `mediaType` ∈ `ebook\|audiobook\|both` | **Established** from source; *the 201 was read, not run* |
+| **`mediaType` defaults to `ebook`** | **Established** — and this is the trap below |
+| `GET /api/v1/book?status=…` → `{items,total,limit,offset}`; statuses `wanted\|downloading\|downloaded\|imported` | **Established** from source |
+| `asin` is top-level on a book; `foreignBookId` is namespaced `gb:`/`hc:`/`dnb:`/unprefixed-means-OpenLibrary | **Established** from source |
+| ISBN is **not** on `Book` (`ProviderISBNs` is `json:"-"`); it lives on editions via `GET /api/v1/book/{id}` | **Established** from source |
+| **There is no OpenAPI or Swagger document at all** | **Established** |
+| **The per-item field names of a search result and of a book** | **NOT established.** See Step 1. |
+
+**Two facts were read from source at commit `300e38a` and never executed**, and they are the
+implementer's first job: the `400` on `?q=`, and the `201` on `POST /api/v1/author/book`. Step 1
+runs both. If either is wrong, the code changes and the finding goes in the task report — that is
+what this step is for.
+
+**And there is no oracle here.** Bindery publishes no machine-readable schema, so the
+`OpenApiFixtureValidator` pattern `:core:testing` uses for Navidrome has nothing to validate
+against. The substitute is **fixtures captured from a real instance**, and this task does not
+proceed on hand-written JSON.
+
+### The trap that would silently deliver the wrong thing
+
+**`mediaType` defaults to `ebook`.** MuPlay is an audiobook player. A submit that omits the field
+gets a `201`, a happy-looking request row, and an EPUB — which Navidrome will never scan, so the
+request sits at `Imported` forever and never becomes `Arrived`, with nothing anywhere saying why.
+
+`BinderySubmitTest`'s `the media type is always sent, and is audiobook by default` is the
+assertion that closes it, and `LidarrAddPayload`'s equivalent (Trap 1) is the same shape of bug in
+the other service. Two services, two silent-wrong-answers, both from a field whose *absence* is
+legal.
+
+### The key is admin-equivalent, and the plan says so out loud
+
+Bindery's API key is not scoped to a user and is always treated as admin. For a single self-hosted
+owner that is acceptable — it is exactly the position the Navidrome password is already in — but
+it is a hard constraint on anything built later: **nobody may build multi-user sharing on this
+key.** It is sealed with the same AndroidKeystore AES-GCM mechanism as `CredentialStore`, never
+logged, and never placed in a URL. Task 2's store already does all three; this task only adds the
+member.
+
+- [ ] **Step 1: Stand up a real Bindery, settle the two unexecuted facts, and capture the fixtures**
+
+```bash
+# Pin a tag; do not use `latest`. v1.32.1 is the version this plan was written against -- confirm
+# it exists and record whatever you actually pinned.
+docker run -d --name bindery-capture -p 8787:8787 \
+  -v "$PWD/.bindery-capture:/config" ghcr.io/vavallee/bindery:<PINNED TAG>
+
+# The API key: find it the way Bindery's own docs say to (its settings UI, or its config file in
+# /config). Record where it actually came from -- this plan does not know, and guessing a path
+# would be exactly the invention it forbids.
+KEY=<the key>
+B=http://localhost:8787
+F=integrations/bindery/src/test/resources/fixtures/bindery
+mkdir -p "$F"
+
+# --- FACT 1: health is unauthenticated and carries a version -------------------------------
+curl -sS -i "$B/api/v1/health" | tee /dev/stderr | tail -1 > "$F/health.json"
+
+# --- FACT 2: `term`, not `q`. Read from source, never run. -----------------------------------
+echo "--- term (expected: 200 and a bare JSON array) ---"
+curl -sS -o "$F/search-book.json" -w '%{http_code}\n' \
+  -H "X-Api-Key: $KEY" "$B/api/v1/search/book?term=project%20hail%20mary"
+echo "--- q (expected: 400) ---"
+curl -sS -o /dev/null -w '%{http_code}\n' -H "X-Api-Key: $KEY" \
+  "$B/api/v1/search/book?q=project%20hail%20mary"
+
+# --- FACT 3: the submit returns 201. Read from source, never run. ----------------------------
+# Take foreignBookId / foreignAuthorId / authorName from a real element of search-book.json.
+echo "--- submit (expected: 201) ---"
+curl -sS -i -X POST "$B/api/v1/author/book" -H "X-Api-Key: $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"foreignBookId":"<FROM THE SEARCH>","foreignAuthorId":"<FROM THE SEARCH>",
+       "authorName":"<FROM THE SEARCH>","mediaType":"audiobook","searchOnAdd":false}'
+
+# --- FACT 4: the query-string key really is refused on a mutation ----------------------------
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$B/api/v1/author/book?apikey=$KEY" \
+  -H 'Content-Type: application/json' -d '{}'
+
+# --- The book list, in each of the four states it can be in ----------------------------------
+for s in wanted downloading downloaded imported; do
+  curl -sS -H "X-Api-Key: $KEY" "$B/api/v1/book?status=$s" | python3 -m json.tool > "$F/books-$s.json"
+done
+curl -sS -H "X-Api-Key: $KEY" "$B/api/v1/book" | python3 -m json.tool > "$F/books-all.json"
+
+# --- Unauthenticated, for the 401 assertion --------------------------------------------------
+curl -sS -i "$B/api/v1/book" | head -5
+
+! grep -rl "$KEY" integrations/bindery/src/test/resources/ && echo "clean"
+```
+
+**Write all of this into the task report**, whatever it says:
+
+1. Where the API key actually came from.
+2. `?q=` — the real status code and body. If it is not 400, this plan's table is wrong; fix the
+   table and say so.
+3. `POST /api/v1/author/book` — the real status code, and whether the response body carries the
+   created book's id (this plan does not know, and Step 6 depends on it — see the note there).
+4. The status code for the query-string key on a mutation.
+5. **The exact per-item field names** in `search-book.json` and `books-*.json`. This plan asserts
+   `foreignBookId`, `title`, `authorName`, `foreignAuthorId`, `asin`, `id` and `status`; every one
+   of those is a *name this plan did not observe*, and the DTOs in Step 5 must be corrected to
+   match what is really there. **Changing a field name here is a normal outcome of this step, not
+   a failure of the plan.**
+6. Whether a book element carries anything usable as a cover URL.
+
+**If no Bindery instance can be stood up**, stop. Do not write this module against invented field
+names — say so in the task report and let the controller decide whether to defer Task 8 and ship
+the Lidarr half alone. **That is a supported outcome**: the two integrations are independently
+optional by construction, so a Plan 7 with only Lidarr is a complete, coherent deliverable.
+
+- [ ] **Step 2: Add the `Bindery` credential member and close the store's two `when` arms**
+
+`integrations/core/.../IntegrationCredentials.kt` — add inside the sealed interface:
+
+```kotlin
+  /**
+   * Bindery authenticates with a single API key sent as an `X-Api-Key` **header**.
+   *
+   * Bindery also accepts `?apikey=` — but **only on GET, HEAD and OPTIONS; it is rejected outright
+   * on mutations**, so a query-string client cannot even submit a book. The header is therefore
+   * not merely the safer choice here, it is the only one that works end to end.
+   *
+   * **This key is instance-wide and is always treated as admin** (`middleware.go`; the users table
+   * has no `api_key` column in any of Bindery's 75 migrations, so the README's "per-account API
+   * key" claim is false). Acceptable for a single self-hosted owner — the Navidrome password is in
+   * exactly the same position — but nothing may be built on top of it that assumes user scoping.
+   */
+  data class Bindery(
+    override val baseUrl: IntegrationBaseUrl,
+    val apiKey: String,
+  ) : IntegrationCredentials {
+
+    override val service: IntegrationService get() = IntegrationService.BINDERY
+
+    override fun toString(): String = "Bindery(baseUrl=$baseUrl, apiKey=<redacted>)"
+  }
+```
+
+`IntegrationCredentialStore.kt` — the two `when`s become exhaustive over both members:
+
+```kotlin
+    return when (service) {
+      IntegrationService.LIDARR -> IntegrationCredentials.Lidarr(url, secret)
+      IntegrationService.BINDERY -> IntegrationCredentials.Bindery(url, secret)
+    }
+```
+
+```kotlin
+  private fun secretOf(credentials: IntegrationCredentials): String = when (credentials) {
+    is IntegrationCredentials.Lidarr -> credentials.apiKey
+    is IntegrationCredentials.Bindery -> credentials.apiKey
+  }
+```
+
+Then extend `IntegrationCredentialStoreTest` with the fourth configuration combination, which Task
+2 could not write because the member did not exist:
+
+```kotlin
+  private val bindery = IntegrationCredentials.Bindery(
+    baseUrl = url("https://bindery.example.com"),
+    apiKey = "bindery-secret-key",
+  )
+
+  @Test
+  fun `both services configured at once are independent in every direction`() = runTest {
+    store.save(lidarr)
+    store.save(bindery)
+
+    // Both readable, each its own type, neither's secret leaking into the other.
+    assertThat(store.configured.first().keys)
+      .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
+    assertThat((store.load(IntegrationService.LIDARR) as IntegrationCredentials.Lidarr).apiKey)
+      .isEqualTo("0123456789abcdef0123456789abcdef")
+    assertThat((store.load(IntegrationService.BINDERY) as IntegrationCredentials.Bindery).apiKey)
+      .isEqualTo("bindery-secret-key")
+
+    store.clear(IntegrationService.LIDARR)
+
+    // Forgetting one leaves the other completely intact -- entries and Keystore key alike. This
+    // is the assertion the per-service alias exists for.
+    assertThat(store.configured.first().keys).containsExactly(IntegrationService.BINDERY)
+    assertThat((store.load(IntegrationService.BINDERY) as IntegrationCredentials.Bindery).apiKey)
+      .isEqualTo("bindery-secret-key")
+    assertThat(IntegrationCredentialStore.keyExists(IntegrationService.BINDERY)).isTrue()
+    assertThat(IntegrationCredentialStore.keyExists(IntegrationService.LIDARR)).isFalse()
+  }
+```
+
+- [ ] **Step 3: Create the module**
+
+`settings.gradle.kts`: `include(":integrations:bindery")`
+
+`integrations/bindery/build.gradle.kts` — identical in shape to `:integrations:lidarr`'s, with
+`namespace = "app.muplay.integrations.bindery"`.
+
+`build.gradle.kts`:
+
+```kotlin
+  // `:integrations:bindery`. Plain Kotlin over Retrofit/OkHttp, no Android dependency, so the
+  // whole module is Tier-1 BRANCH-enforceable. Measured in Task 8 Step 8.
+  ":integrations:bindery" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+```
+
+- [ ] **Step 4: Write the failing tests**
+
+`integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/BinderyStatusMapperTest.kt`
+— pure JVM, and the one test in this module whose subject is fully established:
+
+```kotlin
+package app.muplay.integrations.bindery
+
+import app.muplay.integrations.RequestStatus
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * Bindery's four book statuses, mapped onto the five this app shows.
+ *
+ * All four as one exact list. The set is `wanted | downloading | downloaded | imported`, from
+ * Bindery's own source, and **it has no failure member** — so this client never synthesises one.
+ * A book Bindery cannot find simply stays `wanted`, and telling the user it failed would be a
+ * claim the server never made.
+ */
+class BinderyStatusMapperTest {
+
+  @Test
+  fun `every bindery status maps to exactly one request status`() {
+    val statuses = listOf("wanted", "downloading", "downloaded", "imported")
+
+    assertThat(statuses.map(BinderyStatusMapper::map)).containsExactly(
+      RequestStatus.Requested,
+      RequestStatus.Downloading(percentComplete = null),
+      RequestStatus.Downloading(percentComplete = null),
+      RequestStatus.Imported,
+    )
+  }
+
+  /**
+   * `downloaded` is deliberately **not** [RequestStatus.Imported]. The file has been fetched but
+   * has not been moved into the library folder, so Navidrome cannot possibly have scanned it —
+   * and `Imported` is what Task 9 treats as "start looking for it in the mirror". Collapsing the
+   * two would start a search that can never succeed and would look, to a user, like the arrival
+   * detection was broken.
+   */
+  @Test
+  fun `downloaded is progress, not arrival`() {
+    assertThat(BinderyStatusMapper.map("downloaded"))
+      .isNotEqualTo(RequestStatus.Imported)
+      .isEqualTo(RequestStatus.Downloading(percentComplete = null))
+  }
+
+  @Test
+  fun `the percentage is null, because bindery does not report one`() {
+    // Not zero. "We do not know how far along this is" and "it has not started" are different
+    // things to show a user, and inventing 0 would show a progress bar that never moves.
+    assertThat((BinderyStatusMapper.map("downloading") as RequestStatus.Downloading).percentComplete)
+      .isNull()
+  }
+
+  @Test
+  fun `a status this client does not know makes the least possible claim`() {
+    // A newer Bindery with a fifth status. `Requested` says only "we have asked and it is not
+    // here yet", which is true of every state short of success. `Failed` would be a verdict.
+    assertThat(BinderyStatusMapper.map("somethingNew")).isEqualTo(RequestStatus.Requested)
+    assertThat(BinderyStatusMapper.map("")).isEqualTo(RequestStatus.Requested)
+  }
+
+  @Test
+  fun `the status match is case-insensitive`() {
+    assertThat(BinderyStatusMapper.map("IMPORTED")).isEqualTo(RequestStatus.Imported)
+  }
+}
+```
+
+`BinderyAuthTest.kt`, `BinderySearchTest.kt` and `BinderySubmitTest.kt` follow the same shape as
+`:integrations:lidarr`'s equivalents — **write them by reading those three files, not by pattern-
+matching this plan**, and change only what differs. The four assertions that are specific to
+Bindery and must exist:
+
+```kotlin
+  // BinderyAuthTest
+  @Test
+  fun `every request carries the key in the X-Api-Key header, at two values`() = runTest { /* … */ }
+
+  @Test
+  fun `no request this client makes carries the key on its url`() = runTest {
+    // Bindery accepts `?apikey=` on GET/HEAD/OPTIONS and **rejects it on mutations**, so a
+    // query-string client cannot submit a book at all. Header-only is the only thing that works
+    // end to end here, as well as the only thing that keeps the key out of a recorded request.
+  }
+
+  // BinderySearchTest
+  @Test
+  fun `the search parameter is term, and never q`() = runTest {
+    server.enqueue(json("[]"))
+    client().searchBooks("project hail mary")
+    val url = nextRequest().url
+    assertThat(url.encodedPath).isEqualTo("/api/v1/search/book")
+    // Bindery's own documentation says `q`. The handler reads `term`, and `q` returns 400. This
+    // assertion is the reason this client works and a client written from the docs does not.
+    assertThat(url.queryParameter("term")).isEqualTo("project hail mary")
+    assertThat(url.queryParameter("q")).isNull()
+
+    server.enqueue(json("[]"))
+    client().searchBooks("dune")
+    assertThat(nextRequest().url.queryParameter("term")).isEqualTo("dune")
+  }
+
+  @Test
+  fun `the search response is a bare array, not an envelope`() = runTest {
+    // `GET /api/v1/search/book` returns an array; `GET /api/v1/book` returns
+    // `{items,total,limit,offset}`. Two shapes on one service, and using the wrong reader for
+    // either yields an empty list rather than an error.
+  }
+
+  // BinderySubmitTest
+  @Test
+  fun `the media type is always sent, and is audiobook by default`() = runTest {
+    server.enqueue(MockResponse.Builder().code(201).body("{}").build())
+    client().submitBook(candidate("book-1"), BinderyMediaType.AUDIOBOOK, searchOnAdd = true)
+
+    val body = bodyOf(nextRequest())
+    // **The trap.** `mediaType` defaults to `ebook` server-side. Omitting it yields a 201, a
+    // happy-looking request row, and an EPUB Navidrome will never scan -- so the request sits at
+    // Imported forever and never becomes Arrived, with nothing anywhere saying why.
+    assertThat(body["mediaType"]!!.jsonPrimitive.content).isEqualTo("audiobook")
+
+    // The second observation, so the field is not a constant.
+    server.enqueue(MockResponse.Builder().code(201).body("{}").build())
+    client().submitBook(candidate("book-1"), BinderyMediaType.BOTH, searchOnAdd = true)
+    assertThat(bodyOf(nextRequest())["mediaType"]!!.jsonPrimitive.content).isEqualTo("both")
+  }
+
+  @Test
+  fun `the body carries the book identifier that was asked for, not a constant`() = runTest {
+    // Two ids. Same assertion, same reason, as Lidarr's -- this is the one the plan's brief names.
+  }
+```
+
+- [ ] **Step 5: Implement the DTOs — from the capture, not from this plan**
+
+Write `BinderyDto.kt` **against `search-book.json` and `books-*.json` as captured in Step 1.** The
+shapes below are the plan's best statement of what to expect and every non-primitive field is
+nullable with a default, so an absent field is not fatal — but **the field names are the part this
+plan did not observe**, and correcting them from the capture is the expected outcome of this step.
+
+```kotlin
+package app.muplay.integrations.bindery
+
+import kotlinx.serialization.Serializable
+
+/** `GET /api/v1/health`, unauthenticated. Established from source. */
+@Serializable
+internal data class HealthBody(val status: String? = null, val version: String? = null)
+
+/**
+ * The envelope `GET /api/v1/book` returns. **Established from source**, unlike the element shape
+ * below: `{items, total, limit, offset}`.
+ *
+ * Note that `GET /api/v1/search/book` returns a **bare array** instead. Two shapes on one service,
+ * and reading either with the other's reader yields an empty list rather than an error.
+ */
+@Serializable
+internal data class BookPageBody(
+  val items: List<BookBody>? = null,
+  val total: Int = 0,
+  val limit: Int = 0,
+  val offset: Int = 0,
+)
+
+/**
+ * One book.
+ *
+ * **`foreignBookId` is namespaced**: `gb:` for Google Books, `hc:` for Hardcover, `dnb:` for the
+ * Deutsche Nationalbibliothek, and an unprefixed value means Open Library. This client treats it
+ * as an opaque string and never parses the prefix — but it is stored as the request's
+ * `externalId`, so two books from different providers cannot collide.
+ *
+ * **There is no ISBN here.** `Book.ProviderISBNs` is `json:"-"` in Bindery's own model; ISBNs live
+ * on editions, reachable through `GET /api/v1/book/{id}`. This client does not need one and does
+ * not fetch editions.
+ */
+@Serializable
+internal data class BookBody(
+  val id: String? = null,
+  val foreignBookId: String? = null,
+  val foreignAuthorId: String? = null,
+  val title: String? = null,
+  val authorName: String? = null,
+  /** Top-level on a book, per Bindery's model. Not used for identity — `foreignBookId` is. */
+  val asin: String? = null,
+  val status: String? = null,
+)
+
+/**
+ * The body of `POST /api/v1/author/book`. **Undocumented**, established by reading the handler.
+ *
+ * `mediaType` is not optional as far as this client is concerned: it defaults to `ebook`
+ * server-side, and this application plays audiobooks.
+ */
+@Serializable
+internal data class AddBookBody(
+  val foreignBookId: String,
+  val foreignAuthorId: String? = null,
+  val authorName: String? = null,
+  val mediaType: String,
+  val searchOnAdd: Boolean,
+)
+```
+
+- [ ] **Step 6: Implement the client, the mapper and the provider**
+
+`BinderyStatusMapper.kt`:
+
+```kotlin
+package app.muplay.integrations.bindery
+
+import app.muplay.integrations.RequestStatus
+
+/**
+ * Bindery's four book statuses, mapped onto this app's five.
+ *
+ * The set is `wanted | downloading | downloaded | imported`, from Bindery's own source. **It has
+ * no failure member**, so this client never synthesises one: a book Bindery cannot find stays
+ * `wanted`, and reporting that as a failure would be a claim the server never made.
+ */
+object BinderyStatusMapper {
+
+  fun map(status: String): RequestStatus = when (status.lowercase()) {
+    "wanted" -> RequestStatus.Requested
+    // Bindery reports no byte counts, so there is no percentage to compute. `null`, not `0`:
+    // "we do not know how far along this is" and "it has not started" are different things, and
+    // a progress bar pinned at 0 looks broken.
+    "downloading" -> RequestStatus.Downloading(percentComplete = null)
+    // **Not `Imported`.** The file is fetched but has not been moved into the library folder, so
+    // Navidrome cannot have scanned it -- and `Imported` is what Task 9 treats as "start looking
+    // for it in the mirror". Collapsing the two starts a search that can never succeed.
+    "downloaded" -> RequestStatus.Downloading(percentComplete = null)
+    "imported" -> RequestStatus.Imported
+    // A newer Bindery with a fifth status. `Requested` claims only "we have asked and it is not
+    // here yet", which is true of everything short of success.
+    else -> RequestStatus.Requested
+  }
+}
+```
+
+`BinderySource.kt` / `BinderyClient.kt` follow `:integrations:lidarr`'s structure exactly:
+`BinderyAuthInterceptor` sets `X-Api-Key` and `Accept: application/json`; `call` maps `401` to
+`BinderyUnauthorizedException` and anything else unsuccessful to `BinderyHttpException(status)`;
+`BinderySourceProvider.current()` returns **`BinderySource?`**, nullable for the same reason
+Lidarr's is — a MuPlay with no Bindery is a normal MuPlay.
+
+`submitBook` returns `BinderyBook?`:
+
+> **A decision Step 1 settles.** This plan does **not** know whether the 201 body carries the
+> created book's id. If it does, `submitBook` returns the parsed `BinderyBook` and Task 9 stores
+> its `id` as the request's `remoteId`. If it does not, `submitBook` returns `null`, and Task 9
+> correlates on `foreignBookId` against `GET /api/v1/book` instead — which works regardless, since
+> `foreignBookId` is what the user asked for and what the request row already stores. **Implement
+> whichever the capture shows, and say which in the task report.** Do not implement both.
+
+- [ ] **Step 7: Run everything**
+
+Run: `./gradlew :integrations:bindery:test :integrations:core:connectedDebugAndroidTest`
+Expected: PASS, including Task 2's now-fourth configuration combination.
+
+- [ ] **Step 8: Measure the floor, probe, commit**
+
+Measure `:integrations:bindery`'s BRANCH floor as in Task 4 Step 10 and write the real number.
+
+`ci/mutation-probes.sh`:
+
+```python
+BINDERY_STATUS = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt"
+BINDERY_CLIENT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyClient.kt"
+```
+
+```python
+    # ---- Plan 7: Bindery ----------------------------------------------------------------------
+    # The trap: `mediaType` defaults to `ebook`, so a dropped field silently acquires an EPUB.
+    ("integrations/bindery-mediaType", BINDERY_CLIENT,
+     "mediaType = mediaType.wireValue,", 'mediaType = "ebook",',
+     "the media type is always sent, and is audiobook by default", 1),
+    ("integrations/bindery-search-term", BINDERY_CLIENT,
+     "api.searchBook(term)", 'api.searchBook("dune")',
+     "the search parameter is term, and never q", 1),
+    ("integrations/bindery-status-downloaded", BINDERY_STATUS,
+     '"downloaded" -> RequestStatus.Downloading(percentComplete = null)',
+     '"downloaded" -> RequestStatus.Imported',
+     "downloaded is progress, not arrival", 2),
+    ("integrations/bindery-foreignBookId", BINDERY_CLIENT,
+     "foreignBookId = candidate.foreignBookId,", 'foreignBookId = "book-1",',
+     "the body carries the book identifier that was asked for, not a constant", 1),
+```
+
+```bash
+git add settings.gradle.kts build.gradle.kts integrations ci/mutation-probes.sh
+git commit -m "feat(bindery): asking for a book, where asking is acquiring
+
+Bindery (vavallee/bindery -- not the archived browser-layout library, not the ebook
+converter) is a Readarr replacement, not a request service: there is no request or approval
+concept in its router or its roadmap, and adding a book *is* acquiring it. Spec section 8
+frames it as a request service and is wrong; Task 11 corrects it. This module models
+acquisition rather than inventing a state machine the server does not have.
+
+mediaType is always sent explicitly, because it defaults to ebook server-side -- an omitted
+field yields a 201, a happy request row, and an EPUB Navidrome will never scan. The search
+parameter is `term`; Bindery's own docs say `q`, and `q` returns 400.
+
+The API key is instance-wide and admin-equivalent (middleware.go; no api_key column in any
+of the 75 migrations, so the README's per-account claim is false). Sealed the same way as
+the Navidrome password, never logged, never on a URL -- and Bindery rejects a query-string
+key on mutations anyway."
+```
+
+---
+
+## Task 9: Arrival — the bridge to Navidrome's scan, and the composition that never guesses
+
+**Files:**
+- Create: `integrations/requests/build.gradle.kts`
+- Create: `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/MirrorPorts.kt`
+- Create: `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/TitleMatching.kt`
+- Create: `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestArrivalDetector.kt`
+- Create: `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestsRepository.kt`
+- Create: `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/di/RequestsModule.kt`
+- Create: `integrations/requests/src/test/kotlin/app/muplay/integrations/requests/Fakes.kt`
+- Create: `integrations/requests/src/test/kotlin/app/muplay/integrations/requests/TitleMatchingTest.kt`
+- Create: `integrations/requests/src/test/kotlin/app/muplay/integrations/requests/RequestArrivalDetectorTest.kt`
+- Create: `integrations/requests/src/test/kotlin/app/muplay/integrations/requests/RequestsRepositoryTest.kt`
+- Modify: `settings.gradle.kts`, `build.gradle.kts`, `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes: `MediaRequestRepository`, `RequestStatus`, `MediaRequest` (Task 3);
+  `LidarrSourceProvider`, `LidarrStatusMapper` (Tasks 4–7); `BinderySourceProvider`,
+  `BinderyStatusMapper` (Task 8); `SyncState`, `SearchResults`, `Album`, `LibraryRole` (Plan 2)
+- Produces:
+  - `fun interface MirrorSync { suspend fun syncIfStale(): SyncState }`
+  - `fun interface AlbumSearch { suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults }`
+  - `fun interface LibraryRoles { suspend fun idsWithRole(role: LibraryRole): List<Int> }`
+  - `object TitleMatching` with `normalise(value: String): String`
+  - `class RequestArrivalDetector @Inject constructor(sync, search, roles)` with
+    `suspend fun locate(request: MediaRequest): String?`
+  - `class RequestsRepository @Inject constructor(requests, credentials, lidarr, bindery, arrival)`
+    with `val configuredServices: Flow<Set<IntegrationService>>`,
+    `val all: Flow<List<MediaRequest>>`, `suspend fun refresh(): RefreshReport`,
+    `suspend fun recordLidarrAdd(...)`, `suspend fun recordBinderyAdd(...)`,
+    `suspend fun forget(id: String)`
+  - `data class RefreshReport(polled: Int, updated: Int, skippedUnconfigured: Set<IntegrationService>)`
+
+### Why a fifth module, and why no WorkManager
+
+**The fifth module.** This code has to see all three of `:integrations:core`,
+`:integrations:lidarr` and `:integrations:bindery`. It cannot live in `:integrations:core` (the two
+clients depend on *it*), and it must not live in `:feature:requests` (a Compose feature module is
+not where a polling repository belongs, and the project's rule is that repositories are the only
+entry point to data). `:integrations:requests` is the composition root of this feature's data
+layer, and it is still inside the one directory a `git rm -r` removes.
+
+**No WorkManager, and that is a deliberate scope decision rather than an omission.** The spec's
+stack table names WorkManager, but it is **not in `gradle/libs.versions.toml`** — adding it would
+break this plan's no-new-dependency rule, and it would buy background polling for an *optional*
+feature, at the cost of a battery consideration, a `FOREGROUND_SERVICE` question, and a failure
+mode the user cannot see. **Requests refresh when the requests screen is opened, and when the user
+pulls to refresh.** For a feature whose entire payoff is "let me check on the thing I asked for",
+that is the right amount of machinery. If background polling is ever wanted, it is a plan of its
+own with a notification design attached.
+
+### The three ports, and why they are not over-abstraction
+
+`RequestArrivalDetector` needs three things from Plan 2: a sync, a search, and the library roles.
+It takes them as three single-method interfaces it declares itself, with production adapters
+wired in `RequestsModule`.
+
+This is the same argument `SubsonicSource` makes in `:core:network`, and it is the *only* reason:
+**a test needs a specific call to fail at a specific point** — `syncIfStale` returning
+`ScanInProgress` must stop the detector before it searches — and `SyncEngine` is a concrete class
+with five constructor dependencies including a `SubsonicSourceProvider`. There is no mock framework
+in this build and there will not be one. Three `fun interface`s with hand-written fakes is the
+smallest thing that makes the whole detector Tier-1 testable.
+
+It also has a severability payoff worth naming: `:integrations:requests` touches `:core:database`
+through three methods, and every one of them is read-only. Nothing in this plan can change the
+mirror, the watermark, or a library role.
+
+### The matching rule, and the trade it makes explicitly
+
+The question this task answers is: *the service says the files are on disk — is it in Navidrome
+yet, and if so, which album is it?* The answer has to come from a title match, and **a title match
+is exactly the kind of thing that silently gives a wrong answer.**
+
+The rule:
+
+1. Only a request at `RequestStatus.Imported` is looked for at all. `Downloading` and `Requested`
+   have nothing to find; `Arrived` is done.
+2. `syncIfStale()` first. `ScanInProgress` or `Failed` → stop, return `null`, try again next
+   refresh. **The watermark is Plan 2's and this code never advances it.**
+3. Search only the libraries whose **role** fits: `MUSIC` for a Lidarr request, `AUDIOBOOKS` for a
+   Bindery one. Spec §4 is emphatic that library id is the only mechanism there is, and a Lidarr
+   album matching a book's title in the audiobook library would be exactly the cross-library
+   contamination this whole application exists to prevent.
+4. A candidate matches only when its **normalised name equals the normalised title** and — when the
+   request has a non-blank subtitle — its **normalised artist equals the normalised subtitle**.
+5. **Exactly one candidate across all searched libraries, or no answer.** Two matches is not "pick
+   the first"; it is "we do not know".
+
+**The trade, stated rather than assumed:** a request that never flips to `Arrived` is a visible,
+harmless annoyance — the user can see the album in their library anyway. A request that flips to
+the *wrong* album puts a "play it" button that opens something else. So near-misses do not match:
+`"Kind of Blue"` and `"Kind of Blue (Remastered)"` are different albums to this code, on purpose,
+and `RequestArrivalDetectorTest` asserts that.
+
+Normalisation is deliberately shallow and fully specified: lower-case, Unicode NFD with combining
+marks stripped, every non-alphanumeric run collapsed to a single space, trimmed. That makes
+`"Hörbücher"` match `"Horbucher"` and `"Sgt. Pepper's"` match `"Sgt Peppers"`, and it does **not**
+try to be clever about subtitles, editions or featured artists.
+
+- [ ] **Step 1: Create the module**
+
+`settings.gradle.kts`: `include(":integrations:requests")`
+
+`integrations/requests/build.gradle.kts`:
+
+```kotlin
+plugins {
+  id("muplay.android.library")
+  id("muplay.android.hilt")
+}
+
+android {
+  namespace = "app.muplay.integrations.requests"
+}
+
+dependencies {
+  api(project(":integrations:core"))
+  api(project(":integrations:lidarr"))
+  api(project(":integrations:bindery"))
+  // Read-only, and through three single-method ports this module declares itself -- see
+  // `MirrorPorts.kt`. Nothing here writes to the mirror, the watermark or a library role.
+  implementation(project(":core:database"))
+
+  implementation(libs.coroutines.core)
+
+  testImplementation(libs.coroutines.test)
+  testImplementation(libs.turbine)
+}
+```
+
+`build.gradle.kts`:
+
+```kotlin
+  // `:integrations:requests`. Pure Kotlin composition over hand-written fakes; every branch is
+  // reachable from a JVM test, so the whole module is one Tier-1 BRANCH floor. Measured in Step 8.
+  ":integrations:requests" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+```
+
+- [ ] **Step 2: Write the failing normalisation test**
+
+`integrations/requests/src/test/kotlin/app/muplay/integrations/requests/TitleMatchingTest.kt`:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+class TitleMatchingTest {
+
+  @Test
+  fun `normalisation is case-insensitive and trims`() {
+    assertThat(TitleMatching.normalise("  Kind Of Blue  ")).isEqualTo("kind of blue")
+    assertThat(TitleMatching.normalise("BITCHES BREW")).isEqualTo("bitches brew")
+  }
+
+  @Test
+  fun `diacritics are stripped, which is what makes a german library searchable`() {
+    // Spec section 4's own example is "Hörbücher". A user typing either spelling must find the
+    // same album, and a request whose title came from Lidarr's metadata may carry either.
+    assertThat(TitleMatching.normalise("Hörbücher")).isEqualTo(TitleMatching.normalise("Horbucher"))
+    assertThat(TitleMatching.normalise("Café Blue")).isEqualTo("cafe blue")
+  }
+
+  @Test
+  fun `punctuation collapses to a single space rather than vanishing`() {
+    // Vanishing would make "Sgt Peppers" equal to "SgtPeppers", which no server ever sends, and
+    // would merge "Vol.1" and "Vol 1" -- the second of which is a real difference between albums.
+    assertThat(TitleMatching.normalise("Sgt. Pepper's Lonely Hearts Club Band"))
+      .isEqualTo("sgt pepper s lonely hearts club band")
+    assertThat(TitleMatching.normalise("A  --  B")).isEqualTo("a b")
+  }
+
+  @Test
+  fun `two different titles do not normalise to the same string`() {
+    // The assertion that makes every one above mean something. Without it a `normalise` returning
+    // a constant passes them all.
+    assertThat(TitleMatching.normalise("Kind of Blue"))
+      .isNotEqualTo(TitleMatching.normalise("Kind of Blue (Remastered)"))
+    assertThat(TitleMatching.normalise("Dune")).isNotEqualTo(TitleMatching.normalise("Dune Messiah"))
+  }
+
+  @Test
+  fun `a blank input normalises to an empty string`() {
+    assertThat(TitleMatching.normalise("   ")).isEmpty()
+    assertThat(TitleMatching.normalise("!!!")).isEmpty()
+  }
+}
+```
+
+- [ ] **Step 3: Write the failing detector test**
+
+`integrations/requests/src/test/kotlin/app/muplay/integrations/requests/Fakes.kt` — hand-written,
+no mock framework anywhere:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import app.muplay.database.SyncState
+import app.muplay.model.Album
+import app.muplay.model.LibraryRole
+import app.muplay.model.SearchResults
+
+/**
+ * Hand-written fakes. **No mock framework may enter this build** (`ConventionTest`'s
+ * `no mock framework is declared in any build file or convention plugin`), and these exist for the
+ * one reason the spec's test hierarchy allows a fake at all: making a specific call fail at a
+ * specific point, which no real `SyncEngine` can be asked to do.
+ *
+ * Each records what it was asked, so a test can assert **argument passthrough** rather than
+ * "it was called" — which is the defect class round six of this project's reviews found.
+ */
+class FakeMirrorSync(private var next: SyncState = SyncState.UpToDate) : MirrorSync {
+  var calls: Int = 0
+    private set
+
+  fun willReturn(state: SyncState) { next = state }
+
+  override suspend fun syncIfStale(): SyncState {
+    calls++
+    return next
+  }
+}
+
+class FakeAlbumSearch(private val byLibrary: Map<Int, List<Album>> = emptyMap()) : AlbumSearch {
+  /** Every `(libraryId, query, limit)` this was called with, in order. */
+  val queries: MutableList<Triple<Int, String, Int>> = mutableListOf()
+
+  override suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults {
+    queries += Triple(libraryId, query, limit)
+    return SearchResults(artists = emptyList(), albums = byLibrary[libraryId].orEmpty(), songs = emptyList())
+  }
+}
+
+class FakeLibraryRoles(private val byRole: Map<LibraryRole, List<Int>>) : LibraryRoles {
+  val asked: MutableList<LibraryRole> = mutableListOf()
+
+  override suspend fun idsWithRole(role: LibraryRole): List<Int> {
+    asked += role
+    return byRole[role].orEmpty()
+  }
+}
+
+fun album(id: String, libraryId: Int, name: String, artist: String?) = Album(
+  id = id, libraryId = libraryId, name = name, artistId = null, artistName = artist,
+  coverArtId = null, songCount = 1, durationSeconds = 1,
+)
+```
+
+`RequestArrivalDetectorTest.kt`:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import app.muplay.database.SyncState
+import app.muplay.integrations.IntegrationService
+import app.muplay.integrations.MediaRequest
+import app.muplay.integrations.RequestStatus
+import app.muplay.model.LibraryRole
+import kotlinx.coroutines.test.runTest
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * Whether a thing the service finished fetching is visible in Navidrome yet, and which album it is.
+ *
+ * The design constraint that shapes every test here: **a wrong answer is far worse than no
+ * answer.** A request stuck at `Imported` is a harmless annoyance; a request that flips to the
+ * wrong album puts a "play it" button on something else.
+ */
+class RequestArrivalDetectorTest {
+
+  private fun request(
+    service: IntegrationService = IntegrationService.LIDARR,
+    title: String = "Kind of Blue",
+    subtitle: String = "Miles Davis",
+    status: RequestStatus = RequestStatus.Imported,
+  ) = MediaRequest(
+    id = "x", service = service, externalId = "e", title = title, subtitle = subtitle,
+    remoteId = null, status = status, requestedAtEpochMs = 0, updatedAtEpochMs = 0,
+  )
+
+  private val roles = FakeLibraryRoles(
+    mapOf(LibraryRole.MUSIC to listOf(1), LibraryRole.AUDIOBOOKS to listOf(2)),
+  )
+
+  @Test
+  fun `a matching album in the right library is found and its id returned`() = runTest {
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    assertThat(detector.locate(request())).isEqualTo("al-1")
+  }
+
+  @Test
+  fun `the id returned is the matching album's, not a constant`() = runTest {
+    // The second observation. A `locate` returning a fixed id passes the test above.
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-99", 1, "Bitches Brew", "Miles Davis"))))
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    assertThat(detector.locate(request(title = "Bitches Brew"))).isEqualTo("al-99")
+  }
+
+  @Test
+  fun `the search is issued with the request's own title, in the right libraries`() = runTest {
+    val search = FakeAlbumSearch()
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    detector.locate(request(title = "Bitches Brew"))
+
+    // Argument passthrough, proven as an exact list rather than "the search was called".
+    assertThat(search.queries.map { it.first }).containsExactly(1)
+    assertThat(search.queries.map { it.second }).containsExactly("Bitches Brew")
+  }
+
+  /**
+   * Spec section 4: library id is the only mechanism scoping has. A Bindery request must be looked
+   * for in the **audiobook** libraries, and a Lidarr one in the **music** libraries — searching
+   * both would let a book with an album's title satisfy a music request, which is the exact
+   * cross-library contamination this application exists to prevent.
+   */
+  @Test
+  fun `a bindery request is looked for in the audiobook libraries and a lidarr one in music`() = runTest {
+    val search = FakeAlbumSearch()
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    detector.locate(request(service = IntegrationService.LIDARR))
+    detector.locate(request(service = IntegrationService.BINDERY))
+
+    // Two observations of the role, and of the library ids that follow from it.
+    assertThat(roles.asked).containsExactly(LibraryRole.MUSIC, LibraryRole.AUDIOBOOKS)
+    assertThat(search.queries.map { it.first }).containsExactly(1, 2)
+  }
+
+  @Test
+  fun `a request that is not imported is not looked for at all`() = runTest {
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+    val sync = FakeMirrorSync()
+    val detector = RequestArrivalDetector(sync, search, roles)
+
+    // Every status that is not `Imported`, so none of them can slip through individually.
+    val notReady = listOf(
+      RequestStatus.Requested,
+      RequestStatus.Downloading(percentComplete = 50),
+      RequestStatus.Arrived(albumId = "already"),
+      RequestStatus.Failed("nope"),
+    )
+
+    assertThat(notReady.map { detector.locate(request(status = it)) })
+      .containsExactly(null, null, null, null)
+    // ...and no sync was triggered by any of them. A detector that synced first and filtered
+    // afterwards would poll Navidrome on every refresh for every dead request.
+    assertThat(sync.calls).isZero()
+    assertThat(search.queries).isEmpty()
+  }
+
+  @Test
+  fun `a scan in progress defers rather than answering`() = runTest {
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+    val sync = FakeMirrorSync(SyncState.ScanInProgress)
+    val detector = RequestArrivalDetector(sync, search, roles)
+
+    // The album is right there in the fake mirror, and the answer is still null: mid-scan the
+    // mirror is not a fact yet. Stopping before the search is what makes "try again next refresh"
+    // correct rather than lucky.
+    assertThat(detector.locate(request())).isNull()
+    assertThat(search.queries).isEmpty()
+  }
+
+  @Test
+  fun `a failed sync defers rather than answering`() = runTest {
+    val sync = FakeMirrorSync(SyncState.Failed(IllegalStateException("no route")))
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+
+    assertThat(RequestArrivalDetector(sync, search, roles).locate(request())).isNull()
+    assertThat(search.queries).isEmpty()
+  }
+
+  @Test
+  fun `an up-to-date mirror is searched, and so is one that just synced`() = runTest {
+    // Both success states of `SyncState`, so a detector that only accepted one of them fails.
+    for (state in listOf(SyncState.UpToDate, SyncState.Synced(emptyMap()))) {
+      val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+      val detector = RequestArrivalDetector(FakeMirrorSync(state), search, roles)
+      assertThat(detector.locate(request())).describedAs("%s", state).isEqualTo("al-1")
+    }
+  }
+
+  /**
+   * **The trade, as a test.** A near-miss is not a match. "Kind of Blue (Remastered)" is a
+   * different album, and guessing costs the user a button that opens the wrong thing.
+   */
+  @Test
+  fun `a near miss does not match`() = runTest {
+    val search = FakeAlbumSearch(
+      mapOf(1 to listOf(album("al-1", 1, "Kind of Blue (Remastered)", "Miles Davis"))),
+    )
+
+    assertThat(RequestArrivalDetector(FakeMirrorSync(), search, roles).locate(request())).isNull()
+  }
+
+  @Test
+  fun `a title match with the wrong artist does not match`() = runTest {
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Someone Else"))))
+
+    assertThat(RequestArrivalDetector(FakeMirrorSync(), search, roles).locate(request())).isNull()
+  }
+
+  @Test
+  fun `a request with no subtitle matches on the title alone`() = runTest {
+    // Bindery may not give an author for every book. Requiring an artist match would make those
+    // requests never arrive; requiring the title alone is the weakest rule that still discriminates.
+    val search = FakeAlbumSearch(mapOf(2 to listOf(album("al-2", 2, "Dune", "Some Narrator"))))
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    assertThat(detector.locate(request(IntegrationService.BINDERY, "Dune", subtitle = "")))
+      .isEqualTo("al-2")
+  }
+
+  @Test
+  fun `two equally good matches is no answer, not the first one`() = runTest {
+    val search = FakeAlbumSearch(
+      mapOf(
+        1 to listOf(
+          album("al-1", 1, "Kind of Blue", "Miles Davis"),
+          album("al-2", 1, "kind of blue", "miles davis"),
+        ),
+      ),
+    )
+
+    // Ambiguity is a fact about the library, not a tie to break. Picking `al-1` would be right
+    // half the time and silently wrong the other half.
+    assertThat(RequestArrivalDetector(FakeMirrorSync(), search, roles).locate(request())).isNull()
+  }
+
+  @Test
+  fun `no library with the right role means no answer and no search`() = runTest {
+    // The user tagged no library `Audiobooks`. Searching everything would be the scope leak spec
+    // section 4 spends a page on.
+    val search = FakeAlbumSearch()
+    val detector = RequestArrivalDetector(
+      FakeMirrorSync(), search, FakeLibraryRoles(mapOf(LibraryRole.MUSIC to listOf(1))),
+    )
+
+    assertThat(detector.locate(request(service = IntegrationService.BINDERY))).isNull()
+    assertThat(search.queries).isEmpty()
+  }
+
+  @Test
+  fun `a match in either of two libraries with the same role is found`() = runTest {
+    val search = FakeAlbumSearch(mapOf(3 to listOf(album("al-3", 3, "Kind of Blue", "Miles Davis"))))
+    val detector = RequestArrivalDetector(
+      FakeMirrorSync(), search, FakeLibraryRoles(mapOf(LibraryRole.MUSIC to listOf(1, 3))),
+    )
+
+    assertThat(detector.locate(request())).isEqualTo("al-3")
+    // Both were searched, in order -- so a detector that stopped at the first empty library fails.
+    assertThat(search.queries.map { it.first }).containsExactly(1, 3)
+  }
+}
+```
+
+- [ ] **Step 4: Implement the ports, the matcher and the detector**
+
+`MirrorPorts.kt`:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import app.muplay.database.SyncState
+import app.muplay.model.LibraryRole
+import app.muplay.model.SearchResults
+
+/**
+ * The three things this module needs from Plan 2's data layer, as three single-method interfaces.
+ *
+ * Declared here rather than consumed directly for one reason, the same one `SubsonicSource` gives:
+ * **a test needs a specific call to fail at a specific point** — `syncIfStale` returning
+ * `ScanInProgress` must stop the detector before it searches — and `SyncEngine` is a concrete
+ * class with five constructor dependencies. There is no mock framework in this build.
+ *
+ * All three are **read-only**. Nothing in this plan writes the mirror, moves the sync watermark or
+ * changes a library role, and these ports are what makes that structural rather than a promise.
+ */
+fun interface MirrorSync {
+  /** Plan 2's `SyncEngine.syncIfStale`. Never called for a request that has nothing to find. */
+  suspend fun syncIfStale(): SyncState
+}
+
+fun interface AlbumSearch {
+  /** Plan 2's `BrowseRepository.search`, scoped to one library. */
+  suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults
+}
+
+fun interface LibraryRoles {
+  /** Plan 2's `LibraryRepository.idsWithRole`. */
+  suspend fun idsWithRole(role: LibraryRole): List<Int>
+}
+```
+
+`TitleMatching.kt`:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import java.text.Normalizer
+
+/**
+ * The one normalisation both halves of an arrival match go through.
+ *
+ * Deliberately shallow and fully specified: lower-case, NFD with combining marks stripped, every
+ * run of non-alphanumeric characters collapsed to one space, trimmed. It makes `"Hörbücher"` match
+ * `"Horbucher"` and `"Sgt. Pepper's"` match `"Sgt Peppers"`, and it makes **no** attempt to be
+ * clever about editions, subtitles or featured artists — because every additional cleverness is
+ * another way to match the wrong album, and a wrong match is worse than no match here.
+ *
+ * Punctuation collapses to a space rather than vanishing: vanishing would equate `"Vol.1"` and
+ * `"Vol 1"`, which is fine, but also `"Sgt Peppers"` and `"SgtPeppers"`, which no server sends,
+ * and it would merge titles that differ only in spacing.
+ */
+object TitleMatching {
+
+  private val NON_ALPHANUMERIC = Regex("[^\\p{Alnum}]+")
+  private val COMBINING_MARKS = Regex("\\p{Mn}+")
+
+  fun normalise(value: String): String =
+    Normalizer.normalize(value, Normalizer.Form.NFD)
+      .replace(COMBINING_MARKS, "")
+      .lowercase()
+      .replace(NON_ALPHANUMERIC, " ")
+      .trim()
+}
+```
+
+`RequestArrivalDetector.kt`:
+
+```kotlin
+package app.muplay.integrations.requests
+
+import app.muplay.database.SyncState
+import app.muplay.integrations.IntegrationService
+import app.muplay.integrations.MediaRequest
+import app.muplay.integrations.RequestStatus
+import app.muplay.model.Album
+import app.muplay.model.LibraryRole
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Answers one question: the service says it has the files — is it in Navidrome yet, and which
+ * album is it?
+ *
+ * Returns `null` for every kind of "we do not know", and there are five of them: the request is
+ * not ready, the mirror is mid-scan, the sync failed, no library carries the right role, and the
+ * match is ambiguous. **None of them is a failure.** Each simply means "ask again next refresh",
+ * which is correct because the answer genuinely changes over time.
+ *
+ * The single design rule, stated once: **a wrong answer is worse than no answer.** A request stuck
+ * at `Imported` is a harmless annoyance the user can route around by opening their library; a
+ * request that flips to the wrong album puts a "play it" button on something else.
+ */
+@Singleton
+class RequestArrivalDetector @Inject constructor(
+  private val sync: MirrorSync,
+  private val search: AlbumSearch,
+  private val roles: LibraryRoles,
+) {
+
+  suspend fun locate(request: MediaRequest): String? {
+    // Filter *before* syncing. A detector that synced first would poll Navidrome on every refresh
+    // for every request that has nothing to find.
+    if (request.status != RequestStatus.Imported) return null
+
+    // Mid-scan the mirror is not yet a fact, and a failed sync did not advance the watermark, so
+    // in both cases the honest answer is "not yet".
+    when (sync.syncIfStale()) {
+      SyncState.ScanInProgress -> return null
+      is SyncState.Failed -> return null
+      SyncState.UpToDate, is SyncState.Synced -> Unit
+    }
+
+    // Spec section 4: library id is the only scoping mechanism there is. A book must not be found
+    // by a music request, and vice versa.
+    val libraryIds = roles.idsWithRole(roleFor(request.service))
+    if (libraryIds.isEmpty()) return null
+
+    val matches = libraryIds
+      .flatMap { libraryId -> search.search(libraryId, request.title, SEARCH_LIMIT).albums }
+      .filter { album -> matches(album, request) }
+      .map(Album::id)
+      .distinct()
+
+    // Exactly one, or nothing. Two matches is a fact about the library, not a tie to break.
+    return matches.singleOrNull()
+  }
+
+  private fun matches(album: Album, request: MediaRequest): Boolean {
+    if (TitleMatching.normalise(album.name) != TitleMatching.normalise(request.title)) return false
+    // A blank subtitle means the service did not tell us an author or artist -- common for Bindery
+    // -- so the title alone has to do. Requiring an artist match would make those never arrive.
+    if (request.subtitle.isBlank()) return true
+    return TitleMatching.normalise(album.artistName.orEmpty()) ==
+      TitleMatching.normalise(request.subtitle)
+  }
+
+  private fun roleFor(service: IntegrationService): LibraryRole = when (service) {
+    IntegrationService.LIDARR -> LibraryRole.MUSIC
+    IntegrationService.BINDERY -> LibraryRole.AUDIOBOOKS
+  }
+
+  private companion object {
+    /**
+     * Enough rows to contain every album whose title matches, small enough that a two-word title
+     * does not drag a page of the mirror into memory. The match is exact after normalisation, so
+     * a bigger page would not find anything a smaller one misses unless the library holds more
+     * than this many *substring* matches for one title.
+     */
+    const val SEARCH_LIMIT = 50
+  }
+}
+```
+
+- [ ] **Step 5: Write the failing repository test — all four configuration combinations**
+
+`RequestsRepositoryTest.kt` (abridged to the assertions that carry the design; write the rest by
+the same rules):
+
+```kotlin
+  /**
+   * **The severability contract, at the data layer.** A user with only Lidarr configured must
+   * cause **zero** Bindery traffic — not "the Bindery UI was not shown", but that no call was made
+   * at all. The fake counts calls; `isZero()` is the assertion.
+   */
+  @Test
+  fun `refresh polls only the services that are configured`() = runTest {
+    credentials.save(lidarrCredentials)          // Bindery deliberately not configured
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+    requests.record(IntegrationService.BINDERY, "book", "B", "y", remoteId = "9")
+
+    val report = repository.refresh()
+
+    assertThat(lidarrSource.queueCalls).isEqualTo(1)
+    assertThat(binderySource.bookCalls).isZero()
+    assertThat(report.skippedUnconfigured).containsExactly(IntegrationService.BINDERY)
+    // The Bindery row is left exactly as it was rather than being marked failed: "we did not
+    // ask" is not "it went wrong".
+    assertThat(requests.requests(IntegrationService.BINDERY).first().single().status)
+      .isEqualTo(RequestStatus.Requested)
+  }
+
+  @Test
+  fun `refresh with nothing configured touches nothing and reports both as skipped`() = runTest {
+    // The path a real user is permanently on until they configure something. It must not throw,
+    // must issue no HTTP, and must not rewrite any row.
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+
+    val report = repository.refresh()
+
+    assertThat(lidarrSource.queueCalls).isZero()
+    assertThat(binderySource.bookCalls).isZero()
+    assertThat(report.polled).isZero()
+    assertThat(report.skippedUnconfigured)
+      .containsExactlyInAnyOrder(IntegrationService.LIDARR, IntegrationService.BINDERY)
+  }
+
+  @Test
+  fun `refresh updates the row whose remote id it polled, and not another`() = runTest {
+    // The delegating-argument rule again, one level up: a refresh that wrote its result to the
+    // first row rather than the matching one passes a single-row test.
+    credentials.save(lidarrCredentials)
+    requests.record(IntegrationService.LIDARR, "mbid-1", "A", "x", remoteId = "7")
+    requests.record(IntegrationService.LIDARR, "mbid-2", "B", "y", remoteId = "8")
+    lidarrSource.queue = listOf(queueItem(albumId = 8, state = "downloading", size = 100.0, left = 25.0))
+
+    repository.refresh()
+
+    val byId = requests.requests().first().associateBy { it.externalId }
+    assertThat(byId.getValue("mbid-2").status).isEqualTo(RequestStatus.Downloading(75))
+    assertThat(byId.getValue("mbid-1").status).isEqualTo(RequestStatus.Requested)
+  }
+
+  @Test
+  fun `an imported request that the detector locates becomes Arrived with that album id`() = runTest {
+    credentials.save(lidarrCredentials)
+    requests.record(IntegrationService.LIDARR, "mbid-1", "Kind of Blue", "Miles Davis", remoteId = "7")
+    lidarrSource.albumProgress = LidarrAlbumProgress(trackFileCount = 5, totalTrackCount = 5)
+    albumSearch = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", "Miles Davis"))))
+
+    repository.refresh()
+
+    assertThat(requests.requests().first().single().status)
+      .isEqualTo(RequestStatus.Arrived(albumId = "al-1"))
+  }
+
+  @Test
+  fun `an imported request the detector cannot locate stays Imported, not Failed`() = runTest {
+    // The user can still find it in their library; telling them it failed would be false.
+    credentials.save(lidarrCredentials)
+    requests.record(IntegrationService.LIDARR, "mbid-1", "Kind of Blue", "Miles Davis", remoteId = "7")
+    lidarrSource.albumProgress = LidarrAlbumProgress(5, 5)
+
+    repository.refresh()
+
+    assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Imported)
+  }
+
+  @Test
+  fun `a request whose service throws leaves every other request updated`() = runTest {
+    // One dead service must not stop the other from refreshing. This is the "fail closed, never
+    // block core playback" rule of spec section 8, applied within the feature itself.
+    credentials.save(lidarrCredentials)
+    credentials.save(binderyCredentials)
+    lidarrSource.failWith = LidarrHttpException(500)
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+    requests.record(IntegrationService.BINDERY, "book", "B", "y", remoteId = "9")
+    binderySource.books = listOf(BinderyBook(id = "9", foreignBookId = "book", title = "B", status = "imported"))
+
+    val report = repository.refresh()
+
+    assertThat(requests.requests(IntegrationService.BINDERY).first().single().status)
+      .isEqualTo(RequestStatus.Imported)
+    assertThat(report.polled).isEqualTo(1)
+  }
+
+  @Test
+  fun `configuredServices reports exactly what is configured, and changes when it changes`() = runTest {
+    // All four combinations through one flow, in order. This is what Task 10's UI decides
+    // whether to render anything at all from.
+    assertThat(repository.configuredServices.first()).isEmpty()
+    credentials.save(lidarrCredentials)
+    assertThat(repository.configuredServices.first()).containsExactly(IntegrationService.LIDARR)
+    credentials.save(binderyCredentials)
+    assertThat(repository.configuredServices.first())
+      .containsExactlyInAnyOrder(IntegrationService.LIDARR, IntegrationService.BINDERY)
+    credentials.clear(IntegrationService.LIDARR)
+    assertThat(repository.configuredServices.first()).containsExactly(IntegrationService.BINDERY)
+  }
+```
+
+> **`IntegrationCredentialStore` is device-only** (it reaches `AndroidKeystore`). To keep
+> `RequestsRepositoryTest` in Tier 1, have `RequestsRepository` depend on a
+> `fun interface ConfiguredServices { val configured: Flow<Map<IntegrationService, IntegrationCredentials>> }`
+> — a fourth port, in `MirrorPorts.kt`, with the production adapter binding
+> `IntegrationCredentialStore::configured` in `RequestsModule`. The same argument as the other
+> three, and it is what makes the four-combination test a JVM test rather than an emulator one.
+> **State in the task report that you did this**, because it is a design decision this plan is
+> making one level later than the others.
+
+- [ ] **Step 6: Implement `RequestsRepository` and `RequestsModule`**
+
+`RequestsRepository` composes, and its shape is fixed by the tests above:
+
+- `configuredServices: Flow<Set<IntegrationService>>` = the port's map's keys.
+- `all: Flow<List<MediaRequest>>` = `MediaRequestRepository.requests()`.
+- `refresh(): RefreshReport`:
+  1. Read the configured map once.
+  2. For each service **that is configured**, fetch its state in one call —
+     `LidarrSource.queue()` for Lidarr, `BinderySource.books(status = null)` for Bindery —
+     inside a `runCatching`, so one dead service does not stop the other.
+  3. For each stored request of that service, compute its new status
+     (`LidarrStatusMapper.map(queueItemFor(remoteId), albumProgress)` /
+     `BinderyStatusMapper.map(book.status)`), and `setStatus` **only when it changed** — an
+     unconditional write would move `updatedAt` on every refresh and make "last updated" useless.
+  4. For each request now at `Imported`, call `RequestArrivalDetector.locate` and, on a non-null
+     result, `setStatus(id, RequestStatus.Arrived(albumId))`.
+  5. Return `RefreshReport(polled, updated, skippedUnconfigured)`.
+- `recordLidarrAdd` / `recordBinderyAdd` call `MediaRequestRepository.record` with the ids the
+  submit returned.
+- `forget(id)` delegates.
+
+`RequestsModule` binds the four ports to the real Plan 2 collaborators:
+
+```kotlin
+  @Provides fun provideMirrorSync(engine: SyncEngine): MirrorSync = MirrorSync { engine.syncIfStale() }
+
+  @Provides fun provideAlbumSearch(browse: BrowseRepository): AlbumSearch =
+    AlbumSearch { libraryId, query, limit -> browse.search(libraryId, query, limit) }
+
+  @Provides fun provideLibraryRoles(libraries: LibraryRepository): LibraryRoles =
+    LibraryRoles { role -> libraries.idsWithRole(role) }
+
+  @Provides fun provideConfiguredServices(store: IntegrationCredentialStore): ConfiguredServices =
+    ConfiguredServices { store.configured }
+```
+
+> **Check these signatures against Plan 2 before writing them.** `SyncEngine.syncIfStale()`,
+> `BrowseRepository.search(libraryId, query, limit)` and `LibraryRepository.idsWithRole(role)` are
+> taken from `docs/superpowers/plans/2026-08-24-muplay-k02-library-browse.md`'s Interfaces blocks.
+> If any differs in the tree, use the real one and say so in the task report — do **not** add a
+> second search or a second sync engine.
+
+- [ ] **Step 7: Run, measure, probe, commit**
+
+Run: `./gradlew :integrations:requests:test`
+Expected: PASS. Measure the module's BRANCH floor and write the real number.
+
+`ci/mutation-probes.sh`:
+
+```python
+DETECTOR = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestArrivalDetector.kt"
+```
+
+```python
+    # ---- Plan 7: arrival -- where a wrong answer is worse than none ---------------------------
+    ("integrations/arrival-role-scope", DETECTOR,
+     "IntegrationService.BINDERY -> LibraryRole.AUDIOBOOKS",
+     "IntegrationService.BINDERY -> LibraryRole.MUSIC",
+     "a bindery request is looked for in the audiobook libraries and a lidarr one in music", 1),
+    ("integrations/arrival-single-match", DETECTOR,
+     "return matches.singleOrNull()", "return matches.firstOrNull()",
+     "two equally good matches is no answer, not the first one", 1),
+    ("integrations/arrival-title-passthrough", DETECTOR,
+     "search.search(libraryId, request.title, SEARCH_LIMIT)",
+     'search.search(libraryId, "Kind of Blue", SEARCH_LIMIT)',
+     "the search is issued with the request's own title, in the right libraries", 1),
+    ("integrations/arrival-scan-in-progress", DETECTOR,
+     "SyncState.ScanInProgress -> return null", "SyncState.ScanInProgress -> Unit",
+     "a scan in progress defers rather than answering", 1),
+]
+```
+
+```bash
+git add settings.gradle.kts build.gradle.kts integrations/requests ci/mutation-probes.sh
+git commit -m "feat(integrations): arrival detection, which declines to guess
+
+The service saying it has the files is not Navidrome having scanned them. This closes that
+gap: sync, then search only the libraries whose role fits the service (spec section 4 --
+library id is the only scoping mechanism there is), and match on an exactly-normalised title
+plus artist. Exactly one match or no answer; a near miss does not match, on purpose.
+
+The trade is stated as a test: a request stuck at Imported is a harmless annoyance, and a
+request that flips to the wrong album puts a play button on something else.
+
+No WorkManager -- it is not in the version catalogue and this plan adds no dependency.
+Requests refresh when the screen is opened. Four hand-written ports keep the whole module
+Tier-1 testable and keep every touch of Plan 2's data layer read-only."
+```
+
+---
+
+## Task 10: `:feature:requests` — a surface that is absent, not empty
+
+**Files:**
+- Create: `feature/requests/build.gradle.kts`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/ConnectionCheck.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationSetupUiState.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationSetupViewModel.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationSetupScreen.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationsSettingsScreen.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/RequestsUiState.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/RequestsViewModel.kt`
+- Create: `feature/requests/src/main/kotlin/app/muplay/requests/RequestsScreen.kt`
+- Create: `feature/requests/src/test/kotlin/app/muplay/requests/ConnectionCheckTest.kt`
+- Create: `feature/requests/src/test/kotlin/app/muplay/requests/IntegrationSetupViewModelTest.kt`
+- Create: `feature/requests/src/test/kotlin/app/muplay/requests/RequestsViewModelTest.kt`
+- Modify: `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt`
+- Create: `app/src/main/kotlin/app/muplay/ui/navigation/RequestsRoute.kt`
+- Modify: `settings.gradle.kts`, `build.gradle.kts`, `app/build.gradle.kts`
+
+**Interfaces:**
+- Consumes: `RequestsRepository`, `IntegrationService`, `IntegrationBaseUrl`, `BaseUrlResult`,
+  `CleartextPolicy`, `MediaRequest`, `RequestStatus`, `LidarrSource`, `BinderySource`
+- Produces:
+  - `sealed interface ConnectionCheck` with `data class Ok(val description: String)`,
+    `data object Unreachable`, `data object Unauthorized`,
+    `data class WrongApplication(val appName: String)`, `data class Failed(val detail: String)`
+  - `data class IntegrationSetupUiState(service, urlText, keyText, urlError, check, saving, saved)`
+  - `class IntegrationSetupViewModel @Inject constructor(...)`
+  - `sealed interface RequestsUiState` with `data object NotConfigured`,
+    `data class Ready(services: Set<IntegrationService>, requests: List<MediaRequest>, searching: Boolean, results: List<RequestCandidate>, error: String?)`
+  - `data class RequestCandidate(service, externalId, title, subtitle, coverUrl, alreadyAdded)`
+  - `@Composable fun RequestsScreen(...)`, `@Composable fun IntegrationSetupScreen(...)`,
+    `@Composable fun IntegrationsSettingsScreen(...)`
+  - `app/…/navigation/RequestsRoute.kt` — the two destinations
+
+### The one piece of always-present UI, and why it is exactly one
+
+The plan's severability contract says a user who runs neither service must see **no dead UI**. It
+also has to be possible to turn the feature on, and a feature with zero affordance is unreachable.
+Those pull against each other, and the resolution is a line drawn in a specific place:
+
+- **The feature surface is absent when nothing is configured.** No requests list, no empty state
+  saying "no requests yet", no search field, no disabled button, and **no requests destination in
+  the navigation graph at all**. `RequestsUiState.NotConfigured` renders nothing and the route is
+  not registered.
+- **One settings row turns it on.** A row reading *"Integrations"* in the app's settings surface —
+  not a feature, a switch. That is the same category of thing as the server-URL field: present
+  because the app has to be configurable, not because a feature is on.
+
+**Where that row goes depends on what exists when this task runs.** Spec §9 names a
+`feature/settings` module; it does not exist in the tree as this plan is written, and no plan
+before this one creates it. So:
+
+- **If a settings screen exists**, add one row to it that navigates to `IntegrationsSettingsScreen`,
+  and nothing else.
+- **If it does not**, add an overflow menu item on the library screen's top app bar, labelled
+  *"Integrations"*, that navigates to the same screen.
+
+Say in the task report which one you did. Either way, **exactly one always-present affordance**,
+and Task 11's emulator journey asserts that a device with nothing configured shows no requests
+surface anywhere.
+
+### The connection check, which must not lie in four different ways
+
+*"Test connection"* is the one place this feature can be genuinely helpful or genuinely
+misleading, because there are four distinct things that can be wrong and they need four distinct
+messages:
+
+| Outcome | How it is detected | Why it is separate |
+|---|---|---|
+| `Unreachable` | the unauthenticated ping/health call fails or is falsy | Nothing is listening. Telling the user their key is wrong sends them to regenerate a perfectly good key. |
+| `Unauthorized` | ping succeeds, the authenticated call throws `*UnauthorizedException` | Something *is* there. **The message must not claim the key is wrong rather than missing** — Lidarr returns a bare 401 for both, and this client does not know which. |
+| `WrongApplication` | the authenticated call succeeds but `appName != "Lidarr"` | The single most likely real mistake: pasting a Sonarr or Radarr URL. `/ping` is byte-identical across all the Servarr apps, so without this check the user gets a green tick and then a stream of 404s. |
+| `Ok` | everything succeeded | — |
+
+Everything else is `Failed(detail)` carrying whatever the exception said.
+
+`ConnectionCheckTest` asserts **all five members as one exact mapped list**, from five different
+fake sources. A connection check observed at one outcome is a connection check that has not been
+tested, and this one is a five-way branch.
+
+**Bindery has no `appName` to check**, because its `/api/v1/health` reports only `status` and
+`version`. So `WrongApplication` is unreachable for Bindery, and the plan says so rather than
+letting an untestable branch sit there: `ConnectionCheck.of(...)` takes the expected application
+name as a **nullable** parameter, `null` means "this service does not identify itself", and both
+paths are tested.
+
+- [ ] **Step 1: Write the failing connection-check test**
+
+```kotlin
+package app.muplay.requests
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * All five outcomes of "test connection", as one exact list.
+ *
+ * Five separate messages, because four separate things can be wrong and sending a user to
+ * regenerate a working API key because nothing was listening is the kind of unhelpfulness that
+ * makes people give up on a feature.
+ */
+class ConnectionCheckTest {
+
+  private object Boom : Exception("no route")
+
+  @Test
+  fun `each way a connection can go maps to its own outcome`() {
+    val outcomes = listOf(
+      // reachable=false: nothing is listening.
+      ConnectionCheck.of(reachable = false, identity = null, failure = null, expectedAppName = "Lidarr"),
+      // reachable, but the authenticated call was refused.
+      ConnectionCheck.of(true, null, failure = Unauthorized, expectedAppName = "Lidarr"),
+      // reachable and authenticated, but it is a Sonarr.
+      ConnectionCheck.of(true, identity = "Sonarr", failure = null, expectedAppName = "Lidarr"),
+      // reachable and authenticated and right.
+      ConnectionCheck.of(true, identity = "Lidarr", failure = null, expectedAppName = "Lidarr"),
+      // reachable, and something else went wrong entirely.
+      ConnectionCheck.of(true, null, failure = Boom, expectedAppName = "Lidarr"),
+    )
+
+    assertThat(outcomes).containsExactly(
+      ConnectionCheck.Unreachable,
+      ConnectionCheck.Unauthorized,
+      ConnectionCheck.WrongApplication(appName = "Sonarr"),
+      ConnectionCheck.Ok(description = "Lidarr"),
+      ConnectionCheck.Failed(detail = "no route"),
+    )
+  }
+
+  @Test
+  fun `the wrong-application outcome names what was actually found`() {
+    // Two observations. "This is not Lidarr" is much less useful than "this is a Radarr".
+    assertThat(ConnectionCheck.of(true, "Radarr", null, "Lidarr"))
+      .isEqualTo(ConnectionCheck.WrongApplication("Radarr"))
+    assertThat(ConnectionCheck.of(true, "Prowlarr", null, "Lidarr"))
+      .isEqualTo(ConnectionCheck.WrongApplication("Prowlarr"))
+  }
+
+  /**
+   * Bindery's `/api/v1/health` reports `status` and `version` and nothing that names the
+   * application, so there is no identity to check. `null` says that explicitly, rather than
+   * leaving a branch that can never be `false`.
+   */
+  @Test
+  fun `a service that does not identify itself skips the identity check entirely`() {
+    assertThat(ConnectionCheck.of(true, identity = "anything at all", failure = null, expectedAppName = null))
+      .isEqualTo(ConnectionCheck.Ok(description = "anything at all"))
+    assertThat(ConnectionCheck.of(true, identity = null, failure = null, expectedAppName = null))
+      .isInstanceOf(ConnectionCheck.Ok::class.java)
+  }
+
+  @Test
+  fun `the identity match is case-insensitive`() {
+    assertThat(ConnectionCheck.of(true, "lidarr", null, "Lidarr"))
+      .isEqualTo(ConnectionCheck.Ok(description = "lidarr"))
+  }
+
+  @Test
+  fun `a failure with no message still produces a message`() {
+    // `Failed("")` renders as a blank line under the field, which reads as a UI bug.
+    assertThat(ConnectionCheck.of(true, null, failure = Exception(), expectedAppName = null))
+      .isInstanceOf(ConnectionCheck.Failed::class.java)
+    assertThat((ConnectionCheck.of(true, null, Exception(), null) as ConnectionCheck.Failed).detail)
+      .isNotBlank()
+  }
+}
+```
+
+`Unauthorized` in the test above is a stand-in: use `LidarrUnauthorizedException()` and
+`BinderyUnauthorizedException()` as two of the inputs, and assert **both** map to
+`ConnectionCheck.Unauthorized` — that is the second observation of that branch and it proves the
+check is not hard-wired to one service's exception type.
+
+- [ ] **Step 2: Write the failing requests-view-model test — all four combinations**
+
+```kotlin
+  @Test
+  fun `nothing configured is NotConfigured, and nothing else`() = runTest {
+    // Not `Ready(emptySet(), emptyList())`. The distinction is the whole severability contract:
+    // `Ready` renders a screen and `NotConfigured` renders nothing, and a `Ready` with empty
+    // sets would render an empty screen -- exactly the dead UI this plan forbids.
+    assertThat(viewModel.uiState.value).isEqualTo(RequestsUiState.NotConfigured)
+  }
+
+  @Test
+  fun `one configured service is Ready with only that service`() = runTest {
+    repository.configure(IntegrationService.LIDARR)
+    viewModel.uiState.test {
+      assertThat((awaitItem() as RequestsUiState.Ready).services)
+        .containsExactly(IntegrationService.LIDARR)
+    }
+  }
+
+  @Test
+  fun `the other configured service alone is Ready with only the other service`() = runTest {
+    // The second observation, and the one a test suite that always configures Lidarr never makes.
+    repository.configure(IntegrationService.BINDERY)
+    viewModel.uiState.test {
+      assertThat((awaitItem() as RequestsUiState.Ready).services)
+        .containsExactly(IntegrationService.BINDERY)
+    }
+  }
+
+  @Test
+  fun `both configured is Ready with both, in declaration order`() = runTest {
+    repository.configure(IntegrationService.LIDARR)
+    repository.configure(IntegrationService.BINDERY)
+    viewModel.uiState.test {
+      // Order is a property: `IntegrationService.entries` order is what every list renders in, so
+      // both screens agree without either sorting.
+      assertThat((awaitItem() as RequestsUiState.Ready).services.toList())
+        .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
+    }
+  }
+
+  @Test
+  fun `removing the last configured service returns the state to NotConfigured`() = runTest {
+    // The reverse transition. Without it, a view model that computed `NotConfigured` only at
+    // construction would pass every test above and then leave a dead screen behind after the user
+    // removed their last integration.
+    repository.configure(IntegrationService.LIDARR)
+    viewModel.uiState.test {
+      assertThat(awaitItem()).isInstanceOf(RequestsUiState.Ready::class.java)
+      repository.unconfigure(IntegrationService.LIDARR)
+      assertThat(awaitItem()).isEqualTo(RequestsUiState.NotConfigured)
+    }
+  }
+
+  @Test
+  fun `a search runs only against the services that are configured`() = runTest {
+    repository.configure(IntegrationService.LIDARR)
+
+    viewModel.search("blue")
+
+    // Exact mapped list: the candidates come back tagged with their service, and a Bindery
+    // candidate appearing here would mean a search was issued against an unconfigured service.
+    assertThat(viewModel.uiState.value.let { (it as RequestsUiState.Ready).results }.map { it.service })
+      .containsOnly(IntegrationService.LIDARR)
+    assertThat(repository.binderySearches).isZero()
+  }
+
+  @Test
+  fun `requesting a candidate records it and the list shows it`() = runTest {
+    repository.configure(IntegrationService.LIDARR)
+    viewModel.search("blue")
+
+    viewModel.request(candidate(externalId = "mbid-1", title = "Kind of Blue"))
+
+    // The identifier, not "a request was made". Same rule as every submit test in this plan.
+    assertThat(repository.submitted.map { it.externalId }).containsExactly("mbid-1")
+  }
+```
+
+- [ ] **Step 3: Implement `ConnectionCheck`**
+
+```kotlin
+package app.muplay.requests
+
+import app.muplay.integrations.bindery.BinderyUnauthorizedException
+import app.muplay.integrations.lidarr.LidarrUnauthorizedException
+
+/**
+ * The outcome of "test connection", with one member per thing that can actually be wrong.
+ *
+ * Five members rather than success-or-failure, because the *advice* differs: an unreachable host
+ * and a rejected key send the user to completely different places, and a Sonarr URL pasted into
+ * the Lidarr field is the single most likely real mistake — `/ping` is byte-identical across every
+ * Servarr application, so without an identity check it produces a green tick and then a stream of
+ * 404s.
+ */
+sealed interface ConnectionCheck {
+
+  /** [description] is whatever the service called itself, shown back to the user as confirmation. */
+  data class Ok(val description: String) : ConnectionCheck
+
+  /** Nothing answered the unauthenticated ping. The key is not the problem and must not be blamed. */
+  data object Unreachable : ConnectionCheck
+
+  /**
+   * Something is there and refused us.
+   *
+   * The message this renders must **not** say the key is wrong: Lidarr returns a bare 401 with an
+   * empty body for a missing key and a wrong key alike, so "wrong" is a guess. "Rejected" is what
+   * is known.
+   */
+  data object Unauthorized : ConnectionCheck
+
+  /** Reachable, authenticated, and a different application. [appName] is what it called itself. */
+  data class WrongApplication(val appName: String) : ConnectionCheck
+
+  data class Failed(val detail: String) : ConnectionCheck
+
+  companion object {
+
+    /**
+     * Decides the outcome from three observations.
+     *
+     * [expectedAppName] is `null` for a service that does not identify itself — Bindery's
+     * `/api/v1/health` reports `status` and `version` and nothing else — and that is written as a
+     * nullable parameter rather than a second code path so the "no identity to check" case is a
+     * tested value rather than an unreachable branch.
+     */
+    fun of(
+      reachable: Boolean,
+      identity: String?,
+      failure: Throwable?,
+      expectedAppName: String?,
+    ): ConnectionCheck = when {
+      !reachable -> Unreachable
+      failure is LidarrUnauthorizedException || failure is BinderyUnauthorizedException -> Unauthorized
+      failure != null -> Failed(failure.message?.takeIf { it.isNotBlank() } ?: "the connection failed")
+      expectedAppName != null && identity != null && !identity.equals(expectedAppName, ignoreCase = true) ->
+        WrongApplication(identity)
+      else -> Ok(description = identity ?: expectedAppName ?: "connected")
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Implement the ui state, the view models and the screens**
+
+`RequestsUiState.kt`:
+
+```kotlin
+package app.muplay.requests
+
+import app.muplay.integrations.IntegrationService
+import app.muplay.integrations.MediaRequest
+
+/**
+ * What the requests screen shows.
+ *
+ * **[NotConfigured] renders nothing at all** — not an empty list, not a "no requests yet" card,
+ * not a "set up an integration" prompt. The plan's severability contract is explicit: a user who
+ * runs neither service sees no degradation and no dead UI, and the one affordance that turns the
+ * feature on is a settings row, not a screen.
+ */
+sealed interface RequestsUiState {
+
+  data object NotConfigured : RequestsUiState
+
+  data class Ready(
+    /** In `IntegrationService.entries` order, so every list agrees without any screen sorting. */
+    val services: Set<IntegrationService>,
+    val requests: List<MediaRequest>,
+    val searching: Boolean,
+    val results: List<RequestCandidate>,
+    val error: String?,
+  ) : RequestsUiState
+}
+
+/** One searchable thing, from either service, in the one shape the list renders. */
+data class RequestCandidate(
+  val service: IntegrationService,
+  val externalId: String,
+  val title: String,
+  val subtitle: String,
+  val coverUrl: String?,
+  val alreadyAdded: Boolean,
+)
+```
+
+`RequestsViewModel` collects `RequestsRepository.configuredServices` and `.all`, maps them into the
+state, calls `refresh()` on `init` and on pull-to-refresh, debounces `search()` (**250 ms**, because
+a Lidarr lookup is a proxied call to `api.lidarr.audio` that is rate-limited upstream), and fans a
+search out only across configured services.
+
+`IntegrationSetupViewModel` holds the URL and key text, calls
+`IntegrationBaseUrl.parse(urlText, cleartextPolicy)` on every change and surfaces
+`BaseUrlResult.message(service)`, runs `ConnectionCheck` on demand, and saves through
+`IntegrationCredentialStore` only when the URL parsed and the check was `Ok`.
+
+The three Composables are ordinary Material 3 screens. They carry `testTag`s, because Task 11's
+emulator journey asserts on them:
+
+| `testTag` | On |
+|---|---|
+| `requests:root` | the requests screen's root — **must not exist when nothing is configured** |
+| `requests:section:LIDARR`, `requests:section:BINDERY` | each service's section |
+| `requests:search` | the search field |
+| `requests:candidate:<externalId>` | one search result row |
+| `requests:row:<requestId>` | one stored request row |
+| `requests:status:<requestId>` | that row's status text |
+| `settings:integrations` | the always-present settings row |
+| `setup:url`, `setup:key`, `setup:test`, `setup:save`, `setup:error` | the setup form |
+
+- [ ] **Step 5: Register the destination — conditionally**
+
+`app/src/main/kotlin/app/muplay/ui/navigation/RequestsRoute.kt` declares the two Navigation 3
+destinations. `MuPlayApp` collects `RequestsRepository.configuredServices` and:
+
+- **always** provides the `IntegrationsSettingsScreen` destination and the one affordance that
+  reaches it (a settings row, or the library app bar's overflow item — see this task's opening
+  section);
+- registers the **requests** destination only when the set is non-empty.
+
+```kotlin
+  // Registered only when at least one integration is configured. Not "registered and hidden": a
+  // destination that exists is reachable by deep link, by a restored back stack and by a stale
+  // navigation event, and each of those would land a user who runs neither service on a screen
+  // for a feature they do not have. `ConventionTest`'s severability rule keeps this the only
+  // edge from :app into integrations/.
+  if (configuredServices.isNotEmpty()) {
+    entry<RequestsRoute> { RequestsScreen(onOpenAlbum = onOpenAlbum) }
+  }
+```
+
+- [ ] **Step 6: Run, measure, commit**
+
+Run: `./gradlew :feature:requests:test`
+Expected: PASS.
+
+`:feature:requests`'s floors are **two** entries, as `:feature:setup`'s are: a BRANCH floor over
+`ConnectionCheck*`, `RequestsUiState*`, `RequestsViewModel` and `IntegrationSetupViewModel`
+(Tier 1, measured from the JVM run), and a **LINE** floor with `requiresInstrumentedData = true`
+over `RequestsScreenKt`, `IntegrationSetupScreenKt` and `IntegrationsSettingsScreenKt` — Compose
+code measures ~0% without a real composition, and Task 11's journey is what composes it. Measure
+both; do not invent either.
+
+```bash
+git add settings.gradle.kts build.gradle.kts app feature/requests
+git commit -m "feat(requests): a surface that is absent rather than empty
+
+RequestsUiState.NotConfigured renders nothing, and the requests destination is not
+registered at all when no integration is configured -- not registered-and-hidden, because a
+registered destination is reachable by deep link, by a restored back stack and by a stale
+navigation event. The one always-present affordance is a settings row, which is a switch and
+not a feature.
+
+Test connection has five outcomes because four separate things can be wrong: nothing
+listening, a rejected key, a Sonarr URL in the Lidarr field (/ping is byte-identical across
+every Servarr app), and everything else. The rejected-key message does not claim the key is
+wrong, because a bare 401 cannot tell us whether it was wrong or missing."
+```
+
+---
+
+## Task 11: The gates — real containers, a journey with nothing configured, and the spec correction
+
+**Files:**
+- Create: `ci/lidarr.compose.yml`, `ci/configure-lidarr.sh`
+- Create: `ci/bindery.compose.yml`, `ci/configure-bindery.sh`
+- Create: `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LiveLidarrTest.kt`
+- Create: `integrations/bindery/src/test/kotlin/app/muplay/integrations/bindery/LiveBinderyTest.kt`
+- Create: `app/src/androidTest/kotlin/app/muplay/IntegrationsJourneyTest.kt`
+- Modify: `build-logic/convention/src/main/kotlin/Testing.kt` — generalise the live-task carve-out
+- Modify: `build.gradle.kts` — the two new live test tasks; the measured coverage floors
+- Modify: `app/src/test/kotlin/app/muplay/ConventionTest.kt` — extend the drift rule
+- Modify: `.github/workflows/pr.yml`, `.github/workflows/e2e.yml`
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` — §8, and §12
+- Modify: `ci/mutation-probes.sh`
+
+### Why a live container, and what it can and cannot cover
+
+Spec §10's countermeasure 2 is *"a real server… anything whose subject is Navidrome's behaviour is
+tested against a pinned container, not a fixture."* The same argument applies to Lidarr and
+Bindery, and Plan 1 already proved the shape works: the Navidrome container starts in 5–11 s, well
+inside a fast-tier job.
+
+**But part of Lidarr's API is not offline.** `/api/v1/album/lookup` proxies to
+`https://api.lidarr.audio`, so a live-container test of lookup would depend on a third-party
+service, would be rate-limited, and would fail while nothing in this repository was wrong. That is
+precisely the flakiness the merge gate must not have.
+
+So the line is drawn like this, and it is drawn on purpose:
+
+| Covered by the live container (deterministic, offline) | Covered by fixtures captured from a real instance |
+|---|---|
+| `/ping` and `/api/v1/health` shapes | album lookup results |
+| a wrong key really returns **401 with an empty body** | the `queue` record shape while something downloads |
+| `/api/v1/system/status`'s `appName`, `version`, `urlBase` | the album `statistics` shape mid-download |
+| a request with no `Accept` header really can get **406** | Bindery's search-result element shape |
+| `POST /api/v1/album` with `{}` really returns **400** and a JSON **array** of failures | |
+| `/api/v1/rootfolder`, `/api/v1/qualityprofile`, `/api/v1/metadataprofile` shapes | |
+| an empty `/api/v1/queue` envelope's field names | |
+| Bindery: `?q=` really returns 400 while `?term=` does not | |
+| Bindery: a query-string key really is refused on a mutation | |
+
+Every row in the left column is a claim this plan made from source and never executed. **That is
+what this task is for.**
+
+- [ ] **Step 1: Pin the containers**
+
+`ci/lidarr.compose.yml`:
+
+```yaml
+services:
+  lidarr:
+    # There is no official Lidarr image; linuxserver and hotio both publish one. PIN A REAL TAG --
+    # list them first and record which you chose:
+    #   curl -s 'https://registry.hub.docker.com/v2/repositories/linuxserver/lidarr/tags?page_size=50' \
+    #     | python3 -c 'import json,sys; [print(t["name"]) for t in json.load(sys.stdin)["results"]]'
+    # `latest` is banned here for the same reason the Navidrome image is pinned to 0.63.2: an
+    # upstream release must not be able to turn this gate red on a morning nobody changed anything.
+    image: lscr.io/linuxserver/lidarr:PINNED_TAG_GOES_HERE
+    ports: ["8686:8686"]
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+    healthcheck:
+      # `/ping` is unauthenticated and returns {"status":"OK"} -- the one endpoint that can be
+      # probed before the API key is known. Match the BODY, not the status code: Lidarr answers
+      # 200 with {"status":"Error"} when its config database will not open, and a status-code
+      # healthcheck would call that healthy. (This is the same trap ci/navidrome.compose.yml
+      # records for /rest/ping.view.)
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8686/ping | grep -q OK"]
+      interval: 2s
+      retries: 60
+```
+
+`ci/configure-lidarr.sh` — reads the generated key and creates a root folder, the way
+`ci/configure-libraries.sh` does for Navidrome:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+# Lidarr generates its API key on first start and writes it to /config/config.xml as a 32-char
+# lowercase hex GUID with the dashes removed (ConfigFileProvider.cs:
+# `Guid.NewGuid().ToString().Replace("-", "")`). There is no environment variable for it, so it
+# has to be read back out of the container.
+#
+# Note that `AuthenticationRequired=DisabledForLocalAddresses` does NOT exempt the API: the
+# local-address bypass is attached only to the "UI" authorization policy, while every
+# [V1ApiController] falls back to a policy requiring an authenticated user (Startup.cs). So the
+# key is needed even from localhost.
+CONTAINER=${1:-lidarr}
+until docker exec "$CONTAINER" test -f /config/config.xml; do sleep 1; done
+KEY=$(docker exec "$CONTAINER" sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml)
+if [ ${#KEY} -ne 32 ]; then
+  echo "expected a 32-character API key, got ${#KEY} characters" >&2
+  exit 1
+fi
+
+# A root folder, so /api/v1/rootfolder is not an empty array -- LiveLidarrTest asserts on its
+# fields, and an empty array would make every one of those assertions vacuous.
+docker exec "$CONTAINER" mkdir -p /music
+curl -sf -X POST 'http://localhost:8686/api/v1/rootfolder' \
+  -H "X-Api-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"path":"/music","name":"Music"}' > /dev/null || {
+    echo "could not create a root folder; see the plan's Task 5 Step 1 note -- the body this" >&2
+    echo "sends is a guess about a setup call MuPlay itself never makes." >&2
+    exit 1
+  }
+
+# The test reads the key from the environment; it never appears on a URL and never in a fixture.
+echo "LIDARR_API_KEY=$KEY" >> "$GITHUB_ENV"
+```
+
+`ci/bindery.compose.yml` follows the same shape: `ghcr.io/vavallee/bindery:<PINNED TAG>`, port
+**8787**, healthcheck on `/api/v1/health` matching the body `"ok"`. `ci/configure-bindery.sh` reads
+the API key from wherever Task 8 Step 1 established it comes from — **this plan does not know, and
+that step is where it is found out.**
+
+- [ ] **Step 2: Generalise the live-test carve-out rather than copying it**
+
+`build-logic/convention/src/main/kotlin/Testing.kt` today carries one constant,
+`LIVE_NAVIDROME_TEST_TASK_NAME`, whose whole design note is that a hand-synced string drifts. Two
+more live tasks means **generalising it, not adding two more constants** — the same argument
+`excludeByteBuddyFromInstrumentedTests` makes about per-module fixes:
+
+```kotlin
+/**
+ * Every test task that runs against a real service container, mapped to the JUnit tag its tests
+ * carry.
+ *
+ * One entry per container, and **one tag per container**, not a shared `"live"` for all three: a
+ * task's `useJUnitPlatform { includeTags(...) }` includes by tag, so a shared tag would make
+ * `liveLidarrTest` try to run `LiveNavidromeTest` against a Lidarr that is not there.
+ *
+ * Kept in sync with root `build.gradle.kts`'s identical declaration by hand — `build-logic` is
+ * included via `pluginManagement.includeBuild`, which exposes its plugins but not its Kotlin
+ * source — and that hand-sync is *checked*, not trusted, by `ConventionTest`'s
+ * `the live test task names are not hand-synced into drift`.
+ */
+internal val LIVE_TEST_TASKS: Map<String, String> = mapOf(
+  "liveNavidromeTest" to "live",
+  "liveLidarrTest" to "live-lidarr",
+  "liveBinderyTest" to "live-bindery",
+)
+```
+
+`configureJUnit5` becomes:
+
+```kotlin
+  tasks.withType<Test>().configureEach {
+    useJUnitPlatform {
+      // Every live tag is excluded from every ordinary task. A live task is excluded from this
+      // rule entirely rather than having it applied and then re-included: JUnit Platform resolves
+      // "both included and excluded" by *excluding*, and the only symptom is a task that reports
+      // success while running zero tests -- which this project has already been bitten by once.
+      if (name !in LIVE_TEST_TASKS) {
+        LIVE_TEST_TASKS.values.distinct().forEach { excludeTags(it) }
+      }
+    }
+  }
+```
+
+Root `build.gradle.kts` registers the two new tasks beside the existing `liveNavidromeTest`, each
+`includeTags` its own tag only.
+
+`ConventionTest`'s existing `the live-Navidrome test task name is not hand-synced into drift` is
+**renamed and widened** to read the whole map out of both files and compare them. Widen it; do not
+add a second rule beside it, or the next person adds a third.
+
+- [ ] **Step 3: Write the live tests — every claim this plan made and never ran**
+
+`LiveLidarrTest.kt`, tagged `@Tag("live-lidarr")`, against `http://localhost:8686` with the key
+from `System.getenv("LIDARR_API_KEY")`:
+
+```kotlin
+  @Test
+  fun `ping answers without a key, and status does not`() = runTest {
+    // The two halves of the handshake design, against the real thing. `/ping` being
+    // unauthenticated is what lets the configuration screen distinguish "nothing is listening"
+    // from "your key was rejected"; `system/status` needing a key is what makes it a credential
+    // check at all.
+    assertThat(clientWith(apiKey = "").ping()).isTrue()
+
+    val thrown = runCatching { clientWith(apiKey = "definitely-not-the-key").status() }.exceptionOrNull()
+    assertThat(thrown).isInstanceOf(LidarrUnauthorizedException::class.java)
+  }
+
+  @Test
+  fun `a wrong key really returns 401 with an empty body`() {
+    // Asserted at the raw HTTP level, not through the client, because the *client's* behaviour is
+    // derived from this fact. If Lidarr ever starts distinguishing a wrong key from a missing one
+    // in the body, `LidarrUnauthorizedException`'s deliberately vague message can be improved --
+    // and this test failing is how anyone finds out.
+    val response = rawGet("/api/v1/system/status", apiKey = "wrong")
+    assertThat(response.code).isEqualTo(401)
+    assertThat(response.body?.string()).isEmpty()
+  }
+
+  @Test
+  fun `status identifies this server as Lidarr and reports a urlBase`() = runTest {
+    val status = client().status()
+    assertThat(status.appName).isEqualTo("Lidarr")
+    assertThat(status.isLidarr).isTrue()
+    assertThat(status.version).isNotBlank()
+    // The container sets no urlBase, so the empty string is the real answer -- and asserting it
+    // pins the field's *presence*, which is what the proxied-install path depends on.
+    assertThat(status.urlBase).isEmpty()
+  }
+
+  @Test
+  fun `an empty album post really returns 400 with a json array of validation failures`() = runTest {
+    // The single most valuable assertion in this file. `openapi.json` documents this endpoint as
+    // returning 200 and declares no field required; the code returns 201 on success and this on
+    // failure. `LidarrValidationException`'s parser is written against a *bare array*, and this is
+    // where that shape is confirmed against the server rather than against a source reading.
+    val response = rawPost("/api/v1/album", body = "{}")
+
+    assertThat(response.code).isEqualTo(400)
+    val raw = checkNotNull(response.body).string()
+    assertThat(raw.trimStart()).startsWith("[")
+    val failures = Json { ignoreUnknownKeys = true }
+      .decodeFromString<List<ValidationFailureBody>>(raw)
+    assertThat(failures).isNotEmpty()
+    assertThat(failures.mapNotNull { it.propertyName }).isNotEmpty()
+  }
+
+  @Test
+  fun `a request with no acceptable media type really can be refused`() = runTest {
+    // `ReturnHttpNotAcceptable = true`. `LidarrAuthInterceptor` sets `Accept` on every request
+    // because of this; the assertion records what happens without it, so removing that header is
+    // a visible change rather than a mystery 406 in the field.
+    val response = rawGet("/api/v1/system/status", accept = "application/xml")
+    assertThat(response.code).isIn(406, 200)
+    // Whichever it is, record it in the task report -- this plan predicted 406 and did not run it.
+  }
+
+  @Test
+  fun `the root folder carries the defaults an add depends on`() = runTest {
+    val folders = client().rootFolders()
+
+    // `isNotEmpty` first, because every assertion after it is vacuous on an empty list -- which
+    // is exactly what an unconfigured container would produce, and exactly the shape this
+    // project's rule 3 exists for.
+    assertThat(folders).isNotEmpty()
+    val music = folders.single { it.path == "/music" }
+    assertThat(music.accessible).isTrue()
+    assertThat(music.name).isNotBlank()
+    // Record the two default profile ids in the task report: if the container leaves them at 0,
+    // `LidarrAddTargets`'s fallback branch is the *normal* path, not the exceptional one, and the
+    // plan's framing of it should be corrected.
+  }
+
+  @Test
+  fun `the profile endpoints answer with at least one profile each`() = runTest {
+    assertThat(client().qualityProfiles()).isNotEmpty()
+    assertThat(client().metadataProfiles()).isNotEmpty()
+  }
+
+  @Test
+  fun `an empty queue really has the envelope this client reads`() = runTest {
+    // Reading the envelope wrong yields an empty list rather than an error, so "it parsed" proves
+    // nothing here. The raw body is checked for the four envelope keys by name.
+    val raw = checkNotNull(rawGet("/api/v1/queue?pageSize=100&includeUnknownArtistItems=true").body).string()
+    assertThat(raw).contains("\"page\"", "\"pageSize\"", "\"totalRecords\"", "\"records\"")
+    assertThat(client().queue()).isEmpty()
+  }
+```
+
+`LiveBinderyTest.kt`, tagged `@Tag("live-bindery")`, carries **the two facts Task 8 could not
+execute**, as permanent assertions rather than one-off curl output:
+
+```kotlin
+  @Test
+  fun `health answers without a key and names a version`() = runTest { /* … */ }
+
+  @Test
+  fun `the search parameter is term, and q is refused`() = runTest {
+    // Bindery's own documentation says `q`. This is the assertion that keeps this client on the
+    // parameter the handler actually reads, and that will go red the day the docs become true.
+    assertThat(rawGet("/api/v1/search/book?term=dune").code).isEqualTo(200)
+    assertThat(rawGet("/api/v1/search/book?q=dune").code).isEqualTo(400)
+  }
+
+  @Test
+  fun `a query-string api key is refused on a mutation`() = runTest {
+    // Header-only is not just this project's preference here, it is the only thing that works.
+    assertThat(rawPost("/api/v1/author/book?apikey=$KEY", body = "{}", withHeaderKey = false).code)
+      .isNotEqualTo(201)
+  }
+```
+
+**If either live suite cannot be stood up in CI**, say so in the task report and leave the
+corresponding job out rather than adding a job that is allowed to fail — a green gate that never
+ran is the exact defect §10's countermeasures exist to prevent.
+
+- [ ] **Step 4: Add the CI jobs**
+
+`.github/workflows/pr.yml` gains one job per container, modelled line-for-line on the existing
+`live-navidrome` job: start the compose file with `--wait`, run the configure script, run the
+Gradle task, tear down with `if: always()`, upload reports on failure.
+
+The **`static-analysis`** job needs no change: `ConventionTest` and `verifyReleaseManifest` already
+run there, and the two rules Task 1 added ride along.
+
+- [ ] **Step 5: The Tier 2 journeys**
+
+`app/src/androidTest/kotlin/app/muplay/IntegrationsJourneyTest.kt`. Three journeys, and the first
+is the one the whole plan turns on.
+
+**Journey A — nothing configured, nothing shown.** With no integration credentials on the device:
+
+```kotlin
+  @Test
+  fun aUserWhoRunsNeitherServiceSeesNoRequestsSurface() {
+    // The severability contract, on a real screen. Not "the ViewModel returned NotConfigured" --
+    // that is a unit test and it already exists. This is the composed app, and the absence is
+    // asserted on the node tree.
+    composeRule.onNodeWithTag("requests:root").assertDoesNotExist()
+    composeRule.onNodeWithTag("requests:section:LIDARR").assertDoesNotExist()
+    composeRule.onNodeWithTag("requests:section:BINDERY").assertDoesNotExist()
+    // ...and the one affordance that turns it on *is* there, so this test cannot pass by the
+    // whole app having failed to start.
+    composeRule.onNodeWithTag("settings:integrations").assertExists()
+  }
+```
+
+> **That last assertion is not decoration.** An `assertDoesNotExist` suite passes perfectly on an
+> app that crashed at launch, on a blank screen, and on a wrong navigation destination. A positive
+> assertion beside the negative ones is what makes the negatives mean something — the same
+> principle as this project's rule 6 about gates that cannot fail.
+
+**Journey B — configure Lidarr against the real container, request an album, watch the status.**
+Reached over `adb reverse tcp:8686 tcp:8686`, exactly as the Navidrome journey uses
+`adb reverse tcp:4533`, and therefore over **cleartext to `localhost`** — which the **debug**
+manifest permits and the release manifest does not. Type the URL and key into `setup:url` /
+`setup:key`, tap `setup:test`, assert the success text names *Lidarr*, save, and assert
+`requests:section:LIDARR` now exists **and** `requests:section:BINDERY` still does not.
+
+**Journey C — a cleartext URL is refused where cleartext is refused.** `IntegrationBaseUrl.parse`
+is unit-tested at both policies in Tier 1, so this journey asserts only the wiring: that the
+**debug** build (the only one an emulator test can run) really does receive
+`CleartextPolicy.Allowed`, by typing an `http://` URL and asserting `setup:error` shows nothing.
+The release half is not reachable from an instrumented test at all, and **that is stated here
+rather than left as an apparent gap** — it is covered by `ConventionTest`'s
+`the cleartext policy and the cleartext manifest cannot disagree` plus
+`:app:verifyReleaseManifest`, which are the two things that can observe a release build.
+
+`.github/workflows/e2e.yml` gains the Lidarr container beside the Navidrome one, the extra
+`adb reverse`, and `:app:connectedDebugAndroidTest` already covers the new class.
+
+- [ ] **Step 6: Measure every floor, and watch each one fail**
+
+For each of `:integrations:core`, `:integrations:lidarr`, `:integrations:bindery`,
+`:integrations:requests` and `:feature:requests`, produce a merged JVM + instrumented report and
+read the real numbers out of `jacocoTestReport.xml`:
+
+```bash
+./gradlew jacocoTestReport
+for m in integrations/core integrations/lidarr integrations/bindery integrations/requests feature/requests; do
+  echo "== $m"
+  python3 - "$m" <<'PY'
+import sys, xml.etree.ElementTree as ET
+t = ET.parse(f"{sys.argv[1]}/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml")
+for cls in t.iter('class'):
+    name = cls.get('name').replace('/', '.')
+    for c in cls.findall('counter'):
+        if c.get('type') in ('BRANCH', 'LINE'):
+            m_, cv = int(c.get('missed')), int(c.get('covered'))
+            if m_ + cv:
+                print(f"{name:78s} {c.get('type'):6s} {cv}/{cv+m_}  {cv/(cv+m_):.4f}")
+PY
+done
+```
+
+Write each measured ratio, **rounded down to two decimals**, into `coverageFloors`, with a comment
+saying what was measured and by which tier. Then, for **every** floor this plan adds, delete one
+test, confirm the gate goes red, and restore it. A floor whose matched classes carry no counters of
+its own kind passes at every minimum; this project has shipped that once and the check is cheap.
+
+Record the five before/after numbers in the task report. **Do not round up, and do not write a
+round number that was not measured.**
+
+- [ ] **Step 7: Run the whole mutation-probe list**
+
+```bash
+./ci/mutation-probes.sh            # every probe, including this plan's ~20
+./ci/mutation-probes.sh integrations   # just this plan's
+```
+
+Every probe added by Tasks 2–9 must report CAUGHT. A probe reported MISSED whose named test *is*
+in the failing list means the expected-failure **count** is stale, not that the code is wrong —
+re-measure and update the number (the script's own header says exactly this). A probe reported
+MISSED whose named test is **not** failing is a real hole: fix the test, not the probe.
+
+**And note honestly what a green run does not mean.** The script's header is explicit: it probes
+only what someone thought to probe, and every finding in its history was a *class* of value nobody
+had asked about. This plan added its probes against the classes it knew — argument passthrough, a
+constant field, a collection order, a mapped status. The next class is by definition not in there.
+
+- [ ] **Step 8: Correct the spec**
+
+`docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`, §8. The current text is:
+
+```markdown
+## 8. Optional integrations
+
+- **Bindery** — request audiobooks from inside the app.
+- **Lidarr** — request music. `POST /api/v1/album` payload is unverified against a live instance.
+
+Both are opt-in, both fail closed, and neither may block core playback.
+```
+
+Replace it with a section that says what was actually found. It must record, at minimum:
+
+1. **Bindery is `github.com/vavallee/bindery`** — MIT, actively developed, v1.32.1 (2026-08-20),
+   `ghcr.io/vavallee/bindery`, port 8787 — and **not** `evanbrooks/bindery` (browser book layout,
+   archived 2023) or `jarynclouatre/bindery` (an e-book converter, and the only "Bindery" in
+   awesome-selfhosted).
+2. **Bindery has no request or approval concept.** It is a Readarr replacement: adding a book *is*
+   acquiring it. §8's "request" framing was wrong, and MuPlay models acquisition. The
+   `mediaType` field defaults to `ebook` and must be sent as `audiobook`. Its search parameter is
+   `term`, not the `q` its own docs claim. Its API key is instance-wide and admin-equivalent.
+3. **The Lidarr payload is no longer unverified.** Record what it requires — `foreignAlbumId` plus
+   a nested `artist` carrying `foreignArtistId`, `qualityProfileId`, `metadataProfileId` and a
+   `rootFolderPath` — and record the two traps: `artist.addOptions.searchForMissingAlbums = true`
+   silently cancels the album search, and `openapi.json` is Swashbuckle-generated, declares zero
+   required fields and documents a 200 where the code returns 201, so it is **not** usable as an
+   oracle the way the OpenSubsonic spec is.
+4. **Cleartext.** Release builds refuse an `http://` integration URL at configuration time, for the
+   reasons in this plan's *Cleartext HTTP* section, and the consequence — a LAN-only plain-HTTP
+   service cannot be configured in a release build — is stated as a decision, not discovered as a
+   bug.
+5. **Both integrations are independently optional and structurally severable**, enforced by
+   `ConventionTest`'s `nothing outside integrations depends on an integration`.
+
+Also add one row to **§12's risk table**:
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| Lidarr's metadata lookup (`api.lidarr.audio`) is slow, rate-limited or down while the user's own server is healthy | Medium | Search is debounced and never auto-retried; the lookup path is covered by recorded fixtures rather than by a merge-gate call to a third party |
+
+- [ ] **Step 9: Final verification, then commit**
+
+```bash
+./gradlew clean
+./gradlew :app:testDebugUnitTest --tests '*ConventionTest*'
+./gradlew lint :app:verifyReleaseManifest :app:assembleRelease
+./gradlew test
+./gradlew jacocoJvmCoverageVerification
+docker compose -f ci/lidarr.compose.yml up -d --wait && ./ci/configure-lidarr.sh && \
+  ./gradlew :integrations:lidarr:liveLidarrTest; docker compose -f ci/lidarr.compose.yml down -v
+docker compose -f ci/bindery.compose.yml up -d --wait && ./ci/configure-bindery.sh && \
+  ./gradlew :integrations:bindery:liveBinderyTest; docker compose -f ci/bindery.compose.yml down -v
+./gradlew connectedDebugAndroidTest jacocoTestCoverageVerification
+./ci/mutation-probes.sh
+```
+
+Every one green. **`:app:assembleRelease` is on this list deliberately**: it is the only command
+that compiles `app/src/release/kotlin/CleartextPolicyModule.kt`, and a release-only Hilt module
+that does not bind is a failure no other command in this list can see.
+
+```bash
+git add -A
+git commit -m "chore(integrations): the gates, and the spec corrections Plan 7 earned
+
+Two pinned containers in Tier 1, carrying every claim this plan made from source and never
+executed: Lidarr's bare-401-on-a-wrong-key, its 400-with-a-JSON-array on an empty album post,
+and Bindery's term-not-q and its refusal of a query-string key on a mutation.
+
+The Tier 2 journey's first assertion is an absence -- no requests surface at all on a device
+with nothing configured -- paired with a positive assertion that the settings row is there,
+because an assertDoesNotExist suite passes perfectly on an app that crashed at launch.
+
+Spec section 8 is rewritten: Bindery is vavallee/bindery, it has no request concept, and the
+Lidarr payload is no longer unverified. Section 12 gains the metadata-lookup risk."
+```
+
+---
