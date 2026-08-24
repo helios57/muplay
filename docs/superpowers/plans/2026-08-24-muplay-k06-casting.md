@@ -111,6 +111,7 @@ Copied verbatim from the roadmap's **Definition of done, per plan**:
 | 8 | `UpnpPlayer` — a `SimpleBasePlayer` over the renderer, and the renderer that disappears | Media3 sees an ordinary `Player`; a dead speaker becomes an error, not silence |
 | 9 | Handover — the output switch, the one-shot resume target, and the progress row | casting mid-song lands on the same second, and a book's position is still written |
 | 10 | `:feature:castpicker` — the device list, the cast button, and volume | a user picks a speaker and hears it, and sees why when they cannot |
+| 12 | `RendererDirect` — the setting Task 7 calls a setting | the user can turn it on, knowing what it costs, and turn it off again |
 | 11 | The gates — the Tier 1 Cast job, the Tier 2 cast journey, the coverage floors, the spec corrections | the whole subsystem is gated, and the spec's §6 no longer contradicts itself |
 
 ---
@@ -8636,6 +8637,18 @@ silent fallback. So it is a setting, default off, and when it is off the third o
 spec's claim is then corrected to say the trust question is **deferred by default**, not eliminated
 — Task 11 makes that edit.
 
+> **"A setting" is Task 12's, and until Task 12 lands it is a constructor parameter.** This
+> paragraph originally stopped at the sentence above, and a spec-coverage audit found what that
+> left: `allowRendererDirect` is a `Boolean` on this class's constructor with no persistence, no UI
+> and no way for a user to reach it. The design is right — off-by-default really is the security
+> decision argued for here — but the tense is not: "it is a setting" described something nobody had
+> built, and the `Unroutable` message tells the user about a switch that does not exist. **Task 12
+> builds it**, as a `SettingsSection` contributed into Plan 2 Task 11's `:feature:settings` slot,
+> which is the arrangement that lets the switch exist without `:feature:settings` ever learning that
+> casting does. Note the parameter becomes a `() -> Boolean` there, read when `confirm` needs it
+> rather than once when the graph is built; every assertion in this task keeps its meaning, because
+> the test helper passes `{ true }` / `{ false }`.
+
 - [ ] **Step 1: Write the failing subnet test**
 
 `core/cast/src/test/kotlin/app/muplay/cast/route/SubnetMatchTest.kt`:
@@ -11762,6 +11775,212 @@ git commit -m "ci(cast): the Tier 1 cast job, the Tier 2 cast journey, and the s
 
 ---
 
+---
+
+## Task 12: `RendererDirect` — the setting Task 7 calls a setting
+
+**Files:**
+- Create: `core/database/src/main/kotlin/app/muplay/database/CastPreferences.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt`
+- Create: `feature/castpicker/src/main/kotlin/app/muplay/castpicker/RendererDirectSection.kt`
+- Modify: `feature/castpicker/build.gradle.kts` (adds `:feature:settings`)
+- Modify: `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` (or wherever
+  `CastRouter` is constructed — read the tree; Task 7 defines the class, Task 9 wires it)
+- Test: `core/database/src/androidTest/kotlin/app/muplay/database/CastPreferencesTest.kt`
+- Test: `feature/castpicker/src/test/kotlin/app/muplay/castpicker/RendererDirectCopyTest.kt`
+- Modify: `app/src/androidTest/kotlin/app/muplay/CastJourneyTest.kt`
+- Modify: `build.gradle.kts`, `ci/mutation-probes.sh`
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` (§6)
+
+**Interfaces:**
+- Consumes: `CastRouter(proxy, registry, allowRendererDirect, …)` and `CastRoute.RendererDirect`
+  (Task 7); `SettingsSection` (**Plan 2 Task 11**); `DataStore<Preferences>` (Plan 2 Task 2's
+  `DataModule` provider).
+- Produces:
+  - `@Singleton class CastPreferences` with `val allowRendererDirect: Flow<Boolean>`,
+    `suspend fun setAllowRendererDirect(allowed: Boolean)`, and
+    `companion object { const val DEFAULT_ALLOW_RENDERER_DIRECT = false }`
+  - `class RendererDirectSection @Inject constructor(...) : SettingsSection` bound `@IntoSet`
+  - label constants `RENDERER_DIRECT_TITLE`, `RENDERER_DIRECT_EXPLANATION`
+
+### What Task 7 promised and what it wired
+
+Task 7 says, in as many words: *"So it is a setting, default off, and when it is off the third
+outcome fires."* What exists is a `Boolean` **constructor parameter** on `CastRouter`. There is no
+persistence, no UI, and no way for a user to reach it. A spec-coverage audit found the gap, and the
+shape of it is worth naming: the sentence is not wrong about the *design* — off-by-default really is
+the security decision Task 7 argues for — it is wrong about the *tense*. "It is a setting" describes
+something nobody built.
+
+That matters in one direction only, and it is the safe one: today the value is hardcoded `false`, so
+the app is conservative and the third outcome (`Unroutable`, loud) fires. Nothing is broken. But
+Task 7's whole argument is that renderer-direct is *reasonable when the user chooses it knowingly* —
+streaming from an office LAN to a speaker that can reach Navidrome but not the phone is a real
+situation, and today it is simply unavailable, with the failure message telling the user about a
+setting that does not exist.
+
+### Where it goes, and the dependency direction that decides it
+
+**Plan 2 Task 11 built `:feature:settings` and a `SettingsSection` slot for precisely this.** The
+arrow points `:feature:castpicker` → `:feature:settings`, never the reverse: `:feature:settings`
+must not know casting exists, because this plan's definition of done, item 5, requires that dropping
+casting stays `git rm -r core/cast feature/castpicker` and nothing else. Removing those two
+directories removes the `@IntoSet` binding with them, the multibound set goes back to empty, and the
+settings screen loses a section without noticing.
+
+**The stored value lives in `:core:database`**, beside `CredentialStore`, on the DataStore that
+module already provides — **not** in `:core:cast`, and not in a new store. `:core:cast` is a
+pure-JVM module with no Android type in it by design (Task 1), and `:core:database` must **not**
+gain a dependency on `:core:cast` — item 5 again, and the reason `RememberedRenderer` lives in
+`:core:model` rather than here. `CastPreferences` is a boolean keyed by name; it mentions no cast
+type at all, which is what keeps that true.
+
+### Minimal, and what "minimal" excludes
+
+One boolean. No preferences framework, no settings schema, no per-device override, no "remember my
+choice for this speaker". The section renders a title, a switch, and the sentence that makes the
+choice informed — because a toggle whose consequence is *"hand a speaker a URL carrying a
+non-expiring auth token"* and which says only "Allow direct streaming" is a toggle the user cannot
+consent to.
+
+- [ ] **Step 1: Write the failing preference test**
+
+`core/database/src/androidTest/kotlin/app/muplay/database/CastPreferencesTest.kt` — instrumented,
+because DataStore is Android and this project does not run Robolectric:
+
+```kotlin
+  @Test
+  fun theDefaultIsOffAndThatIsASecurityDecision() = runBlocking {
+    // Asserted rather than assumed. Task 7's fallback branch, the `Unroutable` outcome and spec §6's
+    // corrected Let's Encrypt claim are all only true while this is false, so this is the assertion
+    // three separate arguments rest on.
+    assertThat(preferences.allowRendererDirect.first()).isFalse
+    assertThat(CastPreferences.DEFAULT_ALLOW_RENDERER_DIRECT).isFalse
+  }
+
+  @Test
+  fun theStoredValueIsReadBackAndCanBeTurnedOffAgain() = runBlocking {
+    // Both directions. A setter that only ever wrote `true` passes a one-way test, and a user who
+    // cannot turn this back off has been handed a one-way security decision.
+    preferences.setAllowRendererDirect(true)
+    assertThat(preferences.allowRendererDirect.first()).isTrue
+
+    preferences.setAllowRendererDirect(false)
+    assertThat(preferences.allowRendererDirect.first()).isFalse
+  }
+
+  @Test
+  fun theValueSurvivesANewInstanceOverTheSameStore() = runBlocking {
+    // "Persisted" is the claim; an in-memory field satisfies both tests above and none of this one.
+    preferences.setAllowRendererDirect(true)
+    assertThat(CastPreferences(dataStore).allowRendererDirect.first()).isTrue
+  }
+```
+
+- [ ] **Step 2: Implement `CastPreferences` and read it where the router is built**
+
+`CastPreferences` is a `booleanPreferencesKey("cast_allow_renderer_direct")` over the DataStore
+`DataModule` already provides, with `DEFAULT_ALLOW_RENDERER_DIRECT = false` as the `?:`.
+
+The router then has to be built from a value that changes at runtime, and there are two ways to do
+that. **Take the second one:**
+
+- *Rejected:* `@Provides fun provideCastRouter(prefs: CastPreferences) = CastRouter(..., allowRendererDirect = runBlocking { prefs.allowRendererDirect.first() }, ...)`.
+  It reads the value **once**, when the graph first needs a router. A user who turns the setting on
+  and immediately casts gets the old answer, with no indication why — the silent-wrong-answer class
+  this plan is written against, reintroduced by the convenience of a `@Singleton`.
+- *Taken:* `CastRouter`'s `allowRendererDirect` becomes a `() -> Boolean` read at the moment
+  `confirm` needs it, backed by a value the preference flow keeps current. `CastRouter` stays a
+  pure-JVM class taking a lambda — it gains no Android type and no coroutine — and `CastRouterTest`'s
+  existing `router(allowRendererDirect = true/false, …)` helper passes `{ true }` / `{ false }`,
+  so **every assertion in Task 7 keeps its meaning**.
+
+If Task 7 has already landed, this is a two-line change to `CastRouter` plus its test helper. If it
+has not, write the parameter as a lambda from the start and delete this paragraph.
+
+- [ ] **Step 3: Contribute the section**
+
+`feature/castpicker/build.gradle.kts` gains `implementation(project(":feature:settings"))`.
+Confirm the reverse edge does not exist — `:feature:settings` naming `:core:cast` or
+`:feature:castpicker` is exactly what item 5 forbids, and `ConventionTest` is where a rule about it
+would go if this happens twice.
+
+```kotlin
+/**
+ * The renderer-direct switch, contributed into `:feature:settings`'s section slot.
+ *
+ * The explanation is not decoration. Turning this on means: the speaker is handed a Navidrome URL
+ * **with a non-expiring Subsonic auth token on it**, and speakers log URLs; the speaker has to
+ * trust Navidrome's TLS chain, which is the Let's Encrypt question spec §6 claims is designed out;
+ * and the library streams over whatever connection the speaker has, metered or not. Task 7 argues
+ * that none of that is unreasonable *if the user chooses it knowingly* and all of it is
+ * unreasonable as a silent fallback. A switch labelled only "Allow direct streaming" is not a
+ * knowing choice.
+ */
+class RendererDirectSection @Inject constructor(
+  private val preferences: CastPreferences,
+) : SettingsSection {
+
+  override val order: Int = 200
+
+  @Composable
+  override fun Content() { /* title, switch, explanation */ }
+}
+```
+
+bound with `@Binds @IntoSet abstract fun bindRendererDirectSection(section: RendererDirectSection): SettingsSection`
+in `:feature:castpicker`'s Hilt module.
+
+`RendererDirectCopyTest` (JVM, pure) asserts the explanation names all three consequences — token,
+TLS, metered — by keyword. It is a test about **copy**, which is unusual and deliberate: this is the
+one string in the app whose job is to make a security decision informed, and "someone shortened it"
+is a real way for that to stop being true.
+
+- [ ] **Step 4: Extend the cast journey**
+
+`CastJourneyTest` gains one test: with the setting **off**, a renderer that cannot reach the phone
+produces the `Unroutable` message and no fetch of the upstream URL; with it **on**, the same
+renderer is handed the upstream URL. Two directions over one switch, which is the only way to prove
+the toggle is wired to the branch rather than to nothing.
+
+The fake renderer already proves it can be made unreachable — Task 7's
+`a renderer that cannot reach the phone falls back…` does exactly that in-process. Reuse that
+mechanism; do not invent a second one.
+
+- [ ] **Step 5: Prove it can fail, and correct the spec**
+
+1. Make `setAllowRendererDirect` a no-op. Expect `theStoredValueIsReadBackAndCanBeTurnedOffAgain`
+   and the journey's "on" half to fail.
+2. Make `allowRendererDirect` emit `true` by default. Expect
+   `theDefaultIsOffAndThatIsASecurityDecision` and the journey's "off" half to fail. **This is the
+   mutation that silently turns a security decision inside out**, and it is the probe to record.
+3. Read the preference once at graph construction instead of per `confirm`. Expect the journey to
+   fail when it toggles the setting and casts without restarting — add that step if it is not
+   already there.
+4. Shorten the explanation to "Allow direct streaming". Expect `RendererDirectCopyTest` to fail.
+
+Record 2 and 3 in `ci/mutation-probes.sh`.
+
+**Spec §6.** Task 11 Step 5 already softens *"designs the Let's Encrypt trust question out of
+existence entirely"* to **deferred by default**. Add the half that sentence still leaves implicit —
+where the user goes:
+
+> Renderer-direct is a switch in **Settings**, off by default, with the three consequences of
+> turning it on stated beside it: the speaker is handed a URL carrying a non-expiring Subsonic auth
+> token, the speaker must trust Navidrome's TLS chain, and the library streams over the speaker's
+> own connection. Off, a renderer that cannot reach the phone is reported as `Unroutable` **by
+> name** rather than silently fetching from the internet.
+
+```bash
+./gradlew :core:database:connectedDebugAndroidTest :feature:castpicker:test :core:cast:test
+./gradlew :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+git add core feature app build.gradle.kts ci/mutation-probes.sh docs/superpowers/specs
+git commit -m "feat(cast): make renderer-direct the setting the routing rule already assumed"
+```
+
+---
+
 ## Definition of done
 
 1. All eleven tasks' tests pass; **both tiers green**.
@@ -11775,8 +11994,12 @@ git commit -m "ci(cast): the Tier 1 cast job, the Tier 2 cast journey, and the s
 4. No mock framework has entered the dependency graph. `ConventionTest` rule 3 and
    `verifyNoMockFrameworks` both pass.
 5. **No UPnP library was added.** `gradle/libs.versions.toml` gains no third-party entry for this
-   plan. The only new production dependency edges are `:core:media` → `:core:cast` and
-   `:feature:castpicker` → `:core:cast`, both internal — and **`:core:database` does not depend on
+   plan. The only new production dependency edges are `:core:media` → `:core:cast`,
+   `:feature:castpicker` → `:core:cast` and (Task 12) `:feature:castpicker` → `:feature:settings`,
+   all internal and all pointing **away** from the modules that must survive casting being dropped
+   — `:feature:settings` never names `:core:cast` or `:feature:castpicker`, so removing those two
+   directories takes the `@IntoSet` binding with them and the settings screen loses a section
+   without noticing — and **`:core:database` does not depend on
    `:core:cast`**, which is what keeps dropping casting a `git rm -r core/cast feature/castpicker`
    rather than that plus surgery on the lowest module in the tree. `RememberedRenderer` /
    `RememberedRenderers` are in `:core:model` for exactly this reason (Task 2 Step 11); a
@@ -11786,7 +12009,16 @@ git commit -m "ci(cast): the Tier 1 cast job, the Tier 2 cast journey, and the s
    widened in Task 11), and `LocalNetworkOnly` refuses a cleartext connection to any address that is
    not loopback, link-local, RFC 1918, RFC 6598 or an IPv6 ULA — with tests observing it refusing as
    well as permitting.
-7. **Every spec correction in Task 11 Step 5 is applied to the spec**, not only to this plan.
+7. **Every spec correction in Task 11 Step 5 is applied to the spec**, not only to this plan — and
+   Task 12's §6 addition with them, which is the half that says *where the user goes* to make the
+   choice §6 now describes as deferred rather than eliminated.
+7a. **Renderer-direct is reachable, reversible and explained** (Task 12). Persisted in
+   `:core:database` beside the credentials, off by default (**asserted**, because Task 7's fallback
+   branch, the `Unroutable` outcome and §6's corrected Let's Encrypt claim all rest on it),
+   toggleable in **both** directions, contributed into `:feature:settings` as a `SettingsSection`
+   so that the dependency arrow runs `:feature:castpicker` → `:feature:settings` and never back —
+   and with the three consequences of turning it on stated beside the switch, asserted by a test,
+   because a security decision the user cannot understand is not a choice they made.
 8. `ci/mutation-probes.sh` runs `:core:cast:test` and `:feature:castpicker:test`, carries every
    probe this plan earned, and reports them all `CAUGHT`.
 
