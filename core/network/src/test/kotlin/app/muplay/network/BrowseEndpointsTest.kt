@@ -103,16 +103,26 @@ class BrowseEndpointsTest {
 
   @Test
   fun `getAlbumList2 stamps every album with the library it was scoped to`() = runTest {
+    // The *same bytes*, twice, at two different scopes. That is the whole assertion: no Subsonic
+    // response carries a library id -- `AlbumID3` has no such property and Navidrome sends none --
+    // so if one identical body yields libraryId 2 on one call and 5 on the next, the stamp
+    // provably came from the argument and from nowhere else.
+    //
+    // One scope would not prove it. A client that hardcoded `toAlbum(2)` satisfies a single
+    // `== 2` assertion exactly as well as the correct one does, which is how the stamps on all
+    // four commands were hardcoded with `./gradlew check` still at exit 0.
+    enqueue(fixture(ALBUM_LIST_MUSIC_FIXTURE))
     enqueue(fixture(ALBUM_LIST_MUSIC_FIXTURE))
 
-    val albums = client.getAlbumList2(2, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
+    val music = client.getAlbumList2(2, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
+    val elsewhere = client.getAlbumList2(5, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
 
-    // No Subsonic response carries a library id -- AlbumID3 has no such property and Navidrome
-    // sends none. The only truthful source is the request's own scope, so this asserts the
-    // stamp came from the argument (2) and not from anything in the body (which was captured
-    // from library 1).
-    assertThat(albums).isNotEmpty
-    assertThat(albums).allMatch { it.libraryId == 2 }
+    // `map { it.libraryId }` rather than `allMatch`: `allMatch` is vacuously true on an empty
+    // list, so a mapper that returned nothing at all would pass it.
+    assertThat(music.map { it.libraryId }).containsExactly(2)
+    assertThat(elsewhere.map { it.libraryId }).containsExactly(5)
+    // Same body both times, so any difference between the two can only have come from the scope.
+    assertThat(music.map { it.id }).isEqualTo(elsewhere.map { it.id })
   }
 
   @Test
@@ -220,6 +230,24 @@ class BrowseEndpointsTest {
   }
 
   @Test
+  fun `getAlbum stamps the album and every song from the argument, not from the body`() = runTest {
+    enqueue(fixture(ALBUM_WITH_SONGS_FIXTURE))
+    enqueue(fixture(ALBUM_WITH_SONGS_FIXTURE))
+
+    val seventh = client.getAlbum(CAPTURED_ALBUM_ID, musicFolderId = 7)
+    val eleventh = client.getAlbum(CAPTURED_ALBUM_ID, musicFolderId = 11)
+
+    // `getAlbum` is the command where the stamp is *all* the argument does -- `musicFolderId` is
+    // never sent (the test above asserts it is absent from the wire), so if the stamp does not
+    // follow it, the argument does nothing whatsoever and nothing in the build would say so.
+    assertThat(seventh.album.libraryId).isEqualTo(7)
+    assertThat(eleventh.album.libraryId).isEqualTo(11)
+    assertThat(seventh.songs.map { it.libraryId }).containsExactly(7, 7, 7)
+    assertThat(eleventh.songs.map { it.libraryId }).containsExactly(11, 11, 11)
+    assertThat(seventh.songs.map { it.id }).isEqualTo(eleventh.songs.map { it.id })
+  }
+
+  @Test
   fun `a successful getAlbum with no album payload is malformed, not empty`() = runTest {
     // `SubsonicResponseBody` is one flattened envelope, so every payload field is nullable and a
     // missing one decodes silently. For a list-shaped payload that means "no results"; for
@@ -305,6 +333,24 @@ class BrowseEndpointsTest {
     assertThat(url.queryParameter("songCount")).isEqualTo("0")
   }
 
+  @Test
+  fun `search3 stamps every artist, album and song from the argument, not from the body`() = runTest {
+    enqueue(fixture(SEARCH3_FIXTURE))
+    enqueue(fixture(SEARCH3_FIXTURE))
+
+    val third = client.search3("Test", musicFolderId = 3, artistCount = 5, albumCount = 5, songCount = 5)
+    val sixth = client.search3("Test", musicFolderId = 6, artistCount = 5, albumCount = 5, songCount = 5)
+
+    // All three result kinds, because `search3` is the only command that produces an `Artist` at
+    // all -- its stamp has no other test anywhere in the build.
+    assertThat(third.artists.map { it.libraryId }).containsExactly(3)
+    assertThat(third.albums.map { it.libraryId }).containsExactly(3)
+    assertThat(third.songs.map { it.libraryId }).containsExactly(3, 3, 3)
+    assertThat(sixth.artists.map { it.libraryId }).containsExactly(6)
+    assertThat(sixth.albums.map { it.libraryId }).containsExactly(6)
+    assertThat(sixth.songs.map { it.libraryId }).containsExactly(6, 6, 6)
+  }
+
   // --- getRandomSongs ------------------------------------------------------------------------
 
   @Test
@@ -357,6 +403,25 @@ class BrowseEndpointsTest {
     assertThat(client.getRandomSongs(musicFolderId = 1, size = 50)).isEmpty()
   }
 
+  @Test
+  fun `getRandomSongs stamps every song with the library it was scoped to`() = runTest {
+    enqueue(fixture(RANDOM_SONGS_FIXTURE))
+    enqueue(fixture(RANDOM_SONGS_FIXTURE))
+
+    val music = client.getRandomSongs(musicFolderId = 1, size = 50)
+    val audiobooks = client.getRandomSongs(musicFolderId = 4, size = 50)
+
+    // Until this test, `getRandomSongs` asserted the stamp at **no value at all** -- and it is the
+    // one command library-scoped shuffle actually calls. `Song.libraryId` is the only thing that
+    // can keep an audiobook chapter out of a music shuffle once the response is in memory
+    // (Navidrome types every media file `"type": "music"`, so nothing in the body can), which
+    // makes an unstamped or mis-stamped song exactly the failure `LiveNavidromeTest` reproduces
+    // against the real server -- just arriving through the client instead of through the wire.
+    assertThat(music.map { it.libraryId }).containsExactly(1, 1, 1)
+    assertThat(audiobooks.map { it.libraryId }).containsExactly(4, 4, 4)
+    assertThat(music.map { it.id }).isEqualTo(audiobooks.map { it.id })
+  }
+
   // --- getScanStatus -------------------------------------------------------------------------
 
   @Test
@@ -402,6 +467,19 @@ class BrowseEndpointsTest {
   fun `the cover art url carries full authentication and the art id`() {
     val url = client.coverArtUrl("al-abc_0", sizePx = 256).toHttpUrl()
 
+    // Scheme, host and port first, because this is the one URL in the client that nothing else
+    // validates: the command tests are immune to a wrong origin only because a request sent
+    // somewhere else would never reach this MockWebServer, whereas `coverArtUrl` is handed
+    // straight to an image loader and would be fetched from wherever it points. Pointing every
+    // cover-art URL at `http://elsewhere.example:9999` left all 97 tests green.
+    //
+    // No second observation is needed to make this discriminating, unusually: MockWebServer picks
+    // a fresh ephemeral port per run, so there is no constant a mutant could hardcode that would
+    // satisfy it twice. `the cover art url is built from the credentials base url ...` below adds
+    // the second observation anyway, over the input that actually varies -- the trailing slash.
+    assertThat(url.scheme).isEqualTo("http")
+    assertThat(url.host).isEqualTo(server.hostName)
+    assertThat(url.port).isEqualTo(server.port)
     assertThat(url.encodedPath).isEqualTo("/rest/getCoverArt")
     assertThat(url.queryParameter("id")).isEqualTo("al-abc_0")
     assertThat(url.queryParameter("size")).isEqualTo("256")
@@ -431,6 +509,28 @@ class BrowseEndpointsTest {
   }
 
   @Test
+  fun `the cover art url is built from the credentials base url, trailing slash or not`() {
+    // The second observation of the base URL, over the one part of it that genuinely varies. It
+    // also closes a gap `SubsonicClientTest` cannot: that class proves `normalizeBaseUrl` for the
+    // Retrofit path (`ping succeeds when baseUrl has no trailing slash`), but `coverArtUrl` is the
+    // *other* caller of the same helper, and nothing exercised it. A missing slash here would
+    // produce `.../restgetCoverArt` or a dropped path segment, and an image loader would simply
+    // show no artwork.
+    val withoutSlash = server.url("/").toString().removeSuffix("/")
+    assertThat(withoutSlash).doesNotEndWith("/")
+
+    val url = SubsonicClient(SubsonicCredentials(withoutSlash, "alice", "sesame"))
+      .coverArtUrl("al-abc_0", sizePx = 256)
+      .toHttpUrl()
+
+    assertThat(url.scheme).isEqualTo("http")
+    assertThat(url.host).isEqualTo(server.hostName)
+    assertThat(url.port).isEqualTo(server.port)
+    assertThat(url.encodedPath).isEqualTo("/rest/getCoverArt")
+    assertThat(url.queryParameter("id")).isEqualTo("al-abc_0")
+  }
+
+  @Test
   fun `the cover art url forwards whichever art id and size it is given`() {
     // Same audit as every request test above, applied to the one URL this client builds rather
     // than sends: `id` and `size` were each observed at exactly one value, so a constant
@@ -438,6 +538,7 @@ class BrowseEndpointsTest {
     // pixel size, is a defect no response assertion can see -- the bytes come back fine.
     val url = client.coverArtUrl(CAPTURED_COVER_ART_ID, sizePx = 96).toHttpUrl()
 
+    assertThat(url.host).isEqualTo(server.hostName)
     assertThat(url.encodedPath).isEqualTo("/rest/getCoverArt")
     assertThat(url.queryParameter("id")).isEqualTo(CAPTURED_COVER_ART_ID)
     assertThat(url.queryParameter("size")).isEqualTo("96")
