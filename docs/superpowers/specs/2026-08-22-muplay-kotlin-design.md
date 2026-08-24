@@ -118,9 +118,29 @@ not "Audiobooks", and a wrong guess silently poisons shuffle scope.
 `musicFolderId` is honoured on `getAlbumList2`, `getStarred2`,
 **`getRandomSongs`**, `getSongsByGenre`, `search2`/`search3`.
 
-> **Trap:** `getIndexes` and `getArtists` **discard the validation error** — an
-> invalid `musicFolderId` silently returns **all** libraries. Never use those two
-> to enforce a scope. Silent-wrong-answer is the worst failure class.
+> **Trap, corrected against a live `deluan/navidrome:0.63.2` while writing Plan 2 —
+> the earlier wording had this backwards, and it matters because scoping is the
+> only mechanism the headline feature has.**
+>
+> What fails open is not a *command*, it is a *kind of value*, and it fails open on
+> **every** scoped command including `getRandomSongs`:
+>
+> | `musicFolderId` | Behaviour, measured |
+> |---|---|
+> | a valid id | correctly scoped |
+> | **non-numeric** (`abc`) | `status: ok`, **all libraries returned** |
+> | **empty** | `status: ok`, **all libraries returned** |
+> | unknown but numeric (`99`) | `status: failed`, error code **70**, *"Library 99 not found or not accessible"* |
+>
+> So a malformed value is silently ignored and widens the scope, while an unknown
+> numeric one fails closed and loudly. The practical consequence: the parameter
+> must be a non-null `Int` rendered with `toString()`, never a nullable or
+> user-supplied string, because there is no runtime signal when it is wrong.
+> Silent-wrong-answer is the worst failure class, and here it means chapter 14 of
+> a novel starting after a song with nothing reported anywhere.
+>
+> `getIndexes` and `getArtists` remain unused for a stronger reason than this
+> trap: Plan 2 derives artists from albums, so neither is called at all.
 
 `getRandomSongs` caps `size` at 500. Ask for more and you silently get 500.
 
@@ -401,6 +421,24 @@ it will assert what the code *does* rather than what it *should*.
 1. **An external oracle.** The **OpenSubsonic OpenAPI spec** (87 paths, 195
    schemas) validates every committed fixture — vendored, with a nightly
    non-blocking drift check.
+
+   **The oracle is not always right, and where it disagrees with the server the
+   server wins.** Two divergences measured against a live
+   `deluan/navidrome:0.63.2` while writing Plan 2, both of which would otherwise
+   read as "our fixture is wrong":
+
+   - `AlbumID3.userRating` is declared `{"type":"integer","minimum":1,"maximum":5}`,
+     but Navidrome returns **`userRating: 0`** for an unrated album — on *every*
+     album-bearing response. Validated naively, the oracle rejects correct server
+     output for the most common case there is.
+   - `ScanStatus` models only `count` and `scanning`; the real `getScanStatus`
+     also returns `elapsedTime`, `folderCount`, `lastScan` and `scanType`.
+
+   A fixture recorded from the real server that fails the oracle is evidence
+   about the *oracle*. Each such divergence is recorded at the code that works
+   around it, never silenced by loosening validation wholesale — the oracle's
+   value is that it fails, and a validator relaxed until everything passes has
+   stopped being one.
 2. **A real server.** Anything whose subject is Navidrome's behaviour is tested
    against a **pinned Navidrome container**, not a fixture. Docker is not an
    emulator; the container starts in 5–11 s, so this belongs in the fast tier.
