@@ -118,4 +118,20 @@ class LibraryDaoTest {
     // ever inserted into `LibraryRole`.
     assertThat(dao.find(1)!!.role).isEqualTo(LibraryRole.MUSIC)
   }
+
+  /**
+   * Every fixture above is built through this file's own `unassigned(id, name)` helper, so
+   * `UNASSIGNED` is the only role that ever reaches `mergeFromServer`'s insert path in this
+   * suite -- a build that hardcoded `insertIgnoringExisting`'s role column to `UNASSIGNED`
+   * regardless of what was passed would still pass every test above, and only
+   * `LibraryRepositoryTest` (a different file, exercising the DAO only through
+   * `LibraryRepository`) would notice. This pins the insert-path passthrough at the DAO's own
+   * level, with a role no `unassigned(...)` fixture ever carries.
+   */
+  @Test
+  fun mergeFromServerPassesTheGivenRoleThroughForABrandNewLibrary() = runTest {
+    dao.mergeFromServer(listOf(LibraryEntity(1, "Music", LibraryRole.MUSIC)))
+
+    assertThat(dao.find(1)!!.role).isEqualTo(LibraryRole.MUSIC)
+  }
 }

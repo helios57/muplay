@@ -16,6 +16,21 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 abstract class LibraryDao {
 
+  /**
+   * Ordered by [LibraryEntity.musicFolderId] -- `LibraryRepository.libraries` documents this as
+   * "in server id order", and callers (a future tagging screen among them) are entitled to rely
+   * on emissions not silently reordering between them.
+   *
+   * That ordering is doubly guaranteed today, not singly: `musicFolderId` is a bare `Int`
+   * `@PrimaryKey` on this table, which SQLite's `INTEGER PRIMARY KEY` aliases to the table's own
+   * rowid, so a plain `SELECT *` already scans in this order regardless of insertion order --
+   * confirmed by `LibraryDaoTest.observeAllEmitsInIdOrder` staying green even with the explicit
+   * `ORDER BY` below deleted. The clause is not redundant, though: the moment [musicFolderId]
+   * stops being a bare `Int` primary key (a composite key, a `String` id, `WITHOUT ROWID`, or this
+   * query growing a `JOIN`), the rowid-aliasing guarantee disappears and only the explicit clause
+   * is left protecting the contract above. Recorded here so that future change is understood as
+   * removing one of two guarantees, not the only one.
+   */
   @Query("SELECT * FROM libraries ORDER BY musicFolderId")
   abstract fun observeAll(): Flow<List<LibraryEntity>>
 

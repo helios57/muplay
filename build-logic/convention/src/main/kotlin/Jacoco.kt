@@ -227,15 +227,23 @@ private val generatedCodeExcludes = listOf(
   // own logic in every ratio.
   "**/*_Impl*.*",
   "**/ComposableSingletons\$*.*",
-  // `**/*_Factory.*` (above) excludes the generated Factory class itself but is suffix-anchored
-  // on "Factory", so it does not match that class's own nested `$InstanceHolder` -- the static
-  // holder Dagger emits for a no-arg, unscoped `@Provides` method to memoize its one Factory
-  // instance. `:core:database`'s Task 4 added the first such provider in this project
-  // (`DataModule.provideSubsonicSourceFactory`), and its generated
-  // `DataModule_ProvideSubsonicSourceFactoryFactory$InstanceHolder` was the first time this
-  // nested shape appeared in a report at all -- confirmed by its absence from every module's
-  // report before that provider existed. Same generated-code argument as every pattern above it.
-  "**/*Factory\$InstanceHolder.*",
+  // `**/*Module_*Factory.*` (above) excludes the generated Factory class itself -- Dagger names it
+  // `DataModule_ProvideSubsonicSourceFactoryFactory`, which contains no `_Factory.` substring, so
+  // `**/*_Factory.*` is not the pattern doing that work; `**/*Module_*Factory.*` is (confirmed by
+  // removing each independently and rebuilding the report: dropping `*Module_*Factory.*` brings
+  // every `DataModule_Provide*Factory` class back, dropping `*_Factory.*` changes nothing here).
+  // That pattern is suffix-anchored on "Factory.", though, so it does not match the same class's
+  // own nested `$InstanceHolder` -- the static holder Dagger emits for a no-arg, unscoped
+  // `@Provides` method to memoize its one Factory instance. `:core:database`'s Task 4 added the
+  // first such provider in this project (`DataModule.provideSubsonicSourceFactory`), and its
+  // generated `DataModule_ProvideSubsonicSourceFactoryFactory$InstanceHolder` was the first time
+  // this nested shape appeared in a report at all. Anchored the same way `*Module_*Factory.*`
+  // already is (`Module_`...`Factory`), not a bare `*Factory$InstanceHolder.*`: the wider form
+  // would also match an unrelated, author-written `class ArtworkFactory { object InstanceHolder }`
+  // anywhere in the project, silently dropping it from every floor's denominator -- exactly the
+  // "silent gate" shape this list is otherwise careful about. Same generated-code argument as
+  // every pattern above it, just anchored to the one shape it is actually justified by.
+  "**/*Module_*Factory\$InstanceHolder.*",
 )
 
 /**

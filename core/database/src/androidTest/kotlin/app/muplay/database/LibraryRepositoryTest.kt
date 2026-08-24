@@ -12,10 +12,8 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicSourceFactory
 import java.io.File
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -75,13 +73,16 @@ class LibraryRepositoryTest {
     // "Not configured" and "the server is down" must not look the same to a caller: only the
     // first is fixable by the user typing a URL, and the setup flow keys off exactly that.
     //
-    // `runBlocking` here (not a plain call): `assertThatThrownBy`'s `ThrowingCallable` is a Java
-    // SAM, not a coroutine context, so a `suspend` call cannot appear directly inside it -- the
-    // Kotlin compiler rejects that with "Suspension functions can only be called within
-    // coroutine body." `runBlocking` gives the lambda a coroutine context of its own without
-    // changing what is being asserted.
-    assertThatThrownBy { runBlocking { repository.refreshFromServer() } }
-      .isInstanceOf(NotConfiguredException::class.java)
+    // `runCatching`, not `assertThatThrownBy { repository.refreshFromServer() }`: AssertJ's
+    // `ThrowingCallable` is a Java SAM, not a coroutine context, so a bare `suspend` call cannot
+    // appear inside it at all -- the Kotlin compiler rejects that with "Suspension functions can
+    // only be called within coroutine body." Wrapping the call in `runBlocking` instead compiles
+    // and genuinely still covers the `throw` branch, but it blocks the test thread and takes
+    // `refreshFromServer` off `runTest`'s `TestScheduler` -- harmless today only because
+    // `CredentialStore.load()` completes on a real dispatcher with nothing to advance virtual
+    // time for. `runCatching` stays on the test coroutine and needs no such argument.
+    val thrown = runCatching { repository.refreshFromServer() }.exceptionOrNull()
+    assertThat(thrown).isInstanceOf(NotConfiguredException::class.java)
   }
 
   @Test
@@ -96,7 +97,12 @@ class LibraryRepositoryTest {
 
     assertThat(repository.libraries.first().map { it.name })
       .containsExactly("Music", "Audiobooks")
-    assertThat(repository.libraries.first()).allMatch { it.role == LibraryRole.UNASSIGNED }
+    // `containsExactly`, not `allMatch`: the `containsExactly` on names above already establishes
+    // non-emptiness, so this one was guarded even before N-4's fix -- rewritten anyway, to the
+    // same standard, since a mapped-field assertion should say what it means rather than lean on
+    // a neighbouring assertion to rule out the vacuous case.
+    assertThat(repository.libraries.first().map { it.role })
+      .containsExactly(LibraryRole.UNASSIGNED, LibraryRole.UNASSIGNED)
   }
 
   @Test
@@ -151,7 +157,12 @@ class LibraryRepositoryTest {
 
     repository.refreshFromServer()
 
-    assertThat(repository.libraries.first()).allMatch { it.role == LibraryRole.UNASSIGNED }
+    // `containsExactly`, not `allMatch`: `allMatch` (and `isEmpty()` below) are true vacuously on
+    // an empty result, so a `refreshFromServer` that silently stored nothing would pass this test
+    // too. Mapping to the exact expected list of three UNASSIGNED roles is only true if three
+    // rows actually landed.
+    assertThat(repository.libraries.first().map { it.role })
+      .containsExactly(LibraryRole.UNASSIGNED, LibraryRole.UNASSIGNED, LibraryRole.UNASSIGNED)
     assertThat(repository.idsWithRole(LibraryRole.AUDIOBOOKS)).isEmpty()
     assertThat(repository.idsWithRole(LibraryRole.MUSIC)).isEmpty()
   }
