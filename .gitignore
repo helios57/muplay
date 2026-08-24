@@ -7,3 +7,10 @@ local.properties
 *.iml
 .idea/
 *.hprof
+
+# The Kotlin Gradle plugin writes `.kotlin/sessions/<id>.salive` during every build and removes it
+# only on a clean shutdown, so any interrupted build leaves it behind. Untracked debris here is not
+# harmless: `ci/mutation-probes.sh` refuses to run on a dirty tree (it reverts with
+# `git checkout --`, which cannot tell a probe from real work), so without this line an interrupted
+# build makes the probe list unrunnable until someone deletes a directory they did not create.
+.kotlin/

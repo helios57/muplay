@@ -51,7 +51,7 @@ class NavidromeSpecDeviationTest {
   fun `navidrome sends userRating 0 which the spec forbids`() {
     // AlbumID3.userRating is `minimum: 1, maximum: 5` ("The user rating of the album. [1-5]").
     // Navidrome sends 0 for an unrated album, which is not in that range. Every album-bearing
-    // response is therefore rejected -- three endpoints, four captures, one cause. The fifth
+    // response is therefore rejected -- three endpoints, five captures, one cause. The fifth
     // rejected capture is `get-scan-status.json`, for an unrelated reason, asserted below.
     ALBUM_BEARING_FIXTURES.forEach { (name, path) ->
       assertThatThrownBy { OpenApiFixtureValidator.assertValid(path, fixture(name)) }
@@ -120,13 +120,14 @@ class NavidromeSpecDeviationTest {
     const val ALBUM_LIST_EMPTY_FIXTURE = "get-album-list2-empty.json"
     const val ALBUM_WITH_SONGS_FIXTURE = "get-album-with-songs.json"
     const val SEARCH3_FIXTURE = "search3-music.json"
+    const val SEARCH3_AUDIOBOOKS_FIXTURE = "search3-audiobooks.json"
     const val RANDOM_SONGS_FIXTURE = "get-random-songs-music.json"
     const val SCAN_STATUS_FIXTURE = "get-scan-status.json"
     const val SCAN_STATUS_SCANNING_FIXTURE = "get-scan-status-scanning.json"
 
     /**
      * Every captured response that carries an `AlbumID3` anywhere in it, with the spec path it
-     * would be validated against. All four committed album-bearing captures are here, not just
+     * would be validated against. All five committed album-bearing captures are here, not just
      * the three the two assertions above strictly need to make their point: a fixture this
      * project commits and never puts in front of the oracle is a fixture nobody is checking, and
      * `get-album-list2-audiobooks.json` (this project's only capture of library 2, and so the
@@ -138,6 +139,7 @@ class NavidromeSpecDeviationTest {
       ALBUM_LIST_AUDIOBOOKS_FIXTURE to "/rest/getAlbumList2",
       ALBUM_WITH_SONGS_FIXTURE to "/rest/getAlbum",
       SEARCH3_FIXTURE to "/rest/search3",
+      SEARCH3_AUDIOBOOKS_FIXTURE to "/rest/search3",
     )
   }
 }

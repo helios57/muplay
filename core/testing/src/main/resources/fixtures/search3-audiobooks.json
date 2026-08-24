@@ -1,0 +1,112 @@
+{
+    "subsonic-response": {
+        "status": "ok",
+        "version": "1.16.1",
+        "type": "navidrome",
+        "serverVersion": "0.63.2 (be10f89c)",
+        "openSubsonic": true,
+        "searchResult3": {
+            "artist": [
+                {
+                    "id": "7eIHgZMdjeuvfHmXT3Z8kj",
+                    "name": "Test Author",
+                    "coverArt": "ar-7eIHgZMdjeuvfHmXT3Z8kj_0",
+                    "albumCount": 1,
+                    "artistImageUrl": "http://localhost:4533/share/img/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImFyLTdlSUhnWk1kamV1dmZIbVhUM1o4a2pfMCIsImlzcyI6Ik5EIn0.72w_juoM0HNX5UvOiXNCmTC2fLNp585-YnE_f5aSUxo?size=600",
+                    "musicBrainzId": "",
+                    "sortName": "test author",
+                    "roles": [
+                        "maincredit",
+                        "albumartist",
+                        "artist"
+                    ]
+                }
+            ],
+            "album": [
+                {
+                    "id": "7uq0TWT0LFFT65BHbdgSkX",
+                    "name": "Test Book",
+                    "artist": "Test Author",
+                    "artistId": "7eIHgZMdjeuvfHmXT3Z8kj",
+                    "coverArt": "al-7uq0TWT0LFFT65BHbdgSkX_6a89053c",
+                    "songCount": 1,
+                    "duration": 15,
+                    "created": "2026-08-23T20:34:38.186951758Z",
+                    "userRating": 0,
+                    "genres": [],
+                    "musicBrainzId": "",
+                    "isCompilation": false,
+                    "sortName": "test book",
+                    "discTitles": [],
+                    "originalReleaseDate": {},
+                    "releaseDate": {},
+                    "releaseTypes": [],
+                    "recordLabels": [],
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "7eIHgZMdjeuvfHmXT3Z8kj",
+                            "name": "Test Author"
+                        }
+                    ],
+                    "displayArtist": "Test Author",
+                    "explicitStatus": "",
+                    "version": ""
+                }
+            ],
+            "song": [
+                {
+                    "id": "qSTAxm5BFyXTJeuw4EIxmM",
+                    "parent": "7uq0TWT0LFFT65BHbdgSkX",
+                    "isDir": false,
+                    "title": "Test Book",
+                    "album": "Test Book",
+                    "artist": "Test Author",
+                    "coverArt": "al-7uq0TWT0LFFT65BHbdgSkX_0",
+                    "size": 65160,
+                    "contentType": "audio/mp4",
+                    "suffix": "m4b",
+                    "duration": 15,
+                    "bitRate": 32,
+                    "path": "Test Author/Test Book/Test Book.m4b",
+                    "created": "2026-08-23T20:34:38.202924541Z",
+                    "albumId": "7uq0TWT0LFFT65BHbdgSkX",
+                    "artistId": "7eIHgZMdjeuvfHmXT3Z8kj",
+                    "type": "music",
+                    "bpm": 0,
+                    "comment": "",
+                    "sortName": "test book",
+                    "mediaType": "song",
+                    "musicBrainzId": "",
+                    "isrc": [],
+                    "genres": [],
+                    "replayGain": {},
+                    "channelCount": 1,
+                    "samplingRate": 44100,
+                    "bitDepth": 16,
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "7eIHgZMdjeuvfHmXT3Z8kj",
+                            "name": "Test Author"
+                        }
+                    ],
+                    "displayArtist": "Test Author",
+                    "albumArtists": [
+                        {
+                            "id": "7eIHgZMdjeuvfHmXT3Z8kj",
+                            "name": "Test Author"
+                        }
+                    ],
+                    "displayAlbumArtist": "Test Author",
+                    "contributors": [],
+                    "displayComposer": "",
+                    "explicitStatus": "",
+                    "groupings": [],
+                    "works": [],
+                    "movements": []
+                }
+            ]
+        }
+    }
+}

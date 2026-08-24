@@ -3,12 +3,15 @@
 # A REGRESSION LIST OF MUTATION PROBES. NOT A RULE, AND NOT A GATE.
 # ============================================================================================
 #
-# Every probe below is a defect that was found by hand -- by an implementer's audit or by an
+# Every probe in the PROBES table below is a defect that was found by hand -- by an implementer's audit or by an
 # independent review -- and then fixed. Each one names the single test that must now fail when the
 # defect is reintroduced. Running this script re-applies each mutation to a committed tree, one at
 # a time, and checks that the named test really does go red.
 #
-# WHAT PASSING THIS SCRIPT MEANS: the seventeen specific defects listed here are still caught.
+# WHAT PASSING THIS SCRIPT MEANS: the specific defects listed in PROBES below are still caught.
+# (The count is deliberately not written out here. It has gone stale three times in this one file,
+#  once in the very commit that existed to correct it; the script prints the real number, derived
+#  from the table, every time it runs.)
 #
 # WHAT PASSING THIS SCRIPT DOES NOT MEAN -- read this before trusting a green run:
 #
@@ -26,6 +29,10 @@
 #     `getRandomSongs` stamps every song with library 1 is worse than no check, because a reviewer
 #     who trusted it would stop mutating by hand. This project has paid for that lesson enough
 #     times; an honest "these are the probes we know about" is the most this can claim.
+#   * It probes only what someone thought to probe. Four review rounds each found a *class* of
+#     value nobody had asked about -- request parameters, then the library stamp, then ScanStatus,
+#     then every other mapped DTO field. Adding a probe records the answer; it does not generate
+#     the question.
 #   * Its ordinary, visible cost is drift: it needs a line added whenever someone finds a new
 #     probe, and nobody is forced to. That cost was accepted knowingly, over silent false
 #     assurance.
@@ -34,7 +41,8 @@
 # the only way this file stays worth running.
 #
 # Exits non-zero if any probe is not caught -- verified, not assumed: the first run of the full
-# list exited 1 on the stale `auth/empty-authParams` count above.
+# list exited 1 on a stale `auth/empty-authParams` count, and an independent review re-proved it by
+# weakening a stamp test in a throwaway worktree.
 #
 # SCOPE. Production-code mutations only. The falsifiability probes for `LiveNavidromeTest`'s six
 # scoping assertions are *test-side* (they change which musicFolderId the test sends, to prove the
@@ -42,7 +50,12 @@
 # are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
 # Navidrome container.
 #
-# USAGE:  ./ci/mutation-probes.sh            # all probes; MEASURED ~13 min for 17 (~46 s each)
+# USAGE:  ./ci/mutation-probes.sh            # every probe; budget ~45 s each (one full JVM test
+#                                            # run per probe). Measured end-to-end at 13 min and
+#                                            # at 8.5 min on two different machines -- so size the
+#                                            # expectation per probe, not from a total that is
+#                                            # wrong the moment a probe is added or the hardware
+#                                            # changes. The script prints the count it will run.
 #         ./ci/mutation-probes.sh stamp      # only probes whose id contains "stamp"
 #
 # The tree must be clean: every probe reverts with `git checkout --`, which cannot tell a probe
@@ -247,7 +260,8 @@ finally:
     revert()
 
 missed = results.count(False)
-print(f"\n{len(results) - missed}/{len(results)} probes caught.")
+print(f"\n{len(results) - missed}/{len(results)} probes caught "
+      f"(of {len(PROBES) + 1} in the list).")
 if missed:
     print("A MISSED probe means a defect this project already found once is no longer detected.")
     raise SystemExit(1)

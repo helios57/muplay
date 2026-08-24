@@ -131,13 +131,38 @@ class BrowseEndpointsTest {
 
     val album = client.getAlbumList2(1, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).single()
 
+    // Every field, at its literal. `id`, `artistId` and `coverArtId` used to be asserted
+    // `isNotBlank` -- the identical construction this file condemned for `lastScan` one round
+    // earlier, and it had the identical consequence: each could be replaced by a constant with the
+    // whole build green. A constant `coverArtId` shows one album's artwork on every album.
+    assertThat(album.id).isEqualTo(MUSIC_ALBUM_ID)
     assertThat(album.name).isEqualTo("Test Album")
+    assertThat(album.artistId).isEqualTo(MUSIC_ARTIST_ID)
     assertThat(album.artistName).isEqualTo("Test Artist")
+    assertThat(album.coverArtId).isEqualTo(MUSIC_ALBUM_COVER_ART_ID)
     assertThat(album.songCount).isEqualTo(3)
     assertThat(album.durationSeconds).isEqualTo(15)
-    assertThat(album.id).isNotBlank
-    assertThat(album.artistId).isNotBlank
-    assertThat(album.coverArtId).isNotBlank
+  }
+
+  @Test
+  fun `getAlbumList2 maps every album field for the second library too`() = runTest {
+    // The second disjoint observation of six of `Album`'s seven mapped fields. Until this test
+    // `get-album-list2-audiobooks.json` was committed, validated against the oracle, and decoded
+    // by nothing -- enqueued once inside a request test that threw the body away -- so every
+    // `Album` field except the stamp was observed at exactly one value and could be a constant.
+    enqueue(fixture(ALBUM_LIST_AUDIOBOOKS_FIXTURE))
+
+    val album = client.getAlbumList2(2, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).single()
+
+    assertThat(album.id).isEqualTo(AUDIOBOOK_ALBUM_ID)
+    assertThat(album.name).isEqualTo("Test Book")
+    assertThat(album.artistId).isEqualTo(AUDIOBOOK_ARTIST_ID)
+    assertThat(album.artistName).isEqualTo("Test Author")
+    assertThat(album.coverArtId).isEqualTo(AUDIOBOOK_ALBUM_COVER_ART_ID)
+    assertThat(album.songCount).isEqualTo(1)
+    // `durationSeconds` is deliberately absent here: both seeded albums total 15 seconds, so this
+    // container cannot produce a second value for it. See `every album and song field the seeded
+    // container cannot vary is still read from the body` below, which closes it.
   }
 
   @Test
@@ -230,6 +255,22 @@ class BrowseEndpointsTest {
       .containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
     assertThat(result.songs.map { it.trackNumber }).containsExactlyInAnyOrder(1, 2, 3)
     assertThat(result.songs.map { it.suffix }).containsExactly("mp3", "mp3", "mp3")
+
+    // Every remaining `Song` field, on one track, at its literal. `albumId`, `albumName`,
+    // `artistId`, `artistName`, `durationSeconds` and `coverArtId` were asserted **nowhere at all**
+    // before this: a constant `albumId` puts every track in the same album, and nothing said so.
+    val first = result.songs.single { it.trackNumber == 1 }
+    assertThat(first.id).isEqualTo(MUSIC_TRACK_1_ID)
+    assertThat(first.title).isEqualTo("Track 1")
+    assertThat(first.albumId).isEqualTo(MUSIC_ALBUM_ID)
+    assertThat(first.albumName).isEqualTo("Test Album")
+    assertThat(first.artistId).isEqualTo(MUSIC_ARTIST_ID)
+    assertThat(first.artistName).isEqualTo("Test Artist")
+    assertThat(first.durationSeconds).isEqualTo(5)
+    assertThat(first.suffix).isEqualTo("mp3")
+    assertThat(first.coverArtId).isEqualTo(MUSIC_TRACK_COVER_ART_ID)
+    // Navidrome sends no `discNumber` for a single-disc release -- confirmed across every capture.
+    assertThat(first.discNumber).isNull()
   }
 
   @Test
@@ -360,6 +401,71 @@ class BrowseEndpointsTest {
     assertThat(third.artists.map { it.id }).isEqualTo(sixth.artists.map { it.id })
     assertThat(third.albums.map { it.id }).isEqualTo(sixth.albums.map { it.id })
     assertThat(third.songs.map { it.id }).isEqualTo(sixth.songs.map { it.id })
+  }
+
+  @Test
+  fun `search3 maps every artist, album and song field from the second library`() = runTest {
+    // One capture, three result kinds, and the second disjoint observation for almost every mapped
+    // field on all three types -- `Artist` has no other source at all, so before this its `id`,
+    // `name` and `coverArtId` were observed once and its `albumCount` never.
+    enqueue(fixture(SEARCH3_AUDIOBOOKS_FIXTURE))
+
+    val results = client.search3("Test", musicFolderId = 2, artistCount = 5, albumCount = 5, songCount = 5)
+
+    val artist = results.artists.single()
+    assertThat(artist.id).isEqualTo(AUDIOBOOK_ARTIST_ID)
+    assertThat(artist.name).isEqualTo("Test Author")
+    assertThat(artist.coverArtId).isEqualTo(AUDIOBOOK_ARTIST_COVER_ART_ID)
+
+    val album = results.albums.single()
+    assertThat(album.id).isEqualTo(AUDIOBOOK_ALBUM_ID)
+    assertThat(album.name).isEqualTo("Test Book")
+    assertThat(album.artistId).isEqualTo(AUDIOBOOK_ARTIST_ID)
+    assertThat(album.artistName).isEqualTo("Test Author")
+    assertThat(album.coverArtId).isEqualTo(AUDIOBOOK_ALBUM_COVER_ART_ID)
+    assertThat(album.songCount).isEqualTo(1)
+
+    val song = results.songs.single()
+    assertThat(song.id).isEqualTo(AUDIOBOOK_TRACK_ID)
+    assertThat(song.title).isEqualTo("Test Book")
+    assertThat(song.albumId).isEqualTo(AUDIOBOOK_ALBUM_ID)
+    assertThat(song.albumName).isEqualTo("Test Book")
+    assertThat(song.artistId).isEqualTo(AUDIOBOOK_ARTIST_ID)
+    assertThat(song.artistName).isEqualTo("Test Author")
+    assertThat(song.coverArtId).isEqualTo(AUDIOBOOK_TRACK_COVER_ART_ID)
+    // The two fields that differ most usefully from every music capture: a 15-second m4b against
+    // three 5-second mp3s, so `durationSeconds` and `suffix` are both genuinely discriminated.
+    assertThat(song.durationSeconds).isEqualTo(15)
+    assertThat(song.suffix).isEqualTo("m4b")
+    // Navidrome sends no track number for this single-file audiobook -- the second observation of
+    // `trackNumber`, against the music captures' 1/2/3, and the one that proves the mapper passes
+    // an absent value through as null rather than defaulting it.
+    assertThat(song.trackNumber).isNull()
+  }
+
+  @Test
+  fun `every album and song field the seeded container cannot vary is still read from the body`() = runTest {
+    // Three fields this project's two live libraries physically cannot disambiguate:
+    //
+    //   `Album.durationSeconds`  -- both seeded albums total exactly 15 seconds.
+    //   `Artist.albumCount`      -- both seeded artists have exactly 1 album.
+    //   `Song.discNumber`        -- Navidrome sends none for a single-disc release, so every
+    //                               capture carries null and a hardcoded null would satisfy them.
+    //
+    // Every other mapped field is covered by two disjoint *live* captures; these three would
+    // otherwise be observable at one value only, which is the whole defect this round exists to
+    // close. So this one body is **synthetic and labelled as such**, on the same footing as
+    // [OK_WITH_NO_PAYLOAD]: the question it answers is "does the mapper read this field from the
+    // body, or return a constant?", which is a question about our code and not about the protocol.
+    // A live capture is required for evidence about Navidrome's wire format; it is not required,
+    // and here not available, for evidence about our own field assignment.
+    enqueue(SEARCH3_WITH_UNCAPTURABLE_FIELDS)
+
+    val results = client.search3("anything", musicFolderId = 9, artistCount = 5, albumCount = 5, songCount = 5)
+
+    assertThat(results.artists.single().albumCount).isEqualTo(7)
+    assertThat(results.albums.single().durationSeconds).isEqualTo(4242)
+    assertThat(results.songs.single().discNumber).isEqualTo(3)
   }
 
   // --- getRandomSongs ------------------------------------------------------------------------
@@ -695,11 +801,31 @@ class BrowseEndpointsTest {
     const val CAPTURED_ALBUM_ID = "7orvCZZyWRqsduCdqXoguY"
     const val CAPTURED_COVER_ART_ID = "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51"
 
+    /**
+     * The ids Navidrome minted for the two seeded libraries, read out of the captures themselves.
+     * They exist so every mapped field can be asserted at a literal rather than at `isNotBlank`:
+     * an id checked only for non-blankness is satisfied by any constant, and a constant
+     * `coverArtId` puts one album's artwork on every album.
+     */
+    const val MUSIC_ALBUM_ID = "7orvCZZyWRqsduCdqXoguY"
+    const val MUSIC_ARTIST_ID = "4kqFOAfzcbEE22Bin8jHjV"
+    const val MUSIC_ALBUM_COVER_ART_ID = "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51"
+    const val MUSIC_TRACK_1_ID = "ISdyB6J3mLnrWAyON36CmS"
+    const val MUSIC_TRACK_COVER_ART_ID = "al-7orvCZZyWRqsduCdqXoguY_0"
+
+    const val AUDIOBOOK_ALBUM_ID = "7uq0TWT0LFFT65BHbdgSkX"
+    const val AUDIOBOOK_ARTIST_ID = "7eIHgZMdjeuvfHmXT3Z8kj"
+    const val AUDIOBOOK_ALBUM_COVER_ART_ID = "al-7uq0TWT0LFFT65BHbdgSkX_6a89053c"
+    const val AUDIOBOOK_ARTIST_COVER_ART_ID = "ar-7eIHgZMdjeuvfHmXT3Z8kj_0"
+    const val AUDIOBOOK_TRACK_ID = "qSTAxm5BFyXTJeuw4EIxmM"
+    const val AUDIOBOOK_TRACK_COVER_ART_ID = "al-7uq0TWT0LFFT65BHbdgSkX_0"
+
     const val ALBUM_LIST_MUSIC_FIXTURE = "get-album-list2-music.json"
     const val ALBUM_LIST_AUDIOBOOKS_FIXTURE = "get-album-list2-audiobooks.json"
     const val ALBUM_LIST_EMPTY_FIXTURE = "get-album-list2-empty.json"
     const val ALBUM_WITH_SONGS_FIXTURE = "get-album-with-songs.json"
     const val SEARCH3_FIXTURE = "search3-music.json"
+    const val SEARCH3_AUDIOBOOKS_FIXTURE = "search3-audiobooks.json"
     const val RANDOM_SONGS_FIXTURE = "get-random-songs-music.json"
     const val SCAN_STATUS_FIXTURE = "get-scan-status.json"
     const val SCAN_STATUS_SCANNING_FIXTURE = "get-scan-status-scanning.json"
@@ -712,6 +838,18 @@ class BrowseEndpointsTest {
      */
     const val IDLE_WATERMARK = "2026-08-24T03:32:38.477978062Z"
     const val SCANNING_WATERMARK = "2026-08-24T10:07:22.030396558Z"
+
+    /**
+     * A synthetic `search3` body carrying the three fields the seeded container cannot vary, each
+     * at a value no capture contains. Synthetic on purpose and used by exactly one test, whose
+     * KDoc explains why a live capture is neither available nor required for the question it asks.
+     */
+    const val SEARCH3_WITH_UNCAPTURABLE_FIELDS =
+      """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
+        """"serverVersion":"0.63.2 (be10f89c)","openSubsonic":true,"searchResult3":{""" +
+        """"artist":[{"id":"ar-synthetic","name":"Synthetic Artist","albumCount":7}],""" +
+        """"album":[{"id":"al-synthetic","name":"Synthetic Album","songCount":9,"duration":4242}],""" +
+        """"song":[{"id":"so-synthetic","title":"Synthetic Track","discNumber":3,"isDir":false}]}}}"""
 
     /**
      * A spec-valid success envelope with no command payload at all. Synthetic, and deliberately
