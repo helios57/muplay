@@ -175,6 +175,16 @@ was written. Each one is repeated at the task that trips over it.
 
 ### Scope discipline
 
+> **Task 11 was added after this plan was written, and nothing was renumbered.** A spec-coverage
+> audit (`.superpowers/sdd/2026-08-24-muplay-k02-library-browse/spec-coverage-audit.md`) found spec
+> §9's `feature/settings` module owned by no plan — Plan 7 Task 10 says so in as many words and
+> routes around it — which leaves a user who mis-tags a library at first run with no way back. The
+> ruling put it here, because this plan owns library roles. It arrives as **Task 11, after the
+> gates task**, because Plans 3 through 7 reference this plan's tasks by number and four of them
+> are outside that repair's editable set; renumbering would have silently redirected every one of
+> those references. Task 11 therefore carries its own journey, coverage floors and module
+> registration rather than reaching back into Task 10's.
+
 Plan 2 is library mirror + browse + library-scoped shuffle. **Playback is Plan 3.** No Media3,
 no `MediaLibraryService`, no `MuPlayer`, no streaming URLs. If you find yourself specifying
 Media3, stop. The one exception is the `media_progress` table itself (Task 1) — spec §3 calls it
@@ -245,6 +255,16 @@ playing another") is testable today with a DAO and no player.
 | `app/src/androidTest/kotlin/app/muplay/FirstRunJourneyTest.kt` | **modify** — setup now ends in role tagging |
 | `.github/workflows/pr.yml` | **modify** — mock-classpath guard step |
 | `.github/workflows/e2e.yml` | **modify** — `:core:database:connectedDebugAndroidTest`, new journeys |
+| `.github/workflows/openapi-drift.yml` | **new** (Task 10) — the nightly, non-blocking oracle drift check; the only thing here that is not a gate |
+| `feature/settings/build.gradle.kts` | **new** (Task 11) — and pointedly **not** depending on `:core:cast`, `:core:media` or `:integrations:*` |
+| `feature/settings/src/main/kotlin/app/muplay/settings/SettingsUiState.kt` | **new** (Task 11) — the sealed state and the pure builder |
+| `feature/settings/src/main/kotlin/app/muplay/settings/SettingsViewModel.kt` | **new** (Task 11) — re-tagging, and the one operation that can lose data |
+| `feature/settings/src/main/kotlin/app/muplay/settings/SettingsScreen.kt` | **new** (Task 11) — server, libraries, and whatever else is installed |
+| `feature/settings/src/main/kotlin/app/muplay/settings/SettingsSection.kt` | **new** (Task 11) — a slot, not a preferences framework |
+| `core/network/src/main/kotlin/app/muplay/network/SubsonicAuthMethod.kt` | **new** (Task 11) — the seam spec §4 asks for, with one member |
+| `core/database/src/main/kotlin/app/muplay/database/SyncEngine.kt` | **modify** (Task 11) — `resetForNewServer()`, which never touches `media_progress` |
+| `app/src/main/kotlin/app/muplay/ui/navigation/SettingsRoute.kt` | **new** (Task 11) |
+| `app/src/androidTest/kotlin/app/muplay/SettingsJourneyTest.kt` | **new** (Task 11) — the mis-tag, and the way back from it |
 
 ---
 
@@ -8272,6 +8292,470 @@ git commit -m "ci: the nightly OpenAPI drift check spec §10 has always claimed"
 
 ---
 
+## Task 11: `:feature:settings` — the server connection, re-tagging, and one slot
+
+**Files:**
+- Modify: `settings.gradle.kts`, `app/build.gradle.kts`, `build.gradle.kts`
+- Create: `feature/settings/build.gradle.kts`
+- Create: `feature/settings/src/main/kotlin/app/muplay/settings/SettingsUiState.kt`
+- Create: `feature/settings/src/main/kotlin/app/muplay/settings/SettingsViewModel.kt`
+- Create: `feature/settings/src/main/kotlin/app/muplay/settings/SettingsScreen.kt`
+- Create: `feature/settings/src/main/kotlin/app/muplay/settings/SettingsSection.kt`
+- Create: `feature/settings/src/main/kotlin/app/muplay/settings/di/SettingsModule.kt`
+- Create: `core/network/src/main/kotlin/app/muplay/network/SubsonicAuthMethod.kt`
+- Modify: `core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/SyncEngine.kt`
+- Modify: `feature/library/src/main/kotlin/app/muplay/library/LibraryScreen.kt`
+- Create: `app/src/main/kotlin/app/muplay/ui/navigation/SettingsRoute.kt`
+- Modify: `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt`
+- Test: `feature/settings/src/test/kotlin/app/muplay/settings/SettingsUiStateTest.kt`
+- Test: `core/network/src/test/kotlin/app/muplay/network/SubsonicAuthMethodTest.kt`
+- Test: `core/database/src/androidTest/kotlin/app/muplay/database/SyncEngineResetTest.kt`
+- Create: `app/src/androidTest/kotlin/app/muplay/SettingsJourneyTest.kt`
+- Modify: `.github/workflows/e2e.yml`
+
+**Interfaces:**
+- Consumes: `CredentialStore` (`save`, `load`, `clear`, `credentials` — Task 2),
+  `SubsonicSourceFactory` / `SubsonicSource.ping` / `.getMusicFolders` (Task 3),
+  `LibraryRepository` (`libraries`, `refreshFromServer`, `setRole` — Task 4),
+  `SyncEngine` (Task 6), `SubsonicCredentials`, `MusicLibrary`, `LibraryRole`,
+  `SubsonicErrorException`, `SubsonicHttpException`
+- Produces:
+  - sealed `SettingsUiState` with `Loading`, `NotConfigured`,
+    `Content(serverUrl: String, username: String, libraries: List<MusicLibrary>, connectionMessage: String?, isBusy: Boolean)`
+  - `internal fun settingsContent(credentials, libraries, connectionMessage, isBusy): SettingsUiState`
+  - `@HiltViewModel class SettingsViewModel` with `uiState: StateFlow<SettingsUiState>`,
+    `fun setRole(musicFolderId: Int, role: LibraryRole)`,
+    `fun reconnect(serverUrl: String, username: String, password: String)`
+  - `SettingsScreen(modifier: Modifier = Modifier, viewModel: SettingsViewModel = hiltViewModel(), sections: Set<SettingsSection> = ...)`
+  - `interface SettingsSection { val order: Int; @Composable fun Content() }` and an empty
+    `@Multibinds` declaration for it
+  - `SettingsRoute` navigation key; `SETTINGS_LABEL` on the library screen
+  - `sealed interface SubsonicAuthMethod` with `data object Token`, and
+    `SubsonicAuth.authParams` delegating to it
+  - `SyncEngine.resetForNewServer()`
+- **Plan 6 interaction:** Plan 6 Task 12 contributes its `RendererDirect` toggle as a
+  `SettingsSection`. That is the *whole* reason the slot exists — see below.
+- **Plan 7 interaction:** Plan 7 Task 10 records that *"spec §9 names a `feature/settings` module;
+  it does not exist in the tree as this plan is written, and no plan before this one creates it"*,
+  and works around it with an overflow menu item. **That workaround is superseded by this task.**
+  Plan 7 is outside this repair's editable set, so it is not edited here; its integration settings
+  should become a `SettingsSection` like Plan 6's rather than an overflow item.
+
+### The two things a user cannot do today, and why the second one is serious
+
+Spec §9's module list names `feature/settings`. **No plan creates it**, and Plan 7 Task 10 says so
+in as many words before routing around it. The consequences are not evenly weighted:
+
+- **There is no way to change the server URL.** Annoying: a user who moves Navidrome behind a
+  different hostname reinstalls the app.
+- **There is no way to re-tag a library.** Not annoying — **unrecoverable.** The Music/Audiobooks
+  tag is the only mechanism library-scoped shuffle has (Task 4: Navidrome hardcodes
+  `child.Type = "music"` and will never tell a client that something is an audiobook). The user
+  sets it exactly once, during first-run setup, from a screen that deliberately *"must not guess"*
+  — and a mistake there poisons the headline feature permanently. Their only route back is clearing
+  app data, which also destroys every audiobook position, which is the other thing this app exists
+  for.
+
+So a user who taps the wrong chip once, in the thirty seconds they spend on the setup screen, has
+to choose between a poisoned shuffle and losing their listening history. That is what this task
+removes.
+
+### Minimal means minimal
+
+There is **no preferences framework here**. No `Preference` type, no key registry, no schema, no
+category system, no search. Two sections this task writes, and one slot other modules can fill:
+
+```
+Server        the URL and username it is connected as, and a way to change them.
+Libraries     the same Music/Audiobooks chips as setup, re-tappable.
+<slot>        whatever else is installed. Empty today, one entry once Plan 6 lands.
+```
+
+**The slot is a `Set<SettingsSection>` supplied by Hilt multibinding, and it exists for exactly one
+reason:** Plan 6's `RendererDirect` toggle has to appear here, and `:feature:settings` **must not
+depend on `:core:cast`**. Plan 6's own definition of done requires that dropping casting stays a
+`git rm -r core/cast feature/castpicker` rather than that plus surgery elsewhere. The alternative
+considered and rejected was passing a `List<@Composable () -> Unit>` down from `:app` — simpler, but
+it makes `:app` responsible for ordering and for knowing which section belongs to which feature,
+which is the thing `:app` is meant not to know. A section is a Composable and an `order`. That is
+the whole contract, and if it ever grows a second member, that is the moment to ask whether a
+preferences framework was wanted after all.
+
+### The one genuinely dangerous operation
+
+**Changing the server URL must throw the mirror away.** The mirror's rows are keyed on *that
+server's* ids; pointing the app at a different Navidrome while keeping them shows the user albums
+that do not exist, whose covers 404 and whose tracks fail to stream, with the sync watermark saying
+everything is current. That is the silent-wrong-answer class, reached by a screen whose whole
+purpose is to be helpful.
+
+So `reconnect` is: `ping` the new details **first** (never store an unverified URL — a saved bad URL
+is a bricked app with no way back), then, only if the base URL actually changed, run
+`SyncEngine.resetForNewServer()` inside one transaction before storing the new credentials and
+re-running `getMusicFolders`.
+
+**Changing a *role*, by contrast, needs no mirror work at all**, and that is worth writing down
+rather than rediscovering: mirror rows carry `libraryId`, and shuffle, browse and the role are three
+separate joins over it. Re-tagging library 2 from Audiobooks to Music changes which rows the shuffle
+scope selects and rewrites nothing. `LibraryDao.mergeFromServer` already refuses to clobber a chosen
+role, so a later sync cannot undo the change either.
+
+- [ ] **Step 1: Write the failing pure test**
+
+`feature/settings/src/test/kotlin/app/muplay/settings/SettingsUiStateTest.kt` — same stance as
+`LibraryUiStateTest`: every rule in a pure function, so the branches are gated by a BRANCH floor in
+Tier 1 and the Composable takes a LINE floor on the device.
+
+```kotlin
+package app.muplay.settings
+
+import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
+import app.muplay.model.SubsonicCredentials
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+class SettingsUiStateTest {
+
+  private val music = MusicLibrary(1, "Music", LibraryRole.MUSIC)
+  private val books = MusicLibrary(2, "Audiobooks", LibraryRole.AUDIOBOOKS)
+  private val credentials = SubsonicCredentials("https://music.example.com", "luc", "hunter2")
+
+  @Test
+  fun `with no credentials there is nothing to configure`() {
+    // Reachable: the settings destination survives a `CredentialStore.clear()`. Rendering an empty
+    // "Server:" row with a blank URL would look like a bug in the store.
+    assertThat(settingsContent(null, emptyList(), null, isBusy = false))
+      .isEqualTo(SettingsUiState.NotConfigured)
+  }
+
+  @Test
+  fun `the url and username are shown, and they come from the credentials`() {
+    // Two observations of each: a screen that hardcoded either passes neither.
+    val first = settingsContent(credentials, listOf(music), null, false) as SettingsUiState.Content
+    val second = settingsContent(
+      SubsonicCredentials("http://10.0.0.5:4533", "ada", "x"), listOf(music), null, false,
+    ) as SettingsUiState.Content
+
+    assertThat(first.serverUrl).isEqualTo("https://music.example.com")
+    assertThat(first.username).isEqualTo("luc")
+    assertThat(second.serverUrl).isEqualTo("http://10.0.0.5:4533")
+    assertThat(second.username).isEqualTo("ada")
+  }
+
+  @Test
+  fun `the password is never part of the state`() {
+    // Asserted on the whole rendered state, not on an absent property, so a password smuggled into
+    // any field fails too. A `toString()` of a UiState reaches a crash report.
+    assertThat(settingsContent(credentials, listOf(music), null, false).toString())
+      .doesNotContain("hunter2")
+  }
+
+  @Test
+  fun `every library is offered with its current role`() {
+    val state = settingsContent(credentials, listOf(music, books), null, false) as SettingsUiState.Content
+
+    assertThat(state.libraries.map { it.name }).containsExactly("Music", "Audiobooks")
+    // The roles, mapped and asserted exactly -- an `allMatch` here would be vacuous on an empty
+    // list, which is the rule Plan 2 Task 3's review rounds produced.
+    assertThat(state.libraries.map { it.role })
+      .containsExactly(LibraryRole.MUSIC, LibraryRole.AUDIOBOOKS)
+  }
+
+  @Test
+  fun `a connection message and the busy flag are carried through independently`() {
+    val busy = settingsContent(credentials, listOf(music), null, isBusy = true) as SettingsUiState.Content
+    val failed = settingsContent(credentials, listOf(music), "Could not connect.", false) as SettingsUiState.Content
+
+    assertThat(busy.isBusy).isTrue
+    assertThat(busy.connectionMessage).isNull()
+    assertThat(failed.isBusy).isFalse
+    assertThat(failed.connectionMessage).isEqualTo("Could not connect.")
+  }
+}
+```
+
+Run: `./gradlew :feature:settings:test` — FAIL, the module does not exist.
+
+- [ ] **Step 2: Add the module, the state and the ViewModel**
+
+`settings.gradle.kts` — `include(":feature:settings")` at column 0. `feature/settings/build.gradle.kts`
+takes `muplay.android.library`, `muplay.android.compose`, `muplay.android.hilt`, and depends on
+`:core:model`, `:core:database`, `:core:designsystem` — **and not on `:core:cast`, `:core:media` or
+any `:integrations:*` module.** That absence is the slot's whole justification; a dependency added
+here is a dependency Plan 6's severability contract forbids.
+
+`SettingsUiState.kt` carries the sealed state and the pure `settingsContent(...)`.
+
+`SettingsViewModel.kt`:
+
+```kotlin
+/**
+ * The settings surface. Two collaborators and no cleverness: [CredentialStore] for the connection,
+ * [LibraryRepository] for the roles.
+ *
+ * `reconnect` is the only method here that can lose data, and it is written defensively for that
+ * reason -- see [reconnect].
+ */
+@HiltViewModel
+class SettingsViewModel @Inject constructor(
+  private val credentialStore: CredentialStore,
+  private val libraryRepository: LibraryRepository,
+  private val sourceFactory: SubsonicSourceFactory,
+  private val syncEngine: SyncEngine,
+) : ViewModel() {
+
+  private val connectionMessage = MutableStateFlow<String?>(null)
+  private val busy = MutableStateFlow(false)
+
+  val uiState: StateFlow<SettingsUiState> =
+    combine(
+      credentialStore.credentials,
+      libraryRepository.libraries,
+      connectionMessage,
+      busy,
+    ) { credentials, libraries, message, isBusy ->
+      settingsContent(credentials, libraries, message, isBusy)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), SettingsUiState.Loading)
+
+  /**
+   * Re-tags one library. **No mirror work is needed and none is done** -- mirror rows carry
+   * `libraryId`, and the role is a separate column the shuffle scope joins against, so re-tagging
+   * changes which rows are in scope and rewrites nothing. `LibraryDao.mergeFromServer` already
+   * preserves a chosen role, so the next sync cannot undo this either.
+   */
+  fun setRole(musicFolderId: Int, role: LibraryRole) {
+    viewModelScope.launch { libraryRepository.setRole(musicFolderId, role) }
+  }
+
+  /**
+   * Points the app at a server, verifying **before** storing.
+   *
+   * Three orderings matter here and all three are the difference between a working app and a
+   * bricked one:
+   *
+   * 1. `ping` first. Storing an unverified URL leaves the app pointed somewhere it cannot reach,
+   *    from a screen it can no longer load the current values into -- with no way back short of
+   *    clearing app data, which destroys every audiobook position.
+   * 2. If the base URL changed, **throw the mirror away before storing the new credentials.** The
+   *    mirror's ids belong to the old server; kept, they render albums that do not exist, whose
+   *    covers 404 and whose tracks fail to stream, while the watermark reports everything current.
+   * 3. `getMusicFolders` last, so the role-tagging list below is the *new* server's libraries.
+   *    They arrive `UNASSIGNED`, which is correct: nobody has said what they are for.
+   */
+  fun reconnect(serverUrl: String, username: String, password: String) {
+    viewModelScope.launch {
+      busy.value = true
+      connectionMessage.value = null
+      val candidate = SubsonicCredentials(serverUrl, username, password)
+      val result = runCatching { sourceFactory.create(candidate).ping() }
+      connectionMessage.value = when {
+        result.isSuccess -> {
+          if (credentialStore.load()?.baseUrl != candidate.baseUrl) syncEngine.resetForNewServer()
+          credentialStore.save(candidate)
+          libraryRepository.refreshFromServer()
+          CONNECTED_MESSAGE
+        }
+        // The three failures a user can actually act on, kept apart. "Something went wrong" is
+        // what makes a settings screen useless.
+        result.exceptionOrNull() is SubsonicErrorException -> "The server rejected those credentials."
+        result.exceptionOrNull() is SubsonicHttpException -> "The server answered, but with an error."
+        else -> "Could not reach that address."
+      }
+      busy.value = false
+    }
+  }
+```
+
+- [ ] **Step 3: Write the screen and the slot**
+
+`SettingsSection.kt` — twenty lines, and the file says why it is not more:
+
+```kotlin
+package app.muplay.settings
+
+import androidx.compose.runtime.Composable
+
+/**
+ * One extra block on the settings screen, contributed by a module `:feature:settings` does not
+ * depend on.
+ *
+ * **This is a slot, not a preferences framework.** There is no `Preference` type, no key registry,
+ * no schema and no categories — a section is a Composable and a sort key. It exists for exactly one
+ * reason: the cast plan's renderer-direct toggle has to appear on this screen, and this module must
+ * not depend on `:core:cast`, because dropping casting has to stay
+ * `git rm -r core/cast feature/castpicker` and nothing else.
+ *
+ * If this interface ever grows a second member, stop and ask whether a preferences framework was
+ * what was wanted after all.
+ */
+interface SettingsSection {
+  /** Ascending. Sections this module writes occupy 0 and 100; contributions sort after them. */
+  val order: Int
+
+  @Composable
+  fun Content()
+}
+```
+
+`di/SettingsModule.kt` declares `@Multibinds abstract fun settingsSections(): Set<SettingsSection>`,
+so the set resolves to **empty** when nothing contributes one. Without that declaration Hilt fails
+to compile a graph with no contributors, which would make `:feature:settings` unbuildable until
+Plan 6 lands — the exact coupling the slot exists to avoid.
+
+`SettingsScreen.kt` renders `Server`, `Libraries`, then `sections.sortedBy { it.order }.forEach { it.Content() }`.
+The library chips are the **same control as setup's**, deliberately: a user who mis-tapped once
+should meet the thing they mis-tapped, not a different-looking one. Labels: `SETTINGS_TITLE =
+"Settings"`, `SERVER_HEADING = "Server"`, `LIBRARIES_HEADING = "What each library is for"`,
+`RECONNECT_LABEL = "Connect"`, `CONNECTED_MESSAGE = "Connected."`.
+
+- [ ] **Step 4: The reset, and the test that it is not vacuous**
+
+`SyncEngine.resetForNewServer()` — on `SyncEngine` rather than `BrowseRepository` because the
+watermark and the mirror have to go **in one transaction**, and `SyncEngine` is the one class that
+already holds both:
+
+```kotlin
+  /**
+   * Forgets everything mirrored from the previous server: artists, albums, songs, libraries and the
+   * sync watermark, in one transaction.
+   *
+   * `media_progress` is **deliberately not touched.** Its ids are the server's, so most rows will
+   * be meaningless against a new server — but a user re-pointing at the same library behind a new
+   * hostname keeps every audiobook position, and a stale progress row costs nothing: it is looked
+   * up by media id and simply never matches. Deleting listening history to tidy up a cache is not a
+   * trade this app makes.
+   */
+  suspend fun resetForNewServer()
+```
+
+`SyncEngineResetTest` (instrumented, real Room): seed mirror rows, a library with a chosen role, a
+watermark **and** a `media_progress` row; call it; assert the first four are gone **and the progress
+row is still there, with its position**. That last assertion is the one that matters — a reset that
+quietly took the positions with it would pass every other test in this task.
+
+- [ ] **Step 5: The auth seam an API key drops into**
+
+Spec §4: **"Design the auth layer so an API key drops in later."** No plan carries that sentence.
+`SubsonicAuth` is an `object` with a fixed `authParams()` returning `u`/`t`/`s`/`v`/`c`/`f`, and
+today the cost of that is zero — Navidrome 0.63.2 does not implement `apiKeyAuthentication` and
+Plan 1 Task 5 pins that fact. The cost the day it ships is every call site, because there is no seam
+to change instead of them.
+
+It is done here because this is the screen an API key would be entered on, and because it is a
+twenty-line refactor with no behaviour change:
+
+```kotlin
+/**
+ * How this client proves who it is.
+ *
+ * Spec §4 asks for an auth layer an API key can drop into. Today there is exactly one member and
+ * Navidrome implements exactly one scheme — `apiKeyAuthentication` is **not** implemented on
+ * 0.63.2 despite third-party claims (Plan 1 Task 5 pins it). So this is not an abstraction over
+ * two things; it is the *shape* that makes adding the second one a new `data object` and one
+ * binding, rather than an edit to every call site that builds a query string.
+ *
+ * Adding a member is the whole change. If adding one turns out to require editing a call site, the
+ * seam is in the wrong place and this comment is the evidence that somebody meant it to be here.
+ */
+sealed interface SubsonicAuthMethod {
+  fun params(credentials: SubsonicCredentials, salt: String): Map<String, String>
+
+  /** `t = md5(password + salt)`, lowercase hex, **fresh salt per request**. */
+  data object Token : SubsonicAuthMethod { /* Plan 1's existing body, moved unchanged */ }
+}
+```
+
+`SubsonicAuth.authParams` delegates to a `method: SubsonicAuthMethod = SubsonicAuthMethod.Token`.
+`SubsonicAuthMethodTest` asserts the delegation is real: a second, test-only member returning a
+sentinel map changes what `SubsonicClient` puts on the wire, **without any edit to `SubsonicClient`**.
+That assertion is the seam; without it this is a rename.
+
+> **Every existing auth assertion stays exactly as it is** — Plan 1's byte-by-byte hex test, the
+> leading-zero case, the fresh-salt-per-request assertions in Tasks 3 and 7, and Plan 3's
+> `the token on this url is a real md5 of the password and the salt beside it`. If any of them needs
+> editing, the refactor changed behaviour and is wrong.
+
+- [ ] **Step 6: Navigation and the way in**
+
+`SettingsRoute` (a `@Serializable data object NavKey`), an `entry<SettingsRoute> { SettingsScreen() }`
+in `MuPlayApp`, and a `SETTINGS_LABEL = "Settings"` action on `LibraryScreen` that pushes it. Pushed,
+not replaced, so system back returns to the library — which
+`backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp` (Task 10) already proves works.
+
+- [ ] **Step 7: The Tier 2 journey**
+
+`app/src/androidTest/kotlin/app/muplay/SettingsJourneyTest.kt`. The headline test is **not** "the
+screen renders" — it is the recovery this task exists for, end to end against the real two-library
+Navidrome:
+
+```kotlin
+  /**
+   * The mis-tag, and the way back from it. This is the whole task in one test.
+   *
+   * Tag Audiobooks as **Music** from the settings screen, shuffle the Audiobooks library, and the
+   * book is there — proving the change reached the shuffle scope. Then tag it back and shuffle
+   * again, and it is gone. Two directions, because a screen that always returned "Music" passes
+   * the first half.
+   */
+  @Test
+  fun retaggingALibraryFromSettingsChangesWhatShuffleDraws() { /* ... */ }
+
+  /** The URL and username on screen are the ones the app is connected as, not placeholders. */
+  @Test
+  fun theServerSectionShowsTheConnectionInUse() { /* ... */ }
+
+  /**
+   * A bad address is refused and **nothing is stored**: the library still loads afterwards. This is
+   * the bricking path, and it is the one worth a journey rather than a unit test, because "nothing
+   * is stored" is only true if `ping` really ran before `save`.
+   */
+  @Test
+  fun aServerThatCannotBeReachedIsRefusedAndChangesNothing() { /* ... */ }
+```
+
+- [ ] **Step 8: Prove each can fail**
+
+1. Make `setRole` a no-op. Expect `retaggingALibraryFromSettingsChangesWhatShuffleDraws` to fail on
+   its first half — and, restored, hardcode the role to `MUSIC` and expect it to fail on the second.
+2. In `reconnect`, `save` before `ping`. Expect `aServerThatCannotBeReachedIsRefusedAndChangesNothing`
+   to fail, and to leave the emulator's app unusable until the journey's own teardown repairs it —
+   which is the point, and is why this mutation is run last.
+3. Delete the `resetForNewServer()` call. Expect a mirror-staleness assertion to fail. Add one if
+   the journey does not have it: reconnect to the same server under a different base URL spelling
+   and assert the album list is rebuilt rather than kept.
+4. In `resetForNewServer`, also delete `media_progress`. Expect `SyncEngineResetTest` to fail on the
+   position assertion. **This mutation is the reason that test exists.**
+5. Delete the `@Multibinds` declaration. Expect the Hilt graph to fail to compile with no
+   contributors — proving the empty-set case is handled by declaration and not by luck.
+6. Point `SubsonicAuth.authParams` back at its own body instead of the method. Expect
+   `SubsonicAuthMethodTest`'s delegation assertion to fail while every other auth test stays green,
+   which is exactly the shape of "this refactor is a rename".
+
+- [ ] **Step 9: Floors and commit**
+
+`:feature:settings` is a new module, so `ConventionTest`'s *every Gradle project has a coverage
+floor* fails until it has an entry. BRANCH over `SettingsUiStateKt` and `SettingsViewModel`, LINE
+over `SettingsScreenKt`, both measured from a real report, `requiresInstrumentedData` measured
+rather than judged. `.github/workflows/e2e.yml` runs `:app`'s suite whole, so `SettingsJourneyTest`
+needs no workflow change — confirm that rather than assuming it.
+
+**Do not correct spec §9's module list in this task.** It is corrected in the same repair commit
+that gave this task its ruling (`feature/search` consolidated into `:feature:library`,
+`feature/settings` now owned here), and correcting it twice would leave one of the two edits
+looking like a conflict.
+
+```bash
+./gradlew :feature:settings:test :core:network:test
+./gradlew :core:database:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+git add settings.gradle.kts feature/settings core app build.gradle.kts .github/workflows
+git commit -m "feat(settings): change the server, and re-tag a library that was tagged wrong"
+```
+
+---
+
 ## Definition of done
 
 1. All tasks' tests pass; **both tiers green**.
@@ -8304,7 +8788,19 @@ git commit -m "ci: the nightly OpenAPI drift check spec §10 has always claimed"
    motivates the non-null `Int` is itself pinned by a live assertion.
 8. Anything discovered to be wrong in the spec is corrected **in the spec** — §4's
    `musicFolderId` trap and §10's oracle claim, at minimum.
-9. **The oracle has a scheduled way of ageing visibly.** `.github/workflows/openapi-drift.yml`
+9. **A mis-tagged library is recoverable** (Task 11). `:feature:settings` exists, spec §9's module
+   list is no longer describing something nobody built, and the Tier 2 journey proves the recovery
+   in **both** directions — re-tag Audiobooks as Music and the book appears in that library's
+   shuffle; tag it back and it is gone. Changing the server URL verifies with `ping` before storing
+   anything and throws the mirror away when the base URL moved, **without touching
+   `media_progress`** — that last is asserted, because a reset that quietly took the audiobook
+   positions with it would pass every other test in the task.
+10. **The auth layer has the seam spec §4 asks for.** `SubsonicAuthMethod` is a sealed interface
+    with one member, and the assertion that makes it a seam rather than a rename is that a
+    test-only second member changes what `SubsonicClient` puts on the wire with no edit to
+    `SubsonicClient`. Every existing auth assertion is unchanged; if one needed editing, the
+    refactor changed behaviour and is wrong.
+11. **The oracle has a scheduled way of ageing visibly.** `.github/workflows/openapi-drift.yml`
    exists, is scheduled, never runs on a pull request, reports on the quiet path as well as the
    loud one, and has been **watched report drift once** against a deliberately altered vendored
    copy. Spec §10 has claimed this check since it was written; until this task nothing implemented
