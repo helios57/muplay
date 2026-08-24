@@ -9,6 +9,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.model.LibraryRole
+import app.muplay.setup.LibraryRepositoryEntryPoint
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.runBlocking
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -56,6 +62,33 @@ class FirstRunJourneyTest {
   @get:Rule
   val composeRule = createAndroidComposeRule<MainActivity>()
 
+  /**
+   * Resets every library back to [LibraryRole.UNASSIGNED] before each test.
+   *
+   * The Room database this app writes to is a real file on the emulator, shared by every test
+   * method in this class across the *same* instrumentation process -- unlike the Activity, which
+   * `composeRule` relaunches fresh per test, nothing recreates the database between methods.
+   * JUnit4 does not guarantee method execution order (no `@FixMethodOrder` is declared here, nor
+   * should there be one for a black-box journey), so a test that tags every library --
+   * [completingEveryTagReachesReadyAndShowsSetupComplete], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
+   * -- can and did run before a later test that needs a fresh, untagged start: observed directly,
+   * the first version of this suite without this reset flaked exactly that way, with
+   * `Continue` already enabled before either role chip had been tapped.
+   *
+   * Reached through [LibraryRepositoryEntryPoint] (declared in `:feature:setup`, not here) — see
+   * that interface's own doc for why an `@EntryPoint` declared in this `androidTest` source set
+   * cannot be used the same way: it would not be part of the real `MuPlayApplication`'s generated
+   * Hilt component at all.
+   */
+  @Before
+  fun resetLibraryTagging() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+    val libraryRepository =
+      EntryPointAccessors.fromApplication(context, LibraryRepositoryEntryPoint::class.java)
+        .libraryRepository()
+    libraryRepository.allIds().forEach { id -> libraryRepository.setRole(id, LibraryRole.UNASSIGNED) }
+  }
+
   @Test
   fun firstRunConnectsToNavidromeAndListsBothSeededLibraries() {
     connectAs(PASSWORD)
@@ -77,6 +110,29 @@ class FirstRunJourneyTest {
     // specifically, per the ordering documented on those constants.
     composeRule.onAllNodesWithText("Music")[MUSIC_LIBRARY_NAME].assertIsDisplayed()
     composeRule.onAllNodesWithText("Audiobooks")[AUDIOBOOKS_LIBRARY_NAME].assertIsDisplayed()
+  }
+
+  /**
+   * Walks all the way to [app.muplay.setup.SetupUiState.Ready] and checks what actually renders
+   * there, not just that the state transition happened.
+   *
+   * This closes a real gap, not a hypothetical one: without this test, JaCoCo still reported
+   * `SetupScreenKt`'s `is SetupUiState.Ready ->` source line as "covered", because Kotlin compiles
+   * an exhaustive sealed `when` as a chain of `instanceof` checks -- the `Ready` check itself runs
+   * on *every* composition regardless of which state is current, so the line lit up green while
+   * the branch it guards, and the text it renders, had never once executed. A metric that is green
+   * without the behaviour it names being real is exactly the failure mode this project keeps
+   * finding.
+   */
+  @Test
+  fun completingEveryTagReachesReadyAndShowsSetupComplete() {
+    connectAs(PASSWORD)
+
+    composeRule.onAllNodesWithText("Music")[MUSIC_ROLE_CHIP].performClick()
+    composeRule.onAllNodesWithText("Audiobooks")[AUDIOBOOK_ROLE_CHIP].performClick()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
+
+    composeRule.onNodeWithText("Setup complete").assertIsDisplayed()
   }
 
   @Test

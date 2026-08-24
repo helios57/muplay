@@ -15,6 +15,7 @@ import app.muplay.network.SubsonicErrorException
 import app.muplay.network.SubsonicHttpException
 import app.muplay.network.SubsonicSource
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -156,6 +157,22 @@ class SetupViewModelTest {
   }
 
   @Test
+  fun `setting a role before any connection has succeeded stores it but touches no screen state`() =
+    runTest(dispatcher) {
+      // setRole's `serverInfo?.let { ... }` guard is what stops this from crashing: there is no
+      // server identity yet to rebuild a Tagging state around. The role is still forwarded --
+      // libraries.setRole itself does not depend on serverInfo -- so only the *screen state*
+      // update is guarded, not the write.
+      val vm = viewModel(StubSource({ error("must not be called") }))
+
+      vm.setRole(1, LibraryRole.MUSIC)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(vm.uiState.value).isEqualTo(SetupUiState.Idle)
+      assertThat(libraries.roles).containsEntry(1, LibraryRole.MUSIC)
+    }
+
+  @Test
   fun `continuing before everything is tagged does nothing`() = runTest(dispatcher) {
     // An untagged library is invisible to every browse and shuffle path, so letting the user past
     // this screen would hand them an app that silently shows nothing.
@@ -251,5 +268,21 @@ class SetupViewModelTest {
 
     assertThat(vm.uiState.value)
       .isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
+  }
+
+  @Test
+  fun `a cancelled connection is never reported as a failure`() = runTest(dispatcher) {
+    // CancellationException is a java.lang.Exception, so a `catch (e: Exception)` clause with no
+    // earlier, more specific catch would swallow it and report Unreachable -- exactly the bug
+    // connect's explicit `catch (e: CancellationException) { throw e }` exists to prevent.
+    // Rethrowing inside a launched coroutine is ordinary cooperative cancellation, not an
+    // uncaught failure, so this does not fail the test: nothing after the throw ever runs, and
+    // uiState is left wherever connect's synchronous half already put it.
+    val vm = viewModel(StubSource({ throw CancellationException("cancelled") }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isEqualTo(SetupUiState.Connecting)
   }
 }
