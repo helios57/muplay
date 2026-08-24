@@ -175,7 +175,13 @@ and again in the Interfaces block of every task that touches it.
 
 1. **Whatever Plan 4 binds as the production `ResumePolicy`.** Task 9 must decorate that binding,
    not `NeverResume` specifically. If Plan 4 provides it under a Hilt qualifier, decorate the
-   qualified binding.
+   qualified binding. Task 9 does this by **re-annotating** the existing provider
+   `@UndecoratedResumePolicy` and re-binding the unqualified `ResumePolicy` to the decorator, so
+   that the graph keeps exactly one unqualified binding and it is the one `MuPlayerFactory` gets.
+   *Adding* a second `@Provides ResumePolicy` alongside Plan 4's is a Hilt duplicate-binding
+   failure; leaving Plan 4's as the unqualified one is worse, because the decorator then arms an
+   object the local player never consults and the return leg restarts from zero, silently. See
+   Task 9 Step 2, "The binding is the whole feature".
 2. **`ResumePolicy.resolve`'s signature.** Plan 3 specifies
    `resolve(mediaIds: List<String>, requestedIndex: Int): ResumeTarget`. If Plan 4 widens it — a
    `LibraryRole`, a `mediaType`, a per-item speed — `OneShotResumePolicy` must be widened to match
@@ -189,7 +195,9 @@ and again in the Interfaces block of every task that touches it.
 
 **Nothing in this plan may define a `ResumePolicy`, a progress writer, a per-book column, or a
 per-item speed mechanism of its own.** If a task seems to need one, it needs Plan 4 to have landed
-first.
+first. The single exception, stated so it is not mistaken for a violation: Task 9 **re-annotates**
+Plan 4's `provideResumePolicy` so its result becomes the decorator's delegate. The policy's body,
+its dependencies and its owner are untouched; only the name it is bound under changes.
 
 ---
 
@@ -318,7 +326,7 @@ Plan 6 is **casting**. Explicitly **not** in this plan:
 | `core/media/src/main/kotlin/app/muplay/media/cast/OneShotResumePolicy.kt` | **new** — the decorator that carries a position across a handover |
 | `core/media/src/main/kotlin/app/muplay/media/PlaybackOutputSwitch.kt` | **new** — the seam `MuPlaybackService` observes |
 | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | **modify** — observe the switch, `setPlayer`, move the writer |
-| `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | **modify** — the cast graph |
+| `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | **modify** — the cast graph, and the `ResumePolicy` binding moved behind `@UndecoratedResumePolicy` so the unqualified one is `OneShotResumePolicy` (Task 9) |
 | `feature/castpicker/build.gradle.kts` | **new** |
 | `feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastUiState.kt` | **new** |
 | `feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastViewModel.kt` | **new** |
@@ -9886,7 +9894,13 @@ git commit -m "feat(cast): a renderer that is a Media3 Player, and a speaker tha
   - `class PlaybackOutputSwitch @Inject constructor()` with `val activePlayer: StateFlow<Player?>`,
     `fun installLocal(player: Player)`, `fun installRemote(player: Player)`, `fun current(): Player?`
   - `class OneShotResumePolicy(private val delegate: ResumePolicy) : ResumePolicy` with
-    `fun armFor(mediaId: String, target: ResumeTarget)`
+    `fun armFor(mediaId: String, target: ResumeTarget)` and `fun disarm()`
+  - In `MediaModule`: `@Qualifier annotation class UndecoratedResumePolicy`, the existing
+    `@Provides ResumePolicy` **re-annotated** `@UndecoratedResumePolicy` (it is *not* deleted and
+    *not* duplicated), `@Provides @Singleton fun provideOneShotResumePolicy(@UndecoratedResumePolicy
+    delegate: ResumePolicy): OneShotResumePolicy`, and
+    `@Provides fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot`.
+    One unqualified `ResumePolicy` binding before, one after.
   - `class CastSessionManager @Inject constructor(...)` with
     `val state: StateFlow<CastSessionState>`, `suspend fun castTo(device: CastDevice)`,
     `suspend fun stopCasting()`, and internal `handleSessionEnded(CastSessionState)`
@@ -9900,6 +9914,9 @@ are explicitly not fixed, and each is handled by depending on a shape rather tha
 1. **What Plan 4 binds as the production `ResumePolicy`.** `OneShotResumePolicy` takes a `delegate`
    and is installed *around* whatever is bound. If Plan 4 introduces a Hilt qualifier, decorate the
    qualified binding. **Do not** decorate `NeverResume` by name.
+   *What is fixed* is the **shape** of that installation, and it is not optional — see
+   "The binding is the whole feature" below. Decorating a policy that nothing injects is a silent
+   no-op, so this task **rebinds** the existing provider rather than adding a second one.
 2. **Whether `ResumePolicy.resolve` keeps its signature.** If Plan 4 widens it — a `LibraryRole`, a
    `mediaType`, a per-item speed — widen `OneShotResumePolicy` identically. It is a decorator; it
    has no signature of its own, and inventing one would fork the interface.
@@ -10188,10 +10205,80 @@ class PlaybackOutputSwitch @Inject constructor() {
 }
 ```
 
+#### The binding is the whole feature
+
+A decorator that nothing injects is a decorator that does nothing, and it fails **silently**. This
+is the one part of the task that has no test of its own until Step 3, so it is written out here in
+full rather than left to a worker to infer from "decorate whatever is bound".
+
+Two facts make the wiring load-bearing:
+
+- `CastSessionManager` injects `OneShotResumePolicy` **by concrete type** and calls `armFor(...)`.
+- The local player gets its policy from `MuPlayerFactory`'s injected **`ResumePolicy`** (Plan 3
+  Task 8's fourth constructor parameter).
+
+Unless those two are the **same object**, the outbound leg still works by accident — `castTo`
+builds the remote `MuPlayer(…, oneShot)` by hand, so the armed target is in the policy that player
+holds — while the **return** leg in `handBackTo` arms `oneShot` and then calls
+`local.setMediaItems(...)`, which consults the *bound* policy. That is the undecorated one, so it
+answers the ordinary resume and the track restarts from zero. Coming back from a speaker losing the
+listener's place is exactly the defect this task exists to fix; it would ship green.
+
+`core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` — **re-annotate one provider and add
+two.** Do not add a second unqualified `@Provides ResumePolicy`: Hilt fails the build on duplicate
+bindings, and that is the *good* outcome — the bad one is the silent mismatch above.
+
+```kotlin
+/**
+ * The policy the cast decorator wraps. Whatever the resume plan bound as *the* `ResumePolicy` keeps
+ * its body and its provenance and gains this annotation; nothing else about it changes.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class UndecoratedResumePolicy
+
+  // Plan 3 shipped `NeverResume` here; Plan 4 replaced the body with `AudiobookResumePolicy`.
+  // This task changes neither body — only which name it is bound under.
+  @Provides
+  @Singleton
+  @UndecoratedResumePolicy
+  fun provideUndecoratedResumePolicy(/* whatever the resume plan's provider takes */): ResumePolicy =
+    /* whatever the resume plan's provider returns, unchanged */
+
+  /**
+   * `@Singleton` because [CastSessionManager] arms *this instance* and the local player must be
+   * asking *this instance*. An unscoped binding would hand out two decorators over one delegate and
+   * the return leg would resume from zero.
+   */
+  @Provides
+  @Singleton
+  fun provideOneShotResumePolicy(
+    @UndecoratedResumePolicy delegate: ResumePolicy,
+  ): OneShotResumePolicy = OneShotResumePolicy(delegate)
+
+  /** The only unqualified `ResumePolicy` in the graph — so `MuPlayerFactory` gets the decorator. */
+  @Provides
+  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot
+```
+
+**If the resume plan landed a Hilt qualifier of its own**, keep it: annotate its provider with both,
+and inject `@ThatQualifier @UndecoratedResumePolicy`. The rule is not "use this annotation", it is
+*"exactly one unqualified `ResumePolicy` exists and it is the decorator"*.
+
+**If the resume plan has not landed yet**, the provider being re-annotated is Plan 3's
+`provideResumePolicy(): ResumePolicy = NeverResume`. Re-annotating it is not decorating
+`NeverResume` by name — the delegate is read out of the graph, so when the resume plan replaces the
+body the decorator wraps the new one with no edit here.
+
 - [ ] **Step 3: Write the failing handover test**
 
 `core/media/src/androidTest/kotlin/app/muplay/media/cast/HandoverTest.kt`, on the device, with a
 real `ExoPlayer`, a real `FakeRenderer`, a real in-memory Room and a real `MediaSession`.
+
+**Build `localPlayer` the way the app does — `playerFactory.create()`, through Hilt.** Constructing
+it as `MuPlayer(exo, OneShotResumePolicy(delegate))` by hand would make every return-leg assertion
+below pass against a decorator the app never installs, which is precisely the failure Step 2's
+binding section describes.
 
 ```kotlin
   @Test
@@ -10294,6 +10381,23 @@ real `ExoPlayer`, a real `FakeRenderer`, a real in-memory Room and a real `Media
     assertThat(onMain { localPlayer.currentPosition }).isBetween(43_000L, 50_000L)
     // ...and the speaker was told to stop, rather than left playing into an empty room.
     assertThat(fake.currentTransportState()).isEqualTo("STOPPED")
+  }
+
+  @Test
+  fun theLocalPlayerConsultsTheSamePolicyInstanceTheSessionManagerArms() {
+    // The wiring assertion, stated on the graph rather than on behaviour, because the behavioural
+    // symptom of getting it wrong -- the return leg restarting from zero -- reads as a resume bug
+    // rather than as a binding bug and would be chased in the wrong file. `armFor` here, and read
+    // the answer out of the *bound* policy, which is what `MuPlayer` asks.
+    val bound: ResumePolicy = boundResumePolicy   // @Inject lateinit var, unqualified
+    oneShot.armFor("track-1", ResumeTarget(startIndex = 0, startPositionMs = 42_000L))
+
+    val resolved = bound.resolve(listOf("track-1", "track-2"), requestedIndex = 0)
+
+    assertThat(resolved.startPositionMs).isEqualTo(42_000L)
+    // Same object, not merely same behaviour: two decorators over one delegate would answer this
+    // once and then diverge on the arming that matters.
+    assertThat(bound).isSameAs(oneShot)
   }
 
   @Test
@@ -10568,6 +10672,10 @@ Mutations:
 2. In `OneShotResumePolicy.resolve`, use `peek` instead of `getAndSet(null)`. Expect
    `an armed target wins over the delegate, once` and
    `theOneShotTargetIsSpentAndDoesNotLeakIntoTheNextQueue` to fail.
+2b. In `MediaModule`, drop `@Singleton` from `provideOneShotResumePolicy` so the decorator is
+   created per injection point. Expect `theLocalPlayerConsultsTheSamePolicyInstanceTheSessionManagerArms`
+   and `comingBackFromCastLandsOnTheSameSecondLocally` to fail — **the silent binding mismatch**,
+   caught. Without this probe the binding section of Step 2 is unenforced prose.
 3. In `OneShotResumePolicy.resolve`, apply the armed target even when the media id is absent.
    Expect `an armed target for a media id that is not in the new queue is discarded` to fail.
 4. In `OneShotResumePolicy.resolve`, use `pending.target.startIndex` rather than the looked-up
