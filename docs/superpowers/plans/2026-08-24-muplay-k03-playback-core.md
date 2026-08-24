@@ -100,16 +100,18 @@ Copied verbatim from the roadmap's **Definition of done, per plan**:
 | 9 | `:feature:player` — the Compose player UI over a `MediaController` | a player and a mini player, with no `ExoPlayer` reachable from a feature |
 | 10 | The gates — Tier 2 playback journeys, the coverage table, the spec corrections | audio advances on a real screen, in the background, and the spec is fixed |
 | 11 | ReplayGain — parsed, mirrored, and applied as a gain stage | two identical sine tracks, one tagged −6 dB, render at half the amplitude |
+| 12 | Transcoded seek via `timeOffset`, and an Opus file in the corpus | seeking inside a forced transcode lands where the user asked, or is not offered |
 
-> **Why 11 comes after the gates task, and why nothing was renumbered.** A spec-coverage audit
+> **Why 11 and 12 come after the gates task, and why nothing was renumbered.** A spec-coverage audit
 > (`.superpowers/sdd/2026-08-24-muplay-k02-library-browse/spec-coverage-audit.md`) found spec §4's
-> ReplayGain sentence owned by **no** plan: this plan deferred it to Plan 4, and Plan 4 deferred it
-> back. The ruling put it here, because this plan owns audio processing. It arrives as Task 11
-> rather than being slotted in beside the tasks it belongs next to because **four plans this repair
-> may not edit reference this plan's tasks by number** — Plan 4 builds on "Plan 3 Task 8", Plan 6 on
-> "Plan 3 Task 9" and "Plan 3 Task 10". Renumbering would silently redirect every one of those. So
-> the numbers stand, and Task 11 carries **its own** journey, coverage-floor and spec-correction
-> steps rather than reaching back into Task 10's.
+> ReplayGain sentence and its transcoded-seek sentence owned by **no** plan: this plan deferred both
+> to other plans, and those plans deferred them back. The ruling put both here, because this plan
+> owns audio processing and this plan is the one that streams a transcode. They arrive as Tasks 11
+> and 12 rather than being slotted in beside the tasks they belong next to because **four plans this
+> repair may not edit reference this plan's tasks by number** — Plan 4 builds on "Plan 3 Task 8",
+> Plan 6 on "Plan 3 Task 9" and "Plan 3 Task 10". Renumbering would silently redirect every one of
+> those. So the numbers stand, and Tasks 11 and 12 each carry **their own** journey, coverage-floor
+> and spec-correction steps rather than reaching back into Task 10's.
 
 ---
 
@@ -308,7 +310,7 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 | `app/src/androidTest/kotlin/app/muplay/PlaybackJourneyTest.kt` | **new** — Tier 2: audio advances, notification, backgrounding |
 | `.github/workflows/e2e.yml` | **modify** — `:core:media:connectedDebugAndroidTest`, `pm grant` for notifications |
 | `ci/mutation-probes.sh` | **modify** — the probes this plan's fields earn |
-| `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` | **modify** — §10's Tier 1/Tier 2 tables, and the corrections Tasks 10 and 11 list |
+| `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` | **modify** — §10's Tier 1/Tier 2 tables, and the corrections Tasks 10, 11 and 12 list |
 | `core/model/src/main/kotlin/app/muplay/model/ReplayGain.kt` | **new** (Task 11) — the four numbers the server reports, and nothing else |
 | `core/model/src/main/kotlin/app/muplay/model/Song.kt` | **modify** (Task 11) — one nullable `replayGain` field |
 | `core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt` | **modify** (Task 11) — the OpenSubsonic `replayGain` object on `Child` |
@@ -316,8 +318,12 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 | `core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt` | **new** (Task 11) — dB to a linear multiplier, clamped by peak. Pure, no Android type |
 | `core/media/src/main/kotlin/app/muplay/media/GainAudioProcessor.kt` | **new** (Task 11) — the gain stage in the audio pipeline |
 | `core/media/src/main/kotlin/app/muplay/media/ReplayGainController.kt` | **new** (Task 11) — sets the stage's gain from the current item |
-| `ci/seed-fixtures.sh`, `ci/fixtures.md5`, `ci/configure-libraries.sh` | **modify** (Task 11) — one ReplayGain-tagged track, and the scan count that waits for it |
+| `core/network/src/main/kotlin/app/muplay/network/SubsonicSource.kt` | **modify** (Task 12) — `streamUrl` gains `timeOffsetSeconds` |
+| `core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt` | **new** (Task 12) — the pure decision: re-issue, seek in place, or refuse |
+| `core/media/src/main/kotlin/app/muplay/media/MuPlayer.kt` | **modify** (Task 12) — the seek and position overrides that make an offset stream honest |
+| `ci/seed-fixtures.sh`, `ci/fixtures.md5`, `ci/configure-libraries.sh` | **modify** (Tasks 11 and 12) — one ReplayGain-tagged track, one Opus track, and the scan count that waits for them |
 | `app/src/androidTest/kotlin/app/muplay/ReplayGainJourneyTest.kt` | **new** (Task 11) — the measurement, on a real decoder |
+| `app/src/androidTest/kotlin/app/muplay/TranscodeSeekJourneyTest.kt` | **new** (Task 12) — a seek inside a forced transcode, on a real screen |
 
 ---
 
@@ -385,15 +391,29 @@ because a media cache that never hits re-downloads whole tracks. Task 3 is where
 `setCustomCacheKey` closes it; Step 2's `two urls for the same song carry different salts` is the
 committed assertion that makes the reason visible from here.
 
-### What this task deliberately does not add
+### What this task does not add, and which task does
 
-**`timeOffset`.** Spec §4 says transcoded seek uses `timeOffset` (the `transcodeOffset`
-extension) and means re-issuing the URI. That is true and it stays true — but nothing in this plan
-streams a transcode it then seeks: Trap 2's Opus path is the only transcode Plan 3 can produce,
-and an Opus library is not in the CI corpus. A parameter with no caller, negotiated against a
-capability with no consumer, is exactly the speculative work the constraints rule out. The plan
-that streams a transcode and seeks it adds `timeOffset` and the `transcodeOffset` capability gate
-together, at the point both are used.
+**`timeOffset` — Task 12 of this plan.** Spec §4 says transcoded seek uses `timeOffset` (the
+`transcodeOffset` extension) and means re-issuing the URI rather than `AVTransport::Seek`. This
+paragraph used to defer that to *"the plan that streams a transcode and seeks it"* without naming
+one, and a spec-coverage audit found the consequence: **no plan claimed it.** Plan 6 seeks a cast
+stream with `AVTransport::Seek`/`REL_TIME` — the mechanism the spec sentence explicitly contrasts
+*against* — so Plan 6 is not the owner either. The plan that streams a transcode and seeks it is
+**this one**: Trap 2's Opus path is a transcode this plan produces, and the player this plan builds
+is the thing that seeks.
+
+The audit rated this the worst finding it made, and the reasoning is worth carrying: seeking inside
+a forced transcode either does nothing or lands in the wrong place, **with nothing reported** —
+the silent-wrong-answer class this plan is written against. It affects **every Opus track**, because
+"Never Opus" forces `format=mp3`. And there is no Opus file in the CI corpus, so no gate could ever
+see it. Task 12 therefore adds **both** the behaviour and the fixture, because a gate that cannot
+see the failing case is not a gate — a lesson this project has now learned in eleven separate
+places.
+
+**This task still sends no `timeOffset`**, and Step 5 pins its absence, because Task 1's
+`streamUrl(songId, format)` is the no-offset call and must stay one. Task 12 adds the offset as an
+explicit third parameter with its own assertions; it does not change what this task's two-argument
+call puts on the wire.
 
 - [ ] **Step 1: Write the failing format-policy test**
 
@@ -670,12 +690,16 @@ class StreamUrlTest {
   }
 
   /**
-   * `timeOffset` belongs to the plan that seeks a transcode; it has no caller in this one. Pinned
-   * as absent rather than left unmentioned, so that adding it is a deliberate act with a test to
-   * change, not a drive-by.
+   * A stream request that asks for no offset carries no `timeOffset`.
+   *
+   * Task 12 adds transcoded seek and makes `timeOffset` a real parameter; this assertion is about
+   * the *other* half of that — the ordinary call must not start smuggling an offset onto every URL,
+   * because a `timeOffset` on a `format=raw` request is a parameter the server ignores and a reader
+   * misinterprets. Pinned here rather than left unmentioned so that Task 12 has a test to extend
+   * rather than a silence to fill.
    */
   @Test
-  fun `timeOffset is not sent by this plan`() {
+  fun `a request that asks for no offset sends no timeOffset`() {
     assertThat(url().queryParameter("timeOffset")).isNull()
   }
 
@@ -811,8 +835,10 @@ and `import app.muplay.model.StreamFormat`:
    * - **`estimateContentLength`.** It makes a transcoded response carry a *guessed*
    *   `Content-Length`. ExoPlayer trusts that header for seeking, so a guess produces seeks that
    *   land in the wrong place with nothing reported anywhere.
-   * - **`timeOffset`.** Only reachable on a transcode this plan does not seek; the plan that seeks
-   *   one adds it together with the `transcodeOffset` capability gate.
+   * - **`timeOffset`.** Only meaningful on a transcode, and only when the server advertises the
+   *   `transcodeOffset` extension. Task 12 adds it as an explicit parameter alongside that
+   *   capability gate; a request that does not ask for an offset must not carry one, because on a
+   *   `format=raw` request the server ignores it and a reader misreads it.
    * - **`maxBitRate` on a raw request.** `format=raw` disables transcoding, so a bitrate cap
    *   beside it is a parameter the server ignores and a reader misreads.
    */
@@ -8681,12 +8707,708 @@ git commit -m "feat(media): apply ReplayGain, from the file's own tags to the au
 
 ---
 
+## Task 12: Transcoded seek via `timeOffset`, and an Opus file in the corpus
+
+**Files:**
+- Modify: `core/network/src/main/kotlin/app/muplay/network/SubsonicSource.kt`
+- Modify: `core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt`
+- Modify: `core/network/src/test/kotlin/app/muplay/network/StreamUrlTest.kt`
+- Modify: `core/network/src/test/kotlin/app/muplay/network/LiveNavidromeTest.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/TranscodeOffsetSupport.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MediaItems.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlayer.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt`
+- Test: `core/media/src/test/kotlin/app/muplay/media/TranscodeSeekTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/TranscodeSeekPlaybackTest.kt`
+- Create: `app/src/androidTest/kotlin/app/muplay/TranscodeSeekJourneyTest.kt`
+- Modify: `ci/seed-fixtures.sh`, `ci/fixtures.md5`, `ci/configure-libraries.sh`
+- Modify: `build.gradle.kts`, `ci/mutation-probes.sh`
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`
+
+**Interfaces:**
+- Consumes: `StreamFormat` (Task 1), `SubsonicSource.streamUrl` (Task 1), `SubsonicSourceProvider`
+  (`:core:database`, Plan 2 Task 4), `CapabilityNegotiator` and `ServerCapabilities.supports`
+  (`:core:network` / `:core:model`, **Plan 1 — committed, and until this task it had no caller at
+  all**), `MuPlayer` and `ResumePolicy` (Task 8), `CapturingAudioSink` and `PlayerHarness`
+  (Tasks 2 and 7).
+- Produces:
+  - `SubsonicSource.streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int? = null): String`
+  - `SubsonicSource.capabilities(): ServerCapabilities` — one `suspend` method, so the negotiation
+    Plan 1 built has a way into the running app
+  - `sealed interface SeekMethod` with `data object InPlace`,
+    `data class ReissueWithOffset(val timeOffsetSeconds: Int)`, `data object NotOffered`
+  - `object TranscodeSeek` with
+    `fun methodFor(formatWireValue: String, serverSupportsTranscodeOffset: Boolean, targetPositionMs: Long): SeekMethod`
+  - `@Singleton class TranscodeOffsetSupport` with `suspend fun refresh()`, `val isSupported: Boolean`,
+    `companion object { const val EXTENSION = "transcodeOffset" }`
+  - `MuPlayer` gains a third constructor parameter `transcodeSeek: TranscodeSeekSupport = TranscodeSeekSupport.None`
+    and overrides `seekTo`, `getCurrentPosition`, `getContentPosition`, `getBufferedPosition`,
+    `getDuration`, `getContentDuration`, `isCommandAvailable` and `getAvailableCommands`
+  - `MediaItems.KEY_STREAM_FORMAT` — the wire value the item's URI was built with
+- **Plan 6 interaction:** none, and that is the point. Plan 6 seeks a **cast** stream with
+  `AVTransport::Seek`/`REL_TIME`, which is the mechanism spec §4's sentence explicitly contrasts
+  `timeOffset` *against*. Those are two different seeks over two different transports and neither
+  is the other's implementation. Nothing in this task touches `:core:cast`.
+
+### The finding this task closes, and why it was invisible
+
+A spec-coverage audit rated this **the worst thing it found**. Spec §4:
+
+> Transcoded seek uses `timeOffset` (the `transcodeOffset` extension), which means re-issuing the
+> URI, not `AVTransport::Seek`.
+
+Task 1 of this plan deferred it to *"the plan that streams a transcode and seeks it"*. Plan 6 was
+read as that plan because it seeks — but it seeks a **renderer**, using the very mechanism the
+sentence contrasts against, and it never mentions `timeOffset`. So the requirement belonged to
+nobody, and three things conspired to keep that invisible:
+
+1. **Every forced transcode is an Opus track**, because "Never Opus" makes `StreamFormat.forSuffix`
+   return `Mp3` for `opus` and `ogg` and for nothing else.
+2. **There is no Opus file in the CI corpus**, so no gate has ever streamed a transcode it then
+   seeked. Task 1's live test transcodes an *MP3* to prove `Accept-Ranges: none`; it never seeks it.
+3. **The failure is silent.** A live transcode has no `Content-Length` and refuses ranges, so
+   ExoPlayer's seek either does nothing or resolves against a length it does not have. Nothing
+   throws. The seek bar moves and the audio does not.
+
+So this task adds **both halves**, and the fixture is not optional garnish: *a gate that cannot see
+the failing case is not a gate.* This project has now found eleven gates that reported success by
+never running, and shipping the behaviour without the Opus file would make it twelve.
+
+### The three answers, and why "silently do nothing" is not one of them
+
+```
+InPlace             raw stream. Navidrome honours Range on format=raw -- Task 1 proved it live.
+ReissueWithOffset   transcode + the server advertises transcodeOffset. Re-issue the URI at the
+                    offset; the new stream starts at 0 and the player reports offset + position.
+NotOffered          transcode + no transcodeOffset. The seek command is REMOVED from the player.
+```
+
+Spec §4 says *"unsupported features are silent no-ops, not errors"*, and `NotOffered` is what that
+rule looks like when it is applied honestly. A silent no-op **on a seek** is a silent wrong answer:
+the user drags the bar, the bar moves, the audio does not, nothing is reported. The honest reading
+of the rule is "do not raise an error at the user", and the strongest form of that is **do not offer
+the command** — `isCommandAvailable(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)` returns `false`, Media3's
+own transport controls disable the seek bar without this project writing a line of UI, and the user
+is told by the interface rather than misled by it.
+
+This is also, as of this task, the **first caller of `ServerCapabilities.supports`** anywhere in the
+project. Plan 1 built the three-tier negotiation and stored the versions list rather than a boolean;
+nothing has ever asked it a question. `transcodeOffset` is the one capability gate spec §4 names, so
+it is the right first question — and the pinned `deluan/navidrome:0.63.2` advertises the extension
+(Plan 1 Task 5 recorded it by name), which is what makes the live assertions below possible at all.
+
+### The seam this does not break
+
+`MuPlayer` exists so that **no caller-supplied position can reach the player** (spec §3). Re-issuing
+a URI at an offset looks like it punches through that, and it must not. It does not, and the reason
+is worth stating: the re-issued item is prepared at position **0** — the offset lives in the *URI*,
+not in a `seekTo` argument — and the base is held by `MuPlayer` itself, which is the seam. The call
+goes to the wrapped player rather than through `MuPlayer.setMediaItem` precisely because it is not a
+new user request: nothing about which item or which position is being decided here that the seam has
+not already decided.
+
+- [ ] **Step 1: Put an Opus file in the corpus**
+
+`ci/seed-fixtures.sh` — a **10 s file whose first 5 s are silent**. That shape is the whole point:
+it makes the fixture a *positional* oracle rather than a length one. Seek to 5 s and the first frames
+out of the decoder are a tone; fail to seek and they are silence. A test that only counted frames
+would pass against a seek that landed in the wrong place.
+
+```bash
+# The Opus track. Its reason for existing is that `StreamFormat.forSuffix` forces `format=mp3`
+# for `opus` -- so it is the ONLY file in this corpus that reaches Navidrome's transcoder on the
+# path a user actually takes, and therefore the only one that can prove a transcoded seek.
+#
+# 5 s of silence then 5 s of 440 Hz. That makes it a POSITIONAL oracle: after a seek to 5 s the
+# first frames the decoder emits are a tone, and after a seek that did nothing they are silence.
+# A frame count alone cannot tell those apart. `-bitexact` matters twice here -- Ogg embeds a
+# random stream serial without it, which this script's own header already warns about.
+mkdir -p "$OUT/Music/Test Artist/Offset Album"
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=10:sample_rate=48000" \
+  -af "volume=enable='lt(t,5)':volume=0" \
+  -c:a libopus -b:a 64k -ac 1 -bitexact -map_metadata -1 \
+  -metadata title="Offset Track" -metadata artist="Test Artist" \
+  -metadata album="Offset Album" -metadata track="1" \
+  "$OUT/Music/Test Artist/Offset Album/01 - Offset Track.opus"
+```
+
+`ci/configure-libraries.sh` — the scan-convergence count moves again: **5 → 6** if Task 11 has
+landed, **4 → 5** if it has not. Read the literal that is there rather than assuming which.
+
+Regenerate `ci/fixtures.md5`, confirm **no existing hash moved**, and then confirm three things
+against the live container before writing a line of Kotlin, because each is an assumption and each
+is one `curl` away:
+
+```bash
+./ci/seed-fixtures.sh
+docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
+# 1. Navidrome scanned the .opus file at all.
+curl -s ".../rest/search3.view?query=Offset&..." | grep -i 'Offset Track'
+# 2. The server still advertises the extension this task gates on.
+curl -s ".../rest/getOpenSubsonicExtensions.view?..." | grep -i transcodeOffset
+# 3. A transcode with an offset returns fewer bytes than one without.
+curl -s -o /dev/null -w '%{size_download}\n' ".../rest/stream.view?id=<id>&format=mp3&..."
+curl -s -o /dev/null -w '%{size_download}\n' ".../rest/stream.view?id=<id>&format=mp3&timeOffset=5&..."
+```
+
+**If (2) or (3) does not hold, stop and write down what the server actually did.** The behaviour
+this task is built on is a server behaviour; discovering it is different is a finding for the spec,
+not a reason to weaken an assertion. Spec §12 rates "the server does not do what we assumed" as the
+class of risk this project spends its live tier on.
+
+> **Every existing live test that takes `getRandomSongs(...).first()` must now name its track.**
+> With five or six files in the Music library, `.first()` is a different file on different runs, and
+> a test that passes for an MP3 and fails for an Opus file is precisely the flake that gets a gate
+> disabled. `LiveNavidromeTest`'s `MUSIC_TITLES` allow-list and `PlaybackJourneyTest`'s copy of it
+> both gain the new titles; the `allMatch { it in MUSIC_TITLES }` assertion in
+> `shuffling the music library never returns the audiobook` is what goes red if you forget one, and
+> that is the assertion doing its job rather than being in the way.
+
+- [ ] **Step 2: Write the failing URL and capability tests**
+
+`core/network/src/test/kotlin/app/muplay/network/StreamUrlTest.kt` — extend Task 1's class. Its
+`a request that asks for no offset sends no timeOffset` stays exactly as it is and is now the
+control:
+
+```kotlin
+  @Test
+  fun `a transcode asked for an offset carries it, in seconds`() {
+    // Two observations: `timeOffset` hardcoded to "5" passes neither.
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 5).queryParameter("timeOffset"))
+      .isEqualTo("5")
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 137).queryParameter("timeOffset"))
+      .isEqualTo("137")
+  }
+
+  /**
+   * `format=raw` disables transcoding, and `timeOffset` only means anything to the transcoder. On a
+   * raw request it is a parameter the server ignores and a reader misreads — the same reasoning
+   * that keeps `maxBitRate` off a raw request.
+   */
+  @Test
+  fun `a raw request never carries a time offset even when one is asked for`() {
+    assertThat(url(format = StreamFormat.Raw, timeOffsetSeconds = 5).queryParameter("timeOffset"))
+      .isNull()
+  }
+
+  @Test
+  fun `a zero offset is sent, because it is a real request and not an absent one`() {
+    // `timeOffset=0` and no `timeOffset` produce the same audio, so this looks like a nicety. It
+    // is not: `0` is what "re-issue from the top" means, and mapping it to `null` would make the
+    // re-issue path silently untestable at its own boundary.
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 0).queryParameter("timeOffset"))
+      .isEqualTo("0")
+  }
+```
+
+and, in `LiveNavidromeTest`, the assertion no unit test can make:
+
+```kotlin
+  /**
+   * The server behaviour the whole feature rests on: `timeOffset` starts the transcode later.
+   *
+   * Measured as **bytes**, because a live transcode has no `Content-Length` to read and no
+   * duration to ask for — the body is all there is. The Opus fixture is ten seconds at a fixed
+   * bitrate, so an offset of five returns close to half of what an offset of zero returns. Two
+   * offsets, not one, because a server that ignored the parameter entirely returns the same size
+   * twice and a single observation cannot see that.
+   */
+  @Test
+  fun `a timeOffset shortens the transcoded body by about the offset`() = runTest {
+    val client = client("testpass")
+    val song = client.search3("Offset Track", musicFolderId = MUSIC_LIBRARY_ID, 0, 0, 10)
+      .songs.single { it.title == "Offset Track" }
+
+    val (_, whole) = fetch(client.streamUrl(song.id, StreamFormat.Mp3(64), timeOffsetSeconds = 0))
+    val (response, tail) = fetch(client.streamUrl(song.id, StreamFormat.Mp3(64), timeOffsetSeconds = 5))
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(whole.size).isGreaterThan(1000)
+    assertThat(tail.size).isGreaterThan(1000)
+    assertThat(tail.size.toDouble() / whole.size).isBetween(0.35, 0.65)
+  }
+
+  /**
+   * The gate's own precondition, asserted rather than assumed: the pinned container advertises
+   * `transcodeOffset`. If a future pin stops advertising it, `NotOffered` becomes the answer for
+   * every transcode and the seek bar quietly disappears — which is correct behaviour and a
+   * terrible surprise. This test is where that gets noticed.
+   */
+  @Test
+  fun `the pinned container advertises the transcodeOffset extension`() = runTest {
+    assertThat(client("testpass").capabilities().supports(TranscodeOffsetSupport.EXTENSION)).isTrue
+  }
+```
+
+- [ ] **Step 3: Add the parameter and the capability accessor**
+
+`SubsonicSource` — `streamUrl` gains a **defaulted** third parameter, so Task 1's every existing call
+site is unchanged and the no-offset call stays the no-offset call:
+
+```kotlin
+  /**
+   * ... (Task 1's documentation, unchanged) ...
+   *
+   * [timeOffsetSeconds] is the `transcodeOffset` extension's `timeOffset`: it starts the
+   * **transcode** that many seconds in, which is the only way to seek a live transcode at all —
+   * one has no `Content-Length` and answers `Accept-Ranges: none`, so there are no byte ranges to
+   * seek with. It is ignored for [StreamFormat.Raw], where a real Range request is available and
+   * strictly better. Ask for it only when the server advertises `transcodeOffset`; see
+   * `:core:media`'s `TranscodeOffsetSupport` for the gate.
+   */
+  fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int? = null): String
+
+  /**
+   * The result of OpenSubsonic capability negotiation for this server.
+   *
+   * Plan 1 built the three-tier negotiation and `ServerCapabilities`; until this method existed,
+   * nothing in the running app could ask it anything, and spec §4's *"unsupported features are
+   * silent no-ops"* rule had never been applied to a Subsonic feature. This is the way in.
+   */
+  suspend fun capabilities(): ServerCapabilities
+```
+
+`SubsonicClient` — implement both. `capabilities()` delegates to Plan 1's negotiator rather than
+re-deriving anything: `override suspend fun capabilities(): ServerCapabilities = CapabilityNegotiator(this).negotiate()`.
+`streamUrl` gains one guarded line, placed with the other two conditional parameters:
+
+```kotlin
+    if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {
+      builder.addQueryParameter("timeOffset", timeOffsetSeconds.coerceAtLeast(0).toString())
+    }
+```
+
+Update the KDoc bullet Task 1 wrote for `timeOffset` — it says the parameter is absent; it is now
+conditional, and the condition is the interesting part.
+
+- [ ] **Step 4: Write the failing decision test**
+
+`core/media/src/test/kotlin/app/muplay/media/TranscodeSeekTest.kt` — pure, Tier 1:
+
+```kotlin
+package app.muplay.media
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+class TranscodeSeekTest {
+
+  @Test
+  fun `a raw stream seeks in place, whatever the server supports`() {
+    // Task 1 proved live that `format=raw` honours Range with a byte-exact 206. Re-issuing a URI
+    // for that would throw away a working seek and add a round trip.
+    assertThat(TranscodeSeek.methodFor("raw", serverSupportsTranscodeOffset = true, 5_000L))
+      .isEqualTo(SeekMethod.InPlace)
+    assertThat(TranscodeSeek.methodFor("raw", serverSupportsTranscodeOffset = false, 5_000L))
+      .isEqualTo(SeekMethod.InPlace)
+  }
+
+  @Test
+  fun `a transcode on a server that supports the extension is re-issued at the offset`() {
+    // Two targets, so an offset hardcoded to 5 passes neither.
+    assertThat(TranscodeSeek.methodFor("mp3", serverSupportsTranscodeOffset = true, 5_000L))
+      .isEqualTo(SeekMethod.ReissueWithOffset(5))
+    assertThat(TranscodeSeek.methodFor("mp3", serverSupportsTranscodeOffset = true, 137_400L))
+      .isEqualTo(SeekMethod.ReissueWithOffset(137))
+  }
+
+  @Test
+  fun `the offset floors rather than rounds`() {
+    // Flooring is not a rounding preference. The server starts the transcode at or before the
+    // second asked for, so the user never loses audio they asked to hear; rounding up would clip
+    // the first word of a sentence and there would be nothing to see.
+    assertThat(TranscodeSeek.methodFor("mp3", true, 5_999L)).isEqualTo(SeekMethod.ReissueWithOffset(5))
+  }
+
+  @Test
+  fun `a negative target is clamped rather than sent`() {
+    // `seekTo(-1)` is a legal call on a Media3 Player. `timeOffset=-1` is a server-side surprise.
+    assertThat(TranscodeSeek.methodFor("mp3", true, -1L)).isEqualTo(SeekMethod.ReissueWithOffset(0))
+  }
+
+  @Test
+  fun `a transcode on a server without the extension does not offer the seek at all`() {
+    // Spec §4 says unsupported features are silent no-ops, not errors. A silent no-op ON A SEEK is
+    // a silent wrong answer, so the honest form of that rule here is to withdraw the command and
+    // let the transport controls grey the bar out.
+    assertThat(TranscodeSeek.methodFor("mp3", serverSupportsTranscodeOffset = false, 5_000L))
+      .isEqualTo(SeekMethod.NotOffered)
+  }
+
+  @Test
+  fun `an item whose format is unknown seeks in place`() {
+    // A `MediaItem` this app did not build -- a resumed session restored by the system, say --
+    // carries no format extra. In place is the conservative answer: it is what every player did
+    // before this task, and it is right for the raw streams that are the overwhelming majority.
+    assertThat(TranscodeSeek.methodFor("", serverSupportsTranscodeOffset = true, 5_000L))
+      .isEqualTo(SeekMethod.InPlace)
+  }
+}
+```
+
+- [ ] **Step 5: Implement the decision, the gate, and the player overrides**
+
+`core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt`:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.model.StreamFormat
+
+/** How a seek on the current item has to be performed. */
+sealed interface SeekMethod {
+
+  /** Byte ranges work. Delegate to the wrapped player and change nothing. */
+  data object InPlace : SeekMethod
+
+  /** Re-issue the item's URI with `timeOffset`, and report positions relative to it. */
+  data class ReissueWithOffset(val timeOffsetSeconds: Int) : SeekMethod
+
+  /** A transcode on a server with no `transcodeOffset`. The command is withdrawn, not swallowed. */
+  data object NotOffered : SeekMethod
+}
+
+/**
+ * Spec §4: *"Transcoded seek uses `timeOffset` (the `transcodeOffset` extension), which means
+ * re-issuing the URI, not `AVTransport::Seek`."*
+ *
+ * Pure, and with no Android import, so Tier 1 sees every branch. The whole decision is three
+ * questions and it is here rather than inside `MuPlayer` because a `ForwardingPlayer` on a device
+ * is the most expensive place in this project to test a `when`.
+ */
+object TranscodeSeek {
+
+  fun methodFor(
+    formatWireValue: String,
+    serverSupportsTranscodeOffset: Boolean,
+    targetPositionMs: Long,
+  ): SeekMethod = when {
+    formatWireValue != StreamFormat.Mp3.WIRE_VALUE -> SeekMethod.InPlace
+    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered
+    else -> SeekMethod.ReissueWithOffset((targetPositionMs.coerceAtLeast(0L) / 1000L).toInt())
+  }
+}
+```
+
+> `StreamFormat.Mp3.WIRE_VALUE` is a `const` this task adds beside Task 1's `wireValue` property, so
+> that neither this file nor `MediaItems` compares against a string literal `"mp3"`.
+
+`TranscodeOffsetSupport` — the capability gate, refreshed once per session:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.database.SubsonicSourceProvider
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Whether this server can start a transcode part-way through.
+ *
+ * **Defaults to `false` and stays there until a negotiation succeeds.** That is the conservative
+ * direction: `false` withdraws the seek command on a transcode, which shows the user a disabled
+ * seek bar for a second or two after the service starts. `true` by default would offer a seek that
+ * silently does nothing, which is the failure this whole task exists to remove.
+ */
+@Singleton
+class TranscodeOffsetSupport @Inject constructor(
+  private val sourceProvider: SubsonicSourceProvider,
+) {
+
+  @Volatile private var supported: Boolean = false
+
+  val isSupported: Boolean get() = supported
+
+  /** Called from `MuPlaybackService.onCreate`. A failure leaves the conservative answer standing. */
+  suspend fun refresh() {
+    supported = runCatching { sourceProvider.current().capabilities().supports(EXTENSION) }
+      .getOrDefault(false)
+  }
+
+  companion object {
+    /** The one capability gate spec §4 names by name. */
+    const val EXTENSION = "transcodeOffset"
+  }
+}
+```
+
+`MuPlayer` — the seam gains a collaborator with an inert default, so every existing test in Task 8
+compiles and keeps meaning what it meant:
+
+```kotlin
+/**
+ * What `MuPlayer` needs to know to seek a transcode. Defaults to [None] — a player with no
+ * transcode support behaves exactly as it did before this task, which is what keeps Task 8's
+ * assertions about the six `setMediaItem(s)` overloads about those overloads.
+ */
+interface TranscodeSeekSupport {
+  fun methodFor(mediaItem: MediaItem, targetPositionMs: Long): SeekMethod
+  fun reissue(mediaItem: MediaItem, timeOffsetSeconds: Int): MediaItem
+
+  object None : TranscodeSeekSupport {
+    override fun methodFor(mediaItem: MediaItem, targetPositionMs: Long) = SeekMethod.InPlace
+    override fun reissue(mediaItem: MediaItem, timeOffsetSeconds: Int) = mediaItem
+  }
+}
+```
+
+and, inside `MuPlayer`:
+
+```kotlin
+  /**
+   * How far into the real track the wrapped player's zero is.
+   *
+   * Non-zero only while the current item is a re-issued transcode. **This does not weaken the seam**
+   * spec §3 asks for: the re-issued item is prepared at position `0`, the offset lives in the URI,
+   * and no caller-supplied position reaches the wrapped player. Reset on every item transition and
+   * by every `setMediaItem(s)` overload, because a stale base reports a position from the previous
+   * track.
+   */
+  private var offsetBaseMs: Long = 0L
+
+  override fun seekTo(positionMs: Long) = seekCurrentTo(positionMs)
+
+  override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+    if (mediaItemIndex != currentMediaItemIndex) {
+      offsetBaseMs = 0L
+      super.seekTo(mediaItemIndex, positionMs)
+      return
+    }
+    seekCurrentTo(positionMs)
+  }
+
+  private fun seekCurrentTo(positionMs: Long) {
+    val item = currentMediaItem ?: return super.seekTo(positionMs)
+    when (val method = transcodeSeek.methodFor(item, positionMs)) {
+      SeekMethod.InPlace -> {
+        offsetBaseMs = 0L
+        super.seekTo(positionMs)
+      }
+      // Withdrawn, not swallowed: `isCommandAvailable` already said no, so nothing in a
+      // well-behaved UI can reach this. Reaching it anyway must not move the bar.
+      SeekMethod.NotOffered -> Unit
+      is SeekMethod.ReissueWithOffset -> {
+        val index = currentMediaItemIndex
+        val wasPlaying = playWhenReady
+        offsetBaseMs = method.timeOffsetSeconds * 1000L
+        // `replaceMediaItem` rather than `setMediaItem`: the rest of the queue is untouched, so a
+        // seek inside track 4 of a shuffle does not discard tracks 5 onwards. And it goes to the
+        // wrapped player rather than through this class's own overrides because it is not a new
+        // request — nothing is being decided here that the seam has not already decided.
+        wrappedPlayer.replaceMediaItem(index, transcodeSeek.reissue(item, method.timeOffsetSeconds))
+        wrappedPlayer.seekTo(index, 0L)
+        wrappedPlayer.prepare()
+        wrappedPlayer.playWhenReady = wasPlaying
+      }
+    }
+  }
+
+  // Every position this player reports is real-track time. A UI that showed the re-issued
+  // stream's own clock would jump to 0:00 on every seek and count up from there, which is the
+  // "silent wrong answer" wearing a different hat.
+  override fun getCurrentPosition(): Long = offsetBaseMs + super.getCurrentPosition()
+  override fun getContentPosition(): Long = offsetBaseMs + super.getContentPosition()
+  override fun getBufferedPosition(): Long = offsetBaseMs + super.getBufferedPosition()
+
+  // ...and the duration is the whole track's, not what is left of it.
+  override fun getDuration(): Long = super.getDuration().takeIf { it == C.TIME_UNSET }
+    ?: (offsetBaseMs + super.getDuration())
+  override fun getContentDuration(): Long = super.getContentDuration().takeIf { it == C.TIME_UNSET }
+    ?: (offsetBaseMs + super.getContentDuration())
+
+  /**
+   * The honest form of spec §4's *"unsupported features are silent no-ops, not errors"*.
+   *
+   * Both this and [getAvailableCommands] are overridden, and both are needed: Media3's transport
+   * controls read the command set, and application code asks the single-command question. Answering
+   * them differently is a UI that disables a button the code still honours, or the reverse.
+   */
+  override fun isCommandAvailable(command: Int): Boolean =
+    if (command in SEEK_COMMANDS && seekIsUnavailable()) false else super.isCommandAvailable(command)
+
+  override fun getAvailableCommands(): Player.Commands =
+    if (seekIsUnavailable()) {
+      Player.Commands.Builder().addAll(super.getAvailableCommands())
+        .removeAll(*SEEK_COMMANDS.toIntArray()).build()
+    } else {
+      super.getAvailableCommands()
+    }
+
+  private fun seekIsUnavailable(): Boolean =
+    currentMediaItem?.let { transcodeSeek.methodFor(it, 0L) == SeekMethod.NotOffered } == true
+```
+
+with `private val SEEK_COMMANDS = setOf(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM, Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD)`
+in the companion. `MediaItems` stamps `KEY_STREAM_FORMAT` with the wire value it built the URI from,
+and the real `TranscodeSeekSupport` reads it, asks `TranscodeSeek.methodFor` and rebuilds the URI
+through `SubsonicSource.streamUrl(id, format, offset)`.
+
+`MuPlaybackService.onCreate` launches `transcodeOffsetSupport.refresh()` into the service scope.
+
+- [ ] **Step 6: Write the failing device measurement**
+
+`core/media/src/androidTest/kotlin/app/muplay/media/TranscodeSeekPlaybackTest.kt`, with a real
+ExoPlayer, a real Navidrome and Task 7's `CapturingAudioSink`. **This is the assertion that would
+have caught the shipped defect**, and it turns on the fixture's shape:
+
+```kotlin
+  /**
+   * Seek a forced transcode to five seconds and the audio starts at five seconds.
+   *
+   * The Opus fixture is five seconds of silence then five seconds of tone, so "did the seek land"
+   * is answerable from the amplitude of the first frames out of the decoder — no golden file, no
+   * timing, no trust in a position readout the player computes itself.
+   */
+  @Test
+  fun seekingAForcedTranscodeLandsWhereItWasAsked() {
+    val fromTheTop = capturePcmAfterSeek(offsetTrackId, seekToMs = 0L)
+    val fromFive = capturePcmAfterSeek(offsetTrackId, seekToMs = 5_000L)
+
+    // Before: silence. After: tone. This is the whole feature in two numbers.
+    assertThat(rmsOf(fromTheTop, from = 0, to = FIRST_200_MS_BYTES)).isLessThan(SILENCE_RMS)
+    assertThat(rmsOf(fromFive, from = 0, to = FIRST_200_MS_BYTES)).isGreaterThan(TONE_RMS)
+  }
+
+  @Test
+  fun theStreamAfterASeekIsShorterByTheOffset() {
+    // The second observation, and the one that fails if `timeOffset` reached the URL but the
+    // player kept the un-offset stream: a full-length body with a tone at the front is impossible.
+    val fromTheTop = capturePcmAfterSeek(offsetTrackId, seekToMs = 0L)
+    val fromFive = capturePcmAfterSeek(offsetTrackId, seekToMs = 5_000L)
+
+    assertThat(fromFive.size.toDouble() / fromTheTop.size).isBetween(0.35, 0.65)
+  }
+
+  /**
+   * The player's clock stays in real-track time across the re-issue. Without the position
+   * overrides the bar snaps back to 0:00 on every seek and counts up from there — a seek that
+   * worked, displayed as one that did not.
+   */
+  @Test
+  fun thePositionReadoutStaysInRealTrackTime() {
+    val player = playerFor(offsetTrackId)
+    onMain { player.seekTo(5_000L) }
+    awaitPositionAtLeast(player, 5_500L)
+
+    assertThat(onMain { player.currentPosition }).isGreaterThan(5_000L)
+    // Two observations, because a hardcoded offset base satisfies one.
+    onMain { player.seekTo(8_000L) }
+    awaitPositionAtLeast(player, 8_200L)
+    assertThat(onMain { player.currentPosition }).isGreaterThan(8_000L)
+  }
+
+  /**
+   * A raw stream must not be re-issued. Task 1 proved live that `format=raw` honours Range with a
+   * byte-exact 206; sending it down the re-issue path would replace a working seek with a round
+   * trip and a rebuffer.
+   */
+  @Test
+  fun aRawTrackStillSeeksInPlaceAndIssuesNoSecondRequest() {
+    val requests = countingDataSource()
+    val player = playerFor(songIdByTitle("Track 2"), requests)
+    onMain { player.seekTo(2_000L) }
+    awaitPositionAtLeast(player, 2_200L)
+
+    assertThat(requests.uriCount).isEqualTo(1)
+    assertThat(onMain { player.currentPosition }).isGreaterThan(2_000L)
+  }
+
+  /**
+   * The withdrawal, observed on a real player rather than argued about. With the capability gate
+   * saying no, the seek command is gone from the command set — which is what disables Media3's own
+   * seek bar without this project writing any UI.
+   */
+  @Test
+  fun withoutTheExtensionATranscodeDoesNotOfferASeekAtAll() {
+    val player = playerFor(offsetTrackId, transcodeOffsetSupported = false)
+
+    assertThat(onMain { player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) }).isFalse
+    assertThat(onMain { player.availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) }).isFalse
+    // ...and the control, at the same two assertions, so "always false" is not what is being proved.
+    val rawPlayer = playerFor(songIdByTitle("Track 2"), transcodeOffsetSupported = false)
+    assertThat(onMain { rawPlayer.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) }).isTrue
+  }
+```
+
+- [ ] **Step 7: The Tier 2 journey**
+
+`app/src/androidTest/kotlin/app/muplay/TranscodeSeekJourneyTest.kt` — the whole chain through the
+real UI: reach the library, open "Offset Album", play "Offset Track", drag the seek bar to five
+seconds, and assert the on-screen position readout passes 5 s and keeps advancing, and that playback
+reaches the end at about ten seconds rather than about fifteen.
+
+What it adds over Step 6 is the parts Step 6 builds by hand: that `:feature:player`'s bar is wired to
+a `MediaController` over the **session**, that the session's command set reflects the withdrawal, and
+that `MediaItems` stamped the format on an item that came out of the real mirror.
+
+- [ ] **Step 8: Prove each new assertion can fail**
+
+1. In `SubsonicClient.streamUrl`, drop the `timeOffset` line. Expect the two URL tests, the live
+   body-size test, `seekingAForcedTranscodeLandsWhereItWasAsked` and the journey to fail. **This is
+   the shipped defect, restored** — the single most valuable probe this task adds.
+2. In `TranscodeSeek.methodFor`, return `InPlace` for everything. Expect
+   `seekingAForcedTranscodeLandsWhereItWasAsked` to fail on its amplitude assertion — which is the
+   *exact* observable of the original bug: a seek that appears to work and plays the wrong audio.
+3. In `TranscodeSeek.methodFor`, return `ReissueWithOffset` for a raw stream too. Expect
+   `aRawTrackStillSeeksInPlaceAndIssuesNoSecondRequest` to fail on its request count.
+4. In `TranscodeOffsetSupport`, default `supported = true`. Expect
+   `withoutTheExtensionATranscodeDoesNotOfferASeekAtAll` to fail. Then make `refresh()` a no-op and
+   expect every re-issue test to fail — the gate discriminating in both directions.
+5. Delete `MuPlayer.getCurrentPosition`'s offset. Expect `thePositionReadoutStaysInRealTrackTime`
+   and the journey to fail.
+6. In `MuPlayer.seekCurrentTo`, use `setMediaItem` instead of `wrappedPlayer.replaceMediaItem`.
+   Expect a queue-preservation assertion to fail — add one if none exists: seek inside track 2 of a
+   three-track queue and assert tracks 3 is still there.
+
+Record 1, 2, 4 and 5 in `ci/mutation-probes.sh`.
+
+- [ ] **Step 9: Floors, the spec, and commit**
+
+Add `"app.muplay.media.TranscodeSeek"`, `"app.muplay.media.SeekMethod*"` and
+`"app.muplay.media.TranscodeOffsetSupport"` to `:core:media`'s **BRANCH** floor includes and measure.
+`MuPlayer`'s floor moves — it has gained real branches — so re-measure it rather than assuming the
+old number still holds.
+
+Then the spec, `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`:
+
+1. **§4, Streaming, the `timeOffset` sentence.** It is right, and it now has an owner and a
+   consequence worth naming:
+   > Transcoded seek uses `timeOffset` (the `transcodeOffset` extension), which means re-issuing the
+   > URI, not `AVTransport::Seek`. **Gate it on the extension**, and when the server does not
+   > advertise it, *withdraw the seek command* rather than accepting a seek that does nothing —
+   > `COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM` is removed from the player's command set, so the transport
+   > controls disable the bar. A silent no-op on a seek is a silent wrong answer.
+2. **§4, Capability negotiation, "Unsupported features are silent no-ops, not errors."** Add the
+   worked example, because until this task the rule had never been applied to a Subsonic feature and
+   `ServerCapabilities.supports` had no caller anywhere in the project:
+   > The first and, for now, only gate is `transcodeOffset` (§4, Streaming). "Silent no-op" means
+   > *the app does not offer the feature* — not that it accepts the request and discards it.
+3. **§10, Tier 2 table** — add a line under it, in the form Plans 2 and 3 already use:
+   > Plan 3 Task 12 added `TranscodeSeekJourneyTest`, and with it the **first Opus file in the CI
+   > corpus** — `Offset Track`, five seconds of silence then five of tone, which is the only fixture
+   > that reaches Navidrome's transcoder on the path a user takes, and whose shape makes "did the
+   > seek land where it was asked" answerable from the decoder's own output.
+
+```bash
+./gradlew build
+./gradlew :core:network:liveNavidromeTest
+./gradlew :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+./ci/mutation-probes.sh
+git add core ci build.gradle.kts docs/superpowers/specs app
+git commit -m "feat(media): seek a forced transcode with timeOffset, and an Opus file to prove it"
+```
+
+---
+
 ## Definition of done
 
 1. All tasks' tests pass; **both tiers green**.
-2. **Tier 2 carries this plan's journeys**: `PlaybackJourneyTest`, `MuPlaybackServiceTest` and
-   `ReplayGainJourneyTest` (Task 11) in `:app`'s emulator suite, plus `:core:media`'s instrumented
-   classes, and **each has been watched go red**.
+2. **Tier 2 carries this plan's journeys**: `PlaybackJourneyTest`, `MuPlaybackServiceTest`,
+   `ReplayGainJourneyTest` (Task 11) and `TranscodeSeekJourneyTest` (Task 12) in `:app`'s emulator
+   suite, plus `:core:media`'s instrumented classes, and **each has been watched go red**.
 3. Coverage ≥ 90% on every module this plan touched — **branch** for non-UI code, **line** for
    `@Composable`-bearing files and for Android plumbing that carries no author-written conditional.
    Every floor measured from a real report, every `requiresInstrumentedData` flag measured rather
@@ -8722,10 +9444,15 @@ git commit -m "feat(media): apply ReplayGain, from the file's own tags to the au
     the same waveform and the same encoder settings, differing only in a tag, render at amplitudes
     whose ratio is the tag. The untagged control measures the same with and without the stage, and
     an untagged track is **bit-identical** with the gain stage in the chain.
-12. **The CI corpus can see the case the code handles.** It gained a ReplayGain-tagged track whose
-    only difference from Track 2 is a tag, `ci/fixtures.md5` regenerated with **no existing hash
-    moved**, and `ci/configure-libraries.sh`'s scan-convergence count moved with it. A gate that
-    cannot see the failing case is not a gate, and this feature was unowned for exactly as long as
-    no fixture could show it failing.
-13. Anything discovered to be wrong in the spec is corrected **in the spec** — the nine items in
-    Task 10 Step 5 and the two in Task 11 Step 11, at minimum.
+12. **A seek inside a forced transcode lands where it was asked, or is not offered** (Task 12).
+    Proved from the decoder's own output against an Opus fixture whose first five seconds are
+    silent, so "the seek did nothing" and "the seek landed elsewhere" are distinguishable — and
+    the capability gate is proved in **both** directions, including that the pinned container
+    really does advertise `transcodeOffset`.
+13. **The CI corpus can see the cases the code handles.** It gained a ReplayGain-tagged track and
+    an Opus track, `ci/fixtures.md5` regenerated with **no existing hash moved**, and
+    `ci/configure-libraries.sh`'s scan-convergence count moved with them. A gate that cannot see
+    the failing case is not a gate, and both of these features were unowned for exactly as long as
+    no fixture could show them failing.
+14. Anything discovered to be wrong in the spec is corrected **in the spec** — the nine items in
+    Task 10 Step 5, the two in Task 11 Step 11 and the three in Task 12 Step 9, at minimum.
