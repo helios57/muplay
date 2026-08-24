@@ -8630,14 +8630,78 @@ it, and that a write for an untagged item preserves whatever was there.
 - [ ] **Step 9: The Tier 2 journey**
 
 `app/src/androidTest/kotlin/app/muplay/ReplayGainJourneyTest.kt` — the whole chain on a real screen,
-reusing Plan 2 Task 10's `reachLibraryScreen` helper and Plan 3 Task 10's playback helpers. It plays
-"Quiet Track" from the real UI against the real Navidrome and asserts the rendered amplitude ratio
-against "Track 2" played the same way — the same measurement as Step 6, but through browse, the
-mirror, the session and the service instead of through a hand-built player.
+reusing Plan 2 Task 10's `reachLibraryScreen` helper and Task 10's playback helpers.
 
 Its value over Step 6 is precisely the parts Step 6 skips: that `getAlbum`'s `replayGain` survived
-the **mirror round trip** and the `MediaItem` mapping. A defect that drops the columns in
-`MirrorMapper` leaves every unit test green and this one red.
+the **mirror round trip** and the `MediaItem` mapping. A defect that drops the three columns in
+`MirrorMapper` leaves every unit test in Steps 2 and 4 green and this one red.
+
+```kotlin
+@RunWith(AndroidJUnit4::class)
+class ReplayGainJourneyTest {
+
+  @get:Rule
+  val composeRule = createAndroidComposeRule<MainActivity>()
+
+  /**
+   * The same controlled experiment as `GainAudioProcessorTest`, run through the real app: browse to
+   * an album, tap a track, and measure what the audio pipeline produced.
+   *
+   * The capture is installed by the same `TeeAudioProcessor` seam Task 7 uses, so this works on the
+   * `-no-audio` CI emulator. What it adds is every layer between the response and the player --
+   * `MirrorMapper`, `BrowseRepository`, `MediaItems`, the session and the service.
+   */
+  @Test
+  fun aTaggedTrackPlayedFromTheRealUiIsQuieterThanTheSameSineUntagged() {
+    val untagged = playFromUiAndCapture(album = "Test Album", track = "Track 2")
+    val tagged = playFromUiAndCapture(album = "Gain Album", track = "Quiet Track")
+
+    assertThat(rmsOf(tagged) / rmsOf(untagged)).isCloseTo(0.5012f, within(0.06f))
+    // Neither capture is silence -- a ratio assertion with a tolerance is satisfiable by two zeroes.
+    assertThat(rmsOf(untagged)).isGreaterThan(1000f)
+    assertThat(rmsOf(tagged)).isGreaterThan(400f)
+  }
+
+  private fun playFromUiAndCapture(album: String, track: String): ByteArray {
+    reachLibraryScreen()
+    composeRule.onNodeWithText(SEARCH_LABEL).performTextClearance()
+    composeRule.onNodeWithText(SEARCH_LABEL).performTextInput(album)
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(album).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(track).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    val capture = installCapture()
+    composeRule.onNodeWithText(track).performClick()
+    // Wait for audio to have advanced, not for a button to have been pressed -- this plan's rule 1
+    // for playback. Two seconds of a five-second track is plenty of PCM to measure.
+    composeRule.waitUntil(TIMEOUT_MILLIS) { capture.pcm.size > BYTES_IN_TWO_SECONDS }
+    return capture.pcm
+  }
+
+  private companion object {
+    const val SEARCH_LABEL = "Search this library"
+    const val OPEN_LABEL = "Open"
+    const val FIRST_ALBUM = 0
+    const val TIMEOUT_MILLIS = 30_000L
+
+    /** 44100 Hz, mono, 16-bit, two seconds. The corpus's own numbers -- see ci/seed-fixtures.sh. */
+    const val BYTES_IN_TWO_SECONDS = 44_100 * 2 * 2
+  }
+}
+```
+
+> **`installCapture()` is the one awkward part, and it is awkward on purpose.** The journey drives
+> the *app's* player, built by `MuPlayerFactory` inside `MuPlaybackService`, so the capture cannot be
+> constructed the way `GaplessTest` constructs one. Install it the way Task 7's harness does — a
+> `TeeAudioProcessor` in the same chain as the `GainAudioProcessor`, exposed for instrumentation
+> through a debug-only seam on `MuPlayRenderersFactory`. **If that seam does not already exist,
+> build it here and say so in the task report**; do not reach into the service with reflection, and
+> do not weaken the assertion to something a `MediaController` can see, because everything a
+> `MediaController` can see is satisfied by a player rendering silence.
 
 - [ ] **Step 10: Prove each new assertion can fail**
 
@@ -9334,14 +9398,88 @@ have caught the shipped defect**, and it turns on the fixture's shape:
 
 - [ ] **Step 7: The Tier 2 journey**
 
-`app/src/androidTest/kotlin/app/muplay/TranscodeSeekJourneyTest.kt` — the whole chain through the
-real UI: reach the library, open "Offset Album", play "Offset Track", drag the seek bar to five
-seconds, and assert the on-screen position readout passes 5 s and keeps advancing, and that playback
-reaches the end at about ten seconds rather than about fifteen.
+`app/src/androidTest/kotlin/app/muplay/TranscodeSeekJourneyTest.kt`.
 
 What it adds over Step 6 is the parts Step 6 builds by hand: that `:feature:player`'s bar is wired to
 a `MediaController` over the **session**, that the session's command set reflects the withdrawal, and
 that `MediaItems` stamped the format on an item that came out of the real mirror.
+
+```kotlin
+@RunWith(AndroidJUnit4::class)
+class TranscodeSeekJourneyTest {
+
+  @get:Rule
+  val composeRule = createAndroidComposeRule<MainActivity>()
+
+  /**
+   * Seek inside a forced transcode, from the real seek bar, and land there.
+   *
+   * The observation is the **position readout on screen**, read twice: once after the seek and once
+   * a second later. One reading proves a label changed; two prove the clock is running from the new
+   * place, which is what "the seek worked" means and what a re-issued stream reporting its own zero
+   * would fail.
+   */
+  @Test
+  fun seekingInsideAForcedTranscodeMovesTheClockAndKeepsItRunning() {
+    playOffsetTrack()
+
+    composeRule.onNodeWithTag(SEEK_BAR).performTouchInput { click(percentOffset(x = 0.5f, y = 0.5f)) }
+
+    composeRule.waitUntil(TIMEOUT_MILLIS) { positionSeconds() >= 5 }
+    val afterSeek = positionSeconds()
+    composeRule.waitUntil(TIMEOUT_MILLIS) { positionSeconds() > afterSeek }
+
+    assertThat(afterSeek).isBetween(4, 7)
+  }
+
+  /**
+   * The end arrives at about ten seconds, not fifteen.
+   *
+   * A player that seeked the *stream* rather than the *track* would report a position that jumped
+   * and a duration that shrank; a player that ignored the seek entirely plays the whole ten
+   * seconds. The remaining-time assertion separates the two, and it is measured against the real
+   * fixture's real duration.
+   */
+  @Test
+  fun theTrackStillKnowsHowLongItIs() {
+    playOffsetTrack()
+    composeRule.onNodeWithTag(SEEK_BAR).performTouchInput { click(percentOffset(x = 0.5f, y = 0.5f)) }
+    composeRule.waitUntil(TIMEOUT_MILLIS) { positionSeconds() >= 5 }
+
+    // Ten seconds, from the file, not from what is left of the re-issued stream.
+    assertThat(durationSeconds()).isBetween(9, 11)
+  }
+
+  private fun playOffsetTrack() {
+    reachLibraryScreen()
+    composeRule.onNodeWithText(SEARCH_LABEL).performTextInput("Offset Album")
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText("Offset Album").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText("Offset Track").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText("Offset Track").performClick()
+    // Audio advancing, not a button pressed.
+    composeRule.waitUntil(TIMEOUT_MILLIS) { positionSeconds() >= 1 }
+  }
+
+  private companion object {
+    const val SEARCH_LABEL = "Search this library"
+    const val OPEN_LABEL = "Open"
+    const val SEEK_BAR = "player-seek-bar"
+    const val FIRST_ALBUM = 0
+    const val TIMEOUT_MILLIS = 30_000L
+  }
+}
+```
+
+> `positionSeconds()` and `durationSeconds()` read the player screen's own time labels — Task 9's
+> readout, which spec §3 requires to come from the **live player position** rather than the
+> database. `SEEK_BAR` is a `Modifier.testTag` on Task 9's slider; **add it in this task if Task 9
+> did not**, and say so in the task report. A journey that reached for the `MediaController`
+> directly would skip the layer this test exists to cover.
 
 - [ ] **Step 8: Prove each new assertion can fail**
 

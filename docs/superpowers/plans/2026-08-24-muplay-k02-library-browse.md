@@ -8696,32 +8696,150 @@ not replaced, so system back returns to the library — which
 
 `app/src/androidTest/kotlin/app/muplay/SettingsJourneyTest.kt`. The headline test is **not** "the
 screen renders" — it is the recovery this task exists for, end to end against the real two-library
-Navidrome:
+Navidrome. It reuses Task 10's `reachLibraryScreen` helper and its label constants; **do not fork
+them.**
 
 ```kotlin
+@RunWith(AndroidJUnit4::class)
+class SettingsJourneyTest {
+
+  @get:Rule
+  val composeRule = createAndroidComposeRule<MainActivity>()
+
   /**
    * The mis-tag, and the way back from it. This is the whole task in one test.
    *
-   * Tag Audiobooks as **Music** from the settings screen, shuffle the Audiobooks library, and the
-   * book is there — proving the change reached the shuffle scope. Then tag it back and shuffle
-   * again, and it is gone. Two directions, because a screen that always returned "Music" passes
-   * the first half.
+   * Tag Audiobooks as **Music** from the settings screen, shuffle that library, and the book is
+   * there — which proves the change reached the shuffle scope rather than only the chip. Then tag
+   * it back and shuffle again, and it is gone. **Two directions**, because a screen whose
+   * `setRole` always wrote `MUSIC` passes the first half on its own.
    */
   @Test
-  fun retaggingALibraryFromSettingsChangesWhatShuffleDraws() { /* ... */ }
+  fun retaggingALibraryFromSettingsChangesWhatShuffleDraws() {
+    reachLibraryScreen()
+    openSettings()
+
+    // Audiobooks -> Music.
+    composeRule.onAllNodesWithText(MUSIC_ROLE)[AUDIOBOOK_LIBRARY_ROW].performClick()
+    back()
+
+    composeRule.onAllNodesWithText("Audiobooks")[LIBRARY_CHIP].performClick()
+    composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText(AUDIOBOOK_TITLE).assertIsDisplayed()
+
+    // ...and back again. The same chip, the other role.
+    openSettings()
+    composeRule.onAllNodesWithText(AUDIOBOOKS_ROLE)[AUDIOBOOK_LIBRARY_ROW].performClick()
+    back()
+
+    composeRule.onAllNodesWithText("Audiobooks")[LIBRARY_CHIP].performClick()
+    composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
+    }
+    // The shuffle ran -- the heading is up -- and the book is not in it. Asserting the heading
+    // first is what stops this passing because nothing happened at all.
+    composeRule.onNodeWithText(AUDIOBOOK_TITLE).assertDoesNotExist()
+  }
 
   /** The URL and username on screen are the ones the app is connected as, not placeholders. */
   @Test
-  fun theServerSectionShowsTheConnectionInUse() { /* ... */ }
+  fun theServerSectionShowsTheConnectionInUse() {
+    reachLibraryScreen()
+    openSettings()
+
+    composeRule.onNodeWithText(SERVER_HEADING).assertIsDisplayed()
+    composeRule.onNodeWithText(SERVER_URL).assertIsDisplayed()
+    composeRule.onNodeWithText(USERNAME).assertIsDisplayed()
+    // The one thing that must never be on this screen, asserted directly.
+    composeRule.onNodeWithText(PASSWORD).assertDoesNotExist()
+  }
 
   /**
-   * A bad address is refused and **nothing is stored**: the library still loads afterwards. This is
-   * the bricking path, and it is the one worth a journey rather than a unit test, because "nothing
-   * is stored" is only true if `ping` really ran before `save`.
+   * A bad address is refused and **nothing is stored**: the library still loads afterwards.
+   *
+   * This is the bricking path, and it is worth a journey rather than a unit test because "nothing
+   * is stored" is only true if `ping` really ran before `save` — and if it did not, the app is
+   * pointed at an unreachable server from a screen that can no longer load its current values,
+   * with no route back except clearing app data.
    */
   @Test
-  fun aServerThatCannotBeReachedIsRefusedAndChangesNothing() { /* ... */ }
+  fun aServerThatCannotBeReachedIsRefusedAndChangesNothing() {
+    reachLibraryScreen()
+    openSettings()
+
+    composeRule.onNodeWithText(SERVER_URL_LABEL).performTextClearance()
+    composeRule.onNodeWithText(SERVER_URL_LABEL).performTextInput(UNREACHABLE_URL)
+    composeRule.onNodeWithText(PASSWORD_LABEL).performTextInput(PASSWORD)
+    composeRule.onNodeWithText(RECONNECT_LABEL).performClick()
+
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(UNREACHABLE_MESSAGE).fetchSemanticsNodes().isNotEmpty()
+    }
+    // The stored connection is untouched: the screen still shows the real one...
+    composeRule.onNodeWithText(SERVER_URL).assertIsDisplayed()
+    // ...and the library still loads, which is the assertion that would fail if `save` had run.
+    back()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText("Test Album").fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  private fun openSettings() {
+    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(LIBRARIES_HEADING).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  /** System back, the same path `backFromAnAlbumReturnsToTheLibrary...` (Task 10) exercises. */
+  private fun back() {
+    InstrumentationRegistry.getInstrumentation().uiAutomation
+      .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  private companion object {
+    const val SERVER_URL = "http://localhost:4533"
+    const val USERNAME = "admin"
+    const val PASSWORD = "testpass"
+
+    /** Port 1 is closed on the emulator, so this fails as a refused connection in under a second. */
+    const val UNREACHABLE_URL = "http://127.0.0.1:1"
+
+    // Duplicated from the production code, as every journey in this suite is: a shared constant
+    // would let a wording change pass unnoticed, and the wording is what the user reads.
+    const val SETTINGS_LABEL = "Settings"
+    const val SERVER_HEADING = "Server"
+    const val LIBRARIES_HEADING = "What each library is for"
+    const val SERVER_URL_LABEL = "Server URL"
+    const val PASSWORD_LABEL = "Password"
+    const val RECONNECT_LABEL = "Connect"
+    const val UNREACHABLE_MESSAGE = "Could not reach that address."
+    const val SHUFFLE_LABEL = "Shuffle this library"
+    const val SHUFFLE_HEADING = "Shuffled"
+    const val MUSIC_ROLE = "Music"
+    const val AUDIOBOOKS_ROLE = "Audiobooks"
+    const val AUDIOBOOK_TITLE = "Test Book"
+
+    /** Indices, like Task 10's: verify them by running, not by reasoning. */
+    const val AUDIOBOOK_LIBRARY_ROW = 1
+    const val LIBRARY_CHIP = 0
+
+    const val TIMEOUT_MILLIS = 30_000L
+  }
+}
 ```
+
+> **`reachLibraryScreen` lives in `BrowseJourneyTest` (Task 10).** Extract it to a shared
+> `JourneyHelpers.kt` in the same source set rather than copying it — and if you extract it, update
+> Task 10's own use of it in the same commit, because two helpers that drift apart is how the
+> emulator suite gets a hidden ordering dependency back.
 
 - [ ] **Step 8: Prove each can fail**
 
