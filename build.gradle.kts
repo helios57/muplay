@@ -984,9 +984,15 @@ object CoverageGateNotice {
     ) {
       // Skipped, but this gate was owed nothing: every one of this module's floors needs
       // instrumented data, so the tier below has no rule of its own to evaluate whether execution
-      // data exists or not. `:core:database` is the first module in this shape -- Room needs the
-      // Android framework's SQLite and Robolectric is banned project-wide, so it has no JVM tests
-      // at all and never will.
+      // data exists or not. `:core:database` is the module that motivated this branch -- Room
+      // needs the Android framework's SQLite and Robolectric is banned project-wide, so its Room
+      // and DAO coverage can never come from a JVM test. [Corrected on a Task 4 re-review: this
+      // comment used to claim the module "has no JVM tests at all and never will", which was true
+      // when it was written and stopped being true the moment Task 2 added `KeystoreCipherTest`
+      // (its cryptographic contract needs no Android framework, only Room and the DAO layer do) --
+      // the module carries real JVM tests today for the code that needs no framework, and nobody
+      // revisited this prose. The same false premise had propagated into `ci/mutation-probes.sh`'s
+      // own header; both are fixed together.]
       //
       // Split out from the general no-data branch below deliberately. That branch says "usually
       // this means the module's tests did not run or no longer exist", which for a module in this
