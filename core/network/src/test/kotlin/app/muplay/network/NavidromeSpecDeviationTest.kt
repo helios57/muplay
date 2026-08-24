@@ -77,14 +77,20 @@ class NavidromeSpecDeviationTest {
     // extends it with a monotonic lastScan"), and the vendored spec's ScanStatus schema has only
     // `scanning` and `count`. Asserting all four extension fields by name means a future spec
     // refresh that adds three of them still fails here rather than half-passing.
-    assertThatThrownBy {
-      OpenApiFixtureValidator.assertValid("/rest/getScanStatus", fixture(SCAN_STATUS_FIXTURE))
+    // Both captures, not just the idle one: the second was recorded while a scan was genuinely in
+    // flight, and a fixture this project commits but never puts in front of the oracle is a
+    // fixture nobody is checking.
+    listOf(SCAN_STATUS_FIXTURE, SCAN_STATUS_SCANNING_FIXTURE).forEach { name ->
+      assertThatThrownBy {
+        OpenApiFixtureValidator.assertValid("/rest/getScanStatus", fixture(name))
+      }
+        .describedAs(name)
+        .isInstanceOf(AssertionError::class.java)
+        .hasMessageContaining("lastScan")
+        .hasMessageContaining("folderCount")
+        .hasMessageContaining("scanType")
+        .hasMessageContaining("elapsedTime")
     }
-      .isInstanceOf(AssertionError::class.java)
-      .hasMessageContaining("lastScan")
-      .hasMessageContaining("folderCount")
-      .hasMessageContaining("scanType")
-      .hasMessageContaining("elapsedTime")
   }
 
   @Test
@@ -92,6 +98,7 @@ class NavidromeSpecDeviationTest {
     // Not a shape assertion: the sync engine reads this exact field, so its presence in a real
     // capture is a precondition of the design, not a detail of the oracle's opinion about it.
     assertThat(fixture(SCAN_STATUS_FIXTURE)).contains("\"lastScan\"")
+    assertThat(fixture(SCAN_STATUS_SCANNING_FIXTURE)).contains("\"lastScan\"")
   }
 
   /**
@@ -115,6 +122,7 @@ class NavidromeSpecDeviationTest {
     const val SEARCH3_FIXTURE = "search3-music.json"
     const val RANDOM_SONGS_FIXTURE = "get-random-songs-music.json"
     const val SCAN_STATUS_FIXTURE = "get-scan-status.json"
+    const val SCAN_STATUS_SCANNING_FIXTURE = "get-scan-status-scanning.json"
 
     /**
      * Every captured response that carries an `AlbumID3` anywhere in it, with the spec path it

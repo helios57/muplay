@@ -349,19 +349,33 @@ class BrowseEndpointsTest {
     assertThat(sixth.artists.map { it.libraryId }).containsExactly(6)
     assertThat(sixth.albums.map { it.libraryId }).containsExactly(6)
     assertThat(sixth.songs.map { it.libraryId }).containsExactly(6, 6, 6)
+    // The same-bytes control its three sibling stamp tests carry: identical ids from both calls,
+    // so the only thing that differed between them was the argument.
+    assertThat(third.artists.map { it.id }).isEqualTo(sixth.artists.map { it.id })
+    assertThat(third.albums.map { it.id }).isEqualTo(sixth.albums.map { it.id })
+    assertThat(third.songs.map { it.id }).isEqualTo(sixth.songs.map { it.id })
   }
 
   // --- getRandomSongs ------------------------------------------------------------------------
 
   @Test
-  fun `getRandomSongs sends the scope and the size`() = runTest {
+  fun `getRandomSongs sends whichever scope and size it is given`() = runTest {
+    enqueue(fixture(RANDOM_SONGS_FIXTURE))
     enqueue(fixture(RANDOM_SONGS_FIXTURE))
 
+    // Two calls, two disjoint values for both parameters, in one test whose name claims exactly
+    // that. Previously the only second observation of this command's scope lived inside a test
+    // named for size clamping, so the probe protecting the shuffle's scope pointed at a test that
+    // did not say it was protecting it.
     client.getRandomSongs(musicFolderId = 1, size = 50)
+    val first = assertAuthenticatedRequestTo("/rest/getRandomSongs")
+    assertThat(first.queryParameter("musicFolderId")).isEqualTo("1")
+    assertThat(first.queryParameter("size")).isEqualTo("50")
 
-    val url = assertAuthenticatedRequestTo("/rest/getRandomSongs")
-    assertThat(url.queryParameter("musicFolderId")).isEqualTo("1")
-    assertThat(url.queryParameter("size")).isEqualTo("50")
+    client.getRandomSongs(musicFolderId = 2, size = 25)
+    val second = assertAuthenticatedRequestTo("/rest/getRandomSongs")
+    assertThat(second.queryParameter("musicFolderId")).isEqualTo("2")
+    assertThat(second.queryParameter("size")).isEqualTo("25")
   }
 
   @Test
@@ -380,17 +394,12 @@ class BrowseEndpointsTest {
   fun `getRandomSongs clamps a non-positive size up to one`() = runTest {
     enqueue(fixture(RANDOM_SONGS_FIXTURE))
 
-    client.getRandomSongs(musicFolderId = 2, size = 0)
+    client.getRandomSongs(musicFolderId = 1, size = 0)
 
     // `size=0` is not a documented value and Navidrome's behaviour for it is unknown; asking for
     // one song is the smallest well-defined request, and it keeps a caller's arithmetic error
     // from turning into an undefined server-side one.
-    val url = nextRequest().url
-    assertThat(url.queryParameter("size")).isEqualTo("1")
-    // The second scope this command is ever observed at. Every other getRandomSongs call in this
-    // file passes 1, so without this a hardcoded `"musicFolderId" to "1"` -- shuffle that can
-    // only ever play library 1 -- would satisfy the whole suite.
-    assertThat(url.queryParameter("musicFolderId")).isEqualTo("2")
+    assertThat(nextRequest().url.queryParameter("size")).isEqualTo("1")
   }
 
   @Test
@@ -447,9 +456,34 @@ class BrowseEndpointsTest {
 
     assertThat(status.isScanning).isFalse
     assertThat(status.scannedCount).isEqualTo(4)
-    // An opaque token, never parsed as a date: all this client needs is "did it change".
-    assertThat(status.lastScan).isNotNull
-    assertThat(status.lastScan).isNotBlank
+    // Asserted at its literal, not merely `isNotNull`/`isNotBlank`. The client treats this as an
+    // opaque token and never parses it as a date -- all the sync engine asks is "is this the same
+    // string as the one I last committed?" -- but "opaque" is a statement about *interpretation*,
+    // not a licence to leave the value unobserved. A watermark checked only for non-blankness is
+    // satisfied by any constant, which is exactly the mapper defect this pins.
+    assertThat(status.lastScan).isEqualTo(IDLE_WATERMARK)
+  }
+
+  @Test
+  fun `getScanStatus maps a scan in progress, watermark and all`() = runTest {
+    // The second observation of every field `ScanStatus` carries. Unlike the stamp tests, this one
+    // cannot reuse the same bytes twice: these three values come *from the body*, so discriminating
+    // them needs two different bodies -- hence a second live capture, taken while a real scan was
+    // running (`scanning: true`, `count: 0`, and the watermark of the scan *before* it).
+    //
+    // Without it, hardcoding `isScanning = false`, `scannedCount = 4` and any non-blank `lastScan`
+    // left `./gradlew check` at exit 0 with 101 tests green and 56/56 branch coverage. `lastScan`
+    // in particular was asserted only `isNotNull`/`isNotBlank` -- never at a value -- which is the
+    // same as not asserting it, on the field this method's own KDoc calls the watermark the whole
+    // sync design rests on. A mapper returning a constant watermark is a sync that never advances
+    // or never detects a change, permanently and silently.
+    enqueue(fixture(SCAN_STATUS_SCANNING_FIXTURE))
+
+    val status = client.getScanStatus()
+
+    assertThat(status.isScanning).isTrue
+    assertThat(status.scannedCount).isEqualTo(0)
+    assertThat(status.lastScan).isEqualTo(SCANNING_WATERMARK)
   }
 
   @Test
@@ -662,6 +696,16 @@ class BrowseEndpointsTest {
     const val SEARCH3_FIXTURE = "search3-music.json"
     const val RANDOM_SONGS_FIXTURE = "get-random-songs-music.json"
     const val SCAN_STATUS_FIXTURE = "get-scan-status.json"
+    const val SCAN_STATUS_SCANNING_FIXTURE = "get-scan-status-scanning.json"
+
+    /**
+     * The two watermarks the two captures carry, as literals. Both were read off a real
+     * `deluan/navidrome:0.63.2`: the idle capture holds the scan that had completed when it was
+     * taken, and the scanning capture -- recorded while a full rescan was genuinely in flight --
+     * holds the watermark of the scan *before* that one, which is `lastScan`'s real semantics.
+     */
+    const val IDLE_WATERMARK = "2026-08-24T03:32:38.477978062Z"
+    const val SCANNING_WATERMARK = "2026-08-24T10:07:22.030396558Z"
 
     /**
      * A spec-valid success envelope with no command payload at all. Synthetic, and deliberately

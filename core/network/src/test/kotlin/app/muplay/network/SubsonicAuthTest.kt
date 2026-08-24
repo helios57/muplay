@@ -67,6 +67,13 @@ class SubsonicAuthTest {
   fun `the password never appears in the parameters`() {
     // Plaintext auth must never be emitted, and no stray key may carry it.
     val params = SubsonicAuth.authParams(credentials, "c19b2d")
+
+    // Positive assertion first, and it is not decoration. `doesNotContainKey` and `noneMatch` are
+    // **both true of an empty map**, so on their own this test passed while asserting nothing: with
+    // `authParams()` returning `emptyMap()` -- the exact Plan 1 defect -- fourteen tests go red and
+    // this security test was not one of them. A negative is only evidence once something positive
+    // establishes there was anything to search.
+    assertThat(params).containsKeys("u", "t", "s", "v", "c", "f")
     assertThat(params).doesNotContainKey("p")
     assertThat(params.values).noneMatch { it.contains("sesame") }
   }
