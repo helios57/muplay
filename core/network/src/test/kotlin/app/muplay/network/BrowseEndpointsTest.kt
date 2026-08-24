@@ -111,6 +111,18 @@ class BrowseEndpointsTest {
   }
 
   @Test
+  fun `a successful getAlbumList2 with no albumList2 payload at all maps to no albums`() = runTest {
+    // The other half of the flattened envelope's asymmetric mapping rule, and the half the
+    // `"albumList2": {}` capture cannot reach: there the container is present and only `album` is
+    // absent, so `body.albumList2?.album` never takes its null branch. Here the whole payload
+    // field is missing. A list-shaped payload maps that to "no results" -- unlike `getAlbum` and
+    // `getScanStatus` below, whose payload *is* the entire answer and which throw instead.
+    enqueue(OK_WITH_NO_PAYLOAD)
+
+    assertThat(client.getAlbumList2(1, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)).isEmpty()
+  }
+
+  @Test
   fun `getAlbumList2 clamps its page size to the protocol maximum`() = runTest {
     enqueue(fixture(ALBUM_LIST_MUSIC_FIXTURE))
 
@@ -203,6 +215,22 @@ class BrowseEndpointsTest {
     assertThat(results.songs).allMatch { it.libraryId == 3 }
   }
 
+  @Test
+  fun `a successful search3 with no searchResult3 payload matches nothing`() = runTest {
+    // Same rule, same reason as the `getAlbumList2` case above: a search that matched nothing is
+    // a real answer, so an absent container is an empty result rather than a failure. Asserted
+    // through `isEmpty` so the one piece of author-written logic on `SearchResults` is exercised
+    // by the code path that can actually produce all-empty results.
+    enqueue(OK_WITH_NO_PAYLOAD)
+
+    val results = client.search3("nothing matches this", 1, 5, 5, 5)
+
+    assertThat(results.isEmpty).isTrue
+    assertThat(results.artists).isEmpty()
+    assertThat(results.albums).isEmpty()
+    assertThat(results.songs).isEmpty()
+  }
+
   // --- getRandomSongs ------------------------------------------------------------------------
 
   @Test
@@ -238,6 +266,16 @@ class BrowseEndpointsTest {
     // one song is the smallest well-defined request, and it keeps a caller's arithmetic error
     // from turning into an undefined server-side one.
     assertThat(nextRequest().url.queryParameter("size")).isEqualTo("1")
+  }
+
+  @Test
+  fun `a successful getRandomSongs with no randomSongs payload shuffles nothing`() = runTest {
+    // Third and last of the list-shaped payloads. An empty shuffle is a legitimate answer -- a
+    // library with no playable tracks in it -- so this must not throw; the two commands whose
+    // payload is the whole answer do, and the two tests below pin that difference.
+    enqueue(OK_WITH_NO_PAYLOAD)
+
+    assertThat(client.getRandomSongs(musicFolderId = 1, size = 50)).isEmpty()
   }
 
   // --- getScanStatus -------------------------------------------------------------------------
@@ -311,6 +349,27 @@ class BrowseEndpointsTest {
   @Test
   fun `the cover art url omits size when none is asked for`() {
     assertThat(client.coverArtUrl("al-abc_0", null).toHttpUrl().queryParameter("size")).isNull()
+  }
+
+  // --- the production factory ----------------------------------------------------------------
+
+  @Test
+  fun `the default factory builds a source that really talks to the server it was given`() = runTest {
+    // `DefaultSubsonicSourceFactory` is the seam every repository from Task 4 on injects, and it
+    // is one line of wiring -- which is exactly the shape of thing that is never asserted and
+    // therefore never noticed when it points somewhere else. Proven by use, not by identity:
+    // the source it returns is asked for a real command, and the request that reaches this
+    // server is asserted to carry this server's credentials.
+    enqueue(fixture(SCAN_STATUS_FIXTURE))
+
+    val source: SubsonicSource =
+      DefaultSubsonicSourceFactory.create(
+        SubsonicCredentials(server.url("/").toString(), "alice", "sesame"),
+      )
+    val status = source.getScanStatus()
+
+    assertThat(status.scannedCount).isEqualTo(4)
+    assertAuthenticatedRequestTo("/rest/getScanStatus")
   }
 
   // --- shared helpers ------------------------------------------------------------------------

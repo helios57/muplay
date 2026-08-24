@@ -193,7 +193,13 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  * - **`:core:network`, `:core:testing`** — no `@Composable` code at all (neither module even
  *   applies the Compose convention plugin), and nothing within them that needs separating: a
  *   single `"BUNDLE"`-element BRANCH rule each (an aggregate across the whole module), measuring
- *   100% today (30/30 and 6/6 real branches) against the full 0.90 target.
+ *   100% today (**56/56** and 6/6 real branches) against the full 0.90 target. `:core:network`'s
+ *   branch population went 30 → 56 in Plan 2 Task 3, and the floor is not decorative there: with
+ *   the six browse commands added but before the three `OK_WITH_NO_PAYLOAD` tests that reach
+ *   their absent-container branches, the same module measured **46/56 = 0.8214** and this floor
+ *   failed. That failure is what produced those three tests, which are also the only coverage of
+ *   the asymmetric mapping rule (`albumList2`/`searchResult3`/`randomSongs` absent → empty,
+ *   `album`/`scanStatus` absent → `SubsonicMalformedResponseException`).
  *
  * - **`:core:model`** — no `@Composable` code either, but **no longer one `"BUNDLE"` rule**. The
  *   final whole-branch review showed why that shape was wrong here: a BUNDLE aggregate over this
@@ -289,27 +295,48 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // Two `"CLASS"`-element rules, not one `"BUNDLE"` rule, and the difference is the whole point --
   // see this table's own doc above for what the BUNDLE form was hiding here.
   ":core:model" to listOf(
-    // 10/10 -- `ServerCapabilities.supports`'s two null-safe chains, this module's entire branch
-    // population, covered by `ServerCapabilitiesTest`.
+    // Two classes with branches of their own, each individually held to the floor (a
+    // `"CLASS"`-element rule evaluates `minimum` per matched class, never as a blend):
     //
-    // `ServerInfo`, `MusicLibrary` and `LibraryRole` ride along, the same way `SetupUiState` rides
-    // along in `:feature:setup`'s rule: they carry zero branches, so they cannot move this ratio,
-    // and including them is what keeps `warnUngatedClasses` from flagging them on every run. That
-    // is honest for these three specifically because they contain **no author-written executable
-    // code at all** -- read them: two are `data class` declarations with no body and the third is a
-    // three-entry `enum class` with no body, so every line JaCoCo counts in them is compiler-
-    // generated `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that would be
-    // gating the Kotlin compiler, the same argument this table already makes about Compose's
-    // synthetic branches. If any of them grows a body, it needs a rule of its own.
+    //   `ServerCapabilities`  10/10 -- `supports`'s two null-safe chains, covered by
+    //                         `ServerCapabilitiesTest`.
+    //   `SearchResults`        6/6 -- `isEmpty`'s three-way `&&`, added by Plan 2 Task 3 and
+    //                         covered by `SearchResultsTest`, which exercises each of the three
+    //                         lists as the sole non-empty one. Measured 0/6 the moment the class
+    //                         landed: `:core:network`'s `BrowseEndpointsTest` does assert
+    //                         `isEmpty` on a real all-empty `search3` response, but that is a
+    //                         different module's execution data and contributes nothing here --
+    //                         the same trap `SubsonicCredentials` fell into below.
+    //
+    // Everything else in the list rides along, the same way `SetupUiState` rides along in
+    // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
+    // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
+    // for NaN), and including them is what keeps `warnUngatedClasses` from flagging them on every
+    // run. That is honest for these specifically because they contain **no author-written
+    // executable code at all** -- read them: `ServerInfo`, `MusicLibrary`, `Album`,
+    // `AlbumWithSongs`, `Artist`, `Song` and `ScanStatus` are `data class` declarations with no
+    // body, and `LibraryRole`/`AlbumListType` are `enum class` declarations whose only members are
+    // constructor properties, so every line JaCoCo counts in them is compiler-generated
+    // `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that would be gating the
+    // Kotlin compiler, the same argument this table already makes about Compose's synthetic
+    // branches. If any of them grows a body, it needs a rule of its own -- which is exactly what
+    // happened to `SearchResults`, and why it is listed above rather than here.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.model.ServerCapabilities",
+        "app.muplay.model.SearchResults",
         "app.muplay.model.ServerInfo",
         "app.muplay.model.MusicLibrary",
         "app.muplay.model.LibraryRole",
+        "app.muplay.model.Album",
+        "app.muplay.model.AlbumWithSongs",
+        "app.muplay.model.AlbumListType",
+        "app.muplay.model.Artist",
+        "app.muplay.model.ScanStatus",
+        "app.muplay.model.Song",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:

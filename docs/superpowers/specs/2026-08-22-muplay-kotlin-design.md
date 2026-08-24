@@ -439,6 +439,21 @@ it will assert what the code *does* rather than what it *should*.
    around it, never silenced by loosening validation wholesale — the oracle's
    value is that it fails, and a validator relaxed until everything passes has
    stopped being one.
+
+   **And "recorded" means a committed assertion, not a comment.** Both
+   divergences above are pinned by name in
+   `core/network/src/test/kotlin/app/muplay/network/NavidromeSpecDeviationTest.kt`,
+   which asserts the *rejection* — `hasMessageContaining("minimum value of 1")`
+   for `userRating`, and one `hasMessageContaining` per extension field for
+   `scanStatus` — and separately asserts that stripping only `userRating` makes
+   every album-bearing capture validate, so "rejected" cannot hide a second,
+   unnoticed deviation behind the first. Those assertions fail in **both**
+   directions: if Navidrome stops sending `userRating: 0`, or a vendored-spec
+   refresh models Navidrome's `scanStatus`, the build goes red and someone reads
+   that file instead of finding out through a parsing bug. Of Plan 2's seven
+   browse captures, two validate as recorded (`getRandomSongs`, and a
+   past-the-end `getAlbumList2` whose payload is `{}`), four fail on
+   `userRating`, and one fails on the four `scanStatus` extension fields.
 2. **A real server.** Anything whose subject is Navidrome's behaviour is tested
    against a **pinned Navidrome container**, not a fixture. Docker is not an
    emulator; the container starts in 5–11 s, so this belongs in the fast tier.
