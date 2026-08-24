@@ -305,6 +305,8 @@ Plan 6 is **casting**. Explicitly **not** in this plan:
 | `core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt` | **new** — the UPnP description parser, `URLBase`, embedded devices, XXE refusal |
 | `core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt` | **new** — a renderer this app can actually control |
 | `core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt` | **new** — discovery, dedupe, ordering, and the remembered-device fallback |
+| `core/model/src/main/kotlin/app/muplay/model/RememberedRenderers.kt` | **new** — `RememberedRenderer` and the store interface. **In `:core:model` on purpose** (Task 2 Step 11): it is what keeps `:core:database` off `:core:cast` |
+| `core/database/src/main/kotlin/app/muplay/database/RendererStore.kt` | **new** — the DataStore-backed `RememberedRenderers`, on its own `@CastPreferences` file (Task 2) |
 | `core/cast/src/main/kotlin/app/muplay/cast/soap/SoapEnvelope.kt` | **new** — envelope rendering, SOAPACTION, response and fault parsing |
 | `core/cast/src/main/kotlin/app/muplay/cast/soap/XmlText.kt` | **new** — escaping, in the one order that is correct |
 | `core/cast/src/main/kotlin/app/muplay/cast/soap/UpnpError.kt` | **new** — the fault codes a renderer really returns |
@@ -1853,11 +1855,11 @@ git commit -m "feat(cast): the cast module, an HTTP/1.1 codec we own, and cleart
 - Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt`
 - Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt`
 - Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt`
-- Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/RememberedRenderers.kt`
+- Create: `core/model/src/main/kotlin/app/muplay/model/RememberedRenderers.kt` — **`:core:model`,
+  not `:core:cast`.** See Step 11; this placement is what keeps `:core:database` off `:core:cast`.
 - Create: `core/database/src/main/kotlin/app/muplay/database/RendererStore.kt`
 - Modify: `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` (the qualified
   `@CastPreferences` DataStore — see Step 13)
-- Modify: `core/database/build.gradle.kts`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/SsdpSearchTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/DeviceDescriptionTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/RendererDirectoryTest.kt`
@@ -1891,10 +1893,14 @@ git commit -m "feat(cast): the cast module, an HTTP/1.1 codec we own, and cleart
     `const val DEVICE_MEDIA_RENDERER`
   - `class MalformedDescriptionException(message: String) : IOException`
   - `data class CastDevice(...)` with `val isSonos: Boolean` and `companion object { fun from(root: UpnpDevice, descriptionUrl: URI): CastDevice? }`
-  - `data class RememberedRenderer(val udn: String, val friendlyName: String, val descriptionUrl: String)`
-  - `interface RememberedRenderers` with `suspend fun load(): List<RememberedRenderer>`,
-    `suspend fun remember(devices: List<CastDevice>)`, `suspend fun forget(udn: String)`,
-    `companion object { const val MAX_REMEMBERED = 16 }`
+  - **In `:core:model`:**
+    `data class RememberedRenderer(val udn: String, val friendlyName: String, val descriptionUrl: String)`
+  - **In `:core:model`:** `interface RememberedRenderers` with
+    `suspend fun load(): List<RememberedRenderer>`,
+    `suspend fun remember(renderers: List<RememberedRenderer>)`, `suspend fun forget(udn: String)`,
+    `companion object { const val MAX_REMEMBERED = 16 }`.
+    **Note the parameter type**: `List<RememberedRenderer>`, not `List<CastDevice>` — see Step 11.
+  - `fun CastDevice.remembered(): RememberedRenderer` in `:core:cast`, the one place the mapping lives
   - `class RendererDirectory(transport, http, remembered, clock)` with
     `suspend fun discover(mxSeconds: Int = SsdpSearch.DEFAULT_MX_SECONDS): DiscoveryResult`
   - `data class DiscoveryResult(val devices: List<CastDevice>, val unreachable: List<RememberedRenderer>)`
@@ -3391,8 +3397,8 @@ class RendererDirectoryTest {
 
     override suspend fun load(): List<RememberedRenderer> = stored
 
-    override suspend fun remember(devices: List<CastDevice>) {
-      saved = devices.map { RememberedRenderer(it.udn, it.friendlyName, it.descriptionUrl.toString()) }
+    override suspend fun remember(renderers: List<RememberedRenderer>) {
+      saved = renderers
       stored = saved
     }
 
@@ -3421,10 +3427,29 @@ Expected: FAIL — `Unresolved reference: RendererDirectory`.
 
 - [ ] **Step 11: Implement the directory and the remembered-device store**
 
-`core/cast/src/main/kotlin/app/muplay/cast/discovery/RememberedRenderers.kt`:
+**These two types go in `:core:model`, and the reason is a module edge.** The obvious home is
+`app.muplay.cast.discovery` beside everything else discovery owns. But the implementation is
+`RendererStore` in `:core:database` — DataStore is an Android dependency and `:core:cast` is pure
+JVM — and a `:core:database` class implementing a `:core:cast` interface means
+`core/database/build.gradle.kts` gains `implementation(project(":core:cast"))`. That one line is
+expensive out of proportion to itself:
+
+- `:core:database` is the **lowest** module in the tree and every other module depends on it, so
+  every consumer would carry `:core:cast` at runtime — including the ~600 lines of `FakeRenderer`
+  that Task 8 Step 1 moves into `src/main`.
+- Dropping casting stops being `git rm -r core/cast feature/castpicker` and becomes that plus
+  surgery on `:core:database`. Plan 7 goes to considerable trouble to keep its subsystem severable;
+  giving that up in the lowest module in the tree, in one line, is not a trade this plan meant to
+  make.
+
+`:core:model` is where a record with no behaviour belongs anyway, `:core:database` already has
+`api(project(":core:model"))`, and `:core:cast` can depend on it as a pure-JVM module. So the edge
+never exists.
+
+`core/model/src/main/kotlin/app/muplay/model/RememberedRenderers.kt`:
 
 ```kotlin
-package app.muplay.cast.discovery
+package app.muplay.model
 
 /** A device seen before, kept so it can be found again when multicast cannot reach it. */
 data class RememberedRenderer(
@@ -3435,18 +3460,23 @@ data class RememberedRenderer(
 )
 
 /**
- * Persistence for [RememberedRenderer], implemented outside this module because this module is
- * pure JVM and knows nothing about Android storage.
+ * Persistence for [RememberedRenderer], implemented outside this module because this is a record
+ * with no behaviour and the store that holds it is an Android one.
  *
  * **Backed by DataStore, not by Room** -- see `RendererStore` in `:core:database`. This is a
  * bounded list of at most [MAX_REMEMBERED] flat records with no query, no join and no ordering
  * requirement. A Room table for it would cost a schema version bump and a migration, and buy
  * nothing; and this plan's standing rule is that a migration in Plan 6 means something has been
  * added that belongs to another plan.
+ *
+ * [remember] takes [RememberedRenderer], **not `CastDevice`**. That is what lets this interface
+ * live here at all: `CastDevice` is a `:core:cast` type, and naming it would drag the whole cast
+ * module into every consumer of `:core:database`. The mapping lives in `:core:cast`, next to the
+ * type that needs mapping -- see `CastDevice.remembered()`.
  */
 interface RememberedRenderers {
   suspend fun load(): List<RememberedRenderer>
-  suspend fun remember(devices: List<CastDevice>)
+  suspend fun remember(renderers: List<RememberedRenderer>)
   suspend fun forget(udn: String)
 
   companion object {
@@ -3454,6 +3484,15 @@ interface RememberedRenderers {
     const val MAX_REMEMBERED: Int = 16
   }
 }
+```
+
+`core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt` — add the mapping beside the
+type it maps from:
+
+```kotlin
+/** The three fields worth keeping when this device is no longer on the air. */
+fun CastDevice.remembered(): RememberedRenderer =
+  RememberedRenderer(udn = udn, friendlyName = friendlyName, descriptionUrl = descriptionUrl.toString())
 ```
 
 `core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt`:
@@ -3541,7 +3580,7 @@ class RendererDirectory(
       compareBy({ it.friendlyName.lowercase() }, { it.udn }),
     )
 
-    remembered.remember(devices)
+    remembered.remember(devices.map { it.remembered() })
     return DiscoveryResult(devices, unreachable)
   }
 
@@ -3595,14 +3634,13 @@ Expected: PASS — the nine tests above plus the unicast-recovery test from the 
 
 - [ ] **Step 13: Implement the DataStore-backed store**
 
-`core/database/build.gradle.kts` — add:
-
-```kotlin
-  // `:core:cast` is a pure-JVM module; this is the interface + record it defines, not a UPnP
-  // dependency. The store implementation lives here because DataStore lives here and because the
-  // constraints say repositories are the only entry point to data.
-  implementation(project(":core:cast"))
-```
+**`core/database/build.gradle.kts` is not modified.** `RememberedRenderer` and
+`RememberedRenderers` live in `:core:model` (Step 11) precisely so this file does not gain
+`implementation(project(":core:cast"))`, and `api(project(":core:model"))` is already there. If a
+worker finds themselves adding a `:core:cast` line here, the record types went to the wrong module
+— fix that, not this file. `:core:database` must stay the module that knows nothing about casting,
+because everything depends on it and dropping casting has to stay
+`git rm -r core/cast feature/castpicker`.
 
 `core/database/src/main/kotlin/app/muplay/database/RendererStore.kt`:
 
@@ -3613,9 +3651,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import app.muplay.cast.discovery.CastDevice
-import app.muplay.cast.discovery.RememberedRenderer
-import app.muplay.cast.discovery.RememberedRenderers
+import app.muplay.model.RememberedRenderer
+import app.muplay.model.RememberedRenderers
 import javax.inject.Inject
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -3646,10 +3683,8 @@ class RendererStore @Inject constructor(
   override suspend fun load(): List<RememberedRenderer> =
     dataStore.data.first()[KEY].orEmpty().mapNotNull(::decode)
 
-  override suspend fun remember(devices: List<CastDevice>) {
-    val encoded = devices.take(RememberedRenderers.MAX_REMEMBERED)
-      .map { encode(RememberedRenderer(it.udn, it.friendlyName, it.descriptionUrl.toString())) }
-      .toSet()
+  override suspend fun remember(renderers: List<RememberedRenderer>) {
+    val encoded = renderers.take(RememberedRenderers.MAX_REMEMBERED).map(::encode).toSet()
     dataStore.edit { it[KEY] = encoded }
   }
 
@@ -10950,7 +10985,7 @@ dependencies {
 package app.muplay.castpicker
 
 import app.muplay.cast.discovery.DiscoveryResult
-import app.muplay.cast.discovery.RememberedRenderer
+import app.muplay.model.RememberedRenderer
 import app.muplay.media.cast.CastSessionState
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -11685,8 +11720,12 @@ git commit -m "ci(cast): the Tier 1 cast job, the Tier 2 cast journey, and the s
 4. No mock framework has entered the dependency graph. `ConventionTest` rule 3 and
    `verifyNoMockFrameworks` both pass.
 5. **No UPnP library was added.** `gradle/libs.versions.toml` gains no third-party entry for this
-   plan. The only new production dependency edge is `:core:media` → `:core:cast` and
-   `:core:database` → `:core:cast`, both internal.
+   plan. The only new production dependency edges are `:core:media` → `:core:cast` and
+   `:feature:castpicker` → `:core:cast`, both internal — and **`:core:database` does not depend on
+   `:core:cast`**, which is what keeps dropping casting a `git rm -r core/cast feature/castpicker`
+   rather than that plus surgery on the lowest module in the tree. `RememberedRenderer` /
+   `RememberedRenderers` are in `:core:model` for exactly this reason (Task 2 Step 11); a
+   `core/database/build.gradle.kts` that names `:core:cast` means they went to the wrong module.
 6. **The cleartext constraint holds and is enforced in two places at once:** the release manifest
    carries neither `usesCleartextTraffic` nor `networkSecurityConfig` (`verifyReleaseManifest`,
    widened in Task 11), and `LocalNetworkOnly` refuses a cleartext connection to any address that is
