@@ -7381,7 +7381,9 @@ git commit -m "feat(library): browse, search and library-scoped shuffle UI"
 - Create: `app/src/androidTest/kotlin/app/muplay/ScopedShuffleJourneyTest.kt`
 - Modify: `build.gradle.kts` (the `verifyNoMockFrameworks` task, the completed floor table)
 - Modify: `.github/workflows/pr.yml`, `.github/workflows/e2e.yml`
-- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` (§10's Tier 2 table)
+- Create: `.github/workflows/openapi-drift.yml` (the nightly, non-blocking oracle drift check)
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` (§10's Tier 2 table, §10's
+  countermeasure 1)
 
 **Interfaces:**
 - Consumes: `CredentialStore.credentials`, `LibraryRepository.hasUnassignedLibraries()`,
@@ -7391,6 +7393,8 @@ git commit -m "feat(library): browse, search and library-scoped shuffle UI"
   - `@HiltViewModel class StartDestinationViewModel` with `val startDestination: StateFlow<StartDestination>`
   - Gradle task `verifyNoMockFrameworks` in every subproject, wired into `check`
   - Tier 2 journeys `BrowseJourneyTest` and `ScopedShuffleJourneyTest`
+  - the scheduled, **non-blocking** `openapi-drift` workflow — the third workflow in the repository
+    and the only one that is not a gate
 
 ### Why the app must decide where it starts
 
@@ -8095,7 +8099,124 @@ instead of one. Measure the real wall-clock time of a full run and, if it lands 
 minutes of the limit, raise the limit **and say what was measured** — a gate that starts flaking
 on time gets disabled, which is the worst outcome available.
 
-- [ ] **Step 8: Correct the spec**
+- [ ] **Step 8: The nightly OpenAPI drift check**
+
+Spec §10's first countermeasure says the OpenSubsonic OpenAPI spec is *"vendored, with a nightly
+non-blocking drift check"*. **There is no such check.** The repository has `pr.yml` and `e2e.yml`
+and nothing else, and the word "nightly" appears in the seven plans only to say that Tier 2 is *not*
+nightly. So the oracle — the thing this project's whole testing stance rests on — ages invisibly.
+
+That matters more here than the phrase "invisible to a user" suggests. `NavidromeSpecDeviationTest`
+pins two divergences by asserting the **rejection**, in *both* directions: if a vendored-spec refresh
+ever models Navidrome's `scanStatus`, or upstream fixes `AlbumID3.userRating`'s `minimum: 1`, the
+build goes red and someone reads that file. But that only happens if somebody refreshes the vendored
+copy, and nothing schedules it. The pinned assertions are a trap with nobody scheduled to check it.
+
+**This is the one thing in this plan that is deliberately not a gate**, and it belongs here rather
+than in a plan of its own for the same reason the `contract` job does: this task owns the gates, and
+"the gate this project chose not to make blocking" is a decision about gates.
+
+`.github/workflows/openapi-drift.yml`:
+
+```yaml
+name: OpenAPI drift
+
+# Nightly and on demand. NOT on pull_request: this workflow asks a question about the *upstream
+# world*, which can change while this repository does not, so a failure here is never a reason to
+# block a change somebody wrote. Spec section 10 calls it "non-blocking" and means it.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Read-only. This workflow reports; it does not open an issue, push a refreshed spec, or comment
+# on anything. Refreshing the vendored copy is a human decision, because it can turn
+# `NavidromeSpecDeviationTest`'s pinned assertions red on purpose.
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The vendored copy, byte for byte, is the subject. `opensubsonic-1.16.1.json` is the file
+      # `OpenApiFixtureValidator` loads, so this compares the exact artefact the oracle uses --
+      # not a rendering of it, and not a version string that can lag the content.
+      - name: Fetch the upstream specification
+        id: fetch
+        run: |
+          set -euo pipefail
+          curl -fsSL "$UPSTREAM_SPEC_URL" -o /tmp/upstream.json
+          # Normalised through `jq -S` so a key reordering is not reported as drift. A reordering
+          # is not drift; a changed schema is.
+          jq -S . /tmp/upstream.json > /tmp/upstream.norm.json
+          jq -S . core/testing/src/main/resources/openapi/opensubsonic-1.16.1.json > /tmp/vendored.norm.json
+          if diff -q /tmp/vendored.norm.json /tmp/upstream.norm.json >/dev/null; then
+            echo "drifted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+            diff -u /tmp/vendored.norm.json /tmp/upstream.norm.json | head -400 > /tmp/drift.diff
+          fi
+        env:
+          # The exact URL Plan 1 vendored from -- see Plan 1 Task 3, which fetched this file with
+          # the same `curl`. Verified while this step was written: HTTP 200, 453,720 bytes,
+          # `openapi: 3.0.0`, `info.version: 1.16.1`, **87 paths and 195 schemas** -- the same two
+          # numbers spec section 10 quotes.
+          UPSTREAM_SPEC_URL: https://opensubsonic.netlify.app/docs/openapi/openapi.json
+
+      # A workflow whose only failure mode is silence is the defect class this project keeps
+      # finding. Say the answer out loud on every run, including the boring one.
+      - name: Report
+        run: |
+          if [ "${{ steps.fetch.outputs.drifted }}" = "true" ]; then
+            echo "DRIFT: the vendored OpenSubsonic specification differs from upstream."
+            cat /tmp/drift.diff
+          else
+            echo "NO DRIFT: the vendored OpenSubsonic specification matches upstream."
+          fi
+
+      - name: Upload the diff
+        if: steps.fetch.outputs.drifted == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openapi-drift
+          path: /tmp/drift.diff
+```
+
+Three things about it are decisions rather than defaults, and each is written into the file:
+
+- **It never runs on `pull_request`.** Its subject is upstream, which changes without anybody here
+  doing anything. A red mark on somebody's unrelated change would get the workflow deleted inside a
+  month, which is how a non-blocking check becomes no check.
+- **`jq -S` before the diff.** A key reordering upstream is not drift, and a checker that cries
+  every night is one nobody reads.
+- **It reports on the quiet path too.** This project has found eleven gates that passed by never
+  running. A drift check that only speaks when it has something to say is indistinguishable, from
+  the outside, from one whose `curl` has been 404ing for six weeks.
+
+**The URL was confirmed while this step was written, and the answer is worth recording rather than
+re-deriving.** `curl -fsSL https://opensubsonic.netlify.app/docs/openapi/openapi.json` returns HTTP
+200 and 453,720 bytes; parsed, it is `openapi: 3.0.0`, `info.version: 1.16.1`, **87 paths and 195
+schemas**, matching spec §10's own description of the oracle. Normalised with sorted keys it is
+**byte-identical to the vendored copy** as of 2026-08-25 — so the check's first real run should
+report `NO DRIFT`, and anything else on day one means the fetch is wrong rather than that upstream
+moved.
+
+Two guesses were wrong on the way to that, and both are recorded so nobody repeats them:
+`raw.githubusercontent.com/opensubsonic/open-subsonic-api/main/static/open-subsonic-api.json` and
+the same path without `static/` both 404. **Re-confirm before committing anyway** — pointing a drift
+check at a 404 is the purest possible form of the defect it exists to prevent, and if the file has
+moved since, that discovery *is* the first drift finding.
+
+**And confirm the check can report drift**, the way every other gate in this project is proved:
+change one character in the vendored copy, run `gh workflow run "OpenAPI drift"`, and require
+`DRIFT:` in the log. Restore the character afterwards. A drift check nobody has watched report drift
+is a drift check nobody knows works — the same rule the coverage floors are held to.
+
+- [ ] **Step 9: Correct the spec**
 
 `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` §10, the **Tier 2** table. It already
 lists `Browse` and `Library-scoped shuffle` as journeys. Both are now real, so nothing needs
@@ -8113,7 +8234,17 @@ holds them. Add a line under the table:
 Also fold in Task 3's spec corrections if they were not already committed there: the
 `musicFolderId` trap's real shape, and the three fixture/spec deviations.
 
-- [ ] **Step 9: Final green run and commit**
+And §10's **countermeasure 1**, which says the vendored spec comes *"with a nightly non-blocking
+drift check"* — a claim that was false for seven plans. Step 8 makes it true; name the workflow so
+the claim is checkable rather than aspirational:
+
+> … vendored, with a **nightly non-blocking drift check** — `.github/workflows/openapi-drift.yml`,
+> scheduled and `workflow_dispatch`-able, never run on a pull request, and reporting on the quiet
+> path as well as the loud one. It is deliberately **not** a gate: its subject is upstream, which
+> changes without anything here changing, so a failure is a prompt to look rather than a reason to
+> block somebody's work.
+
+- [ ] **Step 10: Final green run and commit**
 
 Run, and require every one to pass:
 
@@ -8129,6 +8260,14 @@ Run, and require every one to pass:
 ```bash
 git add app build.gradle.kts .github/workflows docs/superpowers/specs
 git commit -m "ci: tier 2 browse and scoped-shuffle journeys, resolved-classpath mock guard"
+```
+
+The nightly drift check is a separate commit, because it is a separate decision and the only thing
+in this repository that is not a gate:
+
+```bash
+git add .github/workflows/openapi-drift.yml docs/superpowers/specs
+git commit -m "ci: the nightly OpenAPI drift check spec §10 has always claimed"
 ```
 
 ---
@@ -8165,3 +8304,9 @@ git commit -m "ci: tier 2 browse and scoped-shuffle journeys, resolved-classpath
    motivates the non-null `Int` is itself pinned by a live assertion.
 8. Anything discovered to be wrong in the spec is corrected **in the spec** — §4's
    `musicFolderId` trap and §10's oracle claim, at minimum.
+9. **The oracle has a scheduled way of ageing visibly.** `.github/workflows/openapi-drift.yml`
+   exists, is scheduled, never runs on a pull request, reports on the quiet path as well as the
+   loud one, and has been **watched report drift once** against a deliberately altered vendored
+   copy. Spec §10 has claimed this check since it was written; until this task nothing implemented
+   it, which left `NavidromeSpecDeviationTest`'s two both-directions assertions waiting for a
+   refresh nobody scheduled.
