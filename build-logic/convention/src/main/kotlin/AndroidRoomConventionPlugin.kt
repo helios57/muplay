@@ -89,6 +89,11 @@ class AndroidRoomConventionPlugin : Plugin<Project> {
         // below resolve.
         kotlinSources.from(variant.sources.kotlin?.all)
         kotlinSources.from(variant.sources.java?.all)
+        // The floor `verify()` checks its zero-file guard against: at least one scanned
+        // file has to live under this module's own `src/`, not merely somewhere non-zero --
+        // generated KSP output under `build/` can never satisfy this on its own. See
+        // `verify()` for why a bare non-zero total was not enough.
+        projectSrcPath.set(File(projectDir, "src").path)
         // A `ConfigurableFileCollection`, not a hardcoded existence check here: whether this
         // resolves to zero or one file is exactly the question `verify()` answers, and Gradle
         // tracks the file's presence *and* content as a real input either way -- adding, removing
