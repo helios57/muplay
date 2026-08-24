@@ -5425,8 +5425,16 @@ answers from `media_progress` for audiobooks, and changes nothing else.
 The stronger structural point is in the policy's *signature*: `resolve(mediaIds, requestedIndex)`
 is never given the caller's requested position, so there is no position for an implementation to
 accidentally honour. The requested **index** is passed, because an index is queue membership — "play
-track 3 of this album" is a legitimate thing for a caller to say — and a policy is free to override
-it, which is how Plan 4 resumes a book at chapter 14.
+track 3 of this album" is a legitimate thing for a caller to say — and the index is the caller's to choose.
+
+**Correction, found by Plan 4 before this was implemented.** An earlier draft of this paragraph
+said a policy is free to override the index, "which is how Plan 4 resumes a book at chapter 14".
+It cannot be. `"play this book"` and `"play chapter 1 from the top"` both arrive as
+`requestedIndex = 0`, so a policy that overrode the index would make tapping chapter 1 jump to
+chapter 14. The **index** belongs to the caller; only the **position** belongs to the policy.
+Plan 4 resumes at chapter 14 by having its own launcher choose the index before `setMediaItems`
+is called — which leaves this seam unchanged and the guarantee it exists for, that no code path
+can set a wrong position, exactly as strong.
 
 ### The seven persistence points, and the trap inside them
 
@@ -5567,8 +5575,11 @@ data class ResumeTarget(val startIndex: Int, val startPositionMs: Long)
  * means no implementation can accidentally trust one.
  *
  * The requested **index** is passed, because an index is queue membership rather than progress —
- * "play track 3 of this album" is a legitimate request. A policy may still override it, which is
- * how the audiobook plan resumes a book at chapter 14.
+ * "play track 3 of this album" is a legitimate request. The index belongs to the CALLER and a policy
+ * must not override it: "play this book" and "play chapter 1 from the top" both arrive as index
+ * 0, so overriding would make tapping chapter 1 jump to chapter 14. The audiobook plan resumes at
+ * chapter 14 by choosing the index before it calls `setMediaItems`. This policy chooses only the
+ * position.
  *
  * **Implementations must answer without blocking.** [MuPlayer] calls this from `setMediaItems`,
  * which runs on the player's application thread; a Room query there would jank the UI. The
