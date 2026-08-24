@@ -151,9 +151,15 @@ plan reaches Navidrome only through a stream URL that a `MediaItem` already carr
 ### Already on disk and unchanged by this plan
 
 `MediaProgressEntity(mediaId, positionMs, isFinished, lastPlayedAtEpochMs, speed, skipSilence,
-gainDb)` and `MediaProgressDao` in `:core:database`, at **Room schema version 1**. **This plan adds
-no table and no column, so the schema version does not move.** If you find yourself writing a Room
-migration in this plan, stop — you have added something that belongs to Plan 4.
+gainDb)` and `MediaProgressDao` in `:core:database`. **This plan adds no table and no column, so the
+schema version does not move.** If you find yourself writing a Room migration in this plan, stop —
+you have added something that belongs to Plan 4.
+
+> The version this plan lands *on* is not 1, which is only what the tree carries today: Plan 2
+> Tasks 4, 5 and 6 take it to **4**, and Plan 4 Task 2 to **5**. Plans 3 and 4 both record 4
+> correctly. Read the real `MuPlayDatabase` rather than any number written here — the number is
+> Plan 2's and Plan 4's to move, and the only claim this plan makes about it is that it does not
+> move it.
 
 ---
 
@@ -321,10 +327,14 @@ Plan 6 is **casting**. Explicitly **not** in this plan:
 | `core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt` | **new** — the phone's HTTP server |
 | `core/cast/src/main/kotlin/app/muplay/cast/route/CastRoute.kt` | **new** — proxied, renderer-direct, or honestly unroutable |
 | `core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt` | **new** — the decision, proved by observation |
-| `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt` | **new** — a real UPnP renderer in-process, strict by default |
-| `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt` | **new** — several devices on one loopback "network" |
+| `core/cast/src/main/kotlin/app/muplay/cast/fake/FakeRenderer.kt` | **new** — a real UPnP renderer in-process, strict by default. Written in `src/test` by Task 3 and **moved to `src/main` by Task 8 Step 1**, which argues the move; `:core:media`'s and `:app`'s device tests cannot see a `src/test` source set |
+| `core/cast/src/main/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt` | **new** — several devices on one loopback "network". Same move, same task |
+| `core/cast/src/main/kotlin/app/muplay/cast/fake/FakeDescriptions.kt` | **new** — a loopback server for the four description documents, plus the `(URI) -> String?` fetcher `RendererDirectory` takes. Same move, same task |
 | `core/media/src/main/kotlin/app/muplay/media/MediaItems.kt` | **modify** — a fifth parameter, so the served MIME has one source |
 | `core/media/src/main/kotlin/app/muplay/media/cast/UpnpPlayer.kt` | **new** — `SimpleBasePlayer` over a renderer |
+| `core/media/src/main/kotlin/app/muplay/media/cast/CastQueueItem.kt` | **new** — the `MediaItem` → `CastItem` mapping (Task 8). The Android-typed half of the split that keeps `:core:cast` pure |
+| `core/media/src/main/kotlin/app/muplay/media/cast/CastSessionState.kt` | **new** — Idle / Connecting / Playing / Lost / Failed (Task 8) |
+| `core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt` | **modify** — `attach(player)`, so one writer can follow the output switch (Task 9). Plan 3 records this as Plan 6's to add |
 | `core/media/src/main/kotlin/app/muplay/media/cast/CastSessionManager.kt` | **new** — start a session, tear one down, react to a dead speaker |
 | `core/media/src/main/kotlin/app/muplay/media/cast/OneShotResumePolicy.kt` | **new** — the decorator that carries a position across a handover |
 | `core/media/src/main/kotlin/app/muplay/media/PlaybackOutputSwitch.kt` | **new** — the seam `MuPlaybackService` observes |
@@ -1863,7 +1873,11 @@ git commit -m "feat(cast): the cast module, an HTTP/1.1 codec we own, and cleart
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/SsdpSearchTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/DeviceDescriptionTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/RendererDirectoryTest.kt`
-- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt`
+- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt` — **Task 8 Step 1
+  moves this to `src/main`**; write it here and let that task move it, rather than pre-empting the
+  argument it makes
+- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeDescriptions.kt` — same, and see the
+  note after Step 11
 - Test: `core/database/src/androidTest/kotlin/app/muplay/database/RendererStoreTest.kt`
 - Modify: `build.gradle.kts` (`:core:cast` and `:core:database` floors)
 - Modify: `ci/mutation-probes.sh`
@@ -3411,7 +3425,8 @@ class RendererDirectoryTest {
 
 > `FakeDescriptions` is a small loopback HTTP server that serves the four XML documents and
 > nothing else, plus `fun client(): (URI) -> String?` returning the fetcher `RendererDirectory`
-> takes. Write it beside `FakeSsdpResponder` in `core/cast/src/test/kotlin/app/muplay/cast/fake/`,
+> takes. Write it beside `FakeSsdpResponder` in `core/cast/src/test/kotlin/app/muplay/cast/fake/`
+> — Task 8 Step 1 moves all three of these to `src/main` together —
 > reusing `HttpWire.renderResponseHead` — **not** a `MockWebServer`, because a description URL must
 > have a path this test chooses and `MockWebServer` dispatches by queue order by default. Its four
 > document builders (`sonosDescription`, `genericDescription`, `mediaServerDescription`,
@@ -3905,8 +3920,12 @@ git commit -m "feat(cast): SSDP discovery, device descriptions, and Sonos's embe
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/soap/XmlTextTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/soap/SoapEnvelopeTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/soap/UpnpTimeTest.kt`
-- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt`
-- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRendererStrictnessTest.kt`
+- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt` — **Task 8 Step 1 moves
+  this to `core/cast/src/main/kotlin/app/muplay/cast/fake/`**, where `:core:media`'s and `:app`'s
+  device tests can reach it. Write it here; that task argues the move at the point it becomes
+  necessary
+- Test: `core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRendererStrictnessTest.kt` — **stays in
+  `src/test`.** It is the test *of* the fake, not the fake
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/soap/SoapClientTest.kt`
 - Modify: `build.gradle.kts` (`:core:cast` floors)
 - Modify: `ci/mutation-probes.sh`
@@ -9179,8 +9198,11 @@ Response: report `Player.STATE_IDLE` with a `PlaybackException`, and hand
 
 - [ ] **Step 1: Put the fake renderer where the device tests can reach it**
 
-`FakeRenderer` lives in `:core:cast`'s `src/test`, which is not published to consumers. Two ways to
-reach it from `:core:media`'s `androidTest`, and this plan takes the second:
+`FakeRenderer`, `FakeSsdpResponder` and `FakeDescriptions` were written into `:core:cast`'s
+`src/test` by Tasks 2 and 3 — which is where a JVM module's own tests belong, and which is **not
+published to consumers**. `:core:media`'s `androidTest` and `:app`'s `CastJourneyTest` cannot see
+another module's `src/test` source set at all, so without this step Task 11's Tier 2 cast journey
+has no renderer to talk to. Two ways to reach them, and this plan takes the second:
 
 - a `testFixtures` source set — supported, and it means a new source set, a new artifact, new
   coverage bookkeeping, and `ConventionTest` learning about it;
@@ -9188,18 +9210,44 @@ reach it from `:core:media`'s `androidTest`, and this plan takes the second:
   `core/cast/src/main/kotlin/app/muplay/cast/fake/`** and depend on `:core:cast` from
   `:core:media`'s `androidTest`, which it already does for main.
 
+```bash
+git mv core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt \
+       core/cast/src/main/kotlin/app/muplay/cast/fake/FakeRenderer.kt
+git mv core/cast/src/test/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt \
+       core/cast/src/main/kotlin/app/muplay/cast/fake/FakeSsdpResponder.kt
+git mv core/cast/src/test/kotlin/app/muplay/cast/fake/FakeDescriptions.kt \
+       core/cast/src/main/kotlin/app/muplay/cast/fake/FakeDescriptions.kt
+```
+
+`FakeRendererStrictnessTest` **stays in `src/test`** — it is the test of the fake, not the fake.
+The package does not change, so no import in Tasks 2, 3, 5, 6 or 7 moves; only the source set does.
+
 The second is chosen because these three classes are **real servers**, not assertions: a strict
 in-process UPnP renderer is a piece of this subsystem's public surface, useful to `:core:media`,
 to `:app`'s Tier 2 journey, and to anyone debugging a real speaker. It costs a small amount of
 production code that ships in the APK.
 
-> **That cost is real and must be paid explicitly**, not waved away. Add
-> `"app.muplay.cast.fake.*"` to `:core:cast`'s coverage **excludes** with the comment *"test
-> infrastructure that lives in main so device tests can reach it; its own behaviour is gated by
-> `FakeRendererStrictnessTest`"* — otherwise these classes drag the module's measured branch
-> coverage around for reasons unrelated to the code under test. And note in the task report that
-> ~600 lines of test server ship in the release APK; if that ever matters, the answer is R8, or
-> promoting it to `testFixtures` then.
+> **That cost is real and must be paid explicitly**, not waved away — and the *mechanism* matters,
+> because the obvious one does nothing. `:core:cast`'s floor is a single `element = "CLASS"` rule
+> driven by an explicit `includes` list (Task 1 Step 1), which each task extends with the classes it
+> measured. So `app.muplay.cast.fake.*` is kept out of the floor by **staying out of `includes`**,
+> and that omission must be written down as a decision:
+>
+> ```kotlin
+>       // `app.muplay.cast.fake.*` is deliberately absent from this list. It is test
+>       // infrastructure that lives in `main` so device tests can reach it, and its own behaviour
+>       // is gated by `FakeRendererStrictnessTest` rather than by a coverage floor.
+> ```
+>
+> **Do not add an `excludes` entry instead.** The root `build.gradle.kts`'s `CoverageFloor` doc
+> records, from measurement, that `includes`/`excludes` on an `element = "BUNDLE"` rule *"silently
+> do nothing"* — and on this module's `CLASS`-element rule an `excludes` over classes the
+> `includes` list never names is a line that reads as a gate and is not one. A comment naming an
+> absence is honest; a rule that filters nothing is the "assertions that execute but do not
+> discriminate" defect this plan is written against, in the coverage config.
+>
+> And note in the task report that ~600 lines of test server ship in the release APK; if that ever
+> matters, the answer is R8, or promoting it to `testFixtures` then.
 
 `core/media/build.gradle.kts` — add:
 
@@ -9972,6 +10020,8 @@ git commit -m "feat(cast): a renderer that is a Media3 Player, and a speaker tha
 - Test: `core/media/src/test/kotlin/app/muplay/media/cast/OneShotResumePolicyTest.kt`
 - Test: `core/media/src/androidTest/kotlin/app/muplay/media/cast/HandoverTest.kt`
 - Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt` (add `attach(player)` —
+  Plan 3 Task 8 records this method as this plan's to add; see Step 4)
 - Modify: `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt`
 - Modify: `build.gradle.kts`, `ci/mutation-probes.sh`
 
@@ -9992,7 +10042,8 @@ git commit -m "feat(cast): a renderer that is a Media3 Player, and a speaker tha
   `CastRouter`, `MediaProxyServer`, `ProxyRegistry` (Tasks 6–7); `CastDevice` (Task 2).
 - Produces:
   - `class PlaybackOutputSwitch @Inject constructor()` with `val activePlayer: StateFlow<Player?>`,
-    `fun installLocal(player: Player)`, `fun installRemote(player: Player)`, `fun current(): Player?`
+    `fun installLocal(player: Player)`, `fun installRemote(player: Player)`,
+    `fun returnToLocal()`, `fun current(): Player?`
   - `class OneShotResumePolicy(private val delegate: ResumePolicy) : ResumePolicy` with
     `fun armFor(mediaId: String, target: ResumeTarget)` and `fun disarm()`
   - In `MediaModule`: `@Qualifier annotation class UndecoratedResumePolicy`, the existing
@@ -11622,7 +11673,11 @@ Read every ratio out of each module's `jacocoTestReport.xml` and write the measu
 - **Never `0.00`**, and never an invented round number. A floor of 0.00 passes at every minimum and
   gates nothing — this project shipped that once.
 - **Never lower a floor to make a number fit.** Add the missing case.
-- `"app.muplay.cast.fake.*"` goes in **excludes**, with the comment Task 8 Step 1 specifies.
+- `"app.muplay.cast.fake.*"` **stays out of `:core:cast`'s `includes`**, with the comment Task 8
+  Step 1 specifies. Not an `excludes` entry: this module's rule is `element = "CLASS"` over an
+  explicit include list, so an `excludes` there filters nothing that was ever being measured — and
+  the root `build.gradle.kts` documents by measurement that the `excludes` form is a silent no-op on
+  a `"BUNDLE"` rule. Confirm the fakes appear in `jacocoTestReport.xml` and in no floor.
 
 Then read the notice output for all three modules and confirm each says *"evaluated all N of its
 coverage floors"* rather than the `onlyIf` warning. **A module whose gate did not run is a module
