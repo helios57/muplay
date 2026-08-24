@@ -222,11 +222,14 @@ class BrowseEndpointsTest {
     assertThat(result.album.libraryId).isEqualTo(7)
     assertThat(result.album.name).isEqualTo("Test Album")
     assertThat(result.songs).hasSize(3)
-    assertThat(result.songs).allMatch { it.libraryId == 7 }
+    // `map { … }` + `containsExactly`, not `allMatch`: `allMatch` is vacuously true on an empty
+    // list, and while the `hasSize(3)` above happens to guard these today, that guard is
+    // positional -- delete or reorder it and they go silent without anything failing.
+    assertThat(result.songs.map { it.libraryId }).containsExactly(7, 7, 7)
     assertThat(result.songs.map { it.title })
       .containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
     assertThat(result.songs.map { it.trackNumber }).containsExactlyInAnyOrder(1, 2, 3)
-    assertThat(result.songs).allMatch { it.suffix == "mp3" }
+    assertThat(result.songs.map { it.suffix }).containsExactly("mp3", "mp3", "mp3")
   }
 
   @Test
@@ -291,9 +294,12 @@ class BrowseEndpointsTest {
     assertThat(results.albums.map { it.name }).contains("Test Album")
     assertThat(results.songs.map { it.title })
       .containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
-    assertThat(results.artists).allMatch { it.libraryId == 3 }
-    assertThat(results.albums).allMatch { it.libraryId == 3 }
-    assertThat(results.songs).allMatch { it.libraryId == 3 }
+    // Same reason as above, and here the guard was even thinner: these three were non-vacuous only
+    // because the `contains(...)` assertions above happen to run first and happen to establish
+    // non-emptiness. That is an accident of ordering, not a property of the assertion.
+    assertThat(results.artists.map { it.libraryId }).containsExactly(3)
+    assertThat(results.albums.map { it.libraryId }).containsExactly(3)
+    assertThat(results.songs.map { it.libraryId }).containsExactly(3, 3, 3)
 
     // The stamp above is only trustworthy if the scope it claims to come from actually went out,
     // so the request is asserted here too -- and a second query and a second scope mean no fixed

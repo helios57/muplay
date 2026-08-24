@@ -81,7 +81,10 @@ class LiveNavidromeTest {
     val libraries = client("testpass").getMusicFolders()
 
     assertThat(libraries.map { it.name }).containsExactlyInAnyOrder("Music", "Audiobooks")
-    assertThat(libraries).allMatch { it.role == LibraryRole.UNASSIGNED }
+    // Not `allMatch`, which passes on an empty list: if `getMusicFolders` ever returned nothing,
+    // the line above would fail but this one would not, and on its own it would report success.
+    assertThat(libraries.map { it.role })
+      .containsExactly(LibraryRole.UNASSIGNED, LibraryRole.UNASSIGNED)
   }
 
   // --- the scoping trap, measured against the server rather than argued from the type ----------
