@@ -38,3 +38,16 @@ class SubsonicErrorException(val code: Int, message: String? = null) :
  */
 class SubsonicHttpException(val status: Int) :
   Exception("Subsonic HTTP error $status"), SubsonicException
+
+/**
+ * The server answered `status: "ok"` but the response carried no [missingField] payload at all.
+ *
+ * Deliberately **not** a member of the sealed [SubsonicException] hierarchy. That hierarchy means
+ * "the server produced a real answer on purpose", and its members are the ones a caller may
+ * legitimately degrade on. A success envelope with no payload is not an answer — it is the same
+ * class of event as an unparseable body, which this codebase already lets propagate as whatever
+ * the parser threw. Adding it to the sealed set would invite callers to treat "we got nothing"
+ * as "the server said no".
+ */
+class SubsonicMalformedResponseException(val missingField: String) :
+  Exception("Subsonic reported success but carried no `$missingField` payload")

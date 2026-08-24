@@ -31,4 +31,19 @@ interface SubsonicApi {
 
   @GET("rest/getOpenSubsonicExtensions")
   suspend fun getOpenSubsonicExtensions(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/getAlbumList2")
+  suspend fun getAlbumList2(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/getAlbum")
+  suspend fun getAlbum(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/search3")
+  suspend fun search3(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/getRandomSongs")
+  suspend fun getRandomSongs(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/getScanStatus")
+  suspend fun getScanStatus(@QueryMap params: Map<String, String>): SubsonicEnvelope
 }

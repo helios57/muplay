@@ -1,13 +1,24 @@
 package app.muplay.network
 
+import app.muplay.model.Album
+import app.muplay.model.AlbumListType
+import app.muplay.model.AlbumWithSongs
+import app.muplay.model.Artist
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.ScanStatus
+import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
+import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
+import app.muplay.network.model.AlbumBody
+import app.muplay.network.model.ArtistBody
+import app.muplay.network.model.ChildBody
 import app.muplay.network.model.SubsonicEnvelope
 import app.muplay.network.model.SubsonicResponseBody
 import java.security.SecureRandom
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.HttpException
 import retrofit2.Retrofit
@@ -29,10 +40,10 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 class SubsonicClient(
   private val credentials: SubsonicCredentials,
   private val api: SubsonicApi = buildApi(credentials.baseUrl),
-) {
+) : SubsonicSource {
 
   /** Calls `ping` and returns the server's identity. Throws [SubsonicException] on failure. */
-  suspend fun ping(): ServerInfo {
+  override suspend fun ping(): ServerInfo {
     val body = call { api.ping(authParams()) }
     return ServerInfo(
       type = body.type.orEmpty(),
@@ -49,7 +60,7 @@ class SubsonicClient(
    * a placeholder. A folder missing its (optional, per the spec) `name` gets the stable fallback
    * `"Library <id>"` rather than a blank or null one.
    */
-  suspend fun getMusicFolders(): List<MusicLibrary> {
+  override suspend fun getMusicFolders(): List<MusicLibrary> {
     val body = call { api.getMusicFolders(authParams()) }
     val folders = body.musicFolders?.musicFolder.orEmpty()
     return folders.map { folder ->
@@ -77,6 +88,173 @@ class SubsonicClient(
     val body = call { api.getOpenSubsonicExtensions(authParams()) }
     return body.openSubsonicExtensions.orEmpty().associate { it.name to it.versions }
   }
+
+  /**
+   * Calls `getScanStatus` and reports the server's scan state, including Navidrome's own
+   * `lastScan` extension — the watermark this project's whole sync design rests on.
+   *
+   * Reads only. It never calls `startScan`, and the request test asserts no `fullScan` parameter
+   * rides along: Tempo re-triggers a full server scan on every poll of this endpoint, and a
+   * client that polls must not be the thing that makes the server work.
+   *
+   * A success envelope with no `scanStatus` payload is a [SubsonicMalformedResponseException],
+   * not a default-valued [ScanStatus]: "not scanning, no watermark" is a *specific claim* a caller
+   * would act on (it is indistinguishable from a server that has genuinely never scanned), and
+   * inventing it from a missing field would silently reset the sync watermark.
+   */
+  override suspend fun getScanStatus(): ScanStatus {
+    val body = call { api.getScanStatus(authParams()) }
+    val status = body.scanStatus ?: throw SubsonicMalformedResponseException("scanStatus")
+    return ScanStatus(
+      isScanning = status.scanning,
+      scannedCount = status.count,
+      lastScan = status.lastScan,
+    )
+  }
+
+  /**
+   * One page of albums from one library, every result stamped with [musicFolderId] — see
+   * [SubsonicSource.getAlbumList2] and [Album.libraryId] for why the stamp comes from the request
+   * rather than from the response.
+   */
+  override suspend fun getAlbumList2(
+    musicFolderId: Int,
+    type: AlbumListType,
+    size: Int,
+    offset: Int,
+  ): List<Album> {
+    val body = call {
+      api.getAlbumList2(
+        authParams() + mapOf(
+          "type" to type.wireValue,
+          "size" to size.coerceIn(1, MAX_ALBUM_LIST_PAGE).toString(),
+          "offset" to offset.coerceAtLeast(0).toString(),
+          "musicFolderId" to musicFolderId.toString(),
+        ),
+      )
+    }
+    // Absent container -> no albums. Legal, and exactly what a past-the-end offset returns.
+    return body.albumList2?.album.orEmpty().map { it.toAlbum(musicFolderId) }
+  }
+
+  /**
+   * One album and its tracks. [musicFolderId] is a *stamp*, never a request parameter — the spec
+   * gives `getAlbum` exactly one parameter, `id`.
+   *
+   * A success envelope with no `album` payload is a [SubsonicMalformedResponseException] rather
+   * than an empty album, because "the server said ok and told us nothing" is not a state a caller
+   * can act on: a full reconcile that read it as "this album has no songs" would delete a real
+   * album's tracks.
+   */
+  override suspend fun getAlbum(albumId: String, musicFolderId: Int): AlbumWithSongs {
+    // No `musicFolderId` on the wire: `getAlbum` takes only `id` per the spec. The argument is a
+    // stamp, not a parameter.
+    val body = call { api.getAlbum(authParams() + mapOf("id" to albumId)) }
+    val album = body.album ?: throw SubsonicMalformedResponseException("album")
+    return AlbumWithSongs(
+      album = album.toAlbum(musicFolderId),
+      songs = album.song.map { it.toSong(musicFolderId) },
+    )
+  }
+
+  /**
+   * Searches one library, stamping every artist, album and song with [musicFolderId].
+   *
+   * An absent `searchResult3` container, or any absent array within it, maps to an empty list
+   * rather than to a failure: unlike [getAlbum], a search that matched nothing is a real answer a
+   * caller can act on, and a server that omits the container for "no matches" is saying exactly
+   * that.
+   */
+  override suspend fun search3(
+    query: String,
+    musicFolderId: Int,
+    artistCount: Int,
+    albumCount: Int,
+    songCount: Int,
+  ): SearchResults {
+    val body = call {
+      api.search3(
+        authParams() + mapOf(
+          "query" to query,
+          "musicFolderId" to musicFolderId.toString(),
+          "artistCount" to artistCount.coerceAtLeast(0).toString(),
+          "albumCount" to albumCount.coerceAtLeast(0).toString(),
+          "songCount" to songCount.coerceAtLeast(0).toString(),
+        ),
+      )
+    }
+    val result = body.searchResult3
+    return SearchResults(
+      artists = result?.artist.orEmpty().map { it.toArtist(musicFolderId) },
+      albums = result?.album.orEmpty().map { it.toAlbum(musicFolderId) },
+      songs = result?.song.orEmpty().map { it.toSong(musicFolderId) },
+    )
+  }
+
+  /** Random songs from one library — the server side of library-scoped shuffle. */
+  override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> {
+    val body = call {
+      api.getRandomSongs(
+        authParams() + mapOf(
+          // Navidrome caps this at 500 and silently truncates; clamping here keeps the number on
+          // the wire and the number the caller reasons about the same one.
+          "size" to size.coerceIn(1, MAX_RANDOM_SONGS).toString(),
+          "musicFolderId" to musicFolderId.toString(),
+        ),
+      )
+    }
+    return body.randomSongs?.song.orEmpty().map { it.toSong(musicFolderId) }
+  }
+
+  /**
+   * An authenticated `getCoverArt` URL. Built here rather than issued, because the caller is an
+   * image loader, not this client.
+   *
+   * `authParams()` supplies a **fresh salt** on every call, so two URLs for the same art are
+   * different strings — see [SubsonicSource.coverArtUrl] for why that matters to Coil.
+   */
+  override fun coverArtUrl(coverArtId: String, sizePx: Int?): String {
+    val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()
+      .addPathSegments("rest/getCoverArt")
+      .addQueryParameter("id", coverArtId)
+    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }
+    if (sizePx != null) builder.addQueryParameter("size", sizePx.toString())
+    return builder.build().toString()
+  }
+
+  private fun AlbumBody.toAlbum(musicFolderId: Int) = Album(
+    id = id,
+    libraryId = musicFolderId,
+    name = name,
+    artistId = artistId,
+    artistName = artist,
+    coverArtId = coverArt,
+    songCount = songCount,
+    durationSeconds = duration,
+  )
+
+  private fun ArtistBody.toArtist(musicFolderId: Int) = Artist(
+    id = id,
+    libraryId = musicFolderId,
+    name = name,
+    coverArtId = coverArt,
+    albumCount = albumCount,
+  )
+
+  private fun ChildBody.toSong(musicFolderId: Int) = Song(
+    id = id,
+    libraryId = musicFolderId,
+    title = title,
+    albumId = albumId,
+    albumName = album,
+    artistId = artistId,
+    artistName = artist,
+    trackNumber = track,
+    discNumber = discNumber,
+    durationSeconds = duration,
+    suffix = suffix,
+    coverArtId = coverArt,
+  )
 
   /**
    * Runs [request] and returns the decoded [SubsonicResponseBody] only once it is proven to
@@ -139,13 +317,27 @@ class SubsonicClient(
     // comes from nextBytes() on the shared instance, not from constructing a new one each time.
     private val secureRandom = SecureRandom()
 
+    /** Subsonic's documented cap on `getRandomSongs.size`; Navidrome truncates silently at it. */
+    const val MAX_RANDOM_SONGS = 500
+
+    /** Subsonic's documented cap on `getAlbumList2.size`. */
+    const val MAX_ALBUM_LIST_PAGE = 500
+
+    /**
+     * Extracted from [buildApi], which had it inline, so the cover-art URL builder and the
+     * Retrofit base URL cannot disagree about whether a user-entered URL needs a trailing slash.
+     * `SubsonicClientTest`'s `ping succeeds when baseUrl has no trailing slash` already covers
+     * the branch; nothing about its behaviour changes here, only where it lives.
+     */
+    private fun normalizeBaseUrl(baseUrl: String): String =
+      if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+
     private fun buildApi(baseUrl: String): SubsonicApi {
       val json = Json { ignoreUnknownKeys = true }
       val contentType = "application/json".toMediaType()
-      val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
       val retrofit =
         Retrofit.Builder()
-          .baseUrl(normalizedBaseUrl)
+          .baseUrl(normalizeBaseUrl(baseUrl))
           .addConverterFactory(json.asConverterFactory(contentType))
           .build()
       return retrofit.create(SubsonicApi::class.java)

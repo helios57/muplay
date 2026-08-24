@@ -36,6 +36,11 @@ data class SubsonicResponseBody(
   val error: SubsonicErrorBody? = null,
   val musicFolders: MusicFoldersBody? = null,
   val openSubsonicExtensions: List<OpenSubsonicExtensionBody>? = null,
+  val albumList2: AlbumList2Body? = null,
+  val album: AlbumBody? = null,
+  val searchResult3: SearchResult3Body? = null,
+  val randomSongs: SongsBody? = null,
+  val scanStatus: ScanStatusBody? = null,
 )
 
 /**
@@ -80,4 +85,98 @@ data class MusicFolderBody(
 data class OpenSubsonicExtensionBody(
   val name: String,
   val versions: List<Int> = emptyList(),
+)
+
+/** The OpenSubsonic `AlbumList2` schema: a wrapper object around the album list. */
+@Serializable
+data class AlbumList2Body(
+  val album: List<AlbumBody> = emptyList(),
+)
+
+/**
+ * The OpenSubsonic `AlbumID3` schema, narrowed to the fields this client uses. Only `id`, `name`,
+ * `songCount`, `duration` and `created` are required by the schema; everything optional is
+ * nullable or defaulted here.
+ *
+ * [song] is present only on a `getAlbum` response (the schema puts it on `AlbumID3` itself), so
+ * it defaults to empty for every `getAlbumList2`/`search3` album.
+ *
+ * `userRating` is deliberately **not** modelled. Navidrome sends `0` for an unrated album while
+ * the schema declares `[1-5]`, which is the single reason four of this project's captured
+ * fixtures fail the OpenAPI oracle (see `NavidromeSpecDeviationTest`); nothing here uses it, and
+ * `Json(ignoreUnknownKeys = true)` drops it.
+ */
+@Serializable
+data class AlbumBody(
+  val id: String,
+  val name: String,
+  val artist: String? = null,
+  val artistId: String? = null,
+  val coverArt: String? = null,
+  val songCount: Int = 0,
+  val duration: Int = 0,
+  val song: List<ChildBody> = emptyList(),
+)
+
+/**
+ * The OpenSubsonic `Child` schema, narrowed to the fields this client uses. Only `id`, `isDir`
+ * and `title` are required by the schema.
+ *
+ * [type] is modelled and then deliberately ignored by every mapper: Navidrome hardcodes it to
+ * `"music"` for every media file including audiobooks, so reading it would be reading a constant.
+ * It is kept so the next reader can see that it was considered rather than missed.
+ */
+@Serializable
+data class ChildBody(
+  val id: String,
+  val title: String,
+  val album: String? = null,
+  val albumId: String? = null,
+  val artist: String? = null,
+  val artistId: String? = null,
+  val track: Int? = null,
+  val discNumber: Int? = null,
+  val duration: Int = 0,
+  val suffix: String? = null,
+  val coverArt: String? = null,
+  val type: String? = null,
+  val isDir: Boolean = false,
+)
+
+/** The OpenSubsonic `ArtistID3` schema, narrowed. Only `id` and `name` are required. */
+@Serializable
+data class ArtistBody(
+  val id: String,
+  val name: String,
+  val coverArt: String? = null,
+  val albumCount: Int = 0,
+)
+
+/** The OpenSubsonic `SearchResult3` schema: three optional arrays. */
+@Serializable
+data class SearchResult3Body(
+  val artist: List<ArtistBody> = emptyList(),
+  val album: List<AlbumBody> = emptyList(),
+  val song: List<ChildBody> = emptyList(),
+)
+
+/** The OpenSubsonic `Songs` schema, the payload of `getRandomSongs`. */
+@Serializable
+data class SongsBody(
+  val song: List<ChildBody> = emptyList(),
+)
+
+/**
+ * The Subsonic `ScanStatus` element. `scanning` is the only field the schema requires; `count` is
+ * optional. [lastScan] is Navidrome's own extension and is absent from the vendored spec
+ * entirely, together with `folderCount`, `scanType` and `elapsedTime` — see
+ * `NavidromeSpecDeviationTest`. It is the field this project's whole sync design rests on, so it
+ * is modelled here even though the oracle does not know about it, and typed `String?` so a server
+ * that omits it degrades to "cannot tell" rather than failing to parse.
+ */
+@Serializable
+data class ScanStatusBody(
+  val scanning: Boolean,
+  val count: Int? = null,
+  val lastScan: String? = null,
 )
