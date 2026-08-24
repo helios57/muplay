@@ -338,7 +338,16 @@ a runtime grant, and an instrumentation test needs `pm grant`.
 
 ## 8. Optional integrations
 
-- **Bindery** — request audiobooks from inside the app.
+- **Bindery** — acquire audiobooks from inside the app. **Correction, established
+  from the project's source rather than its README:** `vavallee/bindery` is a Readarr
+  replacement — acquisition automation with **no request or approval concept** anywhere
+  in its router or roadmap. Adding a book *is* acquiring it. Read literally, the earlier
+  wording here ("request audiobooks") would have produced a request/approval state
+  machine the server cannot satisfy. Note also that **three projects share the name**,
+  and the two wrong ones are the easier to find: `evanbrooks/bindery` (browser book
+  layout, archived 2023) and `jarynclouatre/bindery` (an e-book format converter, and
+  the only Bindery listed in awesome-selfhosted). If a genuine request/approval workflow
+  is ever wanted, `markbeep/audiobookrequest` is the service that has one.
 - **Lidarr** — request music. `POST /api/v1/album` payload is unverified against
   a live instance.
 
@@ -381,7 +390,7 @@ pattern and it is the thing that keeps ten modules consistent.
 | Async | Coroutines + Flow | 1.11.0 |
 | DI | **Hilt via KSP** | 2.60.x |
 | Time | `kotlinx-datetime` / injected `Clock` | — |
-| Background | WorkManager | — |
+| Background | WorkManager — **named here but NOT adopted: absent from `libs.versions.toml`.** No plan currently requires it; add it to the catalogue in the plan that first needs it, and do not assume it is available. | — |
 
 `media3-ui-compose` matters more than its line in the table suggests: it supplies
 `PlayPauseButtonState`, `CurrentMediaItemState`, `PlaylistState` and `ErrorState`
