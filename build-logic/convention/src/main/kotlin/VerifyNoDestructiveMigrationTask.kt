@@ -10,14 +10,15 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 /**
- * Fails the build if any `main` Kotlin source in this module calls
+ * Fails the build if any Kotlin source that actually compiles into the release variant calls
  * `fallbackToDestructiveMigration` -- **unless** [exemptionMarker] resolves to exactly one file,
  * in which case the call is tolerated but this task still says so, loudly, on every run.
  *
  * A silent version of this task -- a gate that could quietly go a whole plan without ever being
  * wired into CI -- is exactly the failure this project spent five rounds of Plan 1 review
  * eliminating: *a mechanism that reports the absence of a problem must be provably incapable of
- * staying quiet when it did not run.* Two things follow from that:
+ * staying quiet when it did not run.* Three things follow from that, the third added after a
+ * re-review found the first two were not enough on their own:
  *
  * 1. This task must actually run in CI on every PR, not merely exist and be reachable by name --
  *    see the explicit step in `.github/workflows/pr.yml`.
@@ -30,18 +31,36 @@ import org.gradle.api.tasks.TaskAction
  *    silent. Deleting the marker is therefore the one action that arms this gate for real, and
  *    that deletion is a deliberate, committed, reviewable diff rather than a fact someone has to
  *    remember.
+ * 3. [kotlinSources] must be **what actually compiles**, not a guess at a conventional layout,
+ *    and the "nothing found" path must be provably a real scan rather than an empty one. A
+ *    re-review proved both were wrong in the first version of this task: it scanned a hardcoded
+ *    `fileTree("src/main/kotlin")`, but `src/main/java` compiles into this project's Kotlin
+ *    output too (AGP's built-in Kotlin support merges "java-shaped" and "kotlin-shaped" source
+ *    roots into one Kotlin compilation, confirmed by placing a `.kt`-content file under
+ *    `src/main/java` and watching `compileReleaseKotlin` fail on it), and so does
+ *    `src/release/kotlin` -- exactly the release-only root a real regression would use. Worse,
+ *    the clean path was a bare early return with no output, so "the scan found nothing to flag"
+ *    and "the scan found nothing because the file tree resolved to zero files" were
+ *    byte-identical. [kotlinSources] is now populated from
+ *    [com.android.build.api.variant.Sources.getKotlin] and
+ *    [com.android.build.api.variant.Sources.getJava] -- the variant's own account of what it
+ *    compiles, not a path this file guesses at -- and [verify] prints every root it scanned and
+ *    the total file count on every single run, then fails outright if that count is zero. A
+ *    module with nothing to scan is not a state this task can pass through unnoticed.
  *
  * Unlike [VerifyMergedManifestTask]'s cleartext-traffic check, there is no merge step to prefer
  * over the source here: a Kotlin function body is not assembled from a debug/release manifest
  * overlay, so the one call site this watches for can only ever appear as exactly the text this
- * task reads. Scanning `main`'s own Kotlin sources is already "what ships" -- there is no more
- * authoritative compiled artifact to read instead, the way the manifest task prefers the merged
- * manifest over `AndroidManifest.xml`.
+ * task reads. Scanning the variant's own Kotlin sources is already "what ships" -- there is no
+ * more authoritative compiled artifact to read instead, the way the manifest task prefers the
+ * merged manifest over `AndroidManifest.xml`.
  *
  * Registered by [AndroidRoomConventionPlugin] under the **release** variant only (mirroring
- * `configureReleaseManifestVerification`): the call site does not vary by build type (there is
- * one `DataModule.kt`, not a debug/release overlay), so "release-scoped" here is about naming and
- * precedent, not about the check seeing different content for different variants.
+ * `configureReleaseManifestVerification`): the call site does not vary by build type in the
+ * *main* source set (there is one `DataModule.kt`, not a debug/release overlay), so
+ * "release-scoped" is mostly about naming and precedent -- but [kotlinSources] deliberately still
+ * asks the *release variant specifically* what it compiles, because a release-only source root
+ * (`src/release/kotlin`) is exactly where a regression could hide from a main-only scan.
  *
  * `fallbackToDestructiveMigration` is Room's "drop every table and start over" escape hatch --
  * the right call before anything has shipped, and exactly the wrong one to ship: the first
@@ -51,6 +70,13 @@ import org.gradle.api.tasks.TaskAction
  */
 abstract class VerifyNoDestructiveMigrationTask : DefaultTask() {
 
+  /**
+   * Every directory the release variant's own [com.android.build.api.variant.Sources.getKotlin]
+   * and [com.android.build.api.variant.Sources.getJava] report as a source root -- not a
+   * hardcoded path. This is what makes a new or renamed source root (a release-only Kotlin
+   * directory, a `src/main/java` file, a future product flavor) impossible to fall outside of:
+   * the variant is asked, not assumed.
+   */
   @get:InputFiles
   @get:PathSensitive(PathSensitivity.RELATIVE)
   abstract val kotlinSources: ConfigurableFileCollection
@@ -78,10 +104,33 @@ abstract class VerifyNoDestructiveMigrationTask : DefaultTask() {
 
   @TaskAction
   fun verify() {
-    val offenders: List<File> = kotlinSources.files
-      .filter { it.extension == "kt" && it.readText().contains(FORBIDDEN_CALL) }
+    val roots: List<File> = kotlinSources.files.filter { it.isDirectory }
+    val kotlinFiles: List<File> = roots
+      .flatMap { root -> root.walkTopDown().filter { it.isFile && it.extension == "kt" } }
+      .distinct()
+
+    // The whole point of this line: "ran and found nothing" and "never really ran" must never
+    // look the same. Printed unconditionally, pass or fail, clean or exempted.
+    logger.lifecycle(
+      "verifyNoDestructiveMigration: scanned ${kotlinFiles.size} Kotlin source file(s) across " +
+        "${roots.size} root(s): ${roots.joinToString { it.path }}",
+    )
+    if (kotlinFiles.isEmpty()) {
+      throw GradleException(
+        "verifyNoDestructiveMigration scanned zero Kotlin source files across ${roots.size} " +
+          "root(s) (${roots.joinToString { it.path }}). A module with nothing to scan is not a " +
+          "state this task can pass through silently: either this module genuinely has no " +
+          "release-variant Kotlin sources (in which case it should not apply " +
+          "muplay.android.room, or this task needs excluding explicitly), or the source roots " +
+          "changed shape and this task's input wiring in AndroidRoomConventionPlugin needs to " +
+          "follow.",
+      )
+    }
+
+    val offenders: List<File> = kotlinFiles.filter { it.readText().contains(FORBIDDEN_CALL) }
     if (offenders.isEmpty()) {
-      // The clean, post-release-prep state: no call, nothing to exempt, nothing to say.
+      // The clean, post-release-prep state: no call, nothing to exempt. Nothing further to
+      // report -- the scan summary above already proved this was a real scan, not an empty one.
       return
     }
 

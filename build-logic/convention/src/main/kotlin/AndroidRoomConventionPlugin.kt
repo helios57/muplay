@@ -78,7 +78,17 @@ class AndroidRoomConventionPlugin : Plugin<Project> {
         description = "Fails if a main Kotlin source in this module calls " +
           "fallbackToDestructiveMigration() with no DESTRUCTIVE_MIGRATION_EXEMPTION.md present " +
           "-- see VerifyNoDestructiveMigrationTask for why."
-        kotlinSources.from(fileTree("src/main/kotlin") { include("**/*.kt") })
+        // The variant's own account of what it compiles -- `Sources.kotlin`/`Sources.java`,
+        // not a hardcoded `fileTree("src/main/kotlin")`. AGP's built-in Kotlin support compiles
+        // both "kotlin-shaped" and "java-shaped" source roots for every variant that contributes
+        // to it (main, `release`, any active flavor), and a hardcoded main-only path missed both
+        // `src/main/java` and `src/release/kotlin` -- a re-review found this by placing the call
+        // in each and watching the gate stay quiet. `kotlinSources` holds *directories* here
+        // (`VerifyNoDestructiveMigrationTask.verify` walks each one for `.kt` files itself), not
+        // a pre-filtered file tree, because the set of roots is not known until the `Provider`s
+        // below resolve.
+        kotlinSources.from(variant.sources.kotlin?.all)
+        kotlinSources.from(variant.sources.java?.all)
         // A `ConfigurableFileCollection`, not a hardcoded existence check here: whether this
         // resolves to zero or one file is exactly the question `verify()` answers, and Gradle
         // tracks the file's presence *and* content as a real input either way -- adding, removing
