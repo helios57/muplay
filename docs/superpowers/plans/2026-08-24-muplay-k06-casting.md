@@ -169,7 +169,8 @@ and again in the Interfaces block of every task that touches it.
 | Casting mid-book must land on the right second | `ResumePolicy` and whatever policy Plan 4 installs | Task 9 wraps *whatever* `ResumePolicy` is bound with `OneShotResumePolicy`, a decorator over Plan 3's exact `fun interface`. It answers one handover target and then delegates. It has no independent shape. |
 | A book has a per-item playback speed | `MediaProgressEntity.speed`, and Plan 4's accessor for it | **UPnP cannot deliver it.** `AVTransport::Play` takes `Speed="1"`, and `TransportPlaySpeed` values other than `1` are not implemented by Sonos or by any renderer this plan targets. Task 8 makes `UpnpPlayer` report `PlaybackParameters(1.0f)` and Task 10 surfaces that to the user as a visible statement. It does not silently accept a speed it cannot honour. |
 | Chapters | `media3-inspector`, Plan 4 | Unaffected. Chapter extraction is local metadata reading; it does not care where the audio is rendered. |
-| Sleep timer, smart rewind | Plan 4 | Unaffected. Both act on the `Player` interface. |
+| Smart rewind | Plan 4 | **Unaffected.** `SmartRewind` is a pure function of two `Long`s; nothing about the render target reaches it. |
+| Sleep timer | Plan 4 | **Affected, and Task 9 re-attaches it.** `SleepTimerController` acts on the `Player` interface but is bound to *one* `Player` by `attach(player, scope)`, and its fade drives that player's `volume`. Left on the local player it would count down against a paused, silent one — the fade lowers nothing, the pause lands on a player that is not playing, and the speaker plays all night. Task 9 re-points it through `PlaybackOutputSwitch.activePlayer`, the same way it re-points `ProgressWriter`. |
 
 **Names that are not yet fixed, and what to do about each:**
 
@@ -10041,6 +10042,10 @@ is what Google's own Cast integration does. `MuPlaybackService` observes
 - **the notification.** Comes from the session, so it follows automatically. Nothing to do, and
   worth an assertion because "nothing to do" and "quietly broken" look the same.
 - **the `MediaController` in the UI.** Also from the session. Also automatic. Also asserted.
+- **the sleep timer, if Plan 4 has landed.** Re-attached in the `activePlayer` collector, because
+  `SleepTimerController.attach(player, scope)` binds it to *one* player and its fade drives that
+  player's `volume`. This is the one item on this list whose failure is invisible: left behind, it
+  fades and pauses a silent local player while the speaker plays all night. See Step 4.
 
 The **local player** — the `MuPlayer` from `MuPlayerFactory.create()`, wrapping an `ExoPlayer` —
 is **paused, not released**, while casting. Releasing it would mean
@@ -10516,6 +10521,24 @@ binding section describes.
   }
 
   @Test
+  fun aRunningSleepTimerFollowsPlaybackToTheSpeaker() {
+    // Skip with an assumption if Plan 4 has not landed. Left on the local player the timer counts
+    // down against a paused, silent player: the fade lowers a volume nobody can hear, the pause
+    // lands on a player that is not playing, and the speaker plays until the battery dies. Nothing
+    // throws and nothing logs.
+    startLocalPlayback(items, startIndex = 0)
+    sleepTimer.start(SleepTimerRequest.Duration(millis = 60_000L))
+
+    runBlocking { sessionManager.castTo(device) }
+    awaitCondition { switch.current() is UpnpPlayer }
+    clock.advance(60_000L)
+
+    // The *speaker* stopped -- read off the renderer's own transport state, not off a controller
+    // field that would be set either way.
+    awaitCondition { fake.currentTransportState() == "PAUSED_PLAYBACK" }
+  }
+
+  @Test
   fun theLocalPlayerIsPausedRatherThanReleasedWhileCasting() {
     startLocalPlayback(items, startIndex = 0)
 
@@ -10712,9 +10735,37 @@ is `val player = playerFactory.create()`; use whatever name that line landed wit
     // the media buttons, the lock screen and every `MediaController` come along without any of them
     // being told.
     lifecycleScope.launch {
-      outputSwitch.activePlayer.filterNotNull().collect { player -> mediaSession.player = player }
+      outputSwitch.activePlayer.filterNotNull().collect { player ->
+        mediaSession.player = player
+        // Every collaborator that is bound to *one* `Player` is re-pointed here. `attach` on the
+        // sleep timer is not a listener registration but an assignment of which player it drives,
+        // so calling it again is how it moves.
+        sleepTimer.attach(player, serviceScope)
+      }
     }
 ```
+
+**The `ProgressWriter` is re-attached in `CastSessionManager` rather than here, and that is
+deliberate:** it must be attached *before* `setMediaItems` on the incoming player, and this
+collector runs as a coroutine — it would not have resumed by the time the synchronous handover block
+reaches `setMediaItems`. The timer has no such ordering requirement, so it goes where the whole list
+of player-bound collaborators can be seen at once.
+
+**Which collaborators are on that list, and why the other two are not.** The rule is not "everything
+that takes a `Player`" — `MuPlayer`, `ProgressWriter` and `MediaSession` all take one and only some
+of them are broken by being left behind:
+
+- **`SleepTimerController` (Plan 4).** Re-attached, per the list above. It is the one with a
+  user-visible failure: it holds a single `player` field and its fade writes `player.volume`.
+- **`ContentTypeSwitcher` (Plan 3 Task 6) and `BookSpeedController` (Plan 4).** Left on the local
+  player, and harmless while remote. Audio attributes and `PlaybackParameters` are `ExoPlayer`
+  concerns; a UPnP renderer has neither, and Task 8 already reports `1.0f` for speed and Task 10
+  already surfaces that limitation to the user. Re-attaching them would move a no-op.
+
+**If Plan 4 has not landed**, there is no `sleepTimer` to attach; omit that line and record in the
+task report that the collector has one entry, so the plan that adds the timer knows where its second
+one goes. **If Plan 4 landed and this line is omitted**, the failure is silent — see the interaction
+table.
 
 `ProgressWriter` needs an `attach(player: Player)` that detaches from the previous one. **That is a
 one-method addition to Plan 3's class**, not a redesign: Plan 3 constructs it with a player and this
@@ -10740,6 +10791,11 @@ Mutations:
    created per injection point. Expect `theLocalPlayerConsultsTheSamePolicyInstanceTheSessionManagerArms`
    and `comingBackFromCastLandsOnTheSameSecondLocally` to fail — **the silent binding mismatch**,
    caught. Without this probe the binding section of Step 2 is unenforced prose.
+2c. In `MuPlaybackService`'s `activePlayer` collector, drop the `sleepTimer.attach(player, …)` line
+   so the timer stays on the local player. Expect `aRunningSleepTimerFollowsPlaybackToTheSpeaker` to
+   fail and every other handover test to pass — which is the whole point of adding it, since this
+   defect is invisible from every assertion that looks at position or at the queue. Skip this probe
+   if Plan 4 has not landed, and say so in the task report.
 3. In `OneShotResumePolicy.resolve`, apply the armed target even when the media id is absent.
    Expect `an armed target for a media id that is not in the new queue is discarded` to fail.
 4. In `OneShotResumePolicy.resolve`, use `pending.target.startIndex` rather than the looked-up
