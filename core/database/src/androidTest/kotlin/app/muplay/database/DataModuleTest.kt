@@ -3,11 +3,13 @@ package app.muplay.database
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.database.di.DataModule
+import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.LibraryRole
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -92,6 +94,26 @@ class DataModuleTest {
     dao.mergeFromServer(listOf(LibraryEntity(1, "Music", LibraryRole.UNASSIGNED)))
 
     assertThat(dao.find(1)!!.name).isEqualTo("Music")
+  }
+
+  /**
+   * Task 5 added `provideBrowseDao` and nothing called it either -- `BrowseDaoTest` and
+   * `BrowseRepositoryTest` both build the DAO from an in-memory Room database of their own, the
+   * same gap `provideLibraryDao` had above. Measured 9/10 LINE (0.90, exactly on the floor) before
+   * this test, with `provideBrowseDao` itself the one uncovered line.
+   */
+  @Test
+  fun theProvidedBrowseDaoWorks() = runTest {
+    val dao = DataModule.provideBrowseDao(database)
+
+    dao.replaceLibraryContents(
+      libraryId = 1,
+      artists = emptyList(),
+      albums = listOf(AlbumEntity("al1", 1, null, "Test Album", null, null, 1, 5, "test album")),
+      songs = emptyList(),
+    )
+
+    assertThat(dao.observeAlbums(1).first().map { it.name }).containsExactly("Test Album")
   }
 
   @Test

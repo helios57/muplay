@@ -93,6 +93,11 @@ class MirrorMapperTest {
     // derived -- AlbumID3 carries no artist image and this plan never calls getArtists.
     assertThat(first.coverArtId).isEqualTo("al-a1")
     assertThat(first.sortName).isEqualTo("test artist")
+    // N-2/M: the only other test that asserts a derived artist's libraryId uses 9, so a
+    // hardcoded "9" in artistEntities' `libraryId = ordered.first().libraryId` line would still
+    // pass that test. This is the second, disjoint value (the default libraryId = 1) that makes
+    // the hardcode fail somewhere.
+    assertThat(first.libraryId).isEqualTo(1)
   }
 
   @Test
@@ -113,6 +118,10 @@ class MirrorMapperTest {
     val artists = MirrorMapper.artistEntities(listOf(album("a1", "First", libraryId = 9)))
 
     assertThat(artists.single().libraryId).isEqualTo(9)
+    // N-2/L: every other test in this file derives a two-album artist (albumCount = 2), so a
+    // hardcoded "2" in `albumCount = ordered.size` would still pass them all. This one-album
+    // fixture gives a second, disjoint observation.
+    assertThat(artists.single().albumCount).isEqualTo(1)
   }
 
   @Test
@@ -184,5 +193,109 @@ class MirrorMapperTest {
     assertThat(artist.name).isEqualTo("Test Artist")
     assertThat(artist.coverArtId).isEqualTo("art-1")
     assertThat(artist.albumCount).isEqualTo(5)
+  }
+
+  // N-2/N-6: every forward and reverse function above was exercised by exactly one fixture, so
+  // hardcoding any single field it assigns to that fixture's own literal value was undetectable
+  // -- confirmed live by a review that mutated eight forward fields and four reverse fields, one
+  // at a time, and found every one MISSED. `discNumber` was the worst of these: observed only as
+  // `null` anywhere in this repo, on both tiers, so a `discNumber = null` hardcode in either
+  // direction was invisible everywhere. The tests below each use a second fixture whose every
+  // field differs from every other fixture's -- not just from the one it is paired with -- so a
+  // hardcode to *any* literal already in use elsewhere in this file still fails here.
+
+  @Test
+  fun `a second song, every field disjoint from the first, still round-trips`() {
+    val song = Song(
+      id = "s2",
+      libraryId = 4,
+      title = "Chapter Seven",
+      albumId = "a9",
+      albumName = "Distant Album",
+      artistId = "artist-9",
+      artistName = "Someone Else",
+      trackNumber = 7,
+      discNumber = 2,
+      durationSeconds = 777,
+      suffix = "m4b",
+      coverArtId = "cover-zzz",
+    )
+
+    assertThat(MirrorMapper.song(MirrorMapper.songEntity(song))).isEqualTo(song)
+  }
+
+  @Test
+  fun `a second album, every field disjoint from the first, still round-trips`() {
+    val second = Album(
+      id = "a-second",
+      libraryId = 6,
+      name = "A Completely Different Album",
+      artistId = "artist-77",
+      artistName = "Some Other Artist",
+      coverArtId = "cover-second",
+      songCount = 21,
+      durationSeconds = 543,
+    )
+
+    assertThat(MirrorMapper.album(MirrorMapper.albumEntity(second))).isEqualTo(second)
+  }
+
+  @Test
+  fun `a second artist entity, every field disjoint from the first, maps field by field`() {
+    val entity = ArtistEntity(
+      id = "artist-second",
+      libraryId = 11,
+      name = "Second Test Artist",
+      coverArtId = "cover-second-artist",
+      albumCount = 42,
+      sortName = "second test artist",
+    )
+
+    val artist = MirrorMapper.artist(entity)
+
+    assertThat(artist.id).isEqualTo("artist-second")
+    assertThat(artist.libraryId).isEqualTo(11)
+    assertThat(artist.name).isEqualTo("Second Test Artist")
+    assertThat(artist.coverArtId).isEqualTo("cover-second-artist")
+    assertThat(artist.albumCount).isEqualTo(42)
+  }
+
+  // N-9: the LIKE-pattern construction BrowseRepository.search used to build inline (trim, the
+  // blank short-circuit, and %/_ escaping) moved here so it is JVM-testable rather than needing
+  // an emulator and a decoy row to prove what it does. Every case below asserts the exact pattern
+  // string, which is strictly stronger than the instrumented decoy-row tests it replaces: no
+  // fixture pair can be accidentally non-discriminating when the assertion is the literal output.
+
+  @Test
+  fun `searchPattern wraps a plain query in wildcards`() {
+    assertThat(MirrorMapper.searchPattern("beatles")).isEqualTo("%beatles%")
+  }
+
+  @Test
+  fun `searchPattern trims surrounding whitespace before building the pattern`() {
+    // N-7: dropping this trim was undetectable everywhere else in the repo -- the only
+    // whitespace fixture in BrowseRepositoryTest was all-whitespace, whose pattern matches
+    // nothing either way. A trailing space is what a soft keyboard inserts after autocomplete.
+    assertThat(MirrorMapper.searchPattern("  beatles  ")).isEqualTo("%beatles%")
+  }
+
+  @Test
+  fun `searchPattern is null for a blank query`() {
+    assertThat(MirrorMapper.searchPattern("")).isNull()
+    assertThat(MirrorMapper.searchPattern("   ")).isNull()
+  }
+
+  @Test
+  fun `searchPattern escapes the caller's own percent and underscore`() {
+    assertThat(MirrorMapper.searchPattern("50%")).isEqualTo("%50\\%%")
+    assertThat(MirrorMapper.searchPattern("a_b")).isEqualTo("%a\\_b%")
+  }
+
+  @Test
+  fun `searchPattern escapes a literal backslash before escaping percent or underscore`() {
+    // Ordering matters: escaping "%" or "_" first would double-escape the backslash it just
+    // inserted. A query containing a literal backslash is the case that catches the two
+    // `.replace(...)` calls running in the wrong order.
+    assertThat(MirrorMapper.searchPattern("a\\b")).isEqualTo("%a\\\\b%")
   }
 }
