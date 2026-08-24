@@ -7945,6 +7945,14 @@ git diff ci/fixtures.md5    # exactly one added line; the four existing hashes U
 **If any existing hash moved, stop.** Task 7's gapless measurement is arithmetic over those exact
 bytes, and a re-encode invalidates every frame count in this plan.
 
+> **A fifth file in the Music library moves three counted things, and one of them lives in a task
+> that has already run.** `ci/configure-libraries.sh`'s `[ "$count" = "4" ]`;
+> `LiveNavidromeTest.MUSIC_TITLES`, a three-element allow-list asserted with
+> `allMatch { it in MUSIC_TITLES }`; and `PlaybackJourneyTest`'s own copy of the same list, written
+> by **Task 10**. Add `"Quiet Track"` to both lists. The `allMatch` assertion is what goes red if
+> you forget one — that is the assertion doing its job rather than being in the way, and it is
+> exactly why the list is an allow-list rather than a "does not contain the audiobook" check.
+
 Then prove the server actually reports the tag — this is the assumption the whole task rests on and
 it is one `curl` away:
 
