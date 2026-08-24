@@ -7669,8 +7669,13 @@ item 6, these are corrected **in the spec**, not recorded in a report.
    That is imprecise in a way that matters: the **index** is queue membership — "play track 3 of
    this album" is a legitimate request — and discarding it unconditionally would break every
    tap-a-track-to-play path in the app. What is unconditionally removed is the **position**;
-   `ResumePolicy.resolve(mediaIds, requestedIndex)` is never given one, and it *may* override the
-   index, which is how a book resumes at chapter 14. Reword accordingly.
+   `ResumePolicy.resolve(mediaIds, requestedIndex)` is never given one. **The policy must NOT
+   override the index** — `"play this book"` and `"play chapter 1 from the top"` both arrive as
+   `requestedIndex = 0`, so overriding it would make tapping chapter 1 jump to chapter 14. The
+   index belongs to the caller; only the position belongs to the policy. The audiobook plan
+   resumes at chapter 14 by choosing the index in its own launcher before `setMediaItems` is
+   called. Reword §3 accordingly, and do not reintroduce the override claim — Plan 4 rewords this
+   same paragraph, and the two must not contradict.
 7. **§5, "Audio focus: a one-line switch"** — record the input. The switch is one line; the signal
    it switches on is the **user's own `LibraryRole` assignment**, carried on
    `MediaMetadata.mediaType` (`MEDIA_TYPE_AUDIO_BOOK_CHAPTER` vs `MEDIA_TYPE_MUSIC`), because
