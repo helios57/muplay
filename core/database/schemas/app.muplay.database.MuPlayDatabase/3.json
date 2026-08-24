@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 3,
-    "identityHash": "fcd10f3d4330a9602d04524d432957c7",
+    "identityHash": "4b959d14a4d52f6a5b63fd81e17ced35",
     "entities": [
       {
         "tableName": "media_progress",
@@ -90,7 +90,7 @@
       },
       {
         "tableName": "artists",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `libraryId` INTEGER NOT NULL, `name` TEXT NOT NULL, `coverArtId` TEXT, `albumCount` INTEGER NOT NULL, `sortName` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `libraryId` INTEGER NOT NULL, `name` TEXT NOT NULL, `coverArtId` TEXT, `albumCount` INTEGER NOT NULL, `sortName` TEXT NOT NULL, PRIMARY KEY(`id`, `libraryId`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -131,7 +131,8 @@
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
-            "id"
+            "id",
+            "libraryId"
           ]
         },
         "indices": [
@@ -361,7 +362,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fcd10f3d4330a9602d04524d432957c7')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4b959d14a4d52f6a5b63fd81e17ced35')"
     ]
   }
 }

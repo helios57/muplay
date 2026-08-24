@@ -23,10 +23,11 @@ data class MirrorReplacement(
 /**
  * Every read the browse UI makes, and the one write the sync engine makes.
  *
- * **Every query takes a `libraryId`** except the two that take an id already known to belong to
- * one library (`observeSongs(albumId)`, `observeAlbumsByArtist(artistId)`). That is not
- * boilerplate: an unscoped browse query is how an audiobook ends up in a music list, and the
- * absence of a "give me everything" query is the point.
+ * **Every query takes a `libraryId`** except `observeSongs(albumId)`, whose `albumId` is already
+ * known to belong to one library. `observeAlbumsByArtist` takes **both**: Navidrome artist ids are
+ * global, so `artistId` alone cannot scope by library the way `albumId` can — see `ArtistEntity`'s
+ * own doc for the two live bugs an unscoped version of this query and a bare-`id` primary key
+ * produced. The absence of a "give me everything" query elsewhere is still the point.
  */
 @Dao
 abstract class BrowseDao {
@@ -37,8 +38,8 @@ abstract class BrowseDao {
   @Query("SELECT * FROM albums WHERE libraryId = :libraryId ORDER BY sortName")
   abstract fun observeAlbums(libraryId: Int): Flow<List<AlbumEntity>>
 
-  @Query("SELECT * FROM albums WHERE artistId = :artistId ORDER BY sortName")
-  abstract fun observeAlbumsByArtist(artistId: String): Flow<List<AlbumEntity>>
+  @Query("SELECT * FROM albums WHERE libraryId = :libraryId AND artistId = :artistId ORDER BY sortName")
+  abstract fun observeAlbumsByArtist(libraryId: Int, artistId: String): Flow<List<AlbumEntity>>
 
   @Query(
     "SELECT * FROM songs WHERE albumId = :albumId " +
@@ -86,6 +87,14 @@ abstract class BrowseDao {
    * primitive that can say "this album is gone", so the only reliable way to notice is to keep
    * exactly what the server just listed. Scoped to one library so a failure while reconciling the
    * audiobook library cannot empty the music library.
+   *
+   * The three `require` checks are the one thing standing between a caller's bug and a mirror row
+   * landing in the wrong library: [libraryId] scopes the deletes and the counts, but the inserts
+   * write whatever `libraryId` each entity already carries, and nothing about Room or SQLite
+   * checks that the two agree. `libraryId` is the *only* link between a track and the user's
+   * Music/Audiobooks decision (see this module's own doc), so a caller that built [songs] from the
+   * wrong library's server pages must fail loudly here rather than silently mis-scope a row the
+   * shuffle guard and every browse query then trust.
    */
   @Transaction
   open suspend fun replaceLibraryContents(
@@ -94,6 +103,16 @@ abstract class BrowseDao {
     albums: List<AlbumEntity>,
     songs: List<SongEntity>,
   ): MirrorReplacement {
+    require(artists.all { it.libraryId == libraryId }) {
+      "replaceLibraryContents($libraryId, ...) was given an artist row scoped to a different library"
+    }
+    require(albums.all { it.libraryId == libraryId }) {
+      "replaceLibraryContents($libraryId, ...) was given an album row scoped to a different library"
+    }
+    require(songs.all { it.libraryId == libraryId }) {
+      "replaceLibraryContents($libraryId, ...) was given a song row scoped to a different library"
+    }
+
     val artistsBefore = countArtists(libraryId)
     val albumsBefore = countAlbums(libraryId)
     val songsBefore = countSongs(libraryId)

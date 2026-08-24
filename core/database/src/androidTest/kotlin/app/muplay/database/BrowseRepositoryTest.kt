@@ -34,6 +34,12 @@ import org.junit.runner.RunWith
  * used rather than a hand-written fake -- `BrowseDaoTest` already establishes that the DAO itself
  * discriminates correctly on every argument, so reusing it here isolates what this file is
  * actually testing: `BrowseRepository`'s own delegation, not SQLite's.
+ *
+ * `search`'s four positive tests all assert `.artists` and `.albums`, not only `.songs`: a review
+ * found that every positive search test here originally seeded songs alone, so two of the three
+ * `SearchResults` fields were only ever observed empty (the vacuous-observation defect this
+ * project's own standard warns against) and a dropped `searchArtists`/`searchAlbums` delegation
+ * left every gate in this repo green.
  */
 @RunWith(AndroidJUnit4::class)
 class BrowseRepositoryTest {
@@ -105,7 +111,7 @@ class BrowseRepositoryTest {
     assertThat(repository.albums(2).first().map { it.name }).containsExactly("Library Two Album")
   }
 
-  // ---- albumsByArtist(artistId) ---------------------------------------------------------------
+  // ---- albumsByArtist(libraryId, artistId) -----------------------------------------------------
 
   @Test
   fun albumsByArtistPassesTheArtistIdThroughToTheDao() = runTest {
@@ -119,10 +125,38 @@ class BrowseRepositoryTest {
       emptyList(),
     )
 
-    assertThat(repository.albumsByArtist("artist-a").first().map { it.name })
+    assertThat(repository.albumsByArtist(1, "artist-a").first().map { it.name })
       .containsExactly("First Artist's Album")
-    assertThat(repository.albumsByArtist("artist-b").first().map { it.name })
+    assertThat(repository.albumsByArtist(1, "artist-b").first().map { it.name })
       .containsExactly("Second Artist's Album")
+  }
+
+  /**
+   * N-8: Navidrome artist ids are global, so `artistId` alone cannot scope by library -- the same
+   * artist id can genuinely exist in two libraries, and only `libraryId` decides which library's
+   * album list this call returns. Varies `libraryId` only, holding the shared `artistId` fixed,
+   * so a build that forwarded `artistId` but dropped or hardcoded `libraryId` fails this test even
+   * though it would still pass `albumsByArtistPassesTheArtistIdThroughToTheDao` above.
+   */
+  @Test
+  fun albumsByArtistPassesTheLibraryIdThroughToTheDao() = runTest {
+    dao.replaceLibraryContents(
+      1,
+      listOf(artist("shared", "Shared Artist", 1)),
+      listOf(album("al1", "Library One Album", 1, artistId = "shared")),
+      emptyList(),
+    )
+    dao.replaceLibraryContents(
+      2,
+      listOf(artist("shared", "Shared Artist", 2)),
+      listOf(album("al2", "Library Two Album", 2, artistId = "shared")),
+      emptyList(),
+    )
+
+    assertThat(repository.albumsByArtist(1, "shared").first().map { it.name })
+      .containsExactly("Library One Album")
+    assertThat(repository.albumsByArtist(2, "shared").first().map { it.name })
+      .containsExactly("Library Two Album")
   }
 
   // ---- songs(albumId) ------------------------------------------------------------------------
@@ -167,37 +201,71 @@ class BrowseRepositoryTest {
 
   @Test
   fun searchPassesTheLibraryIdThroughToTheDao() = runTest {
-    dao.replaceLibraryContents(1, emptyList(), emptyList(), listOf(song("s1", "Shared Title", 1, albumId = "al1")))
-    dao.replaceLibraryContents(2, emptyList(), emptyList(), listOf(song("s2", "Shared Title", 2, albumId = "al2")))
+    dao.replaceLibraryContents(
+      1,
+      listOf(artist("ar1", "Shared", 1)),
+      listOf(album("al1", "Shared", 1)),
+      listOf(song("s1", "Shared Title", 1, albumId = "al1")),
+    )
+    dao.replaceLibraryContents(
+      2,
+      listOf(artist("ar2", "Shared", 2)),
+      listOf(album("al2", "Shared", 2)),
+      listOf(song("s2", "Shared Title", 2, albumId = "al2")),
+    )
 
-    assertThat(repository.search(1, "Shared", 10).songs.map { it.id }).containsExactly("s1")
-    assertThat(repository.search(2, "Shared", 10).songs.map { it.id }).containsExactly("s2")
+    val one = repository.search(1, "Shared", 10)
+    assertThat(one.songs.map { it.id }).containsExactly("s1")
+    assertThat(one.albums.map { it.id }).containsExactly("al1")
+    assertThat(one.artists.map { it.id }).containsExactly("ar1")
+
+    val two = repository.search(2, "Shared", 10)
+    assertThat(two.songs.map { it.id }).containsExactly("s2")
+    assertThat(two.albums.map { it.id }).containsExactly("al2")
+    assertThat(two.artists.map { it.id }).containsExactly("ar2")
   }
 
   @Test
   fun searchPassesTheQueryThroughToTheDao() = runTest {
     dao.replaceLibraryContents(
       1,
-      emptyList(),
-      emptyList(),
-      listOf(song("s1", "Alpha Track", 1, albumId = "al1"), song("s2", "Beta Track", 1, albumId = "al1")),
+      listOf(artist("ar-alpha", "Alpha Artist", 1), artist("ar-beta", "Beta Artist", 1)),
+      listOf(album("al-alpha", "Alpha Album", 1), album("al-beta", "Beta Album", 1)),
+      listOf(
+        song("s-alpha", "Alpha Track", 1, albumId = "al-alpha"),
+        song("s-beta", "Beta Track", 1, albumId = "al-beta"),
+      ),
     )
 
-    assertThat(repository.search(1, "Alpha", 10).songs.map { it.title }).containsExactly("Alpha Track")
-    assertThat(repository.search(1, "Beta", 10).songs.map { it.title }).containsExactly("Beta Track")
+    val alpha = repository.search(1, "Alpha", 10)
+    assertThat(alpha.songs.map { it.id }).containsExactly("s-alpha")
+    assertThat(alpha.albums.map { it.id }).containsExactly("al-alpha")
+    assertThat(alpha.artists.map { it.id }).containsExactly("ar-alpha")
+
+    val beta = repository.search(1, "Beta", 10)
+    assertThat(beta.songs.map { it.id }).containsExactly("s-beta")
+    assertThat(beta.albums.map { it.id }).containsExactly("al-beta")
+    assertThat(beta.artists.map { it.id }).containsExactly("ar-beta")
   }
 
   @Test
   fun searchPassesTheLimitThroughToTheDao() = runTest {
     dao.replaceLibraryContents(
       1,
-      emptyList(),
-      emptyList(),
-      listOf(song("s1", "Track One", 1, albumId = "al1"), song("s2", "Track Two", 1, albumId = "al1")),
+      listOf(artist("ar1", "Track Artist One", 1), artist("ar2", "Track Artist Two", 1)),
+      listOf(album("al1", "Track Album One", 1), album("al2", "Track Album Two", 1)),
+      listOf(song("s1", "Track One", 1, albumId = "al1"), song("s2", "Track Two", 1, albumId = "al2")),
     )
 
-    assertThat(repository.search(1, "Track", 1).songs).hasSize(1)
-    assertThat(repository.search(1, "Track", 10).songs).hasSize(2)
+    val limited = repository.search(1, "Track", 1)
+    assertThat(limited.songs).hasSize(1)
+    assertThat(limited.albums).hasSize(1)
+    assertThat(limited.artists).hasSize(1)
+
+    val unlimited = repository.search(1, "Track", 10)
+    assertThat(unlimited.songs).hasSize(2)
+    assertThat(unlimited.albums).hasSize(2)
+    assertThat(unlimited.artists).hasSize(2)
   }
 
   /**
@@ -218,20 +286,41 @@ class BrowseRepositoryTest {
     // directly, per this task's own standard.
     dao.replaceLibraryContents(
       1,
-      emptyList(),
-      emptyList(),
+      listOf(artist("ar-real", "A%Z Marker", 1), artist("ar-decoy", "AxyzZ Marker", 1)),
+      listOf(album("al-real", "A%Z Marker", 1), album("al-decoy", "AxyzZ Marker", 1)),
       listOf(
-        song("s1", "A%Z Marker", 1, albumId = "al1"),
-        song("s2", "AxyzZ Marker", 1, albumId = "al1"),
+        song("s-real", "A%Z Marker", 1, albumId = "al-real"),
+        song("s-decoy", "AxyzZ Marker", 1, albumId = "al-decoy"),
       ),
     )
 
-    assertThat(repository.search(1, "A%Z", 10).songs.map { it.title }).containsExactly("A%Z Marker")
+    val result = repository.search(1, "A%Z", 10)
+
+    assertThat(result.songs.map { it.id }).containsExactly("s-real")
+    assertThat(result.albums.map { it.id }).containsExactly("al-real")
+    assertThat(result.artists.map { it.id }).containsExactly("ar-real")
+  }
+
+  /**
+   * N-7: `query.trim()` had no test of its own -- the only whitespace fixture was `"   "`, whose
+   * pattern (`%   %`) matches nothing either way, so dropping the trim left every gate green. A
+   * trailing space is what a soft keyboard actually inserts after autocomplete.
+   */
+  @Test
+  fun searchTrimsWhitespaceAroundTheQuery() = runTest {
+    dao.replaceLibraryContents(1, emptyList(), emptyList(), listOf(song("s1", "Alpha Track", 1, albumId = "al1")))
+
+    assertThat(repository.search(1, "  Alpha  ", 10).songs.map { it.id }).containsExactly("s1")
   }
 
   @Test
   fun searchOnABlankQueryReturnsEmptyWithoutMatchingEverything() = runTest {
-    dao.replaceLibraryContents(1, emptyList(), emptyList(), listOf(song("s1", "Anything", 1, albumId = "al1")))
+    dao.replaceLibraryContents(
+      1,
+      listOf(artist("ar1", "Anything", 1)),
+      listOf(album("al1", "Anything", 1)),
+      listOf(song("s1", "Anything", 1, albumId = "al1")),
+    )
 
     val result = repository.search(1, "   ", 10)
 

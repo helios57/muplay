@@ -2,7 +2,6 @@ package app.muplay.database.entity
 
 import androidx.room.Entity
 import androidx.room.Index
-import androidx.room.PrimaryKey
 
 /**
  * A mirrored artist, **derived from the albums of one library** rather than fetched.
@@ -15,17 +14,23 @@ import androidx.room.PrimaryKey
  * image is available without `getArtist`/`getArtistInfo2`. It is a real cover of the right
  * artist, not a placeholder.
  *
- * [libraryId] is the stamped scope of the request that produced the albums. The same artist
- * appearing in two libraries produces two rows only if the server gives them different ids; if it
- * gives them the same id, the later reconcile wins, which is correct for a browse mirror and is
- * why this table is never the source of truth for anything but display.
+ * [libraryId] is the stamped scope of the request that produced the albums. The primary key is
+ * **`(id, libraryId)` together, not `id` alone** — Navidrome artist ids are global, so the same
+ * artist genuinely does appear with the same id in two different libraries whenever the same
+ * person has both a music and an audiobook credit. A bare `id` primary key made `INSERT ...
+ * REPLACE` **move** that artist's row between libraries on every reconcile instead of each
+ * library holding its own: whichever library synced last silently emptied the artist out of the
+ * other library's Artists tab. The composite key makes the two rows independent, so reconciling
+ * library 2 can never remove library 1's copy, and `observeAlbumsByArtist` additionally takes
+ * `libraryId` for the same reason `artistId` alone cannot scope by library the way `albumId` can.
  */
 @Entity(
   tableName = "artists",
+  primaryKeys = ["id", "libraryId"],
   indices = [Index("libraryId"), Index("sortName")],
 )
 data class ArtistEntity(
-  @PrimaryKey val id: String,
+  val id: String,
   val libraryId: Int,
   val name: String,
   val coverArtId: String?,

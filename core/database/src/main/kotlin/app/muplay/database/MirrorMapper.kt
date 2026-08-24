@@ -26,6 +26,21 @@ object MirrorMapper {
    */
   fun sortKey(value: String): String = value.trim().lowercase()
 
+  /**
+   * The `LIKE` pattern for [query], or `null` if [query] is blank after trimming -- the caller's
+   * signal to skip the DAO entirely rather than run a pattern that would match every row.
+   *
+   * The user's own `%` and `_` are escaped with a backslash so a query containing them matches
+   * those characters literally instead of turning into a wildcard the user did not type; the
+   * three `BrowseDao` search queries pair this with `ESCAPE '\\'`, without which the escaping
+   * here is inert.
+   */
+  fun searchPattern(query: String): String? {
+    val trimmed = query.trim()
+    if (trimmed.isEmpty()) return null
+    return "%" + trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+  }
+
   fun albumEntity(album: Album): AlbumEntity = AlbumEntity(
     id = album.id,
     libraryId = album.libraryId,

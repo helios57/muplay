@@ -30,8 +30,11 @@ class BrowseRepository @Inject constructor(
   fun albums(libraryId: Int): Flow<List<Album>> =
     browseDao.observeAlbums(libraryId).map { rows -> rows.map(MirrorMapper::album) }
 
-  fun albumsByArtist(artistId: String): Flow<List<Album>> =
-    browseDao.observeAlbumsByArtist(artistId).map { rows -> rows.map(MirrorMapper::album) }
+  // `libraryId` is required, not folded into `artistId`: Navidrome artist ids are global, so the
+  // same artist id can genuinely exist in two libraries (see `ArtistEntity`'s own doc) and only
+  // the caller's own scope decides which library's album list this should return.
+  fun albumsByArtist(libraryId: Int, artistId: String): Flow<List<Album>> =
+    browseDao.observeAlbumsByArtist(libraryId, artistId).map { rows -> rows.map(MirrorMapper::album) }
 
   fun songs(albumId: String): Flow<List<Song>> =
     browseDao.observeSongs(albumId).map { rows -> rows.map(MirrorMapper::song) }
@@ -42,14 +45,13 @@ class BrowseRepository @Inject constructor(
   /**
    * Searches the mirror within one library.
    *
-   * The LIKE pattern is built here, once, and the user's own `%` and `_` are escaped with a
-   * backslash so a query containing them matches those characters literally instead of turning
-   * into a wildcard the user did not type.
+   * The LIKE pattern itself is built by [MirrorMapper.searchPattern] — pure string work with no
+   * DAO/Android dependency, moved there so it is JVM-testable rather than needing an emulator to
+   * exercise the trim/escape logic that actually decides what a query matches.
    */
   suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults {
-    val trimmed = query.trim()
-    if (trimmed.isEmpty()) return SearchResults(emptyList(), emptyList(), emptyList())
-    val pattern = "%" + trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    val pattern = MirrorMapper.searchPattern(query)
+      ?: return SearchResults(emptyList(), emptyList(), emptyList())
     return SearchResults(
       artists = browseDao.searchArtists(libraryId, pattern, limit).map(MirrorMapper::artist),
       albums = browseDao.searchAlbums(libraryId, pattern, limit).map(MirrorMapper::album),
