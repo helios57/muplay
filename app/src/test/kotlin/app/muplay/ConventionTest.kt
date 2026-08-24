@@ -303,10 +303,20 @@ class ConventionTest {
    * Room module) with every other test still green. Same shape as the emulator-coordinates test
    * above: a workflow file is a build artifact this class already checks, not a place a scan
    * conveniently stops.
+   *
+   * Pinning the step's *text* is not the same claim as pinning its *power to fail the job* -- a
+   * re-review found that `continue-on-error: true` added to this exact step leaves the text
+   * assertion above green while the gate can no longer redden a PR (GitHub Actions marks the step
+   * outcome failed but the job conclusion success). The same escape exists for an `if:` that
+   * evaluates false. Both are checked below, scoped to *this step's own block* -- the text between
+   * its `- name:` line and the next step's `- name:` line -- specifically because the very next
+   * step in this file (`Upload reports`) legitimately has an `if: failure()` of its own, and a
+   * whole-file `doesNotContain` would flag that unrelated, correct line.
    */
   @Test
   fun `pr yml still runs the destructive-migration gate, unqualified`() {
-    val workflow = File(repoRoot(), ".github/workflows/pr.yml").readText()
+    val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
+    val workflow = workflowFile.readText()
 
     // The bare task name, not module-qualified: AndroidRoomConventionPlugin registers this task
     // per module, and only the unqualified form (`./gradlew verifyReleaseNoDestructiveMigration`)
@@ -320,10 +330,31 @@ class ConventionTest {
     )
     assertThat(line.containsMatchIn(workflow))
       .describedAs(
-        "${File(repoRoot(), ".github/workflows/pr.yml").path} must run " +
-          "`./gradlew verifyReleaseNoDestructiveMigration` (unqualified) as an explicit step",
+        "${workflowFile.path} must run `./gradlew verifyReleaseNoDestructiveMigration` " +
+          "(unqualified) as an explicit step",
       )
       .isTrue()
+
+    // The step's own block: from its `- name:` line up to (but not including) the next step's
+    // `- name:` line, or end of file if it were the last step. A non-greedy `(.*?)` bounded by
+    // that lookahead, not a bare `doesNotContain` over the whole file.
+    val stepBlock = Regex(
+      """- name: No destructive migration without a named exemption\n(.*?)(?=\n\s*- name:|\z)""",
+      setOf(RegexOption.DOT_MATCHES_ALL),
+    ).find(workflow)?.groupValues?.get(1)
+
+    assertThat(stepBlock).describedAs("the step's own block in ${workflowFile.path}").isNotNull()
+
+    assertThat(stepBlock).describedAs(
+      "${workflowFile.path}: the destructive-migration step must not carry " +
+        "`continue-on-error: true` -- that leaves this very test green while the step can no " +
+        "longer fail the job",
+    ).doesNotContain("continue-on-error")
+
+    assertThat(stepBlock).describedAs(
+      "${workflowFile.path}: the destructive-migration step must not carry its own `if:` -- an " +
+        "always-false condition would skip the step (green) with the gate never evaluated",
+    ).doesNotContain("if:")
   }
 
   @Test
