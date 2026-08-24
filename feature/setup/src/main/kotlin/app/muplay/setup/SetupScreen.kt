@@ -44,6 +44,16 @@ fun SetupScreen(
   viewModel: SetupViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+  // N-5 (review round 1, task-8-review.md): unobserved by any test today -- deleting this whole
+  // effect leaves every test in both tiers green, because `MuPlayApp.kt` currently wires
+  // `onSetupComplete = {}` and there is no destination for a real callback to reach yet. Harmless
+  // now; becomes a real risk the moment a later task supplies a non-no-op callback, at which point
+  // a silent failure to invoke it here would look like a bug in the navigation code that receives
+  // it instead. Whoever wires real navigation should add a test that actually observes this
+  // firing (a `SetupScreen`-level Compose test with the primary/test-seam `SetupViewModel`
+  // constructor and an explicit `viewModel =` argument, bypassing `hiltViewModel()`, needs no new
+  // Hilt testing infrastructure and was deliberately not added here to keep this round's fix
+  // scoped to what was found).
   LaunchedEffect(uiState) {
     if (uiState is SetupUiState.Ready) onSetupComplete()
   }
@@ -127,6 +137,12 @@ private fun SetupScreen(
         // `type: "music"` -- so the user decides, once, here. No name is inspected: "Hörbücher"
         // is not "Audiobooks", and a wrong guess silently poisons shuffle scope.
         Text(text = "What is each library for?", style = MaterialTheme.typography.titleMedium)
+        // Labelled "Tag as Music"/"Tag as Audiobooks", not the bare "Music"/"Audiobooks" a first
+        // draft used: every row also renders the library's own name, so a bare-word chip label is
+        // indistinguishable, to both a screen reader and a black-box UI test, from the name of a
+        // library that happens to be called "Music" or "Audiobooks". A distinct label is what lets
+        // `FirstRunJourneyTest` assert on the library *name* -- its actual documented contract on
+        // server state -- without accidentally matching a chip instead (see that test's own doc).
         uiState.libraries.forEach { library ->
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -137,12 +153,12 @@ private fun SetupScreen(
             FilterChip(
               selected = library.role == LibraryRole.MUSIC,
               onClick = { onRoleChosen(library.id, LibraryRole.MUSIC) },
-              label = { Text("Music") },
+              label = { Text("Tag as Music") },
             )
             FilterChip(
               selected = library.role == LibraryRole.AUDIOBOOKS,
               onClick = { onRoleChosen(library.id, LibraryRole.AUDIOBOOKS) },
-              label = { Text("Audiobooks") },
+              label = { Text("Tag as Audiobooks") },
             )
           }
         }
