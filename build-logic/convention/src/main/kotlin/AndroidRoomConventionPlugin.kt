@@ -1,3 +1,4 @@
+import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import com.google.devtools.ksp.gradle.KspExtension
 import java.io.File
 import org.gradle.api.Plugin
@@ -8,6 +9,8 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.dependencies
+import org.gradle.kotlin.dsl.getByType
+import org.gradle.kotlin.dsl.register
 import org.gradle.process.CommandLineArgumentProvider
 
 /**
@@ -26,6 +29,12 @@ import org.gradle.process.CommandLineArgumentProvider
  * Exports the schema to `<module>/schemas`. Without it the schema is invisible and every future
  * migration is unverifiable — and Room warns about it on every build, which is noise that
  * trains people to ignore warnings.
+ *
+ * Also registers `verifyReleaseNoDestructiveMigration` (release-variant only, see
+ * [VerifyNoDestructiveMigrationTask]) and wires it into `check`. It fails on a
+ * `fallbackToDestructiveMigration` call unless `<module>/DESTRUCTIVE_MIGRATION_EXEMPTION.md`
+ * exists, in which case it passes but prints a loud warning naming that file on every run -- see
+ * [VerifyNoDestructiveMigrationTask]'s own doc for why a silent pass was rejected on review.
  */
 class AndroidRoomConventionPlugin : Plugin<Project> {
   override fun apply(target: Project) {
@@ -47,6 +56,52 @@ class AndroidRoomConventionPlugin : Plugin<Project> {
         add("ksp", libs.findLibrary("room-compiler").get())
         add("androidTestImplementation", libs.findLibrary("room-testing").get())
       }
+
+      configureNoDestructiveMigrationVerification()
+    }
+  }
+
+  /**
+   * `getByType`, not `findByType`: every module this convention plugin applies to today is an
+   * Android **library** (`:core:database`, via `muplay.android.library`, applied before this
+   * plugin in that module's `plugins {}` block) -- there is no `com.android.application` consumer
+   * of Room yet. If one ever exists, `LibraryAndroidComponentsExtension` genuinely will not be
+   * the right extension type for it, and this project's own standing preference is a loud
+   * Gradle-configuration failure over a check that quietly never registers.
+   */
+  private fun Project.configureNoDestructiveMigrationVerification() {
+    val androidComponents = extensions.getByType<LibraryAndroidComponentsExtension>()
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+      val taskName = "verify${variant.name.replaceFirstChar(Char::titlecase)}NoDestructiveMigration"
+      val verifyTask = tasks.register<VerifyNoDestructiveMigrationTask>(taskName) {
+        group = "verification"
+        description = "Fails if a main Kotlin source in this module calls " +
+          "fallbackToDestructiveMigration() with no DESTRUCTIVE_MIGRATION_EXEMPTION.md present " +
+          "-- see VerifyNoDestructiveMigrationTask for why."
+        // The variant's own account of what it compiles -- `Sources.kotlin`/`Sources.java`,
+        // not a hardcoded `fileTree("src/main/kotlin")`. AGP's built-in Kotlin support compiles
+        // both "kotlin-shaped" and "java-shaped" source roots for every variant that contributes
+        // to it (main, `release`, any active flavor), and a hardcoded main-only path missed both
+        // `src/main/java` and `src/release/kotlin` -- a re-review found this by placing the call
+        // in each and watching the gate stay quiet. `kotlinSources` holds *directories* here
+        // (`VerifyNoDestructiveMigrationTask.verify` walks each one for `.kt` files itself), not
+        // a pre-filtered file tree, because the set of roots is not known until the `Provider`s
+        // below resolve.
+        kotlinSources.from(variant.sources.kotlin?.all)
+        kotlinSources.from(variant.sources.java?.all)
+        // The floor `verify()` checks its zero-file guard against: at least one scanned
+        // file has to live under this module's own `src/`, not merely somewhere non-zero --
+        // generated KSP output under `build/` can never satisfy this on its own. See
+        // `verify()` for why a bare non-zero total was not enough.
+        projectSrcPath.set(File(projectDir, "src").path)
+        // A `ConfigurableFileCollection`, not a hardcoded existence check here: whether this
+        // resolves to zero or one file is exactly the question `verify()` answers, and Gradle
+        // tracks the file's presence *and* content as a real input either way -- adding, removing
+        // or editing the marker invalidates this task's up-to-date state.
+        exemptionMarker.from(fileTree(projectDir) { include("DESTRUCTIVE_MIGRATION_EXEMPTION.md") })
+        exemptionMarkerPath.set(File(projectDir, "DESTRUCTIVE_MIGRATION_EXEMPTION.md").path)
+      }
+      tasks.named("check").configure { dependsOn(verifyTask) }
     }
   }
 

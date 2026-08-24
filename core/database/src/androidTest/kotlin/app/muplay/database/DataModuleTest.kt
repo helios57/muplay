@@ -3,7 +3,11 @@ package app.muplay.database
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.database.di.DataModule
+import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.model.LibraryRole
+import app.muplay.model.SubsonicCredentials
+import app.muplay.network.SubsonicClient
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -73,4 +77,33 @@ class DataModuleTest {
     expected.delete()
   }
 
+  /**
+   * Task 4 added `provideLibraryDao` and `provideSubsonicSourceFactory` to this module and
+   * neither was called by anything: `LibraryRepositoryTest` builds its own `LibraryRepository`
+   * and `SubsonicSourceProvider` by hand, which never touches this `object`. That left both
+   * providers measuring 0/1 LINE -- the exact "obviously fine, exercised by nothing" shape this
+   * class's own doc comment already names -- and dropped `DataModule`'s class-level LINE ratio
+   * below the floor gating it. This test and the one below close that.
+   */
+  @Test
+  fun theProvidedLibraryDaoWorks() = runTest {
+    val dao = DataModule.provideLibraryDao(database)
+
+    dao.mergeFromServer(listOf(LibraryEntity(1, "Music", LibraryRole.UNASSIGNED)))
+
+    assertThat(dao.find(1)!!.name).isEqualTo("Music")
+  }
+
+  @Test
+  fun theProvidedSubsonicSourceFactoryBuildsARealSubsonicClient() {
+    val factory = DataModule.provideSubsonicSourceFactory()
+
+    val source = factory.create(SubsonicCredentials("https://music.example", "alice", "sesame"))
+
+    // Not just "non-null": this is the one place that decides the production `SubsonicSource` is
+    // a real `SubsonicClient` (with a real Retrofit stack) rather than, say, a leftover test
+    // double -- `DefaultSubsonicSourceFactory` is a one-line object, and a test that only checked
+    // "an instance came back" would pass just as well if that line built the wrong type.
+    assertThat(source).isInstanceOf(SubsonicClient::class.java)
+  }
 }

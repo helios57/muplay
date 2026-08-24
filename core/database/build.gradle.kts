@@ -13,13 +13,13 @@ dependencies {
   // (`MusicLibrary`, `Album`, `Song`, ...) from its public signatures, so a consumer cannot
   // compile against this module without them.
   //
-  // `:core:network` is `implementation` **at this point in the plan** and only at this point:
-  // nothing public here mentions a network type yet. Task 4 introduces `SubsonicSourceProvider`,
-  // whose `current(): SubsonicSource` is public, and promotes this line to `api` for that reason.
-  // (`plan-2-inherited.md` item 4 asked for exactly this audit; this is it being done rather
-  // than assumed.)
   api(project(":core:model"))
-  implementation(project(":core:network"))
+  // `api` as of this task: `SubsonicSourceProvider.current()` returns `SubsonicSource`, a
+  // `:core:network` type, from a public signature — with `implementation`, a consumer of this
+  // module cannot resolve that type and the Kotlin compiler reports the supertype as
+  // inaccessible. This is `plan-2-inherited.md` item 4's `api`-vs-`implementation` audit landing
+  // on the first case where the answer actually changes.
+  api(project(":core:network"))
 
   implementation(libs.coroutines.core)
   implementation(libs.datastore.preferences)

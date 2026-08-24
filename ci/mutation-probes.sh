@@ -50,6 +50,28 @@
 # are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
 # Navidrome container.
 #
+# THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
+# SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
+# :core:model:test :core:database:test` -- three plain JVM invocations -- and `failures()` globs
+# both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
+# `core/*/build/test-results/testDebugUnitTest/` (`:core:database`, an Android module's JVM-tier
+# results directory). `:core:database` genuinely does carry JVM test source
+# (`KeystoreCipherTest`, six tests -- its cryptographic contract needs no device) and `run_suite()`
+# now runs it; an earlier version of this comment said `:core:database` "has no JVM test source at
+# all", which was false and was corrected on a re-review that ran `KeystoreCipherTest` itself and
+# found it green today.
+#
+# What genuinely cannot run here is the *instrumented* tier: `LibraryRepository`, `LibraryDao` and
+# everything else that needs Room's real SQLite need a device, and their results land under
+# `build/outputs/androidTest-results/connected/`, a directory tree this JVM-only runner has no
+# business reading (it would need `ci/prepare-emulator.sh`'s emulator to produce anything there in
+# the first place). A green run of this script therefore still says nothing about whether
+# `LibraryRepository.idsWithRole` discriminates its argument -- that class of defect (Task 4's
+# N-1, N-2, N-4, N-5 among them) is recorded in each task's own `task-N-report.md` instead, the
+# same way `LiveNavidromeTest`'s test-side probes already are above. What changed is that the
+# JVM-tier defects this module *can* probe (a `KeystoreCipher` regression, for instance) are no
+# longer silently outside this runner's reach alongside the ones that genuinely have to be.
+#
 # USAGE:  ./ci/mutation-probes.sh            # every probe; budget ~45 s each (one full JVM test
 #                                            # run per probe). Measured end-to-end at 13 min and
 #                                            # at 8.5 min on two different machines -- so size the
@@ -275,18 +297,42 @@ def revert():
     subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL], check=True)
 
 
+# Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
+# JVM tier actually writes to. A plain `muplay.jvm.library` module (`:core:network`, `:core:model`)
+# writes to `test-results/test/`; an Android module's `test<Variant>UnitTest` task (`:core:database`)
+# writes to `test-results/test<Variant>UnitTest/` instead -- `:core:database:test` is a lifecycle
+# alias for `testDebugUnitTest` here (no other build type is tested), so its results always land
+# under `testDebugUnitTest`, not `test`.
+#
+# Listed module-by-module, not a `core/*` wildcard: this repo has *other* Android modules
+# (`:core:designsystem`) whose own `test-results/testDebugUnitTest/` can hold real result files on
+# disk from an earlier, unrelated Gradle invocation -- confirmed live, that directory already
+# existed with a passing `ThemeTest` result before this runner ever touched it. A wildcard glob
+# would read that stale file as if this run had just produced it; `failures()` and `run_suite()`
+# must stay paired to exactly the same module set, or a leftover result from a module this script
+# never ran could silently manufacture (or hide) a probe's expected failure. `:core:network` is the
+# same story from the other direction: it also writes to `test-results/liveNavidromeTest/`, a
+# live-container suite this runner has no business scanning.
+JVM_TEST_RESULT_DIRS = {
+    "core/network": "test",
+    "core/model": "test",
+    "core/database": "testDebugUnitTest",
+}
+
+
 def failures():
     out = []
-    for f in glob.glob("core/*/build/test-results/test/TEST-*.xml"):
-        body = open(f).read()
-        for m in re.finditer(r'<testcase name="([^"]*)"[^>]*>\s*<failure[^>]*>(.*?)</failure>', body, re.S):
-            out.append((m.group(1).removesuffix("()"),
-                        html.unescape(m.group(2)).split("\n\tat ")[0].replace("\n", " ").strip()))
+    for module, result_dir in JVM_TEST_RESULT_DIRS.items():
+        for f in glob.glob(f"{module}/build/test-results/{result_dir}/TEST-*.xml"):
+            body = open(f).read()
+            for m in re.finditer(r'<testcase name="([^"]*)"[^>]*>\s*<failure[^>]*>(.*?)</failure>', body, re.S):
+                out.append((m.group(1).removesuffix("()"),
+                            html.unescape(m.group(2)).split("\n\tat ")[0].replace("\n", " ").strip()))
     return out
 
 
 def run_suite():
-    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test"],
+    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test", ":core:database:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return failures()
 

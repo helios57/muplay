@@ -43,6 +43,22 @@ jobs:
         # AndroidApplicationConventionPlugin.
         run: ./gradlew :app:verifyReleaseManifest
 
+      - name: No destructive migration without a named exemption
+        # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a
+        # release build (see VerifyNoDestructiveMigrationTask): the first post-release schema bump
+        # would silently delete every stored audiobook position. The call is legitimately present
+        # throughout this pre-release plan, so this passes today only because
+        # core/database/DESTRUCTIVE_MIGRATION_EXEMPTION.md exists — and prints a loud warning
+        # naming that file every time it does, so the exemption cannot go unnoticed. Deleting that
+        # file without replacing the call with real Migration objects is what turns this step red.
+        #
+        # The bare (unqualified) task name, not `:core:database:verifyReleaseNoDestructiveMigration`:
+        # AndroidRoomConventionPlugin registers this task for every module that applies
+        # muplay.android.room, and Gradle resolves an unqualified task name against every project
+        # that has one — so a future second Room module gets this step for free instead of needing
+        # a second hardcoded line here that someone has to remember to add.
+        run: ./gradlew verifyReleaseNoDestructiveMigration
+
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7

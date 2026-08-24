@@ -427,13 +427,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:core:database` (Plan 2 Tasks 1-2). Four rules, because the module now holds three different
+  // `:core:database` (Plan 2 Tasks 1-4). Six rules, because the module now holds three different
   // kinds of code and one blended floor would hide a regression in any of them behind the others.
   //
-  // Measured, all of them, from a merged JVM + instrumented report (see task-2's transcript):
-  // KeystoreCipher BRANCH 4/4 and LINE 15/15; CredentialStore BRANCH 16/16 and LINE 37/37;
-  // MuPlayDatabase 1/1, DataModule 6/6, MediaProgressEntity 9/9 LINE; and the coroutine codegen
-  // classes at 0.50-0.67 LINE.
+  // Measured, all of them, from a merged JVM + instrumented report (see task-2's transcript for
+  // Tasks 1-2's numbers; task-4's own transcript for what follows): KeystoreCipher BRANCH 4/4
+  // and LINE 15/15; CredentialStore BRANCH 16/16 and LINE 37/37; MuPlayDatabase 1/1, DataModule
+  // 9/9, MediaProgressEntity 9/9, LibraryDao 5/5, LibraryEntity 5/5, NotConfiguredException 2/2
+  // LINE; LibraryRepository BRANCH 2/2 and LINE 14/15; SubsonicSourceProvider BRANCH 2/2 and
+  // LINE 5/5; and the coroutine/`Flow.map` codegen classes at 0.50-0.67 LINE.
   ":core:database" to listOf(
     // The only floor in this module Tier 1 can enforce, and the only one that is not
     // `requiresInstrumentedData`. KeystoreCipher takes a `SecretKey` rather than fetching one
@@ -457,10 +459,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.database.CredentialStore"),
       requiresInstrumentedData = true,
     ),
+    // LibraryRepository's only author-written branch, confirmed at the method level (not
+    // assumed): both of the 2 branches this measures are JaCoCo's own instrumentation of
+    // `hasUnassignedLibraries`'s `.isNotEmpty()` boolean check (`unassignedLibrariesAreReported...`
+    // exercises it both true and false). Every other method here is either a straight-line
+    // suspend delegation to `LibraryDao` or the `Flow.map` in `libraries`, whose own lambda
+    // classes are covered by the LINE catch-all below, not this rule. Measured 2/2.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.LibraryRepository"),
+      requiresInstrumentedData = true,
+    ),
+    // `SubsonicSourceProvider.current`'s `credentialStore.load() ?: throw NotConfiguredException()`
+    // -- exactly the two branches `refreshingWithNoStoredCredentialsFailsLoudly` (the throw) and
+    // every other `LibraryRepositoryTest` (the pass-through) exist to cover. Measured 2/2.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.SubsonicSourceProvider"),
+      requiresInstrumentedData = true,
+    ),
     // Everything whose value is "did this line run at all": the Room database class, the Hilt
-    // providers, the entity, and CredentialStore's own lines. No BRANCH entry for the first
-    // three -- they contain no author-written conditional, so a BRANCH rule would match only
-    // zero-total counters and pass silently at every minimum through JaCoCo's isNaN branch.
+    // providers, the entities, the DAO, the two Task 4 classes with no branch of their own
+    // (LibraryEntity, NotConfiguredException), and every class above that also has its own
+    // BRANCH rule. No separate BRANCH entry for LibraryDao/LibraryEntity/MediaProgressEntity --
+    // they contain no author-written conditional, so a BRANCH rule would match only zero-total
+    // counters and pass silently at every minimum through JaCoCo's isNaN branch.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -471,28 +498,46 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.CredentialStore*Companion",
         "app.muplay.database.di.DataModule",
         "app.muplay.database.entity.MediaProgressEntity",
+        "app.muplay.database.entity.LibraryEntity",
+        "app.muplay.database.dao.LibraryDao",
+        "app.muplay.database.LibraryRepository",
+        "app.muplay.database.SubsonicSourceProvider",
+        "app.muplay.database.NotConfiguredException",
       ),
       requiresInstrumentedData = true,
     ),
     // The Kotlin compiler's own output for `suspend` bodies and for `Flow.map`: the
-    // `save$2`/`clear$2` continuation classes and the `$special$$inlined$map$1` pair. Measured
-    // 0.50-0.67 LINE, floored at 0.50 -- a real number this run produced, not a round one.
+    // `save$2`/`clear$2`/`CredentialStore$special$$inlined$map$1*` family, and now
+    // `LibraryRepository`'s own `Flow.map` lambda (`LibraryRepository$special$$inlined$map$1*`)
+    // and its `refreshFromServer`/`hasUnassignedLibraries` suspend continuations. Measured
+    // 0.50-0.67 LINE across both families alike, floored at 0.50 -- a real number this run
+    // produced, not a round one. `SubsonicSourceProvider*` rides along in the same rule: its own
+    // `current$1` continuation carries no LINE counter of its own (0/0, JaCoCo's isNaN branch, see
+    // `warnVacuousFloors`'s own doc for why that is not the same thing as "excluded"), so it costs
+    // nothing to include and keeps this rule's reasoning -- "one rule for every suspend/Flow.map
+    // artefact in this module" -- true without a second near-duplicate rule.
     //
     // Gated rather than excluded, and gated low rather than not at all. Excluding them the way
     // Room's `_Impl` and Hilt's generated types are excluded would be defensible, but those have
     // dedicated, stable name shapes; a pattern broad enough to catch every coroutine artefact
     // would also catch author-written nested classes, and this project would rather carry an
     // honest low floor than a silent hole. Leaving them ungated instead would make
-    // `warnUngatedCoverage` print four lines on every run forever, which is how a warning
-    // mechanism dies.
+    // `warnUngatedCoverage` print lines on every run forever, which is how a warning mechanism
+    // dies.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.50"),
-      includes = listOf("app.muplay.database.CredentialStore*"),
+      includes = listOf(
+        "app.muplay.database.CredentialStore*",
+        "app.muplay.database.LibraryRepository*",
+        "app.muplay.database.SubsonicSourceProvider*",
+      ),
       excludes = listOf(
         "app.muplay.database.CredentialStore",
         "app.muplay.database.CredentialStore*Companion",
+        "app.muplay.database.LibraryRepository",
+        "app.muplay.database.SubsonicSourceProvider",
       ),
       requiresInstrumentedData = true,
     ),
@@ -939,9 +984,15 @@ object CoverageGateNotice {
     ) {
       // Skipped, but this gate was owed nothing: every one of this module's floors needs
       // instrumented data, so the tier below has no rule of its own to evaluate whether execution
-      // data exists or not. `:core:database` is the first module in this shape -- Room needs the
-      // Android framework's SQLite and Robolectric is banned project-wide, so it has no JVM tests
-      // at all and never will.
+      // data exists or not. `:core:database` is the module that motivated this branch -- Room
+      // needs the Android framework's SQLite and Robolectric is banned project-wide, so its Room
+      // and DAO coverage can never come from a JVM test. [Corrected on a Task 4 re-review: this
+      // comment used to claim the module "has no JVM tests at all and never will", which was true
+      // when it was written and stopped being true the moment Task 2 added `KeystoreCipherTest`
+      // (its cryptographic contract needs no Android framework, only Room and the DAO layer do) --
+      // the module carries real JVM tests today for the code that needs no framework, and nobody
+      // revisited this prose. The same false premise had propagated into `ci/mutation-probes.sh`'s
+      // own header; both are fixed together.]
       //
       // Split out from the general no-data branch below deliberately. That branch says "usually
       // this means the module's tests did not run or no longer exist", which for a module in this
