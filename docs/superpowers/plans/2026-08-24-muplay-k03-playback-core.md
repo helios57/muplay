@@ -19,7 +19,8 @@ imports `androidx.media3.exoplayer`.
 
 **Tech Stack:** Kotlin 2.4.10, JDK 21, AGP 9.3.1, **KSP** (never KAPT), **Media3 1.11.0**
 (`media3-exoplayer`, `media3-session`, `media3-datasource-okhttp`, `media3-ui-compose`,
-`media3-ui-compose-material3`, `media3-test-utils`), Room 2.8.4, Hilt 2.60.1, OkHttp 5.5.0,
+`media3-ui-compose-material3` — **not** `media3-test-utils`, which needs an Android runtime and
+whose JVM path is the banned Robolectric; see Task 7), Room 2.8.4, Hilt 2.60.1, OkHttp 5.5.0,
 Compose BOM 2026.08.00 + Material 3 1.4.0, Navigation 3 1.1.6, JUnit 5 (JVM) / JUnit 4 (device),
 AssertJ, Turbine, JaCoCo 0.8.12.
 
@@ -86,16 +87,18 @@ Copied verbatim from the roadmap's **Definition of done, per plan**:
 
 ## Task list
 
-1. `streamUrl` — an authenticated `format=raw` URL, and the four traps on it
-2. `:core:media` — the module, Media3 1.11.0, and the OkHttp data source
-3. The media cache, keyed on the track id alone
-4. `Song` → `MediaItem`, and the queue as a list of pointers
-5. `MuPlaybackService` — `MediaLibraryService`, foreground lifecycle, notification, permissions
-6. Audio focus, becoming-noisy, and the content-type switch
-7. Gapless, measured in PCM frames
-8. `MuPlayer` — the `ForwardingPlayer` seam and the progress writer
-9. `:feature:player` — the Compose player UI over a `MediaController`
-10. The gates — Tier 2 playback journeys, the coverage table, the spec corrections
+| # | Task | Deliverable a reviewer can accept or reject on its own |
+|---|---|---|
+| 1 | `streamUrl` — an authenticated `format=raw` URL, and the four traps on it | Navidrome serves this client seekable, length-declared, never-Opus audio |
+| 2 | `:core:media` — the module, Media3 1.11.0, the OkHttp data source and the 429 policy | a real ExoPlayer fetches real audio and survives a transcoding refusal |
+| 3 | The media cache, keyed on the track id alone | a replayed track costs **zero** further HTTP requests |
+| 4 | `Song` → `MediaItem`, and the queue as a list of pointers | every mapped field proven against two inputs; the queue carries no position |
+| 5 | `MuPlaybackService` — `MediaLibraryService`, foreground lifecycle, notification, permissions | the system holds a notification whose title follows the track |
+| 6 | Audio focus, becoming-noisy, and the content-type switch | another app taking focus stops the clock; a noisy route pauses |
+| 7 | Gapless, measured in PCM frames | under 10 ms of silence across a three-track queue, from a real decoder |
+| 8 | `MuPlayer` — the `ForwardingPlayer` seam and the progress writer | all six overloads go through the policy; `media_progress` is written |
+| 9 | `:feature:player` — the Compose player UI over a `MediaController` | a player and a mini player, with no `ExoPlayer` reachable from a feature |
+| 10 | The gates — Tier 2 playback journeys, the coverage table, the spec corrections | audio advances on a real screen, in the background, and the spec is fixed |
 
 ---
 
@@ -220,6 +223,16 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 - **Offline downloads** — deferred by spec §9. No `DownloadService`, no `JobScheduler`.
 - **`media3-inspector`** — chapters are Plan 4's. Adding the artifact here would be an unused
   dependency, which the constraints call out by name.
+- **ReplayGain.** Spec §4 says *"ReplayGain is exposed but **not applied** server-side; the client
+  applies it"*, and applying it means a gain stage in the audio pipeline driven by
+  `media_progress.gainDb` — a column spec §5 groups with per-item speed and silence skipping, i.e.
+  with Plan 4. Task 8 makes sure the progress writer **preserves** `gainDb` rather than resetting
+  it, which is this plan's whole responsibility toward it. Applying it is not.
+- **`savePlayQueue` / `createBookmark` / any server-side progress sync.** Spec §4 and §11 rule this
+  out outright, and spec §4 records the specific hazards (`createBookmark.position` in
+  milliseconds against `bookmarkPosition` in seconds; Navidrome's `savePlayQueue` mapping a track
+  id to an index by first match and silently falling back to 0). Nothing in this plan sends a
+  position to a server.
 
 ---
 
@@ -228,7 +241,7 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 | File | Responsibility |
 |---|---|
 | `settings.gradle.kts` | **modify** — include `:core:media`, `:feature:player` |
-| `gradle/libs.versions.toml` | **modify** — the six Media3 artifacts, `androidx.media` (for `MediaButtonReceiver`? no — see Task 5), `guava` listenablefuture pin |
+| `gradle/libs.versions.toml` | **modify** — five Media3 artifacts at the existing `media3 = "1.11.0"` ref, `androidx-test-rules`, and Coil's aliases if Plan 2 has not added them |
 | `build.gradle.kts` | **modify** — coverage floors for `:core:media` and `:feature:player` |
 | `core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt` | **new** — `RAW`/`MP3`, the two formats this client is allowed to ask for. Opus is unrepresentable. |
 | `core/network/src/main/kotlin/app/muplay/network/SubsonicSource.kt` | **modify** — one new method, `streamUrl` |
@@ -1693,15 +1706,18 @@ class MuPlayDataSourceFactoryTest {
 
     val context = ApplicationProvider.getApplicationContext<android.content.Context>()
     val factory = MuPlayDataSourceFactory(OkHttpClient())
-    harness = PlayerHarness(
-      ExoPlayer.Builder(context)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
-        .setLoadErrorHandlingPolicy(NavidromeLoadErrorHandlingPolicy())
-        .build().also { player ->
-          // Building on the test thread is not allowed; ExoPlayer.Builder captures the current
-          // Looper. Constructed inside runOnMainSync via the harness's own init instead.
-        },
-    )
+    // Built inside runOnMainSync: ExoPlayer.Builder captures the calling thread's Looper, and the
+    // instrumentation thread has none. A violation throws
+    // "Player is accessed on the wrong thread" -- clear, but only at the first access, which is
+    // far from here.
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      harness = PlayerHarness(
+        ExoPlayer.Builder(context)
+          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
+          .setLoadErrorHandlingPolicy(NavidromeLoadErrorHandlingPolicy())
+          .build(),
+      )
+    }
   }
 
   @After
@@ -1816,11 +1832,10 @@ class MuPlayDataSourceFactoryTest {
 > and note that `MockWebServer` is a **real HTTP server**, not a mock framework, which is why it is
 > allowed here at all.
 
-> **On building the player:** `ExoPlayer.Builder.build()` must run on a thread with a `Looper`.
-> Move the construction inside `InstrumentationRegistry.getInstrumentation().runOnMainSync { }` —
-> the sketch above shows the shape; the working form is to build the player inside `onMain` and
-> pass it to `PlayerHarness`. Verify by running: a violation throws
-> `IllegalStateException: Player is accessed on the wrong thread` with a clear message.
+> **On threading:** every `ExoPlayer` in this plan is built and touched on the main `Looper`.
+> `PlayerHarness.onMain` covers the touching; the construction has to be wrapped explicitly, as
+> above, because the harness cannot wrap its own constructor argument. `androidx.test.platform.app.InstrumentationRegistry`
+> needs importing in this test.
 
 - [ ] **Step 9: Run the instrumented tests**
 
@@ -2346,7 +2361,12 @@ with imports for `androidx.media3.datasource.cache.Cache` and
 with imports for `android.content.Context`, `androidx.media3.datasource.cache.Cache`,
 `app.muplay.media.MediaCache` and `dagger.hilt.android.qualifiers.ApplicationContext`.
 
-- [ ] **Step 4: Update Task 2's test for the new constructor**
+- [ ] **Step 4: Update Task 2's test for the new constructor and the shared fixture helper**
+
+`MuPlayDataSourceFactoryTest` has a private `fetchRealTrackBytes()` that does what
+`RealTrackBytes.bytesOf` now does. Delete the private copy and call the shared object — two ways to
+fetch the same bytes is two things to keep pointing at the same container.
+
 
 `MuPlayDataSourceFactoryTest` constructs `MuPlayDataSourceFactory(OkHttpClient())`. It now needs a
 cache. Give that test its **own** per-test cache directory (so it neither shares nor evicts
@@ -2923,16 +2943,16 @@ class QueueRepositoryTest {
       return "https://host/rest/getCoverArt?id=$coverArtId&size=$sizePx"
     }
 
-    // Everything else on the port is out of this test's scope. `TODO()` rather than a benign
+    // Everything else on the port is out of this test's scope. `error(...)` rather than a benign
     // default: a call that should never happen must fail loudly rather than return something
-    // plausible.
-    override suspend fun ping(): ServerInfo = TODO("not used")
-    override suspend fun getMusicFolders(): List<MusicLibrary> = TODO("not used")
-    override suspend fun getScanStatus(): ScanStatus = TODO("not used")
-    override suspend fun getAlbumList2(musicFolderId: Int, type: AlbumListType, size: Int, offset: Int): List<Album> = TODO("not used")
-    override suspend fun getAlbum(albumId: String, musicFolderId: Int): AlbumWithSongs = TODO("not used")
-    override suspend fun search3(query: String, musicFolderId: Int, artistCount: Int, albumCount: Int, songCount: Int): SearchResults = TODO("not used")
-    override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> = TODO("not used")
+    // plausible that the test would then be quietly asserting about.
+    override suspend fun ping(): ServerInfo = error("not used by QueueRepositoryTest")
+    override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by QueueRepositoryTest")
+    override suspend fun getScanStatus(): ScanStatus = error("not used by QueueRepositoryTest")
+    override suspend fun getAlbumList2(musicFolderId: Int, type: AlbumListType, size: Int, offset: Int): List<Album> = error("not used by QueueRepositoryTest")
+    override suspend fun getAlbum(albumId: String, musicFolderId: Int): AlbumWithSongs = error("not used by QueueRepositoryTest")
+    override suspend fun search3(query: String, musicFolderId: Int, artistCount: Int, albumCount: Int, songCount: Int): SearchResults = error("not used by QueueRepositoryTest")
+    override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> = error("not used by QueueRepositoryTest")
   }
 
   private fun song(id: String, suffix: String?, coverArtId: String?) = Song(
@@ -2950,8 +2970,21 @@ class QueueRepositoryTest {
     coverArtId = coverArtId,
   )
 
-  private fun repository(source: SubsonicSource) =
-    QueueRepository(FixedSubsonicSourceProvider(source))
+  private lateinit var storeFile: File
+
+  private fun repository(source: SubsonicSource): QueueRepository {
+    val (provider, file) = fixedSubsonicSourceProvider(
+      ApplicationProvider.getApplicationContext(),
+      source,
+    )
+    storeFile = file
+    return QueueRepository(provider)
+  }
+
+  @After
+  fun tearDown() {
+    if (::storeFile.isInitialized) storeFile.delete()
+  }
 
   @Test
   fun everySongInTheQueueBecomesOneMediaItemInTheSameOrder() = runTest {
@@ -3044,41 +3077,56 @@ class QueueRepositoryTest {
 }
 ```
 
-`FixedSubsonicSourceProvider` is the one-line adapter that lets this test hand a
-`SubsonicSourceProvider` a source directly. **Plan 2 Task 4 defines
-`SubsonicSourceProvider(credentialStore, factory)`; check its real constructor before writing
-this.** If it is `class SubsonicSourceProvider @Inject constructor(credentialStore: CredentialStore,
-factory: SubsonicSourceFactory)` as Plan 2's Interfaces block says, the adapter is:
+`FixedSubsonicSourceProvider` is the helper that gives this test a real
+`SubsonicSourceProvider` whose factory always yields one already-built `SubsonicSource`. It builds
+a **real** `CredentialStore` over a **real** `DataStore` file — exactly what Plan 2's
+`ShuffleRepositoryTest` does — rather than introducing an interface into production code for one
+test:
 
 ```kotlin
 // core/media/src/androidTest/kotlin/app/muplay/media/FixedSubsonicSourceProvider.kt
 package app.muplay.media
 
+import android.content.Context
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.muplay.database.CredentialStore
 import app.muplay.database.SubsonicSourceProvider
+import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicSource
+import app.muplay.network.SubsonicSourceFactory
+import java.io.File
+import kotlinx.coroutines.runBlocking
 
 /**
- * A [SubsonicSourceProvider] that always yields one already-built [SubsonicSource].
+ * A real [SubsonicSourceProvider] whose factory always yields [source].
  *
- * Not a mock: a three-line hand-written stand-in for a class whose only job is to read credentials
- * and call a factory, in a test whose subject is neither. If `SubsonicSourceProvider` turns out to
- * be `final` with no seam, prefer building a real one over a real `CredentialStore` seeded with
- * throwaway credentials and a `SubsonicSourceFactory { source }` — Plan 2's own
- * `ShuffleRepositoryTest` does exactly that, and copying its setup is better than adding an
- * interface to production code for one test.
+ * Real `CredentialStore`, real DataStore file, real credentials — the only thing substituted is
+ * the `SubsonicSourceFactory`, which is already a `fun interface` in production code and therefore
+ * needs no seam invented for it. This is the same construction Plan 2's `ShuffleRepositoryTest`
+ * uses; copying it is better than adding an interface to `SubsonicSourceProvider` for a test.
+ *
+ * Returns the store's backing [File] alongside the provider so the caller can delete it in
+ * `@After`. DataStore refuses a second instance for one path, so the path must be unique per test.
  */
-fun FixedSubsonicSourceProvider(source: SubsonicSource): SubsonicSourceProvider = TODO(
-  "Replace with whichever of the two forms Plan 2's SubsonicSourceProvider actually permits; " +
-    "see ShuffleRepositoryTest for the real-CredentialStore form.",
-)
+fun fixedSubsonicSourceProvider(
+  context: Context,
+  source: SubsonicSource,
+  baseUrl: String = "http://localhost:4533",
+): Pair<SubsonicSourceProvider, File> {
+  val file = File(context.filesDir, "media-test-${System.nanoTime()}.preferences_pb")
+  val credentialStore = CredentialStore(PreferenceDataStoreFactory.create { file })
+  runBlocking { credentialStore.save(SubsonicCredentials(baseUrl, "admin", "testpass")) }
+  return SubsonicSourceProvider(credentialStore, SubsonicSourceFactory { source }) to file
+}
 ```
 
-**Do not leave that `TODO` in the tree.** Step 9 resolves it: read
-`core/database/src/main/kotlin/app/muplay/database/SubsonicSourceProvider.kt`, and if the class is
-open or an interface, subclass it; otherwise delete this file and build a real provider over a
-real `CredentialStore` exactly as `ShuffleRepositoryTest` does, which also means
-`QueueRepositoryTest` gains a `CredentialStore` and a DataStore file in `@Before`. Record which
-form was used and why in the task report.
+> `CredentialStore`'s committed constructor is
+> `CredentialStore @Inject constructor(dataStore: DataStore<Preferences>)` with
+> `suspend save/load/clear` — read the file to confirm the parameter list before relying on this.
+> `SubsonicSourceProvider(credentialStore, factory)` is **Plan 2 Task 4's**, taken from that plan's
+> Interfaces block; if it landed with a different parameter order or name, adapt here and record it
+> in the task report. `QueueRepositoryTest` calls this in `@Before` and deletes the returned `File`
+> in `@After`.
 
 - [ ] **Step 9: Resolve the provider seam, then implement `QueueRepository`**
 
@@ -3204,7 +3252,9 @@ git commit -m "feat(media): Song to MediaItem, and a queue that carries no posit
 - Modify: `gradle/libs.versions.toml` (`androidx-test-rules`, `guava` for `ListenableFuture`)
 - Modify: `build-logic/convention/src/main/kotlin/VerifyMergedManifestTask.kt`
 - Modify: `build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt`
-- Test: `core/media/src/androidTest/kotlin/app/muplay/media/MuPlaybackServiceTest.kt`
+- Test: `app/src/androidTest/kotlin/app/muplay/MuPlaybackServiceTest.kt` — **in `:app`, not
+  `:core:media`; see "Why the service test lives in `:app`" below**
+- Modify: `app/build.gradle.kts`
 - Modify: `build.gradle.kts` (`:core:media` floors)
 
 **Interfaces:**
@@ -3239,6 +3289,28 @@ later when it costs nothing to avoid now.
 defaults are left in place rather than overridden with an empty root. The distinction matters:
 "not supported" is true today, whereas an empty root is a claim — a car head unit would render it
 as a library with nothing in it, which is a wrong answer rather than an absent one.
+
+### Why the service test lives in `:app`
+
+`MuPlaybackService` is `@AndroidEntryPoint`, which requires the hosting `Application` to be
+`@HiltAndroidApp`. A **library** module's instrumented tests run in a self-instrumenting APK whose
+application is the plain `android.app.Application`, so starting this service from
+`:core:media`'s own `androidTest` fails at runtime with Hilt's *"must be attached to an
+@HiltAndroidApp Application"*. The usual fix — `HiltTestApplication` plus a custom
+`testInstrumentationRunner` — is not available here: `configureKotlinAndroid` sets that runner for
+every Android module in build-logic, and `ConventionTest` forbids a module overriding it in its own
+`android { }` block.
+
+So the service test lives in `:app`, where `MuPlayApplication` really is `@HiltAndroidApp` and the
+test can reach the **production** object graph through `EntryPointAccessors`. This is not a
+workaround with a cost: it is a stronger test, because the service is exercised inside the
+application that actually hosts it.
+
+Coverage still lands on `:core:media`. `Jacoco.kt`'s `mergedExecutionData` globs **every** project's
+`build/outputs/code_coverage/**/*.ec`, and `:core:media`'s classes are offline-instrumented by its
+own `enableAndroidTestCoverage`, so a run of `:app:connectedDebugAndroidTest` contributes to
+`:core:media`'s report. Plan 2 already depends on exactly this — `:core:designsystem`'s floors are
+met by the emulator journey composing `MuPlayTheme`, not by any test in that module.
 
 ### Why the notification is tested by reading the real notification
 
@@ -3437,10 +3509,20 @@ knows works.**
 androidx-test-rules    = { module = "androidx.test:rules", version.ref = "androidxTest" }
 ```
 
-`core/media/src/androidTest/kotlin/app/muplay/media/MuPlaybackServiceTest.kt`:
+`app/build.gradle.kts` — the service test needs the media layer's types, a `SubsonicClient` to
+find the seeded tracks, and the notification permission rule:
 
 ```kotlin
-package app.muplay.media
+  androidTestImplementation(project(":core:media"))
+  androidTestImplementation(project(":core:network"))
+  androidTestImplementation(libs.androidx.test.rules)
+  androidTestImplementation(libs.assertj)
+```
+
+`app/src/androidTest/kotlin/app/muplay/MuPlaybackServiceTest.kt`:
+
+```kotlin
+package app.muplay
 
 import android.Manifest
 import android.app.NotificationManager
@@ -3451,6 +3533,19 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import app.muplay.database.CredentialStore
+import app.muplay.database.LibraryRepository
+import app.muplay.media.PlaybackConnection
+import app.muplay.media.PlaybackNotification
+import app.muplay.media.PlaybackQueue
+import app.muplay.media.QueueRepository
+import app.muplay.model.LibraryRole
+import app.muplay.model.Song
+import app.muplay.model.SubsonicCredentials
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -3481,15 +3576,46 @@ class MuPlaybackServiceTest {
   val notificationPermission: GrantPermissionRule =
     GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
+  /**
+   * The production object graph, reached without `@HiltAndroidTest`.
+   *
+   * `MuPlayApplication` is `@HiltAndroidApp`, so `EntryPointAccessors.fromApplication` hands back
+   * the **real** singletons this app runs on — the same `QueueRepository` and `CredentialStore` the
+   * service and the UI use. No test application, no custom runner, and nothing substituted.
+   */
+  @EntryPoint
+  @InstallIn(SingletonComponent::class)
+  interface PlaybackTestEntryPoint {
+    fun queueRepository(): QueueRepository
+    fun credentialStore(): CredentialStore
+    fun libraryRepository(): LibraryRepository
+  }
+
   private lateinit var context: Context
   private lateinit var connection: PlaybackConnection
   private lateinit var controller: MediaController
-  private lateinit var songs: List<app.muplay.model.Song>
+  private lateinit var graph: PlaybackTestEntryPoint
+  private lateinit var songs: List<Song>
 
   @Before
   fun setUp() {
     context = ApplicationProvider.getApplicationContext()
-    songs = runBlocking { RealTrackBytes.musicTracks() }
+    graph = EntryPointAccessors.fromApplication(context, PlaybackTestEntryPoint::class.java)
+
+    runBlocking {
+      // Seeded here rather than inherited from whichever journey ran first: a test that depends on
+      // another test having run is a test that fails alone, and this suite must not have a hidden
+      // ordering. These are ci/navidrome.compose.yml's credentials and
+      // ci/configure-libraries.sh's two libraries.
+      graph.credentialStore().save(SubsonicCredentials(NAVIDROME_URL, "admin", "testpass"))
+      graph.libraryRepository().refreshFromServer()
+      graph.libraryRepository().setRole(MUSIC_LIBRARY_ID, LibraryRole.MUSIC)
+      graph.libraryRepository().setRole(AUDIOBOOK_LIBRARY_ID, LibraryRole.AUDIOBOOKS)
+
+      songs = app.muplay.network.SubsonicClient(
+        SubsonicCredentials(NAVIDROME_URL, "admin", "testpass"),
+      ).getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).sortedBy { it.title }
+    }
     check(songs.size >= 2) { "the seeded music library must hold at least two tracks" }
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
@@ -3591,10 +3717,8 @@ class MuPlaybackServiceTest {
     assertThat(state.durationMs).isGreaterThan(0L)
   }
 
-  private fun setQueueAndPlay(items: List<app.muplay.model.Song>) {
-    val mediaItems = runBlocking {
-      QueueRepositoryProvider.forTest(context).mediaItems(PlaybackQueue.of(items))
-    }
+  private fun setQueueAndPlay(items: List<Song>) {
+    val mediaItems = runBlocking { graph.queueRepository().mediaItems(PlaybackQueue.of(items)) }
     onMain {
       controller.setMediaItems(mediaItems, 0, 0L)
       controller.prepare()
@@ -3649,43 +3773,18 @@ class MuPlaybackServiceTest {
   }
 
   private companion object {
+    /** Reached from inside the emulator via `adb reverse tcp:4533 tcp:4533` -- ci/prepare-emulator.sh. */
+    const val NAVIDROME_URL = "http://localhost:4533"
+    const val MUSIC_LIBRARY_ID = 1
+    const val AUDIOBOOK_LIBRARY_ID = 2
     const val TIMEOUT_MS = 30_000L
   }
 }
 ```
 
-and the one-line test seam that gives the test a `QueueRepository` without a Hilt graph —
-`core/media/src/androidTest/kotlin/app/muplay/media/QueueRepositoryProvider.kt`:
-
-```kotlin
-package app.muplay.media
-
-import android.content.Context
-
-/**
- * A [QueueRepository] over the real container's credentials, for instrumented tests.
- *
- * Builds whatever `SubsonicSourceProvider` Plan 2 Task 4 actually shipped — see
- * `FixedSubsonicSourceProvider` and `ShuffleRepositoryTest` for the two forms. Hilt is not used
- * here on purpose: `@HiltAndroidTest` in a library module's `androidTest` needs a test
- * application, and every one of these tests is about Media3, not about the object graph.
- */
-object QueueRepositoryProvider {
-  fun forTest(context: Context): QueueRepository = TODO(
-    "Build a SubsonicSourceProvider over a real CredentialStore seeded with " +
-      "SubsonicCredentials(\"http://localhost:4533\", \"admin\", \"testpass\"), exactly as " +
-      "Plan 2's ShuffleRepositoryTest does, and wrap it in QueueRepository.",
-  )
-}
-```
-
-**Resolve that `TODO` in Step 6 — it must not be committed.** It is written as a `TODO(...)` rather
-than as prose precisely so that a build that reaches it fails loudly instead of a reviewer
-scrolling past a comment.
-
 - [ ] **Step 6: Run it to verify it fails, then implement**
 
-Run: `./gradlew :core:media:connectedDebugAndroidTest --tests '*MuPlaybackServiceTest*'`
+Run: `./gradlew :app:connectedDebugAndroidTest --tests '*MuPlaybackServiceTest*'`
 Expected: FAIL — `Unresolved reference: PlaybackConnection` / `MuPlaybackService`.
 
 `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt`:
@@ -4025,7 +4124,7 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
 ```bash
 docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
 ./ci/prepare-emulator.sh
-./gradlew :core:media:connectedDebugAndroidTest --tests '*MuPlaybackServiceTest*'
+./gradlew :app:connectedDebugAndroidTest --tests '*MuPlaybackServiceTest*'
 ```
 
 Expected: PASS, 6/6.
@@ -4054,7 +4153,3578 @@ warning is left standing, and that `warnUngatedClasses` does not name a new clas
 
 ```bash
 ./gradlew :app:verifyDebugManifest :app:verifyReleaseManifest
-git add core/media build-logic build.gradle.kts gradle/libs.versions.toml .github/workflows/pr.yml
+git add core/media app build-logic build.gradle.kts gradle/libs.versions.toml .github/workflows/pr.yml
 git commit -m "feat(media): MediaLibraryService with a real notification and a checked manifest"
 ```
 
+---
+
+## Task 6: Audio focus, becoming-noisy, and the content-type switch
+
+**Files:**
+- Create: `core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/ContentTypeSwitcher.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MediaItems.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/QueueRepository.kt`
+- Modify: `core/media/src/androidTest/kotlin/app/muplay/media/MediaItemsTest.kt`
+- Modify: `core/media/src/androidTest/kotlin/app/muplay/media/QueueRepositoryTest.kt`
+- Test: `core/media/src/test/kotlin/app/muplay/media/PlaybackAudioAttributesTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/AudioFocusTest.kt`
+- Modify: `build.gradle.kts` (`:core:media` floors)
+- Modify: `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes:
+  - `app.muplay.model.LibraryRole { MUSIC, AUDIOBOOKS, UNASSIGNED }` — `:core:model`, committed.
+  - **`app.muplay.database.LibraryRepository.idsWithRole(role: LibraryRole): List<Int>`** —
+    **Plan 2 Task 4.** Named exactly as that plan's Interfaces block states. If it landed as
+    `libraryIdsWithRole` or returns a `Set`, use the real signature and record it.
+  - `MediaItems.of` and `QueueRepository` from Task 4, `MuPlayerFactory` from Task 5,
+    `PlayerHarness` from Task 2 (`onMain`, `await`, `awaitState`, `awaitPositionAtLeast`,
+    `awaitEnded`, `assertNoPlaybackError`, `release`).
+- Produces:
+  - `object PlaybackAudioAttributes` with
+    `fun contentTypeFor(mediaType: Int): Int` and `fun of(mediaType: Int): AudioAttributes`
+  - `class ContentTypeSwitcher(player: Player) : Player.Listener`
+  - `MediaItems.of(song, streamUri, artworkUri, isAudiobook: Boolean)` — **fourth parameter added**
+  - `QueueRepository` gains a `LibraryRepository` constructor parameter
+
+### Spec §5's "one-line switch", and the field it actually switches on
+
+Spec §5: *"**Audio focus:** a one-line switch — books use `AudioAttributes.CONTENT_TYPE_SPEECH`,
+music `CONTENT_TYPE_MUSIC`."* The switch is one line. Getting the *input* to it right is the work,
+because the one thing the protocol cannot tell this app is which of the two a track is.
+
+Navidrome hardcodes `child.Type = "music"` for every media file — spec §4, confirmed live on the
+seeded `Test Book.m4b`. So the only signal is the **user's own `LibraryRole` assignment** from
+Plan 2's setup flow, joined to `Song.libraryId`. Task 4 deliberately hardcoded
+`MEDIA_TYPE_MUSIC` on every item because it had no access to that assignment; **this task is where
+that constant stops being a constant**, and `MediaItemsTest`'s
+`theMediaTypeIsNotAnAudiobookInferenceAndTheSuffixDoesNotChangeIt` is rewritten accordingly — the
+suffix still must not decide it, but the library role now does.
+
+`MediaMetadata.mediaType` carries the answer rather than a custom `extras` key, for two reasons:
+it is the field that means this, and Plan 5's car and watch surfaces render from it. One field, no
+parallel truth.
+
+### Why `handleAudioFocus` is not enough on its own
+
+`ExoPlayer.Builder.setAudioAttributes(attributes, handleAudioFocus = true)` makes Media3 request
+and respond to audio focus. It is the right mechanism and it is one call. The reason this task is
+more than one line is that **a wrong `contentType` is invisible**: focus still works, the app still
+pauses for a phone call, and the difference only shows up in the two places nobody tests — a
+navigation prompt ducking music but interrupting speech, and a car deciding how to mix a
+notification over what is playing. So the switch gets a real test with the role varied, or it is
+worth nothing.
+
+### Becoming-noisy, and why the test drives a real system broadcast
+
+`setHandleAudioBecomingNoisy(true)` makes Media3 register a receiver for
+`android.media.AUDIO_BECOMING_NOISY` — headphones unplugged, Bluetooth disconnected — and pause.
+Without it, yanking headphones plays a podcast out loud on a train.
+
+`ACTION_AUDIO_BECOMING_NOISY` is a **protected broadcast**: an app cannot send it, and
+`context.sendBroadcast(...)` from a test throws `SecurityException`. The `shell` uid *is* on
+`ActivityManagerService`'s allow-list for protected broadcasts, so the test sends it through
+`UiAutomation.executeShellCommand("am broadcast -a android.media.AUDIO_BECOMING_NOISY")` — a real
+system broadcast, reaching Media3's real receiver. There is no way to unplug headphones on an
+emulator, and asserting that a receiver was registered would be the "was asked to play" mistake
+again.
+
+- [ ] **Step 1: Write the failing content-type test**
+
+`core/media/src/test/kotlin/app/muplay/media/PlaybackAudioAttributesTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * A JVM test, because [PlaybackAudioAttributes.contentTypeFor] takes an `Int` and returns an `Int`.
+ *
+ * That signature is the whole reason this type exists separately from the `AudioAttributes` builder
+ * beside it: the decision is gated by the fast tier, the object construction is not. Same split as
+ * `StreamRetryPolicy` and, one layer down, as `KeystoreCipher` taking a `SecretKey`.
+ */
+class PlaybackAudioAttributesTest {
+
+  @Test
+  fun `an audiobook chapter is speech`() {
+    assertThat(PlaybackAudioAttributes.contentTypeFor(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER))
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_SPEECH)
+  }
+
+  @Test
+  fun `an audiobook is speech`() {
+    assertThat(PlaybackAudioAttributes.contentTypeFor(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK))
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_SPEECH)
+  }
+
+  @Test
+  fun `music is music`() {
+    // The other observation. Without it, `contentTypeFor` returning SPEECH unconditionally passes
+    // both tests above -- and a music player that declares everything to be speech ducks under a
+    // navigation prompt in a way nobody would notice for months.
+    assertThat(PlaybackAudioAttributes.contentTypeFor(MediaMetadata.MEDIA_TYPE_MUSIC))
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_MUSIC)
+  }
+
+  @Test
+  fun `anything this app has no opinion about is music`() {
+    // MEDIA_TYPE_MIXED is what an unassigned library's items carry. Music is the safe default: it
+    // is what the user is most likely playing, and speech attributes on music is the more
+    // audible mistake of the two.
+    assertThat(PlaybackAudioAttributes.contentTypeFor(MediaMetadata.MEDIA_TYPE_MIXED))
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_MUSIC)
+    assertThat(PlaybackAudioAttributes.contentTypeFor(MediaMetadata.MEDIA_TYPE_PODCAST_EPISODE))
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_MUSIC)
+  }
+
+  @Test
+  fun `the usage is always media`() {
+    // USAGE_MEDIA is what puts this app on the media volume stream rather than the notification or
+    // assistant stream. It does not vary with content type and it must not.
+    assertThat(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC).usage)
+      .isEqualTo(C.USAGE_MEDIA)
+    assertThat(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER).usage)
+      .isEqualTo(C.USAGE_MEDIA)
+  }
+
+  @Test
+  fun `the built attributes carry the content type the switch chose`() {
+    assertThat(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC).contentType)
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_MUSIC)
+    assertThat(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER).contentType)
+      .isEqualTo(C.AUDIO_CONTENT_TYPE_SPEECH)
+  }
+}
+```
+
+> If `androidx.media3.common.AudioAttributes` turns out to touch `android.media.AudioAttributes`
+> eagerly and throws off-device, move **only** the two `of(...)` tests to `androidTest` and leave
+> the four `contentTypeFor` tests in the JVM suite. That is the exact split the type was designed
+> for; do not move the decision.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./gradlew :core:media:testDebugUnitTest --tests '*PlaybackAudioAttributesTest*'`
+Expected: FAIL — `Unresolved reference: PlaybackAudioAttributes`.
+
+- [ ] **Step 3: Implement the switch**
+
+`core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
+
+/**
+ * Spec section 5's one-line switch: books are speech, everything else is music.
+ *
+ * The switch is genuinely one line. It gets a type of its own — and a JVM test — because a wrong
+ * `contentType` is **invisible**: focus still works, the app still pauses for a call, and the
+ * difference only shows up where nobody looks. A navigation prompt should duck music and interrupt
+ * speech, and a car mixes a notification differently over each.
+ *
+ * The input is `MediaMetadata.mediaType`, which `MediaItems` sets from the user's own `LibraryRole`
+ * assignment. It is never inferred from a file suffix or from any server field: Navidrome hardcodes
+ * `child.Type = "music"` for every media file, so the protocol cannot answer this question at all.
+ */
+object PlaybackAudioAttributes {
+
+  /** The Media3 `C.AUDIO_CONTENT_TYPE_*` for a `MediaMetadata.MEDIA_TYPE_*`. */
+  fun contentTypeFor(mediaType: Int): Int = when (mediaType) {
+    MediaMetadata.MEDIA_TYPE_AUDIO_BOOK,
+    MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER,
+    -> C.AUDIO_CONTENT_TYPE_SPEECH
+    // Music by default, including for the media types this app never sets. Speech attributes on
+    // music is the more audible of the two mistakes, so the default is the quieter one.
+    else -> C.AUDIO_CONTENT_TYPE_MUSIC
+  }
+
+  /**
+   * The full attributes for a media type. `USAGE_MEDIA` always — it is what puts this app on the
+   * media volume stream rather than the notification or assistant stream, and it does not vary
+   * with content.
+   */
+  fun of(mediaType: Int): AudioAttributes =
+    AudioAttributes.Builder()
+      .setUsage(C.USAGE_MEDIA)
+      .setContentType(contentTypeFor(mediaType))
+      .build()
+}
+```
+
+`core/media/src/main/kotlin/app/muplay/media/ContentTypeSwitcher.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+
+/**
+ * Keeps the player's audio attributes matching what is currently playing.
+ *
+ * A queue can hold both music and an audiobook chapter — a user can queue a chapter after a song,
+ * and Plan 5's car surface can too — so the attributes cannot be decided once when the player is
+ * built. This listener re-applies them at every item transition.
+ *
+ * `handleAudioFocus = true` on every call, which is what makes Media3 request focus, duck and pause
+ * on its own. Re-applying attributes while playing can cause the underlying `AudioTrack` to be
+ * recreated, which is audible as a brief gap — accepted knowingly, because it happens only at a
+ * boundary between a song and a book, which is already a hard cut.
+ */
+class ContentTypeSwitcher(private val player: ExoPlayer) : Player.Listener {
+
+  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+    val mediaType = mediaItem?.mediaMetadata?.mediaType ?: return
+    player.setAudioAttributes(PlaybackAudioAttributes.of(mediaType), /* handleAudioFocus = */ true)
+  }
+}
+```
+
+`core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt` — extend `create()`:
+
+```kotlin
+  fun create(): ExoPlayer =
+    ExoPlayer.Builder(context)
+      .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory.create()))
+      .setLoadErrorHandlingPolicy(loadErrorPolicy)
+      // Music until the first item transition says otherwise -- ContentTypeSwitcher below keeps it
+      // honest from then on. `handleAudioFocus = true` is what makes Media3 request focus, duck for
+      // a navigation prompt and pause for a call, all of it without a line of focus code here.
+      .setAudioAttributes(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC), true)
+      // Headphones unplugged, Bluetooth disconnected. Without this, yanking headphones plays an
+      // audiobook out loud on a train.
+      .setHandleAudioBecomingNoisy(true)
+      .build()
+      .also { player -> player.addListener(ContentTypeSwitcher(player)) }
+```
+
+with an import for `androidx.media3.common.MediaMetadata`.
+
+- [ ] **Step 4: Give the queue the user's own role assignment**
+
+`core/media/src/main/kotlin/app/muplay/media/MediaItems.kt` — `of` gains a fourth parameter, and
+`setMediaType` stops being a constant:
+
+```kotlin
+  /**
+   * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
+   *   inferable from anything the server sends: Navidrome hardcodes `child.Type = "music"` for
+   *   every media file, and the OpenSubsonic `mediaType` enum describes the object kind
+   *   (`song|album|artist`), not the content. The library id plus the user's own `LibraryRole` is
+   *   the only mechanism there is — spec section 4.
+   */
+  fun of(song: Song, streamUri: String, artworkUri: String?, isAudiobook: Boolean): MediaItem =
+    // ... unchanged, except:
+    .setMediaType(
+      if (isAudiobook) MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER
+      else MediaMetadata.MEDIA_TYPE_MUSIC,
+    )
+```
+
+`core/media/src/main/kotlin/app/muplay/media/QueueRepository.kt` — inject `LibraryRepository`, ask
+it once per queue, and pass the answer down:
+
+```kotlin
+@Singleton
+class QueueRepository @Inject constructor(
+  private val sourceProvider: SubsonicSourceProvider,
+  private val libraryRepository: LibraryRepository,
+) {
+
+  suspend fun mediaItems(queue: PlaybackQueue): List<MediaItem> {
+    val source = sourceProvider.current()
+    // Once per queue, not once per song: the set cannot change mid-call, and a hundred-track
+    // shuffle would otherwise be a hundred identical database reads.
+    val audiobookLibraries = libraryRepository.idsWithRole(LibraryRole.AUDIOBOOKS).toSet()
+    return queue.songs.map { song -> mediaItem(source, song, song.libraryId in audiobookLibraries) }
+  }
+
+  private fun mediaItem(source: SubsonicSource, song: Song, isAudiobook: Boolean): MediaItem {
+    val format = StreamFormat.forSuffix(song.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS)
+    return MediaItems.of(
+      song = song,
+      streamUri = source.streamUrl(song.id, format),
+      artworkUri = song.coverArtId?.let { source.coverArtUrl(it, ARTWORK_SIZE_PX) },
+      isAudiobook = isAudiobook,
+    )
+  }
+  // companion object unchanged
+}
+```
+
+with imports for `app.muplay.database.LibraryRepository` and `app.muplay.model.LibraryRole`.
+
+- [ ] **Step 5: Update Task 4's tests for the new parameter**
+
+`MediaItemsTest` — every `MediaItems.of(...)` call gains `isAudiobook = false`, and the media-type
+test is rewritten. Replace `everyItemIsPlayableAndNotBrowsable`'s media-type assertion and
+`theMediaTypeIsNotAnAudiobookInferenceAndTheSuffixDoesNotChangeIt` with:
+
+```kotlin
+  @Test
+  fun theMediaTypeFollowsTheUsersOwnLibraryRoleAndNothingElse() {
+    // The one fact the protocol cannot supply, and the one this app is allowed to decide. Two
+    // observations, so a constant satisfies neither.
+    assertThat(MediaItems.of(first, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType)
+      .isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+    assertThat(MediaItems.of(second, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType)
+      .isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
+  }
+
+  @Test
+  fun theFileSuffixNeverDecidesWhetherSomethingIsAnAudiobook() {
+    // `second` has suffix "m4b" -- the shape that tempts an inference. It is still music unless
+    // the user's LibraryRole says otherwise, and an mp3 in an Audiobooks library is still a book.
+    assertThat(MediaItems.of(second, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType)
+      .isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+    assertThat(MediaItems.of(first, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType)
+      .isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
+  }
+```
+
+`QueueRepositoryTest` — `repository(source)` now needs a `LibraryRepository`. Build a real one over
+an in-memory Room database exactly as Plan 2's `LibraryRepository` tests do (see
+`core/database/src/androidTest/.../LibraryRepositoryTest.kt` once Plan 2 Task 4 has landed), seed
+library 1 as `MUSIC` and library 2 as `AUDIOBOOKS`, and add:
+
+```kotlin
+  @Test
+  fun aSongFromAnAudiobookLibraryIsMarkedAsAnAudiobookChapter() = runTest {
+    val source = RecordingSource()
+    val items = repository(source).mediaItems(
+      // libraryId 1 is Music, libraryId 2 is Audiobooks -- seeded in @Before.
+      PlaybackQueue.of(listOf(song("a", "mp3", null).copy(libraryId = 1), song("b", "mp3", null).copy(libraryId = 2))),
+    )
+
+    // One queue, two answers: a repository that decided once for the whole queue fails here and
+    // passes any single-song test.
+    assertThat(items.map { it.mediaMetadata.mediaType }).containsExactly(
+      MediaMetadata.MEDIA_TYPE_MUSIC,
+      MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER,
+    )
+  }
+```
+
+- [ ] **Step 6: Write the failing audio-focus and becoming-noisy tests**
+
+`core/media/src/androidTest/kotlin/app/muplay/media/AudioFocusTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import android.content.Context
+import android.media.AudioAttributes as PlatformAudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import kotlinx.coroutines.runBlocking
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import okhttp3.OkHttpClient
+import okio.Buffer
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Focus and becoming-noisy, observed as **playback that stopped**, never as a flag that was set.
+ *
+ * `handleAudioFocus = true` and `setHandleAudioBecomingNoisy(true)` are both single builder calls,
+ * and a test that asserted they were called would be satisfied by a player that ignores both. What
+ * is asserted here instead is that the position stops advancing and `isPlaying` goes false when
+ * another app takes focus and when the system says the audio route became noisy.
+ */
+@RunWith(AndroidJUnit4::class)
+class AudioFocusTest {
+
+  private lateinit var context: Context
+  private lateinit var audioManager: AudioManager
+  private lateinit var server: MockWebServer
+  private lateinit var harness: PlayerHarness
+  private lateinit var cacheDir: File
+  private lateinit var audio: ByteArray
+  private var focusRequest: AudioFocusRequest? = null
+
+  @Before
+  fun setUp() {
+    context = ApplicationProvider.getApplicationContext()
+    audioManager = context.getSystemService(AudioManager::class.java)
+    audio = runBlocking { RealTrackBytes.twoDifferentTracks().first }
+    assertThat(audio.size).isGreaterThan(1000)
+
+    server = MockWebServer()
+    server.start()
+    server.enqueue(
+      MockResponse.Builder().code(200).header("Content-Type", "audio/mpeg")
+        .header("Accept-Ranges", "bytes").body(Buffer().write(audio)).build(),
+    )
+
+    cacheDir = File(context.cacheDir, "focus-test-${System.nanoTime()}")
+    val cache = MediaCache.create(context, cacheDir)
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      harness = PlayerHarness(
+        MuPlayerFactory(
+          context,
+          MuPlayDataSourceFactory(OkHttpClient(), cache),
+          NavidromeLoadErrorHandlingPolicy(),
+        ).create(),
+      )
+      harness.player.setMediaItem(
+        MediaItem.Builder().setUri(server.url("/stream").toString())
+          .setCustomCacheKey("focus-test").build(),
+      )
+      harness.player.prepare()
+      harness.player.play()
+    }
+    harness.awaitPositionAtLeast(500L)
+  }
+
+  @After
+  fun tearDown() {
+    focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+    harness.release()
+    cacheDir.deleteRecursively()
+    server.close()
+  }
+
+  @Test
+  fun anotherAppTakingTransientFocusPausesPlayback() {
+    takeFocus(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+
+    harness.await("playback to pause for a transient focus loss") { !harness.player.isPlaying }
+    val paused = harness.onMain { harness.player.currentPosition }
+    Thread.sleep(1_000L)
+    // Not merely `isPlaying == false`: the position must actually have stopped moving. A player
+    // reporting paused while its clock ran would look identical to the first assertion alone.
+    assertThat(harness.onMain { harness.player.currentPosition }).isEqualTo(paused)
+  }
+
+  @Test
+  fun givingTransientFocusBackResumesPlayback() {
+    takeFocus(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+    harness.await("playback to pause") { !harness.player.isPlaying }
+    val paused = harness.onMain { harness.player.currentPosition }
+
+    abandonFocus()
+
+    harness.await("playback to resume after focus is returned") { harness.player.isPlaying }
+    harness.await("the position to move past where it paused") {
+      harness.player.currentPosition > paused
+    }
+  }
+
+  @Test
+  fun aPermanentFocusLossStopsPlaybackAndKeepsItStopped() {
+    // The control that makes the resume test mean something: transient and permanent must produce
+    // different outcomes, or "resumed" is just "never really paused".
+    takeFocus(AudioManager.AUDIOFOCUS_GAIN)
+
+    harness.await("playback to pause for a permanent focus loss") { !harness.player.isPlaying }
+    abandonFocus()
+    Thread.sleep(2_000L)
+    assertThat(harness.onMain { harness.player.isPlaying }).isFalse
+  }
+
+  /**
+   * `ACTION_AUDIO_BECOMING_NOISY` is a **protected broadcast**: an app cannot send it and
+   * `sendBroadcast` throws `SecurityException`. The `shell` uid is on `ActivityManagerService`'s
+   * allow-list, so this drives the real system broadcast through `UiAutomation` — which is as
+   * close to unplugging headphones as an emulator gets, and closer than asserting a receiver was
+   * registered.
+   */
+  @Test
+  fun theAudioRouteBecomingNoisyPausesPlayback() {
+    InstrumentationRegistry.getInstrumentation().uiAutomation
+      .executeShellCommand("am broadcast -a android.media.AUDIO_BECOMING_NOISY")
+      .close()
+
+    harness.await("playback to pause when the audio route became noisy") { !harness.player.isPlaying }
+    val paused = harness.onMain { harness.player.currentPosition }
+    Thread.sleep(1_000L)
+    assertThat(harness.onMain { harness.player.currentPosition }).isEqualTo(paused)
+  }
+
+  private fun takeFocus(gain: Int) {
+    val request = AudioFocusRequest.Builder(gain)
+      .setAudioAttributes(
+        PlatformAudioAttributes.Builder()
+          .setUsage(PlatformAudioAttributes.USAGE_MEDIA)
+          .setContentType(PlatformAudioAttributes.CONTENT_TYPE_MUSIC)
+          .build(),
+      )
+      .setOnAudioFocusChangeListener { }
+      .build()
+    focusRequest = request
+    val result = audioManager.requestAudioFocus(request)
+    // If the request itself was refused, every assertion below would be testing nothing.
+    assertThat(result).isEqualTo(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+  }
+
+  private fun abandonFocus() {
+    focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+    focusRequest = null
+  }
+}
+```
+
+- [ ] **Step 7: Run them**
+
+```bash
+./gradlew :core:media:connectedDebugAndroidTest --tests '*AudioFocusTest*' --tests '*PlaybackAudioAttributesTest*'
+```
+
+Expected: PASS, 4/4 on the device suite.
+
+- [ ] **Step 8: Prove the focus tests actually test focus — this step is not optional**
+
+Both focus requests here come from the **same process** as the player, because a library module's
+instrumented tests run in one APK with the code under test. Whether Android's focus stack preempts
+one client from another client in the same uid is a real question and this plan does not assert an
+answer to it.
+
+Settle it by mutation, before trusting any of these tests:
+
+1. In `MuPlayerFactory.create()`, change `setAudioAttributes(..., true)` to
+   `setAudioAttributes(..., false)`.
+2. Re-run `AudioFocusTest`.
+3. **Expected: `anotherAppTakingTransientFocusPausesPlayback`, `givingTransientFocusBackResumesPlayback`
+   and `aPermanentFocusLossStopsPlaybackAndKeepsItStopped` all fail.** Restore the flag and
+   confirm they pass again.
+
+If they **do not** fail — i.e. the tests are green with focus handling disabled — then same-uid
+focus contention does not preempt on this emulator and **these three tests prove nothing**. In that
+case: delete them, record the finding in the task report and in this plan's file, and move the
+audio-focus proof into Task 10's Tier 2 journey, where the app under test and the instrumentation
+are separate processes. Do not keep a test that cannot fail; that is the specific defect class this
+project has now shipped eleven times.
+
+`theAudioRouteBecomingNoisyPausesPlayback` has its own mutation: change
+`setHandleAudioBecomingNoisy(true)` to `false` and confirm it goes red.
+
+- [ ] **Step 9: Record the probes, re-measure, commit**
+
+Add to `ci/mutation-probes.sh`: the `contentTypeFor` mutation (return `SPEECH` always → the JVM
+suite goes red), the `isAudiobook` hoist in `QueueRepository` (→
+`aSongFromAnAudiobookLibraryIsMarkedAsAnAudiobookChapter` goes red), and whichever of the focus
+mutations Step 8 proved discriminating.
+
+Re-measure `:core:media`'s floors. `PlaybackAudioAttributes.contentTypeFor` is a JVM-enforceable
+BRANCH floor and must be in the `jacocoJvmCoverageVerification` half — prove it by deleting the
+`.ec` files and running that task alone.
+
+```bash
+git add core/media build.gradle.kts ci/mutation-probes.sh
+git commit -m "feat(media): audio focus, becoming-noisy, and speech attributes for books"
+```
+
+---
+
+## Task 7: Gapless, measured in PCM frames
+
+**Files:**
+- Create: `core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt`
+- Create: `core/testing/src/test/kotlin/app/muplay/testing/PcmAnalysisTest.kt`
+- Create: `core/media/src/androidTest/kotlin/app/muplay/media/CapturingAudioSink.kt`
+- Create: `core/media/src/androidTest/kotlin/app/muplay/media/GaplessTest.kt`
+- Modify: `core/media/build.gradle.kts` (`androidTestImplementation(project(":core:testing"))`)
+- Modify: `build.gradle.kts` (`:core:testing` floor comment; `:core:media` floors)
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` (§10's Tier 1 "Playback
+  goldens" row — see Step 8)
+
+**Interfaces:**
+- Consumes: `MuPlayDataSourceFactory` (Task 3), `MediaCache` (Task 3), `PlayerHarness` (Task 2 —
+  `onMain`, `await`, `awaitState`, `awaitPositionAtLeast`, `awaitEnded`, `assertNoPlaybackError`,
+  `release`), `RealTrackBytes` (Task 3 — `musicTracks()`, `bytesOf(song)`, `client()`).
+- Produces:
+  - `object PcmAnalysis` with
+    `fun frameCount(byteCount: Int, channelCount: Int): Int`,
+    `fun longestZeroRunFrames(pcm: ByteArray, channelCount: Int): Int`,
+    `fun framesToMs(frames: Int, sampleRateHz: Int): Long`
+  - `class CapturingAudioSink : TeeAudioProcessor.AudioBufferSink` with
+    `flushCount`, `sampleRateHz`, `channelCount`, `encoding`, `pcm`
+
+### What "gapless" actually is, and what it is not
+
+Spec §4: *"Gapless has **zero** server support. Use a real Media3 `setMediaItems` queue and let
+ExoPlayer read LAME/iTunSMPB. Never hand-roll."*
+
+There are two separate claims in that sentence, and a test that conflates them proves neither.
+
+1. **The encoder's delay and padding are trimmed.** A LAME-encoded MP3 begins with roughly 1105
+   samples of encoder delay and ends with padding to fill the last MPEG frame — both **silence**,
+   both recorded in the Xing/LAME header. If ExoPlayer does not read that header, every track gains
+   ~25 ms of silence at its start and ~20 ms at its end. That is what a listener hears as "a gap".
+2. **The audio pipeline is not torn down between tracks.** A `setMediaItems` queue of
+   identically-formatted tracks reuses one `AudioTrack`; three separate `prepare()` cycles do not.
+   A rebuild is a hard discontinuity regardless of trimming.
+
+Both are measurable, and neither is measurable from `onMediaItemTransition` firing — which is what
+a "was asked to play" gapless test looks like.
+
+### How each one is measured
+
+A `TeeAudioProcessor` is inserted into the audio processor chain, **upstream of the `AudioTrack`**,
+so every PCM frame the decoder produced is captured whether or not the emulator has a sound card
+(it does not — `.github/workflows/e2e.yml` boots it with `-no-audio`). From that capture:
+
+- **Claim 1** is the *longest run of consecutive zero samples anywhere in the stream*. Every seeded
+  track is a continuous sine wave (`ci/seed-fixtures.sh`: 385, 440 and 495 Hz), so a real sine
+  crosses zero for at most a sample or two at a time. Untrimmed encoder delay is ~25 ms of exact
+  silence and shows up immediately. **This measurement is self-calibrating: it needs no expected
+  frame count, and it cannot be satisfied by a constant.**
+- **Claim 2** is `flushCount`. `AudioBufferSink.flush` is called when the sink is configured or
+  reconfigured. One queue of three tracks against three separate prepare cycles of the same three
+  tracks — everything else held constant — must produce **strictly fewer** flushes for the queue.
+- And a cross-check that the queue lost nothing: the two experiments must produce the **same total
+  frame count**, within 10 ms.
+
+### The analyser is itself gated, because rule 4 applies to it
+
+`longestZeroRunFrames` is a check that reports *the absence* of a problem. Rule 4: a gate that
+reports the absence of a problem must be provably incapable of staying quiet when it did not run.
+So the analyser is a pure function in `:core:testing`, with a JVM test that feeds it a synthetic
+buffer containing a **known** zero run and requires it to find exactly that run. If the analyser
+could not see silence, the whole gapless claim would be a green light with nothing behind it.
+
+- [ ] **Step 1: Write the failing analyser test**
+
+`core/testing/src/test/kotlin/app/muplay/testing/PcmAnalysisTest.kt`:
+
+```kotlin
+package app.muplay.testing
+
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
+import org.junit.jupiter.api.Test
+
+class PcmAnalysisTest {
+
+  /** 16-bit little-endian PCM from a list of per-channel sample values. */
+  private fun pcm(vararg samples: Short): ByteArray {
+    val buffer = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+    samples.forEach(buffer::putShort)
+    return buffer.array()
+  }
+
+  @Test
+  fun `frames are bytes divided by two per channel`() {
+    // Two observations of the channel-count argument, because a `frameCount` that ignored it would
+    // pass a mono-only test and silently halve every stereo measurement.
+    assertThat(PcmAnalysis.frameCount(byteCount = 400, channelCount = 1)).isEqualTo(200)
+    assertThat(PcmAnalysis.frameCount(byteCount = 400, channelCount = 2)).isEqualTo(100)
+  }
+
+  @Test
+  fun `a zero channel count is rejected rather than dividing by zero`() {
+    assertThatIllegalArgumentException()
+      .isThrownBy { PcmAnalysis.frameCount(400, 0) }
+      .withMessageContaining("channelCount")
+  }
+
+  /**
+   * The measurement this analyser exists for, proven against input whose answer is known by
+   * construction.
+   *
+   * Rule 4: a check that reports the absence of a problem must be provably incapable of staying
+   * quiet when it did not run. `longestZeroRunFrames` is exactly that kind of check — the gapless
+   * test passes when it returns a small number — so it gets a test that requires it to return a
+   * **large** one for input that deserves it.
+   */
+  @Test
+  fun `a known run of silence is found and measured exactly`() {
+    val samples = ShortArray(1000) { 500 } + ShortArray(137) { 0 } + ShortArray(1000) { -500 }
+
+    assertThat(PcmAnalysis.longestZeroRunFrames(pcm(*samples), channelCount = 1)).isEqualTo(137)
+  }
+
+  @Test
+  fun `the longest run is reported and not the first or the last`() {
+    val samples = ShortArray(10) { 0 } + ShortArray(50) { 100 } +
+      ShortArray(400) { 0 } + ShortArray(50) { 100 } + ShortArray(20) { 0 }
+
+    assertThat(PcmAnalysis.longestZeroRunFrames(pcm(*samples), channelCount = 1)).isEqualTo(400)
+  }
+
+  @Test
+  fun `a run that ends at the end of the buffer still counts`() {
+    // Encoder padding lives at the *end* of a track, so a scan that only closed a run on the next
+    // non-zero sample would miss the exact case this measurement was built for.
+    val samples = ShortArray(50) { 100 } + ShortArray(300) { 0 }
+
+    assertThat(PcmAnalysis.longestZeroRunFrames(pcm(*samples), channelCount = 1)).isEqualTo(300)
+  }
+
+  @Test
+  fun `a stream with no silence at all reports zero`() {
+    assertThat(PcmAnalysis.longestZeroRunFrames(pcm(1, -1, 2, -2, 3, -3), channelCount = 1)).isZero
+  }
+
+  @Test
+  fun `a frame counts as silent only when every channel is silent`() {
+    // Interleaved stereo: L=0,R=500 twice, then L=0,R=0 three times, then L=700,R=700.
+    // Only the middle three frames are silent.
+    val samples = shortArrayOf(0, 500, 0, 500, 0, 0, 0, 0, 0, 0, 700, 700)
+
+    assertThat(PcmAnalysis.longestZeroRunFrames(pcm(*samples), channelCount = 2)).isEqualTo(3)
+  }
+
+  @Test
+  fun `frames convert to milliseconds at the sample rate given`() {
+    // Two rates, because a hardcoded 44100 is the obvious accident.
+    assertThat(PcmAnalysis.framesToMs(frames = 44100, sampleRateHz = 44100)).isEqualTo(1000L)
+    assertThat(PcmAnalysis.framesToMs(frames = 48000, sampleRateHz = 48000)).isEqualTo(1000L)
+    assertThat(PcmAnalysis.framesToMs(frames = 22050, sampleRateHz = 44100)).isEqualTo(500L)
+  }
+
+  @Test
+  fun `an empty buffer has no frames and no silence`() {
+    assertThat(PcmAnalysis.frameCount(0, 1)).isZero
+    assertThat(PcmAnalysis.longestZeroRunFrames(ByteArray(0), channelCount = 1)).isZero
+  }
+}
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./gradlew :core:testing:test --tests '*PcmAnalysisTest*'`
+Expected: FAIL — `Unresolved reference: PcmAnalysis`.
+
+- [ ] **Step 3: Implement the analyser**
+
+`core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt`:
+
+```kotlin
+package app.muplay.testing
+
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/**
+ * Measurements over raw 16-bit little-endian PCM, as captured from a real audio pipeline.
+ *
+ * Lives in `:core:testing` beside `OpenApiFixtureValidator` for the same reason that class does:
+ * it is an **oracle**, and an oracle has to be gated by the fast tier or it is just another thing
+ * that might be wrong. `:core:media`'s gapless test consumes it from `androidTest`, which cannot
+ * see that module's own `test` source set — so a shared JVM module is where it has to live if its
+ * own correctness is to be a Tier 1 concern.
+ *
+ * 16-bit little-endian is the only encoding handled, and that is deliberate rather than a
+ * limitation: `C.ENCODING_PCM_16BIT` is what the capture asserts it received, so anything else
+ * fails at the capture rather than being silently mis-measured here.
+ */
+object PcmAnalysis {
+
+  private const val BYTES_PER_SAMPLE = 2
+
+  /** Frames (one sample per channel) in [byteCount] bytes of interleaved 16-bit PCM. */
+  fun frameCount(byteCount: Int, channelCount: Int): Int {
+    require(channelCount > 0) { "channelCount must be positive, was $channelCount" }
+    return byteCount / (BYTES_PER_SAMPLE * channelCount)
+  }
+
+  /**
+   * The length, in frames, of the longest run of **completely silent** frames in [pcm].
+   *
+   * A frame counts as silent only when every one of its channels is exactly zero — a single silent
+   * channel in a stereo stream is a real signal, not a gap.
+   *
+   * This is how untrimmed encoder delay and padding are detected. LAME writes roughly 1105 samples
+   * of exact silence at the start of an MP3 and pads the final frame at the end; both are recorded
+   * in the Xing/LAME header, and both survive as audible silence if that header is not read. The
+   * seeded fixtures are continuous sine waves, so a genuine signal never produces a run longer
+   * than a sample or two.
+   */
+  fun longestZeroRunFrames(pcm: ByteArray, channelCount: Int): Int {
+    require(channelCount > 0) { "channelCount must be positive, was $channelCount" }
+    val buffer = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+    val frames = frameCount(pcm.size, channelCount)
+
+    var longest = 0
+    var current = 0
+    for (frame in 0 until frames) {
+      var silent = true
+      for (channel in 0 until channelCount) {
+        if (buffer.get(frame * channelCount + channel).toInt() != 0) {
+          silent = false
+          break
+        }
+      }
+      if (silent) {
+        current++
+        // Updated inside the run rather than when it ends: encoder padding sits at the very end of
+        // a stream, so a scan that only closed a run on the next non-zero sample would miss the
+        // exact case this function was written for.
+        if (current > longest) longest = current
+      } else {
+        current = 0
+      }
+    }
+    return longest
+  }
+
+  /** [frames] at [sampleRateHz], in milliseconds. */
+  fun framesToMs(frames: Int, sampleRateHz: Int): Long {
+    require(sampleRateHz > 0) { "sampleRateHz must be positive, was $sampleRateHz" }
+    return frames.toLong() * 1000L / sampleRateHz
+  }
+}
+```
+
+- [ ] **Step 4: Run it to verify it passes**
+
+Run: `./gradlew :core:testing:test --tests '*PcmAnalysisTest*'`
+Expected: PASS, 9/9. `:core:testing` already carries a `BRANCH >= 0.90` BUNDLE floor; run
+`./gradlew :core:testing:jacocoTestReport jacocoJvmCoverageVerification` and confirm the module
+still clears it with the new class in it.
+
+- [ ] **Step 5: Write the PCM capture and the failing gapless test**
+
+`core/media/build.gradle.kts` — add:
+
+```kotlin
+  androidTestImplementation(project(":core:testing"))
+```
+
+`core/media/src/androidTest/kotlin/app/muplay/media/CapturingAudioSink.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+
+/**
+ * Captures every PCM frame the decoder produced, upstream of the `AudioTrack`.
+ *
+ * Upstream matters: the CI emulator boots with `-no-audio`, and this measurement must not depend on
+ * a sound card existing. The `TeeAudioProcessor` this backs sits inside the audio processor chain,
+ * so it sees exactly what the decoder emitted after Media3 applied the encoder-delay and padding
+ * trimming that "gapless" actually consists of.
+ *
+ * [flushCount] is the second half of the measurement. `flush` is called when the sink is configured
+ * or reconfigured, so a queue that keeps one `AudioTrack` across three tracks flushes strictly
+ * fewer times than three separate `prepare()` cycles of the same three tracks.
+ */
+class CapturingAudioSink : TeeAudioProcessor.AudioBufferSink {
+
+  private val captured = ByteArrayOutputStream()
+
+  var flushCount: Int = 0
+    private set
+  var sampleRateHz: Int = 0
+    private set
+  var channelCount: Int = 0
+    private set
+  var encoding: Int = 0
+    private set
+
+  val pcm: ByteArray get() = captured.toByteArray()
+
+  override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {
+    flushCount++
+    this.sampleRateHz = sampleRateHz
+    this.channelCount = channelCount
+    this.encoding = encoding
+  }
+
+  override fun handleBuffer(buffer: ByteBuffer) {
+    // Position saved and restored: the processor chain reads this same buffer after this call, and
+    // consuming it here would silence playback in a way that looks like a decoder fault.
+    val position = buffer.position()
+    val bytes = ByteArray(buffer.remaining())
+    buffer.get(bytes)
+    buffer.position(position)
+    captured.write(bytes)
+  }
+}
+```
+
+`core/media/src/androidTest/kotlin/app/muplay/media/GaplessTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import android.content.Context
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.model.Song
+import app.muplay.testing.PcmAnalysis
+import java.io.File
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Gapless, measured in PCM frames off a real decoder on a real device.
+ *
+ * Two experiments over the same three real tracks, differing in exactly one thing:
+ *
+ * - **A**: one `setMediaItems([t1, t2, t3])`, one `prepare()`, played to the end.
+ * - **B**: three separate `setMediaItem` + `prepare()` + play-to-end cycles.
+ *
+ * Everything else is held constant — same player configuration, same tracks, same order, same
+ * capture. That is what makes the comparison an argument rather than an observation.
+ */
+@RunWith(AndroidJUnit4::class)
+class GaplessTest {
+
+  private lateinit var context: Context
+  private lateinit var cacheDir: File
+  private lateinit var songs: List<Song>
+  private lateinit var streamUrls: List<String>
+
+  @Before
+  fun setUp() {
+    context = ApplicationProvider.getApplicationContext()
+    cacheDir = File(context.cacheDir, "gapless-test-${System.nanoTime()}")
+    songs = runBlocking { RealTrackBytes.musicTracks() }
+    check(songs.size == 3) {
+      "ci/seed-fixtures.sh seeds exactly three music tracks; found ${songs.size}. This test's " +
+        "arithmetic is over those three."
+    }
+    val client = RealTrackBytes.client()
+    streamUrls = songs.map { client.streamUrl(it.id, app.muplay.model.StreamFormat.Raw) }
+  }
+
+  @After
+  fun tearDown() {
+    cacheDir.deleteRecursively()
+  }
+
+  @Test
+  fun aQueuePlaysAllThreeTracksWithNoInsertedSilence() {
+    val capture = playAsOneQueue()
+
+    // Sanity first: the capture is real 16-bit PCM at a real rate, or every number below is
+    // meaningless. This is the "hasSizeGreaterThan" of an audio test.
+    assertThat(capture.encoding).isEqualTo(C.ENCODING_PCM_16BIT)
+    assertThat(capture.sampleRateHz).isGreaterThan(0)
+    assertThat(capture.channelCount).isGreaterThan(0)
+
+    val frames = PcmAnalysis.frameCount(capture.pcm.size, capture.channelCount)
+    val playedMs = PcmAnalysis.framesToMs(frames, capture.sampleRateHz)
+    // Three 5.000 s tracks. A wide band, because this is a "did all three actually decode" check,
+    // not the gapless assertion -- that one is the zero-run below.
+    assertThat(playedMs).isBetween(14_500L, 15_500L)
+
+    /*
+     * The gapless assertion proper, and it is self-calibrating: no expected frame count appears in
+     * it, so no constant can satisfy it.
+     *
+     * Every seeded track is a continuous sine wave (ci/seed-fixtures.sh: 385, 440, 495 Hz), so a
+     * genuine signal crosses zero for at most a sample or two at a time. LAME writes ~1105 samples
+     * of exact silence as encoder delay at the start of each file and pads the final MPEG frame at
+     * the end; both are recorded in the Xing/LAME header, and both survive as audible silence at
+     * every track boundary if ExoPlayer does not read it. 25 ms of silence would be a run of ~1100
+     * frames; the threshold below is 10 ms.
+     */
+    val silentFrames = PcmAnalysis.longestZeroRunFrames(capture.pcm, capture.channelCount)
+    assertThat(PcmAnalysis.framesToMs(silentFrames, capture.sampleRateHz))
+      .describedAs("longest run of silence anywhere in three gaplessly-queued tracks")
+      .isLessThan(10L)
+  }
+
+  @Test
+  fun aQueueReconfiguresTheAudioSinkFewerTimesThanThreeSeparatePreparations() {
+    val queued = playAsOneQueue()
+    val separate = playAsThreeSeparatePreparations()
+
+    // The second half of gapless: the pipeline was not torn down between tracks. Strictly fewer,
+    // not "equal to one" -- the absolute count is a Media3 implementation detail, the comparison
+    // is the property. Everything but the queueing is identical between the two runs.
+    assertThat(queued.flushCount)
+      .describedAs("audio sink configurations for one queue of three vs three preparations")
+      .isLessThan(separate.flushCount)
+
+    // ...and the queue did not achieve that by playing less. Within 10 ms of the same audio.
+    val queuedFrames = PcmAnalysis.frameCount(queued.pcm.size, queued.channelCount)
+    val separateFrames = PcmAnalysis.frameCount(separate.pcm.size, separate.channelCount)
+    val differenceMs = PcmAnalysis.framesToMs(
+      kotlin.math.abs(queuedFrames - separateFrames),
+      queued.sampleRateHz,
+    )
+    assertThat(differenceMs)
+      .describedAs("total decoded audio, queued vs separately prepared")
+      .isLessThan(10L)
+  }
+
+  @Test
+  fun theQueueReallyPlayedEveryTrackAndNotTheFirstOneThreeTimes() {
+    // The control for the whole class. A "gapless" implementation that played track 1 three times
+    // would satisfy the frame count and the zero-run check perfectly. Media3 reports each
+    // transition; three distinct media ids, in order, is what rules that out.
+    val transitions = mutableListOf<String>()
+
+    runExperiment(transitions) { harness ->
+      harness.onMain {
+        harness.player.setMediaItems(streamUrls.indices.map { mediaItem(it) })
+        harness.player.prepare()
+        harness.player.play()
+      }
+      harness.awaitEnded(timeoutMs = 60_000L)
+    }
+
+    assertThat(transitions).containsExactly(songs[0].id, songs[1].id, songs[2].id)
+  }
+
+  private fun mediaItem(index: Int): MediaItem =
+    MediaItem.Builder()
+      .setMediaId(songs[index].id)
+      .setUri(streamUrls[index])
+      .setCustomCacheKey(songs[index].id)
+      .build()
+
+  private fun playAsOneQueue(): CapturingAudioSink = runExperiment { harness ->
+    harness.onMain {
+      harness.player.setMediaItems(streamUrls.indices.map { mediaItem(it) })
+      harness.player.prepare()
+      harness.player.play()
+    }
+    harness.awaitEnded(timeoutMs = 60_000L)
+  }
+
+  private fun playAsThreeSeparatePreparations(): CapturingAudioSink = runExperiment { harness ->
+    streamUrls.indices.forEach { index ->
+      harness.onMain {
+        harness.player.setMediaItem(mediaItem(index))
+        harness.player.prepare()
+        harness.player.play()
+      }
+      harness.awaitEnded(timeoutMs = 60_000L)
+    }
+  }
+
+  /**
+   * Builds a player whose audio processor chain contains a [TeeAudioProcessor] feeding a fresh
+   * [CapturingAudioSink], runs [block], and returns the capture.
+   *
+   * An audio-only `RenderersFactory` rather than [DefaultRenderersFactory], because supplying a
+   * custom `AudioSink` is the supported way to insert a processor chain and because a music player
+   * has no use for a video renderer. The renderer constructor used here —
+   * `MediaCodecAudioRenderer(context, mediaCodecSelector, eventHandler, eventListener, audioSink)`
+   * — and `DefaultAudioSink.Builder(context)` are both public API; **confirm their exact shapes
+   * against the resolved Media3 1.11.0 sources with `./gradlew :core:media:compileDebugAndroidTestKotlin`
+   * before assuming this compiles.** If a signature has moved, fix the construction; the experiment
+   * itself does not change.
+   */
+  private fun runExperiment(
+    transitions: MutableList<String>? = null,
+    block: (PlayerHarness) -> Unit,
+  ): CapturingAudioSink {
+    val capture = CapturingAudioSink()
+    val cache = MediaCache.create(context, File(cacheDir, "run-${System.nanoTime()}"))
+    lateinit var harness: PlayerHarness
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      val audioSink = DefaultAudioSink.Builder(context)
+        .setAudioProcessorChain(DefaultAudioSink.DefaultAudioProcessorChain(TeeAudioProcessor(capture)))
+        .build()
+      val renderersFactory = RenderersFactory { handler, _, audioListener, _, _ ->
+        arrayOf(MediaCodecAudioRenderer(context, MediaCodecSelector.DEFAULT, handler, audioListener, audioSink))
+      }
+      harness = PlayerHarness(
+        ExoPlayer.Builder(context, renderersFactory)
+          .setMediaSourceFactory(
+            DefaultMediaSourceFactory(MuPlayDataSourceFactory(OkHttpClient(), cache).create()),
+          )
+          .build(),
+      )
+      if (transitions != null) {
+        harness.player.addListener(object : androidx.media3.common.Player.Listener {
+          override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            mediaItem?.mediaId?.let(transitions::add)
+          }
+        })
+      }
+    }
+    try {
+      block(harness)
+      harness.assertNoPlaybackError()
+    } finally {
+      harness.release()
+      cache.release()
+    }
+    return capture
+  }
+}
+```
+
+- [ ] **Step 6: Run it**
+
+```bash
+docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
+./ci/prepare-emulator.sh
+./gradlew :core:media:connectedDebugAndroidTest --tests '*GaplessTest*'
+```
+
+Expected: PASS, 3/3. Each experiment plays 15 s of real-time audio, so this class is roughly a
+minute on its own; that is the price of measuring audio rather than intent.
+
+**If `aQueuePlaysAllThreeTracksWithNoInsertedSilence` fails on the silence assertion, do not raise
+the threshold.** Print the measured run length first. A run near 1100 frames means the LAME header
+is not being read, which is a real finding about the fixtures or about Media3 and belongs in the
+task report and in the spec — spec §4 asserts ExoPlayer reads LAME/iTunSMPB, and if the seeded
+files carry no Xing/LAME header at all then `ci/seed-fixtures.sh` needs `-write_xing 1`, not the
+test needs a looser bound.
+
+- [ ] **Step 7: Prove the gapless tests can fail**
+
+1. In `GaplessTest.playAsOneQueue`, replace the three-item `setMediaItems` with three sequential
+   `setMediaItem` calls (i.e. make experiment A into experiment B). Expect
+   `aQueueReconfiguresTheAudioSinkFewerTimesThanThreeSeparatePreparations` to fail. **This is the
+   only mutation that proves the comparison is load-bearing.**
+2. In `CapturingAudioSink.handleBuffer`, write nothing. Expect every frame-count assertion to
+   fail rather than a green run over an empty capture.
+3. In `PcmAnalysis.longestZeroRunFrames`, `return 0`. Expect
+   `a known run of silence is found and measured exactly` in the JVM suite to fail — and note that
+   `aQueuePlaysAllThreeTracksWithNoInsertedSilence` would have **passed**. That asymmetry is
+   exactly why the analyser has its own test in its own tier.
+4. Make `mediaItem(index)` always return `mediaItem(0)`. Expect
+   `theQueueReallyPlayedEveryTrackAndNotTheFirstOneThreeTimes` to fail, and note that the other
+   two tests pass — which is why that control exists.
+
+- [ ] **Step 8: Correct the spec**
+
+`docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`, §10, the **Tier 1** table's
+*"Playback goldens"* row currently reads *"`PlaybackOutput` dumps; gapless byte-compare; chapter
+assertions on the M4B fixture"* and sits in the tier described as **"fast, ≤ 10 minutes, no
+emulator"**.
+
+That is not achievable as written, and the contradiction is internal to the spec rather than a
+matter of taste: Media3's `PlaybackOutput`, `CapturingRenderersFactory` and `DumpFileAsserts` live
+in `media3-test-utils`, they require an Android runtime, and the JVM path to them is
+`media3-test-utils-robolectric` — while §2 and §10 of the same document ban Robolectric outright.
+A row that cannot run in the tier it is filed under is a gate that will never fire.
+
+Move the row to **Tier 2** and say what actually runs there:
+
+> | Gapless | `GaplessTest` — a `TeeAudioProcessor` captures the PCM a real decoder produced on a real emulator; the longest run of silence across a three-track queue must stay under 10 ms, and one queue must reconfigure the audio sink strictly fewer times than three separate preparations of the same tracks. |
+
+and add a line under §10's tooling notes:
+
+> **`PlaybackOutput` dumps are a Tier 2 technique here, not a Tier 1 one.** `media3-test-utils`
+> needs an Android runtime and its JVM path is `media3-test-utils-robolectric`, which this project
+> bans. Playback is therefore measured on the emulator, from the real audio pipeline —
+> `TeeAudioProcessor` upstream of the `AudioTrack`, which also means the measurement does not
+> depend on the CI emulator having a sound card (it boots with `-no-audio`). The *analyser* over
+> those PCM bytes (`PcmAnalysis`, `:core:testing`) is pure Kotlin and **is** gated by Tier 1, which
+> is what stops "no silence found" from being a green light with nothing behind it.
+
+- [ ] **Step 9: Re-measure and commit**
+
+```bash
+./gradlew :core:testing:test :core:media:testDebugUnitTest
+./gradlew :core:media:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+git add core/testing core/media build.gradle.kts docs/superpowers/specs
+git commit -m "test(media): gapless measured in PCM frames, and the analyser that can see silence"
+```
+
+---
+
+## Task 8: `MuPlayer` — the `ForwardingPlayer` seam and the progress writer
+
+**Files:**
+- Create: `core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/MuPlayer.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt`
+- Test: `core/media/src/test/kotlin/app/muplay/media/ResumePolicyTest.kt`
+- Test: `core/media/src/test/kotlin/app/muplay/media/ProgressTableShapeTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/MuPlayerTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/ProgressWriterTest.kt`
+- Modify: `build.gradle.kts` (`:core:media` floors)
+- Modify: `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes:
+  - **`app.muplay.database.entity.MediaProgressEntity(mediaId: String, positionMs: Long,
+    isFinished: Boolean, lastPlayedAtEpochMs: Long, speed: Float, skipSilence: Boolean,
+    gainDb: Float)`** — `:core:database`, **committed** (Plan 2 Task 1). Read the file; this plan
+    adds no column to it.
+  - **`app.muplay.database.dao.MediaProgressDao`** — `suspend upsert(progress)`,
+    `suspend find(mediaId): MediaProgressEntity?`, `suspend findAll(): List<MediaProgressEntity>`,
+    `suspend recentlyPlayed(limit): List<MediaProgressEntity>`. Committed, and **written by
+    nothing until this task**.
+  - `MuPlayerFactory` (Task 5), `PlayerHarness` (Task 2), `RealTrackBytes` (Task 3).
+- Produces:
+  - `data class ResumeTarget(val startIndex: Int, val startPositionMs: Long)`
+  - `fun interface ResumePolicy { fun resolve(mediaIds: List<String>, requestedIndex: Int): ResumeTarget }`
+  - `object NeverResume : ResumePolicy`
+  - `class MuPlayer(player: Player, resumePolicy: ResumePolicy) : ForwardingPlayer`
+  - `class ProgressWriter(player: Player, dao: MediaProgressDao, clock: Clock, scope: CoroutineScope)`
+    with `fun start()`, `suspend fun write(mediaId: String, positionMs: Long, finished: Boolean)`,
+    `fun flushBlocking()`, `companion object { const val TICK_MS = 5_000L }`
+  - `MediaModule` provides `@Singleton java.time.Clock`
+
+### The seam, and what it is actually for
+
+Spec §3: *"`MuPlayer` is a `ForwardingPlayer` overriding **all six** `setMediaItem(s)` overloads to
+discard the caller's index and position and rehydrate from Room. No code path can set a wrong
+position."* (The idea is Voice's; **Voice is GPL, so read none of it** — the licence constraint is
+not decorative here.)
+
+The six, exactly, on `androidx.media3.common.Player`:
+
+```
+setMediaItem(MediaItem)
+setMediaItem(MediaItem, long startPositionMs)
+setMediaItem(MediaItem, boolean resetPosition)
+setMediaItems(List<MediaItem>)
+setMediaItems(List<MediaItem>, boolean resetPosition)
+setMediaItems(List<MediaItem>, int startIndex, long startPositionMs)
+```
+
+Miss one and the guarantee is gone: a `MediaController` in a car, a headset, or a future feature
+calls the one that was not overridden and sets whatever position it likes.
+
+**This plan installs a policy that resumes nothing**, and that is not a placeholder — it is exactly
+what spec §3 says music does: *"Only books get resume treatment. Music restarts from 0 — progress
+is still recorded, just not honoured on prepare."* Plan 4 replaces `NeverResume` with a policy that
+answers from `media_progress` for audiobooks, and changes nothing else.
+
+The stronger structural point is in the policy's *signature*: `resolve(mediaIds, requestedIndex)`
+is never given the caller's requested position, so there is no position for an implementation to
+accidentally honour. The requested **index** is passed, because an index is queue membership — "play
+track 3 of this album" is a legitimate thing for a caller to say — and a policy is free to override
+it, which is how Plan 4 resumes a book at chapter 14.
+
+### The seven persistence points, and the trap inside them
+
+Spec §3 lists seven, plus a 5–10 s ticker, and one of them carries a footnote worth restating:
+`onPositionDiscontinuity` must **ignore `DISCONTINUITY_REASON_SILENCE_SKIP` (6)**. Silence skipping
+(Plan 4) moves the position without the listener having moved; recording it as progress would
+inch a book forward every time it skipped a pause.
+
+The trap that is *not* in the spec, and that this task must not fall into:
+**`media_progress` already has columns this plan does not own.** `speed`, `skipSilence` and
+`gainDb` are per-item settings Plan 4 writes. A writer that constructs a fresh
+`MediaProgressEntity(mediaId, positionMs, false, now, 1f, false, 0f)` and upserts it **resets a
+listener's per-book speed every five seconds**. So every write is a read-modify-write that
+preserves the columns it does not own, and `ProgressWriterTest` asserts exactly that.
+
+`isFinished` gets the same treatment in the other direction: it is set to `true` at `STATE_ENDED`
+and otherwise **preserved**, never written as `false`. A ticker that wrote `false` would un-finish
+a completed book on the next accidental tap. "Un-finish on replay" is a real behaviour and it is
+Plan 4's, at the point it has a UI to express it.
+
+### The `Clock`
+
+This is the **first code in the project to write a timestamp**, so — per the global constraint and
+per Plan 2's own note that "the first task in any plan that writes a timestamp injects a `Clock`
+at that point" — this is where a `Clock` is injected. `java.time.Clock`, not `kotlinx-datetime`:
+`java.time` is available natively at `minSdk 26`, `MediaProgressEntity.lastPlayedAtEpochMs` is
+already an epoch-millis `Long`, and adding a datetime library plus a Room type converter for a
+column that is already a `Long` would be a dependency bought for nothing.
+
+- [ ] **Step 1: Write the failing policy and table-shape tests**
+
+`core/media/src/test/kotlin/app/muplay/media/ResumePolicyTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * A JVM test, because [ResumePolicy] takes media ids and an index — no `MediaItem`, no
+ * `android.net.Uri`. That signature is chosen for exactly this reason, and it has a second
+ * benefit: the policy is *structurally incapable* of honouring a caller's requested position,
+ * because it is never told one.
+ */
+class ResumePolicyTest {
+
+  @Test
+  fun `the plan-3 policy starts every item from zero`() {
+    // Spec section 3: "Music restarts from 0 -- progress is still recorded, just not honoured on
+    // prepare." Not a placeholder; the specified behaviour.
+    assertThat(NeverResume.resolve(listOf("a", "b", "c"), requestedIndex = 0).startPositionMs).isZero
+    assertThat(NeverResume.resolve(listOf("a", "b", "c"), requestedIndex = 2).startPositionMs).isZero
+  }
+
+  @Test
+  fun `the caller's chosen item is respected`() {
+    // The index is queue membership -- "play track 3 of this album" is a legitimate request -- so
+    // it is *not* discarded. Two observations, because a policy that returned 0 always would pass
+    // the first alone.
+    assertThat(NeverResume.resolve(listOf("a", "b", "c"), requestedIndex = 0).startIndex).isZero
+    assertThat(NeverResume.resolve(listOf("a", "b", "c"), requestedIndex = 2).startIndex).isEqualTo(2)
+  }
+
+  @Test
+  fun `a policy cannot be handed a position to honour`() {
+    // A structural assertion, and the reason this test class exists at all. `resolve` has exactly
+    // two parameters; adding a `requestedPositionMs` would give a future implementation something
+    // to accidentally trust, which is the failure mode spec section 3's seam exists to remove.
+    val parameters = ResumePolicy::class.java.methods.single { it.name == "resolve" }.parameterTypes
+
+    assertThat(parameters.map { it.simpleName }).containsExactly("List", "int")
+  }
+}
+```
+
+`core/media/src/test/kotlin/app/muplay/media/ProgressTableShapeTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.database.entity.MediaProgressEntity
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * The other half of `PlaybackQueueTest`'s structural guard, now that this plan has a writer.
+ *
+ * Spec section 3: *"Nothing about queue membership may live in this table — a `queuePosition`
+ * column would invert the design."* `PlaybackQueue` is guarded against gaining a position; this
+ * guards the progress table against gaining queue membership. The two together are what make
+ * "two pointer lists over one progress table" a fact rather than an intention.
+ */
+class ProgressTableShapeTest {
+
+  @Test
+  fun `the progress table carries no queue membership`() {
+    val fields = MediaProgressEntity::class.java.declaredFields
+      .filterNot { it.isSynthetic }
+      .map { it.name }
+
+    assertThat(fields)
+      .describedAs(
+        "media_progress is a property of the item, never of a queue (spec section 3). A " +
+          "queuePosition or isInQueue column inverts the design: it makes one global now-playing " +
+          "position that the next thing played overwrites, which is the exact defect this app " +
+          "exists to fix.",
+      )
+      .containsExactlyInAnyOrder(
+        "mediaId", "positionMs", "isFinished", "lastPlayedAtEpochMs", "speed", "skipSilence", "gainDb",
+      )
+  }
+}
+```
+
+- [ ] **Step 2: Run them, then implement the policy**
+
+Run: `./gradlew :core:media:testDebugUnitTest --tests '*ResumePolicyTest*' --tests '*ProgressTableShapeTest*'`
+Expected: `ResumePolicyTest` FAILs on `Unresolved reference: NeverResume`;
+`ProgressTableShapeTest` should **pass immediately** — it is a guard on an existing type, and a
+guard that failed on arrival would mean Plan 2's table is already wrong.
+
+`core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt`:
+
+```kotlin
+package app.muplay.media
+
+/** Where playback should actually start: which item, and how far into it. */
+data class ResumeTarget(val startIndex: Int, val startPositionMs: Long)
+
+/**
+ * Decides where a queue starts. The **only** thing in this application permitted to choose a
+ * playback position.
+ *
+ * [resolve] is deliberately never given the caller's requested position. Spec section 3's seam
+ * exists because a single global "now playing position" that the next thing played overwrites is
+ * why every other player loses an audiobook's place; taking the position out of the signature
+ * means no implementation can accidentally trust one.
+ *
+ * The requested **index** is passed, because an index is queue membership rather than progress —
+ * "play track 3 of this album" is a legitimate request. A policy may still override it, which is
+ * how the audiobook plan resumes a book at chapter 14.
+ *
+ * **Implementations must answer without blocking.** [MuPlayer] calls this from `setMediaItems`,
+ * which runs on the player's application thread; a Room query there would jank the UI. The
+ * intended mechanism for the audiobook plan is an in-memory snapshot of `media_progress` kept
+ * current by a Flow collector, not a blocking read.
+ */
+fun interface ResumePolicy {
+  fun resolve(mediaIds: List<String>, requestedIndex: Int): ResumeTarget
+}
+
+/**
+ * Plan 3's policy: start the item the caller chose, from the beginning.
+ *
+ * Not a placeholder. Spec section 3: *"Only books get resume treatment. Music restarts from 0 —
+ * progress is still recorded, just not honoured on prepare."* This is that behaviour, and
+ * [ProgressWriter] is the "progress is still recorded" half. The audiobook plan replaces this
+ * object and changes nothing else.
+ */
+object NeverResume : ResumePolicy {
+  override fun resolve(mediaIds: List<String>, requestedIndex: Int): ResumeTarget =
+    ResumeTarget(startIndex = requestedIndex, startPositionMs = 0L)
+}
+```
+
+- [ ] **Step 3: Write the failing seam test**
+
+`core/media/src/androidTest/kotlin/app/muplay/media/MuPlayerTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * The seam, exercised through **all six** `setMediaItem(s)` overloads.
+ *
+ * Missing one is not a partial failure, it is a total one: a `MediaController` in a car, a headset
+ * button handler, or a feature written next year calls the one that was not overridden and sets
+ * whatever position it likes, and the guarantee spec section 3 rests on is gone.
+ *
+ * The policy here is a **recording fake**, so each test asserts two independent things: that the
+ * policy was consulted at all, and that its answer — not the caller's — is what reached the player.
+ */
+@RunWith(AndroidJUnit4::class)
+class MuPlayerTest {
+
+  private class RecordingPolicy(private val target: ResumeTarget) : ResumePolicy {
+    val calls = mutableListOf<Pair<List<String>, Int>>()
+    override fun resolve(mediaIds: List<String>, requestedIndex: Int): ResumeTarget {
+      calls += mediaIds to requestedIndex
+      return target
+    }
+  }
+
+  private lateinit var inner: ExoPlayer
+
+  private fun item(id: String) =
+    MediaItem.Builder().setMediaId(id).setUri("https://host/$id").setCustomCacheKey(id).build()
+
+  private val items = listOf(item("a"), item("b"), item("c"))
+
+  @Before
+  fun setUp() {
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      inner = ExoPlayer.Builder(ApplicationProvider.getApplicationContext<android.content.Context>()).build()
+    }
+  }
+
+  @After
+  fun tearDown() {
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { inner.release() }
+  }
+
+  private fun <T> onMain(block: () -> T): T {
+    var result: Any? = null
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { result = block() }
+    @Suppress("UNCHECKED_CAST")
+    return result as T
+  }
+
+  private fun player(policy: ResumePolicy): MuPlayer = onMain { MuPlayer(inner, policy) }
+
+  @Test
+  fun allSixOverloadsConsultTheResumePolicy() {
+    val policy = RecordingPolicy(ResumeTarget(startIndex = 0, startPositionMs = 0L))
+    val muPlayer = player(policy)
+
+    onMain {
+      muPlayer.setMediaItem(items[0])
+      muPlayer.setMediaItem(items[0], 30_000L)
+      muPlayer.setMediaItem(items[0], /* resetPosition = */ false)
+      muPlayer.setMediaItems(items)
+      muPlayer.setMediaItems(items, /* resetPosition = */ false)
+      muPlayer.setMediaItems(items, /* startIndex = */ 1, /* startPositionMs = */ 30_000L)
+    }
+
+    // Six calls, not "at least one". A `ForwardingPlayer` that overrode five and inherited the
+    // sixth records five, and this is the assertion that catches it.
+    assertThat(policy.calls).hasSize(6)
+    assertThat(policy.calls.map { it.first }).containsExactly(
+      listOf("a"), listOf("a"), listOf("a"), listOf("a", "b", "c"), listOf("a", "b", "c"), listOf("a", "b", "c"),
+    )
+  }
+
+  @Test
+  fun aCallersRequestedPositionNeverReachesThePlayer() {
+    val muPlayer = player(NeverResume)
+
+    onMain {
+      muPlayer.setMediaItem(items[0], 30_000L)
+    }
+
+    // The single most important assertion in this class. 30 seconds was asked for; zero is where
+    // the player is.
+    assertThat(onMain { inner.currentPosition }).isZero
+  }
+
+  @Test
+  fun aCallersRequestedPositionNeverReachesThePlayerThroughTheListOverloadEither() {
+    val muPlayer = player(NeverResume)
+
+    onMain { muPlayer.setMediaItems(items, 1, 30_000L) }
+
+    assertThat(onMain { inner.currentPosition }).isZero
+    // ...and the item the caller chose is still the item that is queued up: an index is queue
+    // membership, not progress, and discarding it would break "play track 3 of this album".
+    assertThat(onMain { inner.currentMediaItemIndex }).isEqualTo(1)
+  }
+
+  @Test
+  fun thePolicysPositionIsWhatThePlayerActuallyGets() {
+    // The other observation, and the one that stops "always zero" from being mistaken for "the
+    // policy was consulted". A policy answering 7000 must produce a player at 7000.
+    val muPlayer = player(RecordingPolicy(ResumeTarget(startIndex = 2, startPositionMs = 7_000L)))
+
+    onMain { muPlayer.setMediaItems(items, 0, 0L) }
+
+    assertThat(onMain { inner.currentPosition }).isEqualTo(7_000L)
+    assertThat(onMain { inner.currentMediaItemIndex }).isEqualTo(2)
+  }
+
+  @Test
+  fun theOverloadsThatTakeNoPositionStillGoThroughThePolicy() {
+    // `setMediaItem(item)` and `setMediaItems(items)` look harmless -- they name no position -- so
+    // they are the two most likely to be left un-overridden. A policy answering 7000 proves they
+    // were not.
+    val muPlayer = player(RecordingPolicy(ResumeTarget(startIndex = 1, startPositionMs = 7_000L)))
+
+    onMain { muPlayer.setMediaItems(items) }
+
+    assertThat(onMain { inner.currentPosition }).isEqualTo(7_000L)
+    assertThat(onMain { inner.currentMediaItemIndex }).isEqualTo(1)
+  }
+
+  @Test
+  fun everythingElseStillForwards() {
+    // A ForwardingPlayer that broke ordinary delegation would be worse than no seam at all.
+    val muPlayer = player(NeverResume)
+
+    onMain {
+      muPlayer.setMediaItems(items)
+      muPlayer.playWhenReady = false
+    }
+
+    assertThat(onMain { muPlayer.mediaItemCount }).isEqualTo(3)
+    assertThat(onMain { inner.playWhenReady }).isFalse
+    assertThat(onMain { muPlayer.currentMediaItem?.mediaId }).isEqualTo("a")
+  }
+}
+```
+
+- [ ] **Step 4: Implement `MuPlayer`**
+
+`core/media/src/main/kotlin/app/muplay/media/MuPlayer.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+
+/**
+ * The structural enforcement of spec section 3.
+ *
+ * **All six** `setMediaItem(s)` overloads are overridden and funnelled into one place, so no code
+ * path — not a `MediaController` in a car, not a headset button, not a feature written next year —
+ * can set a playback position. Only [resumePolicy] can. Miss one overload and the guarantee is
+ * gone entirely, which is why `MuPlayerTest` counts the policy's calls rather than merely checking
+ * that one of them happened.
+ *
+ * (The idea is Voice's. Voice is GPL and none of it was read: this is written from spec section 3's
+ * description, which is what the licence constraint requires.)
+ *
+ * The overloads that take a `resetPosition` flag ignore it, deliberately: `resetPosition = false`
+ * means "keep the current position", which is precisely the caller-chosen position this class
+ * exists to remove. The policy is asked instead, every time.
+ */
+class MuPlayer(player: Player, private val resumePolicy: ResumePolicy) : ForwardingPlayer(player) {
+
+  override fun setMediaItem(mediaItem: MediaItem) = setResolved(listOf(mediaItem), 0)
+
+  override fun setMediaItem(mediaItem: MediaItem, startPositionMs: Long) =
+    setResolved(listOf(mediaItem), 0)
+
+  override fun setMediaItem(mediaItem: MediaItem, resetPosition: Boolean) =
+    setResolved(listOf(mediaItem), 0)
+
+  override fun setMediaItems(mediaItems: MutableList<MediaItem>) = setResolved(mediaItems, 0)
+
+  override fun setMediaItems(mediaItems: MutableList<MediaItem>, resetPosition: Boolean) =
+    setResolved(mediaItems, 0)
+
+  override fun setMediaItems(
+    mediaItems: MutableList<MediaItem>,
+    startIndex: Int,
+    startPositionMs: Long,
+  ) = setResolved(mediaItems, startIndex)
+
+  /**
+   * The one place a queue is actually set. Note what is *not* a parameter: the caller's position.
+   */
+  private fun setResolved(mediaItems: List<MediaItem>, requestedIndex: Int) {
+    val target = resumePolicy.resolve(mediaItems.map { it.mediaId }, requestedIndex)
+    super.setMediaItems(mediaItems.toMutableList(), target.startIndex, target.startPositionMs)
+  }
+}
+```
+
+> `ForwardingPlayer`'s `setMediaItems` overloads take `MutableList<MediaItem>` in Kotlin because
+> the Java signature is `List<MediaItem>` and Kotlin maps a Java `List` parameter to
+> `MutableList` for overriding. If the resolved 1.11.0 signatures differ, match them exactly — an
+> overload whose signature does not match is not an override, it is a new method that nothing
+> calls, and the compiler will only tell you if `override` is present.
+
+- [ ] **Step 5: Run the seam test**
+
+Run: `./gradlew :core:media:connectedDebugAndroidTest --tests '*MuPlayerTest*'`
+Expected: PASS, 6/6.
+
+- [ ] **Step 6: Write the failing progress-writer test**
+
+`core/media/src/androidTest/kotlin/app/muplay/media/ProgressWriterTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import android.content.Context
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.database.MuPlayDatabase
+import app.muplay.database.dao.MediaProgressDao
+import app.muplay.database.entity.MediaProgressEntity
+import java.io.File
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * The first code in this project to write a `media_progress` row.
+ *
+ * Two halves, tested separately because they fail separately: the **write** (a read-modify-write
+ * that must not clobber columns this plan does not own) against a real in-memory Room, and the
+ * **wiring** (the seven persistence points) against a real ExoPlayer playing real audio.
+ */
+@RunWith(AndroidJUnit4::class)
+class ProgressWriterTest {
+
+  private lateinit var context: Context
+  private lateinit var db: MuPlayDatabase
+  private lateinit var dao: MediaProgressDao
+  private lateinit var scope: CoroutineScope
+  private lateinit var cacheDir: File
+  private lateinit var songs: List<app.muplay.model.Song>
+  private lateinit var streamUrls: List<String>
+  private var harness: PlayerHarness? = null
+
+  /** Fixed, so a timestamp assertion is an equality rather than a range. */
+  private val clock: Clock = Clock.fixed(Instant.ofEpochMilli(1_700_000_000_000L), ZoneOffset.UTC)
+
+  @Before
+  fun setUp() {
+    context = ApplicationProvider.getApplicationContext()
+    db = Room.inMemoryDatabaseBuilder(context, MuPlayDatabase::class.java).build()
+    dao = db.mediaProgressDao()
+    scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    cacheDir = File(context.cacheDir, "progress-test-${System.nanoTime()}")
+    songs = runBlocking { RealTrackBytes.musicTracks() }
+    val client = RealTrackBytes.client()
+    streamUrls = songs.map { client.streamUrl(it.id, app.muplay.model.StreamFormat.Raw) }
+  }
+
+  @After
+  fun tearDown() {
+    harness?.release()
+    scope.cancel()
+    db.close()
+    cacheDir.deleteRecursively()
+  }
+
+  private fun writer(player: androidx.media3.common.Player) =
+    ProgressWriter(player, dao, clock, scope)
+
+  // ---- the write ----------------------------------------------------------------------------
+
+  @Test
+  fun aFirstWriteCreatesARowWithThePositionAndTheClocksTime() = runBlocking {
+    // No player needed: the write is the unit under test here.
+    val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
+
+    subject.write("song-1", positionMs = 12_345L, finished = false)
+
+    val row = dao.find("song-1")!!
+    assertThat(row.positionMs).isEqualTo(12_345L)
+    assertThat(row.lastPlayedAtEpochMs).isEqualTo(1_700_000_000_000L)
+    assertThat(row.isFinished).isFalse
+  }
+
+  @Test
+  fun thePositionWrittenIsThePositionGiven() = runBlocking {
+    // Two observations. A `positionMs` hardcoded to anything passes at most one.
+    val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
+
+    subject.write("song-1", positionMs = 1_000L, finished = false)
+    subject.write("song-2", positionMs = 9_999L, finished = false)
+
+    assertThat(listOf(dao.find("song-1")!!.positionMs, dao.find("song-2")!!.positionMs))
+      .containsExactly(1_000L, 9_999L)
+  }
+
+  /**
+   * The trap. `media_progress` carries `speed`, `skipSilence` and `gainDb` — per-item settings the
+   * audiobook plan owns. A writer that constructs a fresh entity and upserts it resets a
+   * listener's per-book speed **every five seconds**, which is a data-loss bug that no test of
+   * this plan's own fields would ever catch.
+   */
+  @Test
+  fun aWriteDoesNotClobberTheColumnsThisPlanDoesNotOwn() = runBlocking {
+    dao.upsert(
+      MediaProgressEntity(
+        mediaId = "chapter-14",
+        positionMs = 500L,
+        isFinished = false,
+        lastPlayedAtEpochMs = 1L,
+        speed = 1.4f,
+        skipSilence = true,
+        gainDb = 6.0f,
+      ),
+    )
+    val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
+
+    subject.write("chapter-14", positionMs = 90_000L, finished = false)
+
+    val row = dao.find("chapter-14")!!
+    assertThat(row.positionMs).isEqualTo(90_000L)
+    assertThat(row.speed).isEqualTo(1.4f)
+    assertThat(row.skipSilence).isTrue
+    assertThat(row.gainDb).isEqualTo(6.0f)
+  }
+
+  /**
+   * `isFinished` is set to `true` and never back to `false`. A ticker that wrote `false` would
+   * un-finish a completed book on the next accidental tap. "Un-finish on replay" is real behaviour
+   * and it belongs to the plan that has a UI to express it.
+   */
+  @Test
+  fun finishedStaysFinished() = runBlocking {
+    val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
+
+    subject.write("chapter-14", positionMs = 900_000L, finished = true)
+    subject.write("chapter-14", positionMs = 1_000L, finished = false)
+
+    assertThat(dao.find("chapter-14")!!.isFinished).isTrue
+    // ...and the position still moved, so "preserved" does not mean "frozen".
+    assertThat(dao.find("chapter-14")!!.positionMs).isEqualTo(1_000L)
+  }
+
+  // ---- the wiring ---------------------------------------------------------------------------
+
+  @Test
+  fun pausingRealPlaybackWritesTheRealPosition() {
+    val harness = startPlaying(songs.take(1))
+    harness.awaitPositionAtLeast(2_000L)
+
+    harness.onMain { harness.player.pause() }
+
+    // Persistence point 1 and 2 (onPlayWhenReadyChanged, onIsPlayingChanged(false)). Asserted as a
+    // *range*, because the number is a real position from a real clock: a hardcoded constant
+    // cannot be in this band by accident, and neither can zero.
+    val row = awaitRow(songs[0].id)
+    assertThat(row.positionMs).isBetween(1_500L, 6_000L)
+  }
+
+  @Test
+  fun skippingToTheNextTrackLeavesThePreviousTracksPositionBehind() {
+    val harness = startPlaying(songs.take(2))
+    harness.awaitPositionAtLeast(2_000L)
+
+    harness.onMain { harness.player.seekToNextMediaItem() }
+    harness.awaitPositionAtLeast(500L)
+
+    // Persistence points 3 and 4. The first track keeps a real position; the second gets its own
+    // row. Two rows, two ids -- which is the whole "progress is a property of the item" claim in
+    // its smallest form.
+    val first = awaitRow(songs[0].id)
+    val second = awaitRow(songs[1].id)
+    assertThat(first.positionMs).isBetween(1_500L, 6_000L)
+    assertThat(first.mediaId).isNotEqualTo(second.mediaId)
+  }
+
+  @Test
+  fun playingToTheEndMarksTheItemFinished() {
+    val harness = startPlaying(songs.take(1))
+
+    harness.awaitEnded(timeoutMs = 30_000L)
+
+    // Persistence point 5 (STATE_ENDED).
+    assertThat(awaitRow(songs[0].id) { it.isFinished }.isFinished).isTrue
+  }
+
+  @Test
+  fun theTickerWritesWhileNothingElseHappens() {
+    val harness = startPlaying(songs.take(3))
+    harness.awaitPositionAtLeast(1_000L)
+
+    // Persistence point 6. Nothing is paused, nothing transitions -- the only thing that can
+    // produce a row here is the ticker.
+    val first = awaitRow(songs[0].id) { it.positionMs > 0 }
+    Thread.sleep(ProgressWriter.TICK_MS + 2_000L)
+    val second = dao.let { runBlocking { it.find(songs[0].id)!! } }
+
+    assertThat(second.positionMs).isGreaterThan(first.positionMs)
+  }
+
+  /**
+   * **Spec section 3's whole point, in one test.** A book's row is written, then something else
+   * plays entirely, and the book's row is untouched. Plan 3 does not yet *honour* that position on
+   * prepare — that is the audiobook plan — but the property that makes honouring it possible is
+   * true today, and this is where it is proven.
+   */
+  @Test
+  fun playingSomethingElseDoesNotDisturbAnotherItemsProgress() = runBlocking {
+    dao.upsert(
+      MediaProgressEntity("a-book-chapter", 3_600_000L, false, 1L, 1.4f, true, 6.0f),
+    )
+
+    val harness = startPlaying(songs.take(1))
+    harness.awaitPositionAtLeast(2_000L)
+    harness.onMain { harness.player.pause() }
+    awaitRow(songs[0].id)
+
+    val book = dao.find("a-book-chapter")!!
+    assertThat(book.positionMs).isEqualTo(3_600_000L)
+    assertThat(book.speed).isEqualTo(1.4f)
+    assertThat(book.lastPlayedAtEpochMs).isEqualTo(1L)
+  }
+
+  // ---- helpers ------------------------------------------------------------------------------
+
+  private fun startPlaying(items: List<app.muplay.model.Song>): PlayerHarness {
+    val cache = MediaCache.create(context, File(cacheDir, "run-${System.nanoTime()}"))
+    lateinit var built: PlayerHarness
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      built = PlayerHarness(
+        ExoPlayer.Builder(context)
+          .setMediaSourceFactory(
+            DefaultMediaSourceFactory(MuPlayDataSourceFactory(OkHttpClient(), cache).create()),
+          )
+          .build(),
+      )
+      writer(built.player).start()
+      built.player.setMediaItems(
+        items.mapIndexed { index, song ->
+          MediaItem.Builder().setMediaId(song.id).setUri(streamUrls[songs.indexOf(song)])
+            .setCustomCacheKey(song.id).build()
+        },
+      )
+      built.player.prepare()
+      built.player.play()
+    }
+    harness = built
+    return built
+  }
+
+  private fun awaitRow(
+    mediaId: String,
+    predicate: (MediaProgressEntity) -> Boolean = { true },
+  ): MediaProgressEntity {
+    val deadline = System.currentTimeMillis() + 20_000L
+    while (System.currentTimeMillis() < deadline) {
+      runBlocking { dao.find(mediaId) }?.takeIf(predicate)?.let { return it }
+      Thread.sleep(100)
+    }
+    throw AssertionError("no media_progress row for $mediaId satisfying the predicate")
+  }
+}
+```
+
+`NoOpPlayer` is the hand-written inert `Player` the four write-focused tests above hand to
+`ProgressWriter` — `core/media/src/androidTest/kotlin/app/muplay/media/NoOpPlayer.kt`:
+
+```kotlin
+package app.muplay.media
+
+import android.os.Looper
+import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
+
+/**
+ * A `Player` that plays nothing and holds nothing.
+ *
+ * Hand-written, not a mock: this project bans mock frameworks, and a mock would in any case add
+ * nothing here — the four tests that use it are about the **write**, and never touch the player.
+ * `SimpleBasePlayer` supplies every `Player` method from one `State`, so an empty state is a
+ * complete, correct, inert implementation in five lines.
+ *
+ * `ProgressWriter` handles it correctly by construction: `currentMediaItem` is `null` for an empty
+ * playlist, so `captureCurrent` and `flushBlocking` return early and only the explicit
+ * `write(...)` calls reach the database.
+ */
+class NoOpPlayer(looper: Looper = Looper.getMainLooper()) : SimpleBasePlayer(looper) {
+  override fun getState(): State =
+    State.Builder().setAvailableCommands(Player.Commands.EMPTY).build()
+}
+```
+
+> `SimpleBasePlayer` is `androidx.media3.common.SimpleBasePlayer`; its constructor takes an
+> application `Looper` and `getState()` is its one abstract member. Confirm both against the
+> resolved 1.11.0 sources — if `State.Builder()` requires more than `setAvailableCommands`, supply
+> what it asks for and change nothing else.
+
+- [ ] **Step 7: Implement the writer and wire it into the service**
+
+`core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import app.muplay.database.dao.MediaProgressDao
+import app.muplay.database.entity.MediaProgressEntity
+import java.time.Clock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+
+/**
+ * Writes `media_progress` at spec section 3's seven persistence points, plus a ticker.
+ *
+ * The seven, and what each one catches:
+ *
+ * 1. `onPlayWhenReadyChanged` — the user pressing pause, **and** an audio-focus loss pausing for
+ *    them. One callback, both causes.
+ * 2. `onIsPlayingChanged(false)` — anything that stopped playback that point 1 did not see.
+ * 3. `onPositionDiscontinuity` — a seek, or a track boundary. Writes the position of the item
+ *    being *left*, from `oldPosition`, which is the only place that number still exists.
+ *    **`DISCONTINUITY_REASON_SILENCE_SKIP` is ignored**: silence skipping (the audiobook plan)
+ *    moves the position without the listener having moved, and recording it would inch a book
+ *    forward every time it skipped a pause.
+ * 4. `onMediaItemTransition` — stamps the newly-current item so a "recently played" list is right
+ *    even if the listener stops immediately.
+ * 5. `onPlaybackStateChanged` at `STATE_IDLE` or `STATE_ENDED`.
+ * 6. the ticker, every [TICK_MS].
+ * 7. [flushBlocking], called from `MuPlaybackService.onDestroy` — deliberately blocking, because a
+ *    coroutine launched into a scope that is about to be cancelled writes nothing.
+ *
+ * Every write is a **read-modify-write**. `media_progress` carries `speed`, `skipSilence` and
+ * `gainDb`, which the audiobook plan owns; constructing a fresh entity here would reset a
+ * listener's per-book speed every five seconds. And `isFinished` is only ever set to `true` —
+ * writing `false` on a ticker would un-finish a completed book.
+ */
+class ProgressWriter(
+  private val player: Player,
+  private val dao: MediaProgressDao,
+  private val clock: Clock,
+  private val scope: CoroutineScope,
+) : Player.Listener {
+
+  private var ticker: Job? = null
+
+  fun start() {
+    player.addListener(this)
+    ticker = scope.launch {
+      while (true) {
+        delay(TICK_MS)
+        captureCurrent(finished = false)
+      }
+    }
+  }
+
+  fun stop() {
+    ticker?.cancel()
+    ticker = null
+    player.removeListener(this)
+  }
+
+  // 1
+  override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) =
+    captureCurrent(finished = false)
+
+  // 2
+  override fun onIsPlayingChanged(isPlaying: Boolean) {
+    if (!isPlaying) captureCurrent(finished = false)
+  }
+
+  // 3
+  override fun onPositionDiscontinuity(
+    oldPosition: Player.PositionInfo,
+    newPosition: Player.PositionInfo,
+    reason: Int,
+  ) {
+    if (reason == Player.DISCONTINUITY_REASON_SILENCE_SKIP) return
+    val mediaId = oldPosition.mediaItem?.mediaId ?: return
+    scope.launch { write(mediaId, oldPosition.positionMs, finished = false) }
+  }
+
+  // 4
+  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) =
+    captureCurrent(finished = false)
+
+  // 5
+  override fun onPlaybackStateChanged(playbackState: Int) {
+    if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
+      captureCurrent(finished = playbackState == Player.STATE_ENDED)
+    }
+  }
+
+  /** 7. Blocking on purpose — see the class documentation. */
+  fun flushBlocking() {
+    val mediaId = player.currentMediaItem?.mediaId ?: return
+    val positionMs = player.currentPosition
+    runBlocking { write(mediaId, positionMs, finished = false) }
+  }
+
+  suspend fun write(mediaId: String, positionMs: Long, finished: Boolean) {
+    val existing = dao.find(mediaId)
+    dao.upsert(
+      MediaProgressEntity(
+        mediaId = mediaId,
+        positionMs = positionMs.coerceAtLeast(0L),
+        // Only ever set, never cleared. See the class documentation.
+        isFinished = finished || (existing?.isFinished ?: false),
+        lastPlayedAtEpochMs = clock.millis(),
+        // Columns the audiobook plan owns. Preserved, not defaulted.
+        speed = existing?.speed ?: DEFAULT_SPEED,
+        skipSilence = existing?.skipSilence ?: false,
+        gainDb = existing?.gainDb ?: DEFAULT_GAIN_DB,
+      ),
+    )
+  }
+
+  private fun captureCurrent(finished: Boolean) {
+    val mediaId = player.currentMediaItem?.mediaId ?: return
+    val positionMs = player.currentPosition
+    scope.launch { write(mediaId, positionMs, finished) }
+  }
+
+  companion object {
+    /** Spec section 3 asks for 5-10 s. Five: cheap, and the most a crash can cost is five seconds. */
+    const val TICK_MS = 5_000L
+    const val DEFAULT_SPEED = 1.0f
+    const val DEFAULT_GAIN_DB = 0.0f
+  }
+}
+```
+
+`MediaModule` — add the `Clock` and the resume policy:
+
+```kotlin
+  /**
+   * The project's first injected clock. Global constraint: *"Inject a `Clock`; no direct
+   * wall-clock reads outside the injection point."* This is that injection point, and
+   * `ProgressWriter` is its only consumer today.
+   *
+   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
+   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
+   * library plus a Room type converter would be bought for nothing.
+   */
+  @Provides
+  @Singleton
+  fun provideClock(): Clock = Clock.systemUTC()
+
+  /**
+   * Plan 3 resumes nothing — spec section 3's stated behaviour for music. The audiobook plan
+   * replaces this binding and changes nothing else.
+   */
+  @Provides
+  @Singleton
+  fun provideResumePolicy(): ResumePolicy = NeverResume
+```
+
+`MuPlayerFactory` — wrap the player and return the seam, not the raw `ExoPlayer`:
+
+```kotlin
+class MuPlayerFactory @Inject constructor(
+  @ApplicationContext private val context: Context,
+  private val dataSourceFactory: MuPlayDataSourceFactory,
+  private val loadErrorPolicy: NavidromeLoadErrorHandlingPolicy,
+  private val resumePolicy: ResumePolicy,
+) {
+
+  /** The raw player, for the two places that genuinely need `ExoPlayer` (audio attributes). */
+  fun createExoPlayer(): ExoPlayer = /* unchanged body from Tasks 5 and 6 */
+
+  /**
+   * What the session is given. Everything outside this module sees a `Player` that cannot be told
+   * where to start.
+   */
+  fun create(): MuPlayer = MuPlayer(createExoPlayer(), resumePolicy)
+}
+```
+
+`MuPlaybackService` — build through the seam, install the writer, flush on destroy:
+
+```kotlin
+  @Inject lateinit var playerFactory: MuPlayerFactory
+  @Inject lateinit var mediaProgressDao: MediaProgressDao
+  @Inject lateinit var clock: Clock
+
+  private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+  private var progressWriter: ProgressWriter? = null
+
+  override fun onCreate() {
+    super.onCreate()
+    val player = playerFactory.create()
+    progressWriter = ProgressWriter(player, mediaProgressDao, clock, serviceScope).also { it.start() }
+    // ... notification provider and session builder, unchanged, with `player` in place of the
+    // raw ExoPlayer.
+  }
+
+  override fun onDestroy() {
+    // Persistence point 7, and it must block: a coroutine launched into a scope that is about to
+    // be cancelled writes nothing, and this is the last chance to record where the listener was.
+    progressWriter?.flushBlocking()
+    progressWriter?.stop()
+    progressWriter = null
+    serviceScope.cancel()
+    session?.run {
+      player.release()
+      release()
+    }
+    session = null
+    super.onDestroy()
+  }
+```
+
+- [ ] **Step 8: Update the call sites this task's signature changes break**
+
+`MuPlayerFactory` gained a `resumePolicy` constructor parameter and its `create()` now returns a
+`MuPlayer` rather than an `ExoPlayer`. Two existing tests construct it directly:
+
+- `AudioFocusTest` (Task 6) builds
+  `MuPlayerFactory(context, MuPlayDataSourceFactory(OkHttpClient(), cache), NavidromeLoadErrorHandlingPolicy()).create()`
+  and hands the result to `PlayerHarness(player: ExoPlayer)`. Change it to pass `NeverResume` as
+  the fourth argument and to call **`createExoPlayer()`** — that test's subject is audio focus and
+  becoming-noisy, which are `ExoPlayer` behaviours, and routing it through the seam would add a
+  layer with nothing to say about them.
+- Any other direct construction the compiler flags. `./gradlew :core:media:compileDebugAndroidTestKotlin`
+  finds all of them; there is no need to guess.
+
+Do **not** relax `PlayerHarness` to take a `Player`. It exists to drive an `ExoPlayer`, and
+widening it would let a future test wire the harness to something that is not the player behind the
+session — which is the exact confusion the module boundary exists to prevent.
+
+- [ ] **Step 9: Run everything**
+
+```bash
+./gradlew :core:media:testDebugUnitTest
+./gradlew :core:media:connectedDebugAndroidTest
+```
+
+Expected: PASS — `ResumePolicyTest` 3/3, `ProgressTableShapeTest` 1/1, `MuPlayerTest` 6/6,
+`ProgressWriterTest` 9/9, and every earlier suite still green.
+
+- [ ] **Step 10: Prove the seam and the writer can fail**
+
+1. Delete **one** override from `MuPlayer` — the `setMediaItem(MediaItem)` one, which names no
+   position and therefore looks harmless. Expect
+   `theOverloadsThatTakeNoPositionStillGoThroughThePolicy` and
+   `allSixOverloadsConsultTheResumePolicy` to fail. Repeat for each of the six in turn; **all six
+   must be individually detectable**, and record which test catches each.
+2. In `MuPlayer.setResolved`, pass the caller's `startPositionMs` through instead of the policy's.
+   Expect `aCallersRequestedPositionNeverReachesThePlayer` to fail.
+3. In `ProgressWriter.write`, replace the read-modify-write with a fresh
+   `MediaProgressEntity(mediaId, positionMs, finished, clock.millis(), 1f, false, 0f)`. Expect
+   `aWriteDoesNotClobberTheColumnsThisPlanDoesNotOwn` and `finishedStaysFinished` to fail.
+   **This is the trap, reproduced on demand.**
+4. Remove the `DISCONTINUITY_REASON_SILENCE_SKIP` guard. Nothing in this plan skips silence, so
+   **no test fails** — record that, and add the assertion the audiobook plan will need instead of
+   pretending this plan gated it. Honesty about an ungated line beats a test that cannot fail.
+5. Replace `clock.millis()` with a literal. Expect `aFirstWriteCreatesARowWithThePositionAndTheClocksTime`
+   to fail.
+6. Cancel `serviceScope` before `flushBlocking()` in `onDestroy`. Expect no *unit* test to fail —
+   which is exactly why the flush is blocking, and why Task 10's Tier 2 journey covers it.
+
+- [ ] **Step 11: Record the probes, re-measure, commit**
+
+Add mutations 1, 2, 3 and 5 to `ci/mutation-probes.sh`, and record 4 and 6 in the task report as
+**known ungated lines with the plan that gates them named** — the script's own header is explicit
+that recording an answer is not the same as generating a question, and an honest "no probe exists
+for this" is worth more than a probe that passes vacuously.
+
+Re-measure `:core:media`'s floors. `ResumePolicy`/`NeverResume` and `ProgressTableShapeTest`'s
+subject are JVM-enforceable; `MuPlayer` and `ProgressWriter` are instrumented.
+
+```bash
+git add core/media build.gradle.kts ci/mutation-probes.sh
+git commit -m "feat(media): the ForwardingPlayer seam and the progress writer"
+```
+
+---
+
+## Task 9: `:feature:player` — the Compose player UI over a `MediaController`
+
+**Files:**
+- Modify: `settings.gradle.kts`, `gradle/libs.versions.toml`, `app/build.gradle.kts`
+- Create: `core/media/src/main/kotlin/app/muplay/media/PlaybackLauncher.kt`
+- Create: `feature/player/build.gradle.kts`
+- Create: `feature/player/src/main/kotlin/app/muplay/player/PlayerUiState.kt`
+- Create: `feature/player/src/main/kotlin/app/muplay/player/PlayerViewModel.kt`
+- Create: `feature/player/src/main/kotlin/app/muplay/player/PlayerScreen.kt`
+- Create: `feature/player/src/main/kotlin/app/muplay/player/MiniPlayer.kt`
+- Create: `feature/player/src/main/kotlin/app/muplay/player/Artwork.kt`
+- Test: `feature/player/src/test/kotlin/app/muplay/player/PlayerUiStateTest.kt`
+- Modify: `feature/library/build.gradle.kts`
+- Modify: `feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt`
+- Modify: `feature/library/src/main/kotlin/app/muplay/library/LibraryScreen.kt`
+- Modify: `feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt`
+- Modify: `feature/library/src/main/kotlin/app/muplay/library/AlbumScreen.kt`
+- Create: `app/src/main/kotlin/app/muplay/ui/navigation/PlayerRoute.kt`
+- Modify: `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt`
+- Modify: `build.gradle.kts` (`:feature:player` floors)
+
+**Interfaces:**
+- Consumes:
+  - `PlaybackConnection.state: StateFlow<PlaybackState>`, `.controller(): MediaController`,
+    `.release()` (Task 5); `PlaybackState(isPlaying, isBuffering, mediaId, title, artist,
+    albumTitle, artworkUri, positionMs, durationMs, hasNext, hasPrevious)` and
+    `PlaybackState.NOTHING_PLAYING` (Task 5).
+  - `QueueRepository.mediaItems(queue)` and `PlaybackQueue.of(songs, startIndex)` (Tasks 4, 6).
+  - **Plan 2 Task 9's `:feature:library` surface** — `LibraryUiState.Content(libraries,
+    selectedLibraryId, query, albums, shuffled, discardedOutOfScope, syncMessage)`,
+    `LibraryViewModel(uiState, selectLibrary, search, shuffle, refresh)`,
+    `LibraryScreen(onAlbumClick, modifier, viewModel)`, `AlbumUiState.Content(album, songs)`,
+    `AlbumViewModel`, `AlbumScreen(modifier, viewModel)`, and Plan 2 Task 10's `MuPlayApp`,
+    `StartDestination`, `LibraryRoute`, `AlbumRoute`. **All of these are Plan 2's and may have
+    landed with different names.** Read the real files and adapt; do not create parallel screens.
+- Produces:
+  - `class PlaybackLauncher @Inject constructor(queueRepository, playbackConnection)` with
+    `suspend fun play(songs: List<Song>, startIndex: Int)`
+  - sealed `PlayerUiState` with `data object NothingPlaying` and
+    `data class Content(playback: PlaybackState, displayPositionMs: Long, isScrubbing: Boolean)`
+  - `internal fun playerUiState(playback: PlaybackState, scrubPositionMs: Long?): PlayerUiState`
+  - `internal fun formatDuration(millis: Long): String`
+  - `@HiltViewModel class PlayerViewModel` with `uiState: StateFlow<PlayerUiState>`,
+    `fun playPause()`, `fun next()`, `fun previous()`, `fun scrubTo(ms: Long)`, `fun commitScrub()`
+  - `PlayerScreen(modifier: Modifier = Modifier, viewModel: PlayerViewModel = hiltViewModel())`
+  - `MiniPlayer(onOpenPlayer: () -> Unit, modifier: Modifier = Modifier, viewModel: PlayerViewModel = hiltViewModel())`
+  - `@Serializable data object PlayerRoute : NavKey`
+
+### The module boundary is the point
+
+`:feature:player` depends on `media3-session` and **not** on `media3-exoplayer`. It gets a
+`MediaController` and a `StateFlow<PlaybackState>` and nothing else. A feature module that can
+construct an `ExoPlayer` eventually constructs one, and then the process holds two players, one of
+which is not the one behind the media session — which is how a media app ends up with a
+notification that controls nothing and a seek bar that moves the wrong thing.
+
+`:core:media`'s build file already enforces the half of this that a build file can:
+`api(libs.media3.session)` and `implementation(libs.media3.exoplayer)`.
+
+### `media3-ui-compose`, and why the state still comes from a `StateFlow`
+
+Spec §9 names `media3-ui-compose` and `-compose-material3`, and both artifacts really do publish
+1.11.0 (resolved while this plan was written). They supply Compose state holders —
+`PlayPauseButtonState` and friends — that read a `Player` directly.
+
+This plan uses **`PlaybackConnection`'s `StateFlow`** as the source of truth for the screen, and the
+reason is a global constraint rather than a preference: *"Immutable `UiState` as `StateFlow`,
+collected with `collectAsStateWithLifecycle()`."* A `StateFlow` also gives the mini player and the
+full player one shared state instead of two independent subscriptions to the same controller, and —
+the part that actually matters for this project — it makes the **state mapping a pure function that
+Tier 1 can gate**, which the Compose state holders cannot be.
+
+`media3-ui-compose-material3` is therefore declared but used only for transport-control
+composables where it saves real code. If, on reading its resolved API, it does not, **leave it out
+of the module's dependencies entirely and say so in the task report** — an unused dependency is
+exactly what "dependency minimalism" bans, and Task 10 records the outcome in the spec.
+
+### Artwork, and the salt again
+
+A cover-art URL carries a fresh auth salt per call, so Coil keyed on the URL never hits its cache.
+Plan 2 solved this for the library grid with an explicit cache key in `CoverArt.kt`. This module
+does the same thing with the one stable identifier it has: **`PlaybackState.mediaId`**. Same
+principle as `setCustomCacheKey`, one layer up. When a later plan consolidates the two into
+`:core:designsystem`, that is a refactor with two call sites, not a design change.
+
+- [ ] **Step 1: Write the failing state-mapping test**
+
+`feature/player/src/test/kotlin/app/muplay/player/PlayerUiStateTest.kt`:
+
+```kotlin
+package app.muplay.player
+
+import app.muplay.media.PlaybackState
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * A plain JVM test over a pure function. [PlaybackState] carries only primitives and strings — the
+ * `artworkUri` is a `String`, not a `Uri` — precisely so this mapping can be gated by the fast
+ * tier, which is where every field-level assertion in this project belongs when it can be.
+ */
+class PlayerUiStateTest {
+
+  private val playing = PlaybackState(
+    isPlaying = true,
+    isBuffering = false,
+    mediaId = "song-1",
+    title = "Track 1",
+    artist = "Test Artist",
+    albumTitle = "Test Album",
+    artworkUri = "https://host/art-1",
+    positionMs = 2_000L,
+    durationMs = 5_000L,
+    hasNext = true,
+    hasPrevious = false,
+  )
+
+  @Test
+  fun `nothing playing is its own state`() {
+    assertThat(playerUiState(PlaybackState.NOTHING_PLAYING, scrubPositionMs = null))
+      .isEqualTo(PlayerUiState.NothingPlaying)
+  }
+
+  @Test
+  fun `a state with a media id is content`() {
+    // The discriminator is the media id, not `isPlaying`: a paused track is still something the
+    // player screen must render, and a screen that emptied itself on pause would be unusable.
+    val paused = playing.copy(isPlaying = false)
+
+    assertThat(playerUiState(paused, null)).isInstanceOf(PlayerUiState.Content::class.java)
+  }
+
+  @Test
+  fun `the content carries the playback state it was given`() {
+    val content = playerUiState(playing, null) as PlayerUiState.Content
+
+    // The whole value, so no individual field can be dropped or replaced on the way through.
+    assertThat(content.playback).isEqualTo(playing)
+  }
+
+  @Test
+  fun `the displayed position is the player's own position when nobody is scrubbing`() {
+    // Two observations of a value a constant could satisfy.
+    assertThat((playerUiState(playing, null) as PlayerUiState.Content).displayPositionMs)
+      .isEqualTo(2_000L)
+    assertThat((playerUiState(playing.copy(positionMs = 4_100L), null) as PlayerUiState.Content).displayPositionMs)
+      .isEqualTo(4_100L)
+  }
+
+  /**
+   * While a finger is on the seek bar, the thumb must follow the finger and not the player. Without
+   * this, every position tick drags the thumb back to where playback actually is and the bar
+   * becomes impossible to use — a bug that is obvious on a device and invisible in a screenshot.
+   */
+  @Test
+  fun `the displayed position is the scrub position while scrubbing`() {
+    val content = playerUiState(playing, scrubPositionMs = 4_500L) as PlayerUiState.Content
+
+    assertThat(content.displayPositionMs).isEqualTo(4_500L)
+    assertThat(content.isScrubbing).isTrue
+    // ...and the underlying playback state is untouched, so releasing the finger has something
+    // truthful to fall back to.
+    assertThat(content.playback.positionMs).isEqualTo(2_000L)
+  }
+
+  @Test
+  fun `not scrubbing is reported as not scrubbing`() {
+    assertThat((playerUiState(playing, null) as PlayerUiState.Content).isScrubbing).isFalse
+  }
+
+  @Test
+  fun `a duration formats as minutes and seconds`() {
+    // The exact mapped list, one call per input, so a formatter that ignored its argument fails
+    // on the second entry rather than passing an `allMatch`.
+    val inputs = listOf(0L, 1_000L, 61_000L, 599_000L, 600_000L, 3_661_000L)
+
+    assertThat(inputs.map(::formatDuration))
+      .containsExactly("0:00", "0:01", "1:01", "9:59", "10:00", "1:01:01")
+  }
+
+  @Test
+  fun `an unknown duration formats as a placeholder rather than a negative time`() {
+    // `Player.getDuration()` is C.TIME_UNSET until the extractor has read the container.
+    // PlaybackConnection maps that to 0, but a negative can still arrive from a stale controller,
+    // and "-9223372036854:775" on a lock screen is a memorable bug.
+    assertThat(formatDuration(-1L)).isEqualTo("0:00")
+    assertThat(formatDuration(Long.MIN_VALUE)).isEqualTo("0:00")
+  }
+}
+```
+
+- [ ] **Step 2: Run it to verify it fails, then create the module**
+
+Run: `./gradlew :feature:player:testDebugUnitTest --tests '*PlayerUiStateTest*'`
+Expected: FAIL — the project does not exist yet.
+
+`settings.gradle.kts`:
+
+```kotlin
+include(":feature:player")
+```
+
+`gradle/libs.versions.toml` — Coil's version (`coil = "3.5.0"`) is already in `[versions]`. Add the
+library aliases **only if Plan 2 Task 9 has not already added them** (check first; a duplicate
+alias fails the build):
+
+```toml
+coil-compose        = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
+```
+
+`feature/player/build.gradle.kts`:
+
+```kotlin
+plugins {
+  id("muplay.android.library")
+  id("muplay.android.compose")
+  id("muplay.android.hilt")
+}
+
+android {
+  namespace = "app.muplay.player"
+}
+
+dependencies {
+  // `:core:media` exposes `media3-session` as `api`, so a MediaController is reachable here.
+  // `media3-exoplayer` is `implementation` there and is deliberately *not* reachable: a feature
+  // module that can build an ExoPlayer eventually does.
+  implementation(project(":core:media"))
+  implementation(project(":core:designsystem"))
+
+  implementation(libs.compose.ui)
+  implementation(libs.compose.material3)
+  implementation(libs.lifecycle.runtime.compose)
+  implementation(libs.lifecycle.viewmodel.compose)
+  implementation(libs.hilt.navigation.compose)
+  implementation(libs.coroutines.core)
+  implementation(libs.coil.compose)
+  implementation(libs.coil.network.okhttp)
+
+  testImplementation(libs.coroutines.test)
+  testImplementation(libs.turbine)
+}
+```
+
+`build.gradle.kts` — a `coverageFloors` entry, so `ConventionTest` passes from this task on:
+
+```kotlin
+  // `:feature:player`. Two rules, on the line this table draws everywhere else: BRANCH for the
+  // author-written logic, LINE for the Compose-bearing files, because the Compose compiler emits
+  // synthetic branches inside author method bodies that no test can reach.
+  ":feature:player" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerUiStateKt",
+        "app.muplay.player.PlayerUiState",
+        "app.muplay.player.PlayerUiState*",
+      ),
+    ),
+    // Measured in Task 10 once the Tier 2 journey composes these for real. From the JVM alone
+    // they measure ~0, which is the whole reason `requiresInstrumentedData` exists.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerScreenKt",
+        "app.muplay.player.MiniPlayerKt",
+        "app.muplay.player.ArtworkKt",
+        "app.muplay.player.PlayerViewModel",
+      ),
+      requiresInstrumentedData = true,
+    ),
+  ),
+```
+
+- [ ] **Step 3: Implement the state and the formatter**
+
+`feature/player/src/main/kotlin/app/muplay/player/PlayerUiState.kt`:
+
+```kotlin
+package app.muplay.player
+
+import app.muplay.media.PlaybackState
+
+/**
+ * What the player screen renders. A sealed interface, per the constraints, so a `when` over it is
+ * exhaustive at every call site.
+ *
+ * The discriminator between the two states is **`mediaId != null`**, not `isPlaying`: a paused
+ * track is still something to render, and a screen that emptied itself on pause would be unusable.
+ */
+sealed interface PlayerUiState {
+
+  /** Nothing has been queued in this session. The mini player hides; the full screen says so. */
+  data object NothingPlaying : PlayerUiState
+
+  /**
+   * @property displayPositionMs where the seek bar's thumb goes. **Not always
+   *   `playback.positionMs`**: while a finger is on the bar it follows the finger, because
+   *   otherwise every position tick drags the thumb back to where playback actually is and the bar
+   *   cannot be used at all.
+   */
+  data class Content(
+    val playback: PlaybackState,
+    val displayPositionMs: Long,
+    val isScrubbing: Boolean,
+  ) : PlayerUiState
+}
+
+/** Pure mapping — see `PlayerUiStateTest` for why this is a function and not a `ViewModel` method. */
+internal fun playerUiState(playback: PlaybackState, scrubPositionMs: Long?): PlayerUiState =
+  if (playback.mediaId == null) {
+    PlayerUiState.NothingPlaying
+  } else {
+    PlayerUiState.Content(
+      playback = playback,
+      displayPositionMs = scrubPositionMs ?: playback.positionMs,
+      isScrubbing = scrubPositionMs != null,
+    )
+  }
+
+/**
+ * `m:ss`, or `h:mm:ss` past an hour. A negative or nonsensical input renders as `0:00` rather than
+ * as a negative time: `Player.getDuration()` is `C.TIME_UNSET` (a large negative) until the
+ * extractor has read the container, and "-9223372036854:775" on a lock screen is a memorable bug.
+ */
+internal fun formatDuration(millis: Long): String {
+  val totalSeconds = (millis.coerceAtLeast(0L)) / 1000
+  val seconds = totalSeconds % 60
+  val minutes = (totalSeconds / 60) % 60
+  val hours = totalSeconds / 3600
+  return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+  else "%d:%02d".format(minutes, seconds)
+}
+```
+
+- [ ] **Step 4: Run the JVM test**
+
+Run: `./gradlew :feature:player:testDebugUnitTest --tests '*PlayerUiStateTest*'`
+Expected: PASS, 9/9.
+
+- [ ] **Step 5: Implement the launcher, the ViewModel and the screens**
+
+`core/media/src/main/kotlin/app/muplay/media/PlaybackLauncher.kt`:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.model.Song
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * The one way anything in this app starts playing something.
+ *
+ * A single entry point rather than three ViewModels each assembling a queue: the format decision,
+ * the URL construction and the controller handshake all have to happen in the right order, and a
+ * second copy of that sequence is a second place for it to drift.
+ *
+ * `Dispatchers.Main` is not a convenience. A `MediaController` must be built and touched on the
+ * thread whose `Looper` it was created with, and every caller here is a ViewModel coroutine that
+ * may be on anything.
+ */
+@Singleton
+class PlaybackLauncher @Inject constructor(
+  private val queueRepository: QueueRepository,
+  private val playbackConnection: PlaybackConnection,
+) {
+
+  suspend fun play(songs: List<Song>, startIndex: Int) {
+    if (songs.isEmpty()) return
+    val queue = PlaybackQueue.of(songs, startIndex.coerceIn(songs.indices))
+    val items = queueRepository.mediaItems(queue)
+    withContext(Dispatchers.Main) {
+      val controller = playbackConnection.controller()
+      // startIndex is honoured; the position argument is not, and cannot be -- MuPlayer's seam
+      // discards it and asks the ResumePolicy instead. Passing 0 here documents the intent; the
+      // guarantee is structural.
+      controller.setMediaItems(items, queue.startIndex, 0L)
+      controller.prepare()
+      controller.play()
+    }
+  }
+}
+```
+
+`feature/player/src/main/kotlin/app/muplay/player/PlayerViewModel.kt`:
+
+```kotlin
+package app.muplay.player
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import app.muplay.media.PlaybackConnection
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+/**
+ * Drives both the full player screen and the mini player, from one shared [PlaybackConnection].
+ *
+ * One ViewModel for both surfaces on purpose: two would mean two subscriptions to the same
+ * controller and two chances for them to disagree about what is playing, which a user sees as a
+ * mini player showing one track while the screen behind it shows another.
+ */
+@HiltViewModel
+class PlayerViewModel @Inject constructor(
+  private val connection: PlaybackConnection,
+) : ViewModel() {
+
+  /** Non-null only while a finger is on the seek bar. See `PlayerUiState.Content`. */
+  private val scrubPositionMs = MutableStateFlow<Long?>(null)
+
+  val uiState: StateFlow<PlayerUiState> =
+    combine(connection.state, scrubPositionMs, ::playerUiState)
+      .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS),
+        initialValue = PlayerUiState.NothingPlaying,
+      )
+
+  init {
+    // Connecting is what starts the state flowing at all; without it the screen renders
+    // NothingPlaying forever while audio is audibly playing.
+    viewModelScope.launch { connection.controller() }
+  }
+
+  fun playPause() = viewModelScope.launch {
+    val controller = connection.controller()
+    if (controller.isPlaying) controller.pause() else controller.play()
+  }.let { }
+
+  fun next() = viewModelScope.launch { connection.controller().seekToNextMediaItem() }.let { }
+
+  fun previous() = viewModelScope.launch { connection.controller().seekToPreviousMediaItem() }.let { }
+
+  /** Called on every drag. Moves the thumb only; the player is not touched until [commitScrub]. */
+  fun scrubTo(ms: Long) {
+    scrubPositionMs.value = ms.coerceAtLeast(0L)
+  }
+
+  /** Called when the finger lifts. */
+  fun commitScrub() {
+    val target = scrubPositionMs.value ?: return
+    viewModelScope.launch {
+      connection.controller().seekTo(target)
+      scrubPositionMs.value = null
+    }
+  }
+
+  private companion object {
+    const val STOP_TIMEOUT_MS = 5_000L
+  }
+}
+```
+
+`feature/player/src/main/kotlin/app/muplay/player/Artwork.kt`:
+
+```kotlin
+package app.muplay.player
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+
+/**
+ * Cover art, cached on the **media id** rather than on the URL.
+ *
+ * Same principle as `setCustomCacheKey` one layer down, and for the same reason: a cover-art URL
+ * carries a fresh auth salt on every call (`StreamUrlTest` pins that), so a loader keyed on the URL
+ * re-downloads the same image on every session and never hits its cache. `mediaId` is stable for
+ * as long as the server's own id is.
+ */
+@Composable
+fun Artwork(uri: String?, cacheKey: String?, contentDescription: String?, modifier: Modifier = Modifier) {
+  Box(
+    modifier = modifier
+      .clip(RoundedCornerShape(12.dp))
+      .background(MaterialTheme.colorScheme.surfaceVariant)
+      .semantics { if (contentDescription != null) this.contentDescription = contentDescription },
+  ) {
+    if (uri != null) {
+      AsyncImage(
+        model = ImageRequest.Builder(LocalPlatformContext.current)
+          .data(uri)
+          .memoryCacheKey(cacheKey)
+          .diskCacheKey(cacheKey)
+          .build(),
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxSize(),
+      )
+    }
+  }
+}
+```
+
+> `LocalPlatformContext` is `coil3.compose.LocalPlatformContext`, and `dp` is
+> `androidx.compose.ui.unit.dp`. Add both imports. If Plan 2 Task 9 has already put an equivalent
+> helper in `:core:designsystem`, **use that one and delete this file** — two cover-art loaders with
+> two cache-key policies is exactly the drift the design-system module exists to prevent.
+
+`feature/player/src/main/kotlin/app/muplay/player/PlayerScreen.kt`:
+
+```kotlin
+package app.muplay.player
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+/**
+ * The full-screen player.
+ *
+ * Every label below is asserted verbatim by the Tier 2 journey (`PlaybackJourneyTest`), so a
+ * change here is a change there. That duplication is deliberate: the journey is a black-box walk
+ * through what a user sees, and a shared string constant would let a wording change pass unnoticed.
+ */
+@Composable
+fun PlayerScreen(
+  modifier: Modifier = Modifier,
+  viewModel: PlayerViewModel = hiltViewModel(),
+) {
+  val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+  when (val current = state) {
+    PlayerUiState.NothingPlaying -> Text(
+      text = NOTHING_PLAYING_LABEL,
+      textAlign = TextAlign.Center,
+      modifier = modifier.fillMaxSize().padding(32.dp),
+    )
+
+    is PlayerUiState.Content -> Column(
+      modifier = modifier.fillMaxSize().padding(24.dp),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Artwork(
+        uri = current.playback.artworkUri,
+        cacheKey = current.playback.mediaId,
+        contentDescription = ARTWORK_DESCRIPTION,
+        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+      )
+      Text(text = current.playback.title.orEmpty())
+      Text(text = current.playback.artist.orEmpty())
+      Text(text = current.playback.albumTitle.orEmpty())
+
+      Slider(
+        value = current.displayPositionMs.toFloat(),
+        onValueChange = { viewModel.scrubTo(it.toLong()) },
+        onValueChangeFinished = viewModel::commitScrub,
+        // A zero range makes Slider throw; a track whose duration is not yet known renders a
+        // disabled-looking full-width bar rather than crashing.
+        valueRange = 0f..current.playback.durationMs.coerceAtLeast(1L).toFloat(),
+        modifier = Modifier.fillMaxWidth(),
+      )
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(text = formatDuration(current.displayPositionMs))
+        Text(text = formatDuration(current.playback.durationMs))
+      }
+
+      Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        IconButton(onClick = viewModel::previous, enabled = current.playback.hasPrevious) {
+          Text(PREVIOUS_LABEL)
+        }
+        IconButton(onClick = viewModel::playPause) {
+          Text(if (current.playback.isPlaying) PAUSE_LABEL else PLAY_LABEL)
+        }
+        IconButton(onClick = viewModel::next, enabled = current.playback.hasNext) {
+          Text(NEXT_LABEL)
+        }
+      }
+    }
+  }
+}
+
+internal const val NOTHING_PLAYING_LABEL = "Nothing playing"
+internal const val ARTWORK_DESCRIPTION = "Cover art"
+internal const val PLAY_LABEL = "Play"
+internal const val PAUSE_LABEL = "Pause"
+internal const val NEXT_LABEL = "Next"
+internal const val PREVIOUS_LABEL = "Previous"
+```
+
+> `Icon` is imported but unused above; either use Material icons for the transport buttons or drop
+> the import. Text labels are used deliberately: they are what `onNodeWithText` finds in the Tier 2
+> journey, and this project has no icon-content-description convention yet. If you switch to icons,
+> give each one a `contentDescription` equal to the label above and change the journey to
+> `onNodeWithContentDescription`.
+
+`feature/player/src/main/kotlin/app/muplay/player/MiniPlayer.kt`:
+
+```kotlin
+package app.muplay.player
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+/**
+ * The bar above the library. Renders nothing at all when nothing is playing — an empty bar taking
+ * up 64dp of a browse screen is worse than no bar.
+ */
+@Composable
+fun MiniPlayer(
+  onOpenPlayer: () -> Unit,
+  modifier: Modifier = Modifier,
+  viewModel: PlayerViewModel = hiltViewModel(),
+) {
+  val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val content = state as? PlayerUiState.Content ?: return
+
+  Surface(modifier = modifier.fillMaxWidth()) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenPlayer).padding(8.dp),
+    ) {
+      Artwork(
+        uri = content.playback.artworkUri,
+        cacheKey = content.playback.mediaId,
+        contentDescription = null,
+        modifier = Modifier.size(48.dp),
+      )
+      Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+        Text(text = content.playback.title.orEmpty())
+        Text(text = content.playback.artist.orEmpty())
+      }
+      IconButton(onClick = viewModel::playPause) {
+        Text(if (content.playback.isPlaying) PAUSE_LABEL else PLAY_LABEL)
+      }
+    }
+  }
+}
+```
+
+- [ ] **Step 6: Make Plan 2's screens playable**
+
+`feature/library/build.gradle.kts` — add:
+
+```kotlin
+  implementation(project(":core:media"))
+```
+
+`LibraryViewModel` — inject `PlaybackLauncher` and add:
+
+```kotlin
+  /**
+   * Plays a shuffle result. The songs come from `ShuffleRepository`, which has already dropped
+   * anything the mirror does not agree belongs to this library — see Plan 2 Task 7. This method
+   * adds no scope check of its own, deliberately: a second, weaker copy of that guard here would
+   * be a place for the two to disagree.
+   */
+  fun playShuffled(startIndex: Int) {
+    val content = uiState.value as? LibraryUiState.Content ?: return
+    viewModelScope.launch { playbackLauncher.play(content.shuffled, startIndex) }
+  }
+```
+
+`AlbumViewModel` — inject `PlaybackLauncher` and add:
+
+```kotlin
+  /** Plays this album from [startIndex], in track order. */
+  fun play(startIndex: Int) {
+    val content = uiState.value as? AlbumUiState.Content ?: return
+    viewModelScope.launch { playbackLauncher.play(content.songs, startIndex) }
+  }
+```
+
+`AlbumScreen` — each track row becomes clickable, calling `viewModel.play(index)` and then
+`onOpenPlayer()`. `LibraryScreen` — each shuffled-song row does the same via `playShuffled(index)`.
+Both screens gain an `onOpenPlayer: () -> Unit` parameter. **Read Plan 2 Task 9's real files
+first**: the row composables and the exact `LibraryUiState.Content` property names are that task's,
+and this task adapts to them rather than the other way round.
+
+`app/src/main/kotlin/app/muplay/ui/navigation/PlayerRoute.kt`:
+
+```kotlin
+package app.muplay.ui.navigation
+
+import androidx.navigation3.runtime.NavKey
+import kotlinx.serialization.Serializable
+
+/** The full-screen player's destination. `@Serializable` for the same reason every other route is. */
+@Serializable
+data object PlayerRoute : NavKey
+```
+
+`app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` — add the destination and the mini player. The
+mini player goes in a `Scaffold`'s `bottomBar` **around** the `NavDisplay`, not inside a
+destination, so it survives navigation:
+
+```kotlin
+      entry<PlayerRoute> { PlayerScreen() }
+```
+
+and wrap the `NavDisplay` so every screen except the player itself shows the bar:
+
+```kotlin
+  Scaffold(
+    bottomBar = {
+      // Hidden on the player screen itself: a mini player under a full player is two controls for
+      // one thing.
+      if (backStack.lastOrNull() != PlayerRoute) {
+        MiniPlayer(onOpenPlayer = { backStack.add(PlayerRoute) })
+      }
+    },
+  ) { padding -> NavDisplay(/* ... */, modifier = Modifier.padding(padding)) }
+```
+
+`app/build.gradle.kts` — add `implementation(project(":feature:player"))`.
+
+- [ ] **Step 7: Run everything and see it on a device**
+
+```bash
+./gradlew build
+./gradlew :feature:player:testDebugUnitTest
+```
+
+Expected: PASS. Then install the debug APK on the running emulator, play a track from an album,
+and confirm by eye: the mini player appears, tapping it opens the player, the seek bar tracks
+playback, and dragging it moves the audio. **This is the one step in this plan that is a human
+looking at the screen** — the automated proof is Task 10's journey, but a UI nobody has looked at
+has a way of being technically correct and unusable.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add settings.gradle.kts gradle/libs.versions.toml build.gradle.kts core/media feature/player feature/library app
+git commit -m "feat(player): Compose player and mini player over a MediaController"
+```
+
+---
+
+## Task 10: The gates — Tier 2 playback journeys, the coverage table, the spec corrections
+
+**Files:**
+- Modify: `app/build.gradle.kts`
+- Create: `app/src/androidTest/kotlin/app/muplay/PlaybackJourneyTest.kt`
+- Modify: `app/src/androidTest/kotlin/app/muplay/BrowseJourneyTest.kt` (Plan 2 Task 10's file —
+  its `reachLibraryScreen` helper is reused; do not fork it)
+- Modify: `.github/workflows/e2e.yml`, `.github/workflows/pr.yml`
+- Modify: `build.gradle.kts` (the completed floor table)
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`
+- Modify: `ci/mutation-probes.sh`
+
+**Interfaces:**
+- Consumes: every visible label from Task 9 (`PLAY_LABEL`, `PAUSE_LABEL`, `NEXT_LABEL`,
+  `PREVIOUS_LABEL`, `NOTHING_PLAYING_LABEL`), Plan 2 Task 10's `reachLibraryScreen` helper and its
+  label constants, `PlaybackConnection.sessionToken(context)` (Task 5),
+  `PlaybackNotification.CHANNEL_ID` (Task 5).
+- Produces: Tier 2 journey `PlaybackJourneyTest`; the completed `coverageFloors` entries for
+  `:core:media` and `:feature:player`; the spec corrections listed in Step 5.
+
+### What a playback journey has to prove that no unit test can
+
+Spec §10's Tier 2 table has one row for this plan: *"Playback — audio renders, notification and
+lock screen respond, survives backgrounding."* Every clause of it is a whole-chain claim:
+
+- **audio renders** — the request the client built, the URL the server honoured, the container the
+  extractor parsed, the decoder, the audio pipeline, and the clock. Observed as **the position
+  readout on the real screen reaching a later time**, not as `isPlaying`.
+- **lock screen responds** — the system's media-button dispatch finding this app's session. Driven
+  by a real `KEYCODE_MEDIA_PLAY_PAUSE` through the shell, which is the same path a headset button
+  and the lock-screen controls take.
+- **survives backgrounding** — the foreground service actually staying up. Observed as the
+  position having advanced *while the app was not on screen*.
+
+- [ ] **Step 1: Write the failing playback journey**
+
+`app/build.gradle.kts` — add:
+
+```kotlin
+  // The journey reads the app's own live notification and talks to the real session.
+  androidTestImplementation(libs.androidx.test.rules)
+  androidTestImplementation(project(":core:media"))
+```
+
+`app/src/androidTest/kotlin/app/muplay/PlaybackJourneyTest.kt`:
+
+```kotlin
+package app.muplay
+
+import android.Manifest
+import android.app.NotificationManager
+import android.content.Context
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.media3.session.MediaController
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
+import app.muplay.media.PlaybackConnection
+import app.muplay.media.PlaybackNotification
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Tier 2: **audio actually plays**, on a real emulator, out of a real Navidrome.
+ *
+ * The distinction this whole class is built around: `play()` returning, `playWhenReady == true`,
+ * `STATE_READY` and a session reporting `isPlaying` are all satisfied by a player that renders
+ * silence, by a URL that 404s into a swallowed error, and by a decoder that never produced a
+ * sample. What is asserted here instead is that **the position readout on the real screen reaches
+ * a later time**, and that it keeps doing so while the app is not on screen.
+ *
+ * Preconditions this test cannot establish for itself — the container being up,
+ * `adb reverse tcp:4533 tcp:4533`, and the emulator's `-feature Minigbm -prop
+ * qemu.hardware.gralloc=minigbm` boot flags — are all handled by `ci/prepare-emulator.sh`, which
+ * `.github/workflows/e2e.yml` runs and which a local run must run too.
+ */
+@RunWith(AndroidJUnit4::class)
+class PlaybackJourneyTest {
+
+  @get:Rule
+  val composeRule = createAndroidComposeRule<MainActivity>()
+
+  /** Without the grant the media notification is silently not posted -- an empty array, not an error. */
+  @get:Rule
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+  @Test
+  fun playingATrackFromAnAlbumMakesTheAudioAdvance() {
+    startFirstTrackOfTheAlbum()
+
+    // The whole point of the plan, on screen. A five-second track that reaches 0:03 has decoded
+    // three seconds of audio; nothing that merely "started playing" can produce this.
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText("0:03").fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText("0:03").assertIsDisplayed()
+  }
+
+  @Test
+  fun theNotificationShowsTheTrackThatIsPlaying() {
+    startFirstTrackOfTheAlbum()
+    awaitAudioAdvancing()
+
+    val manager = context.getSystemService(NotificationManager::class.java)
+    val notification = manager.activeNotifications.single { it.packageName == context.packageName }
+
+    assertThat(notification.notification.channelId).isEqualTo(PlaybackNotification.CHANNEL_ID)
+    assertThat(
+      notification.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString(),
+    ).isIn(MUSIC_TITLES)
+    assertThat(notification.notification.actions).isNotEmpty
+  }
+
+  /**
+   * The lock screen, the headset button and Android Auto's play/pause all arrive the same way: as a
+   * media button event the system routes to the active session. Driving a real
+   * `KEYCODE_MEDIA_PLAY_PAUSE` through the shell exercises that whole path, and needs no UI
+   * automation dependency.
+   */
+  @Test
+  fun aMediaButtonFromTheSystemPausesAndResumesPlayback() {
+    startFirstTrackOfTheAlbum()
+    awaitAudioAdvancing()
+    val controller = connectController()
+
+    shell("input keyevent 85") // KEYCODE_MEDIA_PLAY_PAUSE
+    awaitOnMain("playback to pause") { !controller.isPlaying }
+    val paused = onMain { controller.currentPosition }
+    Thread.sleep(1_500L)
+    // Paused means the clock stopped, not merely that a flag flipped.
+    assertThat(onMain { controller.currentPosition }).isEqualTo(paused)
+
+    shell("input keyevent 85")
+    awaitOnMain("playback to resume") { controller.isPlaying }
+    awaitOnMain("the position to move past where it paused") { controller.currentPosition > paused }
+  }
+
+  /**
+   * Backgrounding. The app goes off screen, and audio has to keep going — which is the entire
+   * reason a `MediaLibraryService` with `foregroundServiceType="mediaPlayback"` and
+   * `FOREGROUND_SERVICE_MEDIA_PLAYBACK` exists. A missing permission here does not fail a build or
+   * an install; it throws `SecurityException` from `startForeground` at exactly this moment.
+   */
+  @Test
+  fun playbackSurvivesTheAppGoingToTheBackground() {
+    startFirstTrackOfTheAlbum()
+    awaitAudioAdvancing()
+    val controller = connectController()
+
+    val beforeHome = onMain { controller.currentPosition }
+    shell("input keyevent 3") // KEYCODE_HOME
+    Thread.sleep(3_000L)
+
+    val afterHome = onMain { controller.currentPosition }
+    assertThat(afterHome)
+      .describedAs("position after three seconds on the home screen")
+      .isGreaterThan(beforeHome + 2_000L)
+    assertThat(onMain { controller.isPlaying }).isTrue
+  }
+
+  /**
+   * The headline feature, now that it can actually be *played*. Plan 2 proved the shuffle result
+   * never contains the audiobook; this proves the thing that comes out of the speaker never is it
+   * either.
+   */
+  @Test
+  fun shufflingMusicAndPlayingItNeverPlaysTheAudiobook() {
+    reachLibraryScreen()
+
+    repeat(SHUFFLE_ATTEMPTS) {
+      composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
+      composeRule.waitUntil(TIMEOUT_MILLIS) {
+        composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
+      }
+      composeRule.onAllNodesWithText(MUSIC_TITLES[0], substring = false)
+        .fetchSemanticsNodes().firstOrNull()
+      composeRule.onAllNodesWithText(PLAY_SHUFFLE_LABEL)[0].performClick()
+
+      composeRule.waitUntil(TIMEOUT_MILLIS) {
+        composeRule.onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+      }
+      val controller = connectController()
+      val title = onMain { controller.mediaMetadata.title?.toString() }
+
+      // Not `assertDoesNotContain(AUDIOBOOK_TITLE)`: an empty or null title would satisfy that
+      // vacuously. What is playing must be one of the three music tracks, by name.
+      assertThat(title).describedAs("what is actually coming out of the speaker").isIn(MUSIC_TITLES)
+    }
+  }
+
+  // ---- helpers ------------------------------------------------------------------------------
+
+  private fun startFirstTrackOfTheAlbum() {
+    reachLibraryScreen()
+    composeRule.onAllNodesWithText("Open")[0].performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(MUSIC_TITLES[0]).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText(MUSIC_TITLES[0]).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  private fun awaitAudioAdvancing() {
+    val controller = connectController()
+    awaitOnMain("audio to advance past one second") { controller.currentPosition > 1_000L }
+  }
+
+  private var controller: MediaController? = null
+
+  private fun connectController(): MediaController = controller ?: onMain {
+    val connection = PlaybackConnection(context)
+    kotlinx.coroutines.runBlocking { connection.controller() }
+  }.also { controller = it }
+
+  private fun <T> onMain(block: () -> T): T {
+    var result: Any? = null
+    var thrown: Throwable? = null
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      runCatching(block).onSuccess { result = it }.onFailure { thrown = it }
+    }
+    thrown?.let { throw it }
+    @Suppress("UNCHECKED_CAST")
+    return result as T
+  }
+
+  private fun awaitOnMain(description: String, condition: () -> Boolean) {
+    val deadline = System.currentTimeMillis() + TIMEOUT_MILLIS
+    while (System.currentTimeMillis() < deadline) {
+      if (onMain(condition)) return
+      Thread.sleep(100)
+    }
+    throw AssertionError("timed out waiting for $description")
+  }
+
+  private fun shell(command: String) {
+    InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command).close()
+  }
+
+  /**
+   * Identical in intent to `BrowseJourneyTest.reachLibraryScreen` (Plan 2 Task 10) — **reuse that
+   * one**. It is reproduced in the shape below only so this file reads on its own; when
+   * implementing, extract Plan 2's helper into a shared `JourneyNavigation.kt` in
+   * `app/src/androidTest` and call it from all three journey classes. Three copies of a
+   * twenty-line navigation sequence is how a label change breaks two tests and fixes one.
+   */
+  private fun reachLibraryScreen() {
+    val needsSetup =
+      composeRule.onAllNodesWithText(SERVER_URL_LABEL).fetchSemanticsNodes().isNotEmpty()
+    if (needsSetup) {
+      composeRule.onNodeWithText(SERVER_URL_LABEL).performTextInput(SERVER_URL)
+      composeRule.onNodeWithText(USERNAME_LABEL).performTextInput(USERNAME)
+      composeRule.onNodeWithText(PASSWORD_LABEL).performTextInput(PASSWORD)
+      composeRule.onNodeWithText(CONNECT_LABEL).performClick()
+      composeRule.waitUntil(TIMEOUT_MILLIS) {
+        composeRule.onAllNodesWithText(CONTINUE_LABEL).fetchSemanticsNodes().isNotEmpty()
+      }
+      composeRule.onAllNodesWithText("Music")[MUSIC_ROLE_CHIP].performClick()
+      composeRule.onAllNodesWithText("Audiobooks")[AUDIOBOOK_ROLE_CHIP].performClick()
+      composeRule.onNodeWithText(CONTINUE_LABEL).performClick()
+    }
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  private companion object {
+    const val SERVER_URL = "http://localhost:4533"
+    const val USERNAME = "admin"
+    const val PASSWORD = "testpass"
+
+    // Duplicated from the production code rather than shared with it: a journey is a black-box
+    // walk through what a user sees, and a shared constant would let a wording change pass
+    // unnoticed. Same stance as Plan 2's journeys.
+    const val SERVER_URL_LABEL = "Server URL"
+    const val USERNAME_LABEL = "Username"
+    const val PASSWORD_LABEL = "Password"
+    const val CONNECT_LABEL = "Connect"
+    const val CONTINUE_LABEL = "Continue"
+    const val SHUFFLE_LABEL = "Shuffle this library"
+    const val SHUFFLE_HEADING = "Shuffled"
+    const val PLAY_SHUFFLE_LABEL = "Play"
+    const val PAUSE_LABEL = "Pause"
+
+    val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
+    const val AUDIOBOOK_TITLE = "Test Book"
+
+    const val MUSIC_ROLE_CHIP = 1
+    const val AUDIOBOOK_ROLE_CHIP = 2
+
+    /** Five, not Plan 2's ten: each attempt here starts real audio and costs real seconds. */
+    const val SHUFFLE_ATTEMPTS = 5
+    const val TIMEOUT_MILLIS = 30_000L
+  }
+}
+```
+
+- [ ] **Step 2: Run the journey, and prove each part can fail**
+
+```bash
+docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
+./ci/prepare-emulator.sh
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Expected: PASS — `FirstRunJourneyTest`, `BrowseJourneyTest`, `ScopedShuffleJourneyTest` (all Plan
+2's) plus `PlaybackJourneyTest` 5/5.
+
+Then, one mutation at a time, restored after each:
+
+1. Remove `android:foregroundServiceType="mediaPlayback"` from `:core:media`'s manifest. Expect
+   `verifyDebugManifest` to fail at build time — i.e. the journey never even runs, which is the
+   point of having a build-time gate for it. Then remove only the
+   `FOREGROUND_SERVICE_MEDIA_PLAYBACK` **permission** while leaving the type, temporarily drop it
+   from `requiredDeclarations`, and expect `playbackSurvivesTheAppGoingToTheBackground` to fail
+   with a `SecurityException` in logcat. **Record that logcat line**; it is what a future
+   contributor will search for.
+2. In `MuPlaybackService.onCreate`, do not call `setSessionActivity`. Expect the notification test
+   to still pass and `tappingTheNotificationHasSomewhereToGo` (`:core:media`) to fail — two
+   suites, one defect, and only one of them catches it.
+3. Point `LibraryViewModel.playShuffled` at `content.albums.flatMap { … }` — anything that
+   bypasses `ShuffleRepository`'s scope guard. Expect
+   `shufflingMusicAndPlayingItNeverPlaysTheAudiobook` to fail.
+4. Stop the Navidrome container and re-run. Expect red, not green.
+5. Skip `./ci/prepare-emulator.sh` (no `adb reverse`) and re-run. Expect the connect attempt to
+   time out — spike S1's finding that a blocked connection manifests as a **silent connect
+   timeout** is why this shows up as a `waitUntil` timeout naming nothing. Record the message.
+
+- [ ] **Step 3: Complete and prove the coverage table**
+
+Run the whole thing, in the order the two tiers actually run it:
+
+```bash
+./gradlew test
+./gradlew jacocoJvmCoverageVerification
+# emulator + container up:
+./ci/prepare-emulator.sh
+./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport
+./gradlew jacocoTestCoverageVerification
+```
+
+For **every** module this plan touched — `:core:model`, `:core:network`, `:core:testing`,
+`:core:media`, `:feature:library`, `:feature:player`, `:app` — read the measured per-class ratios
+out of each module's `jacocoTestReport.xml` and make the `coverageFloors` entry match:
+
+- **Branch ≥ 0.90 for non-UI code, line ≥ 0.90 for `@Composable`-bearing files.** Where a measured
+  branch ratio on non-UI code is below 0.90, the answer is another test, not a lower floor.
+- **`requiresInstrumentedData` is a measurement, not a judgement.** Delete the instrumented `.ec`
+  files, run `jacocoJvmCoverageVerification`, and set the flag on exactly the floors that fail.
+- **Every floor must be able to fail.** For each module, delete one assertion, confirm its floor
+  goes red, restore it. Record which assertion, per module, in the task report.
+- **No `COVERAGE:` warning may be left standing.** `warnUngatedClasses` and `warnVacuousFloors`
+  print to the build log and as GitHub annotations. `:core:media` is a large new module and will
+  produce several on the first run; each one is either a class that needs a floor or a floor that
+  matches nothing.
+- Confirm `ConventionTest`'s `every Gradle project has a coverage floor` passes with `:core:media`
+  and `:feature:player` both in the table, in the exact `"path" to listOf(` form that test's regex
+  matches.
+
+`:core:media`'s floors need particular care, because the module holds five different kinds of code
+and one blended `BUNDLE` rule would hide a regression in any of them behind the others:
+
+| Kind | Classes | Metric | Tier |
+|---|---|---|---|
+| Pure decisions | `StreamRetryPolicy`, `PlaybackAudioAttributes`, `PlaybackQueue`, `ResumePolicy`/`NeverResume` | BRANCH | Tier 1 — **these must clear their floors from JVM data alone** |
+| Media3 adapters | `NavidromeLoadErrorHandlingPolicy`, `TrackIdCacheKeyFactory`, `MuPlayer`, `ContentTypeSwitcher` | BRANCH | instrumented |
+| Mapping and repositories | `MediaItems`, `QueueRepository`, `ProgressWriter`, `PlaybackLauncher` | BRANCH | instrumented |
+| Android plumbing with no author conditional | `MuPlaybackService`, `MuPlayerFactory`, `MediaCache`, `PlaybackNotification`, `PlaybackState`, `di.MediaModule` | **LINE** — a BRANCH rule over a zero-branch class matches only zero-total counters and passes silently at every minimum through JaCoCo's `isNaN` path | instrumented |
+| Coroutine and `Flow` codegen | `PlaybackConnection$*`, `ProgressWriter$*` | LINE, at a **measured** low floor | instrumented |
+
+The last row follows `:core:database`'s existing precedent exactly: gated low and honestly rather
+than excluded by a pattern broad enough to swallow author-written nested classes.
+
+- [ ] **Step 4: Confirm the Tier 2 workflow runs everything, and measure its wall clock**
+
+`.github/workflows/e2e.yml`'s `script:` block should already carry `:core:media` from Task 2:
+
+```yaml
+          script: |
+            ./ci/prepare-emulator.sh
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+```
+
+**This job now plays real audio in real time, repeatedly.** `GaplessTest` alone runs two 15-second
+experiments; `ProgressWriterTest`, `AudioFocusTest`, `MuPlaybackServiceTest` and
+`PlaybackJourneyTest` each play several seconds more, several times over. That is minutes of
+irreducible wall clock that no amount of hardware removes.
+
+Measure the real duration of a full run and record it in the task report. If it lands within ten
+minutes of `timeout-minutes: 45`, **raise the limit and say what was measured** — a gate that
+starts flaking on time gets disabled, which is the worst outcome available. If it lands well past
+45, the answer is to split the emulator job in two (module suites and app journeys) rather than to
+trim assertions; say which was done and why.
+
+`.github/workflows/pr.yml` — the "Release manifest" step becomes both variants (Task 5):
+
+```yaml
+      - name: Merged manifests
+        # Release must not carry cleartext; *both* variants must carry the playback service, its
+        # foreground-service type, and the three permissions spec section 7 lists. A missing
+        # FOREGROUND_SERVICE_MEDIA_PLAYBACK does not fail a build, an install, or a foreground
+        # test -- it throws SecurityException from startForeground the first time the app is
+        # backgrounded with audio playing.
+        run: ./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest
+```
+
+- [ ] **Step 5: Correct the spec**
+
+Everything this plan found wrong, incomplete or self-contradictory in
+`docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`. Per the roadmap's definition of done
+item 6, these are corrected **in the spec**, not recorded in a report.
+
+1. **§10, Tier 1, the "Playback goldens" row** — already moved to Tier 2 by Task 7. Confirm the
+   edit landed.
+2. **§10, Tier 1, the "Session" row** reads *"browse tree and `onPlaybackResumption`;
+   `isAutomotiveController` branching"* and sits in the **no-emulator** tier. It has the same
+   defect the "Playback goldens" row had: a `MediaSession` needs an Android runtime, and the JVM
+   path to one is Robolectric, which §2 and §10 ban. Move the row to Tier 2 and note that **none
+   of its three subjects exists yet** — the browse tree and `isAutomotiveController` branching are
+   Plan 5's, and `onPlaybackResumption` is the plan that resumes. A row describing three
+   unimplemented things, filed under a tier that cannot run them, is a gate that has never fired
+   and never will.
+3. **§7's permission list** omits `FOREGROUND_SERVICE`. It lists `INTERNET`,
+   `POST_NOTIFICATIONS` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`; a foreground service also needs
+   the plain `FOREGROUND_SERVICE` permission from API 28, and without it `startForeground` throws.
+   Add it.
+4. **§4, Streaming** — add the `estimateContentLength` rule, which is new knowledge from Task 1:
+   > **Never send `estimateContentLength`.** It makes a transcoded response carry a *guessed*
+   > `Content-Length`; ExoPlayer trusts that header for seeking and lands in the wrong place with
+   > nothing reported anywhere. Preferring `format=raw` gives a real one.
+5. **§4, Streaming, "Never Opus"** — record *where* the rule is enforced, because "never" needs a
+   mechanism: `StreamFormat` is a sealed interface with exactly `Raw` and `Mp3`, so `opus` is
+   unrepresentable, and `StreamFormat.forSuffix` transcodes both `opus` and `ogg` — the latter
+   because a suffix cannot distinguish Ogg-Vorbis from Ogg-Opus.
+6. **§3, the `MuPlayer` paragraph** says the seam discards *"the caller's index and position"*.
+   That is imprecise in a way that matters: the **index** is queue membership — "play track 3 of
+   this album" is a legitimate request — and discarding it unconditionally would break every
+   tap-a-track-to-play path in the app. What is unconditionally removed is the **position**;
+   `ResumePolicy.resolve(mediaIds, requestedIndex)` is never given one, and it *may* override the
+   index, which is how a book resumes at chapter 14. Reword accordingly.
+7. **§5, "Audio focus: a one-line switch"** — record the input. The switch is one line; the signal
+   it switches on is the **user's own `LibraryRole` assignment**, carried on
+   `MediaMetadata.mediaType` (`MEDIA_TYPE_AUDIO_BOOK_CHAPTER` vs `MEDIA_TYPE_MUSIC`), because
+   Navidrome hardcodes `child.Type = "music"` and no server field can answer it.
+8. **§9's stack table** — record what was actually adopted for `media3-ui-compose` and
+   `-compose-material3` in Task 9. Both artifacts exist at 1.11.0; if the module ended up not
+   using one of them, say so and why, rather than leaving the table asserting a dependency the
+   build does not have.
+9. **§10's Tier 2 table** — add a line under it, in the same form Plan 2 used:
+   > Plan 3 added `PlaybackJourneyTest` (audio advances on screen, the media notification names
+   > the track, a system media button pauses and resumes, playback survives the app going to the
+   > background, and a played shuffle never surfaces the audiobook) and `MuPlaybackServiceTest`
+   > (the real service, a real `MediaController`, and the notification the system is holding —
+   > in `:app` because `@AndroidEntryPoint` needs an `@HiltAndroidApp` application), plus
+   > `:core:media`'s own instrumented suite — `AudioFocusTest`, `GaplessTest`, `MuPlayerTest`,
+   > `ProgressWriterTest`, `MediaCacheTest`, `MediaItemsTest`, `QueueRepositoryTest`,
+   > `MuPlayDataSourceFactoryTest`. Tier 1 gained `:core:network`'s live
+   > `/rest/stream` assertions (Range → 206/416, accurate `Content-Length` on `format=raw`,
+   > `Accept-Ranges: none` on a live transcode, and auth carried on the URL) and the pure
+   > decisions `:core:media` deliberately keeps free of Android types.
+
+- [ ] **Step 6: Final green run and commit**
+
+Every one of these must pass:
+
+```bash
+./gradlew build
+./gradlew verifyNoMockFrameworks
+./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest
+./gradlew jacocoJvmCoverageVerification
+./gradlew :core:network:liveNavidromeTest                                  # container up
+./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+./ci/mutation-probes.sh                                                    # every probe still caught
+```
+
+```bash
+git add app build.gradle.kts .github/workflows ci/mutation-probes.sh docs/superpowers/specs
+git commit -m "ci: tier 2 playback journeys, the completed coverage table, and the spec corrections"
+```
+
+---
+
+## Definition of done
+
+1. All tasks' tests pass; **both tiers green**.
+2. **Tier 2 carries this plan's journeys**: `PlaybackJourneyTest` and `MuPlaybackServiceTest` in
+   `:app`'s emulator suite, plus `:core:media`'s eight instrumented classes, and **each has been
+   watched go red**.
+3. Coverage ≥ 90% on every module this plan touched — **branch** for non-UI code, **line** for
+   `@Composable`-bearing files and for Android plumbing that carries no author-written conditional.
+   Every floor measured from a real report, every `requiresInstrumentedData` flag measured rather
+   than judged, and **every floor watched fail once**. No module absent from `coverageFloors`, and
+   no `COVERAGE:` warning left standing.
+4. No mock framework anywhere in the dependency graph — `verifyNoMockFrameworks` resolves every
+   test runtime classpath including `:core:media`'s and `:feature:player`'s. `MockWebServer` is a
+   real HTTP server and is not one; every stand-in in this plan (`RecordingSource`,
+   `RecordingPolicy`, `CapturingAudioSink`, the inert `Player`) is hand-written.
+5. Every new external-API assumption is backed by a live test against the Navidrome container:
+   `/rest/stream` honours Range with 206/416 and an accurate `Content-Length` under `format=raw`;
+   a **live transcode** sends `Accept-Ranges: none` and no `Content-Length`; the stream URL
+   authenticates itself; and the audiobook streams as a real MP4 container.
+6. **Audio is proven to have advanced, never merely to have been requested.** Every playback
+   assertion in this plan is a position that moved, a PCM frame count, a notification the system
+   is holding, or a time on the real screen. No test in this plan passes against a player that
+   renders silence.
+7. **The cache key derives from the track id alone**, proven by replaying a track through a URL
+   with a different salt, a different token and a different bitrate and measuring **zero** further
+   HTTP requests — with a different track as the control.
+8. **Gapless is measured, not assumed**: the longest run of silence across a three-track queue is
+   under 10 ms, one queue reconfigures the audio sink strictly fewer times than three separate
+   preparations of the same tracks, and the analyser that reports "no silence" has its own Tier 1
+   test proving it can see silence.
+9. **All six `setMediaItem(s)` overloads go through the resume policy**, each one individually
+   proven detectable by deleting it, and no caller-supplied position can reach the player.
+10. **`media_progress` is written at spec §3's persistence points without clobbering the columns
+    this plan does not own**, and one item's progress survives another item playing — the property
+    the whole architecture rests on, asserted today even though honouring it is Plan 4's.
+11. Anything discovered to be wrong in the spec is corrected **in the spec** — the nine items in
+    Task 10 Step 5, at minimum.
