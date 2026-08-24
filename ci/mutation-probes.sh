@@ -154,6 +154,24 @@ PROBES = [
      "return body.randomSongs?.song.orEmpty().map { it.toSong(1) }",
      "getRandomSongs stamps every song with the library it was scoped to", 1),
 
+    # ---- N3-1, round 4: every mapped DTO field, not just the stamp ---------------------------
+    # 20 of the 22 non-stamp fields on Album/Artist/Song could each be a constant with the whole
+    # build at exit 0. Three representatives are kept here rather than all 22 -- one per type, each
+    # a field that was asserted at NO value at all -- because the full sweep is ~22 minutes and its
+    # transcript is in task-3-report.md. If a mapper is rewritten, run that sweep again; these three
+    # only prove the class of defect is still detected.
+    ("field/Album.coverArtId", CLIENT,
+     "    coverArtId = coverArt,\n    songCount = songCount,",
+     '    coverArtId = "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51",\n    songCount = songCount,',
+     "search3 maps every artist, album and song field from the second library", 2),
+    ("field/Artist.albumCount", CLIENT,
+     "    albumCount = albumCount,", "    albumCount = 1,",
+     "every album and song field the seeded container cannot vary is still read from the body", 1),
+    ("field/Song.albumId", CLIENT,
+     "    albumId = albumId,\n    albumName = album,",
+     '    albumId = "7orvCZZyWRqsduCdqXoguY",\n    albumName = album,',
+     "search3 maps every artist, album and song field from the second library", 1),
+
     # ---- N2-1, round 3: ScanStatus -- the watermark Task 6's sync engine is built on ----------
     # All three hardcoded together left `./gradlew check` at exit 0 with 101 tests green and
     # 56/56 branch coverage. `lastScan` was asserted only isNotNull/isNotBlank, never at a value.
