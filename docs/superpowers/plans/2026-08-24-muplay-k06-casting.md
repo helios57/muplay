@@ -1854,6 +1854,8 @@ git commit -m "feat(cast): the cast module, an HTTP/1.1 codec we own, and cleart
 - Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt`
 - Create: `core/cast/src/main/kotlin/app/muplay/cast/discovery/RememberedRenderers.kt`
 - Create: `core/database/src/main/kotlin/app/muplay/database/RendererStore.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` (the qualified
+  `@CastPreferences` DataStore — see Step 13)
 - Modify: `core/database/build.gradle.kts`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/SsdpSearchTest.kt`
 - Test: `core/cast/src/test/kotlin/app/muplay/cast/discovery/DeviceDescriptionTest.kt`
@@ -1895,7 +1897,12 @@ git commit -m "feat(cast): the cast module, an HTTP/1.1 codec we own, and cleart
   - `class RendererDirectory(transport, http, remembered, clock)` with
     `suspend fun discover(mxSeconds: Int = SsdpSearch.DEFAULT_MX_SECONDS): DiscoveryResult`
   - `data class DiscoveryResult(val devices: List<CastDevice>, val unreachable: List<RememberedRenderer>)`
-  - `class RendererStore @Inject constructor(dataStore)` in `:core:database`, implementing `RememberedRenderers`
+  - `class RendererStore @Inject constructor(@CastPreferences dataStore: DataStore<Preferences>)` in
+    `:core:database`, implementing `RememberedRenderers`. **The qualifier is not decoration** — see
+    Step 13; the unqualified binding is the credentials file, which `CredentialStore.clear()` empties
+    wholesale.
+  - `@Qualifier annotation class CastPreferences` and
+    `DataModule.provideCastDataStore(...): DataStore<Preferences>` over `cast.preferences_pb`
 - **Plan 4 interaction:** none. Discovery does not know what is playing.
 
 ### What a discovery test with one device cannot prove
@@ -3609,6 +3616,7 @@ import app.muplay.cast.discovery.CastDevice
 import app.muplay.cast.discovery.RememberedRenderer
 import app.muplay.cast.discovery.RememberedRenderers
 import javax.inject.Inject
+import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 
@@ -3631,7 +3639,7 @@ import kotlinx.coroutines.flow.first
  */
 @Singleton
 class RendererStore @Inject constructor(
-  private val dataStore: DataStore<Preferences>,
+  @CastPreferences private val dataStore: DataStore<Preferences>,
 ) : RememberedRenderers {
 
   override suspend fun load(): List<RememberedRenderer> =
@@ -3669,6 +3677,44 @@ class RendererStore @Inject constructor(
     const val SEPARATOR = "\t"
   }
 }
+```
+
+**A DataStore of its own, and a qualifier so it cannot be confused with the credentials one.**
+`:core:database` already binds an *unqualified* `DataStore<Preferences>`, and that binding is the
+file `credentials.preferences_pb`. Taking it here would mean remembered speakers live in the
+credentials file — and `CredentialStore.clear()` is `dataStore.edit { it.clear() }`, which empties
+the file rather than removing its own keys. **Signing out would silently delete every remembered
+speaker**, and the symptom would be the unreachable-renderer list going empty, which reads as a
+discovery bug and would be chased in `RendererDirectory`. Plan 7 hit the same shape and answered it
+with `@IntegrationPreferences` over `integrations.preferences_pb`; this follows that precedent.
+
+A separate *file* is required, not merely a separate name: a qualifier over the same path would
+still be wiped by `clear()`, and DataStore throws
+`IllegalStateException: There are multiple DataStores active for the same file` if two instances
+share one. A separate binding then requires the qualifier, because two unqualified
+`DataStore<Preferences>` bindings are a Hilt duplicate-binding failure.
+
+At the bottom of `RendererStore.kt` — one file either way:
+
+```kotlin
+/**
+ * Distinguishes the cast store's DataStore from `:core:database`'s unqualified one, which holds
+ * the Navidrome password and is cleared wholesale on sign-out.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class CastPreferences
+```
+
+`core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` — add beside
+`provideCredentialDataStore`, leaving that provider untouched:
+
+```kotlin
+  @Provides
+  @Singleton
+  @CastPreferences
+  fun provideCastDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
+    PreferenceDataStoreFactory.create { File(context.filesDir, "cast.preferences_pb") }
 ```
 
 `core/database/src/androidTest/kotlin/app/muplay/database/RendererStoreTest.kt` — an instrumented
@@ -3722,6 +3768,21 @@ test against a **real** DataStore in a temporary directory (the same shape as Pl
 
     assertThat(store.load()).hasSize(RememberedRenderers.MAX_REMEMBERED)
   }
+
+  @Test
+  fun signingOutDoesNotForgetTheSpeakers() = runBlocking {
+    // `CredentialStore.clear()` is `dataStore.edit { it.clear() }` -- it empties its *file*, not
+    // its own keys. Wire a real `CredentialStore` over the real credentials DataStore alongside
+    // this store's own, sign in, remember a speaker, sign out, and read the speaker back. Two
+    // stores sharing one file passes every other test in this class and fails only this one.
+    credentialStore.save(SubsonicCredentials("http://nav.example", "u", "p"))
+    store.remember(listOf(device("uuid:a", "Kitchen", "http://10.0.0.1/d.xml")))
+
+    credentialStore.clear()
+
+    assertThat(store.load().map { it.udn }).containsExactly("uuid:a")
+    assertThat(credentialStore.load()).isNull()
+  }
 ```
 
 - [ ] **Step 14: Run the store test on a device**
@@ -3730,7 +3791,7 @@ test against a **real** DataStore in a temporary directory (the same shape as Pl
 ./gradlew :core:database:connectedDebugAndroidTest --tests '*RendererStoreTest*'
 ```
 
-Expected: PASS, 5/5. An emulator is required; this is a `:core:database` instrumented test and it
+Expected: PASS, 6/6. An emulator is required; this is a `:core:database` instrumented test and it
 already runs in `.github/workflows/e2e.yml`'s `script:` line, so no workflow change is needed for
 it.
 
@@ -3762,6 +3823,9 @@ it.
    four-device test may still pass by luck; that is exactly why the rename test exists.
 8. In `RendererStore.decode`, drop `limit = 3`. Expect `aNameContainingTheSeparatorSurvives` to
    fail.
+9. Point `provideCastDataStore` at `credentials.preferences_pb` — the state this task exists to
+   avoid. Expect `signingOutDoesNotForgetTheSpeakers` to fail and every other `RendererStoreTest`
+   assertion to pass, which is what makes that one test worth its runtime.
 
 - [ ] **Step 16: Record the probes and measure the floor**
 
