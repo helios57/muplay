@@ -31,6 +31,15 @@ class LibraryRepositoryTest {
   private lateinit var source: FakeSubsonicSource
   private lateinit var repository: LibraryRepository
 
+  /**
+   * The credentials [SubsonicSourceProvider.current] actually handed the factory on its most
+   * recent call. [FakeSubsonicSource] itself is indifferent to credentials -- every
+   * `SubsonicSource` method behaves the same regardless -- so without capturing this separately,
+   * nothing in this file would notice `current()` passing a hardcoded value instead of whatever
+   * [CredentialStore] holds. See `currentPassesWhicheverCredentialsAreActuallyStoredToTheFactory`.
+   */
+  private var credentialsSeenByFactory: SubsonicCredentials? = null
+
   @Before
   fun setUp() {
     val context = ApplicationProvider.getApplicationContext<android.content.Context>()
@@ -43,7 +52,10 @@ class LibraryRepositoryTest {
       libraryDao = db.libraryDao(),
       sourceProvider = SubsonicSourceProvider(
         credentialStore = credentialStore,
-        factory = SubsonicSourceFactory { source },
+        factory = SubsonicSourceFactory { credentials ->
+          credentialsSeenByFactory = credentials
+          source
+        },
       ),
     )
   }
@@ -135,5 +147,80 @@ class LibraryRepositoryTest {
     assertThat(repository.libraries.first()).allMatch { it.role == LibraryRole.UNASSIGNED }
     assertThat(repository.idsWithRole(LibraryRole.AUDIOBOOKS)).isEmpty()
     assertThat(repository.idsWithRole(LibraryRole.MUSIC)).isEmpty()
+  }
+
+  /**
+   * `libraries` maps `LibraryEntity` to `MusicLibrary` field by field
+   * (`id = it.musicFolderId, name = it.name, role = it.role`), and no test above pins `id` or
+   * `role` on that specific mapping to anything but a single, shared value -- every fixture
+   * above uses ids 1/2 uniformly and UNASSIGNED uniformly, so a build that hardcoded either
+   * (`id = 1` for every row, or `role = UNASSIGNED` for every row) would still pass every test
+   * above. This attributes two *different* roles to two *different* ids and checks both are
+   * attached to the right one.
+   */
+  @Test
+  fun theLibrariesFlowReportsEachLibrarysOwnIdAndRoleNotAConstant() = runTest {
+    signIn()
+    source.musicFolders = listOf(
+      MusicLibrary(1, "Music", LibraryRole.UNASSIGNED),
+      MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
+    )
+    repository.refreshFromServer()
+    repository.setRole(1, LibraryRole.MUSIC)
+    repository.setRole(2, LibraryRole.AUDIOBOOKS)
+
+    val byId = repository.libraries.first().associateBy { it.id }
+
+    assertThat(byId.keys).containsExactlyInAnyOrder(1, 2)
+    assertThat(byId.getValue(1).role).isEqualTo(LibraryRole.MUSIC)
+    assertThat(byId.getValue(2).role).isEqualTo(LibraryRole.AUDIOBOOKS)
+  }
+
+  /**
+   * `refreshFromServer`'s own mapping (`LibraryEntity(musicFolderId = it.id, name = it.name,
+   * role = it.role)`) passes the source's reported role straight through for a brand-new row --
+   * `mergeFromServer` only ever *writes* that role when the row does not already exist. Every
+   * other test in this file feeds `refreshFromServer` a `MusicLibrary` whose role is
+   * `UNASSIGNED` (matching what the real `SubsonicClient` always reports), so a hardcoded
+   * `role = LibraryRole.UNASSIGNED` in that mapping would pass every one of them. Feeding a role
+   * no real server response would carry is what makes this a test of the passthrough itself
+   * rather than of what `SubsonicClient` happens to send today.
+   */
+  @Test
+  fun refreshFromServerPassesTheSourcesReportedRoleThroughForABrandNewLibrary() = runTest {
+    signIn()
+    source.musicFolders = listOf(MusicLibrary(9, "Whatever the source reports", LibraryRole.MUSIC))
+
+    repository.refreshFromServer()
+
+    assertThat(repository.libraries.first().first { it.id == 9 }.role)
+      .isEqualTo(LibraryRole.MUSIC)
+  }
+
+  /**
+   * [SubsonicSourceProvider.current] is supposed to build its [app.muplay.network.SubsonicSource]
+   * from *whatever credentials are stored right now* -- not a value fixed at construction time.
+   * [FakeSubsonicSource] answers identically no matter what credentials it was built with, so no
+   * assertion on server responses could ever distinguish a correct implementation from one that
+   * quietly always uses the first credentials it ever saw (or a hardcoded value). Two different,
+   * sequentially-stored credential sets, each captured at the moment `refreshFromServer` runs, is
+   * what makes the passthrough itself the thing under test.
+   */
+  @Test
+  fun currentPassesWhicheverCredentialsAreActuallyStoredToTheFactory() = runTest {
+    source.musicFolders = emptyList()
+    val first = SubsonicCredentials("http://first.invalid", "alice", "pw1")
+    val second = SubsonicCredentials("http://second.invalid", "bob", "pw2")
+
+    credentialStore.save(first)
+    repository.refreshFromServer()
+    val firstSeen = credentialsSeenByFactory
+
+    credentialStore.save(second)
+    repository.refreshFromServer()
+    val secondSeen = credentialsSeenByFactory
+
+    assertThat(firstSeen).isEqualTo(first)
+    assertThat(secondSeen).isEqualTo(second)
   }
 }
