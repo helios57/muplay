@@ -110,11 +110,20 @@ class SetupViewModel(
     }
   }
 
-  /** Leaves setup, but only once every library has a role. */
+  /**
+   * Leaves setup, but only once every library has a role.
+   *
+   * `current.isNotEmpty() &&` is not decorative: `current.none { UNASSIGNED }` is vacuously true
+   * over an empty list, so without this guard a server reporting zero libraries would reach
+   * [SetupUiState.Ready] the moment this is called -- the same emptiness trap [tagging]'s
+   * `canContinue` guards against, and this predicate has to guard against it independently rather
+   * than delegate to that one, because a caller could reach here without ever having read
+   * `canContinue` at all (a retry path, a restored state, a test).
+   */
   fun continueToLibrary() {
     viewModelScope.launch {
       val current = libraries.current()
-      if (current.none { it.role == LibraryRole.UNASSIGNED }) {
+      if (current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED }) {
         _uiState.value = SetupUiState.Ready
       }
     }

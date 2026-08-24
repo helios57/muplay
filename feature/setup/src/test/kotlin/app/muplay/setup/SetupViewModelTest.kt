@@ -49,27 +49,38 @@ class SetupViewModelTest {
     override fun coverArtUrl(coverArtId: String, sizePx: Int?): String = error("not used by setup")
   }
 
-  /** Records what setup stored, in place of the real Keystore-backed store. */
-  private class RecordingCredentials : SetupCredentialSink {
+  /**
+   * Records what setup stored, in place of the real Keystore-backed store. Appends to the shared
+   * [callOrder] on every save -- `connect`'s doc claims credentials are stored *before* libraries
+   * are fetched, and a bare `saved != null` check cannot tell that claim from its reverse.
+   */
+  private class RecordingCredentials(private val callOrder: MutableList<String>) : SetupCredentialSink {
     var saved: SubsonicCredentials? = null
-    override suspend fun save(credentials: SubsonicCredentials) { saved = credentials }
+    override suspend fun save(credentials: SubsonicCredentials) {
+      saved = credentials
+      callOrder += "save"
+    }
   }
 
-  /** The library half of the flow, in memory. */
-  private class FakeLibraries : SetupLibrarySink {
+  /** The library half of the flow, in memory. Also appends to the shared [callOrder]; see above. */
+  private class FakeLibraries(private val callOrder: MutableList<String>) : SetupLibrarySink {
     var refreshed = 0
     val roles = mutableMapOf<Int, LibraryRole>()
     var reported: List<MusicLibrary> = emptyList()
 
-    override suspend fun refreshFromServer() { refreshed++ }
+    override suspend fun refreshFromServer() {
+      refreshed++
+      callOrder += "refreshFromServer"
+    }
     override suspend fun setRole(musicFolderId: Int, role: LibraryRole) { roles[musicFolderId] = role }
     override suspend fun current(): List<MusicLibrary> =
       reported.map { it.copy(role = roles[it.id] ?: LibraryRole.UNASSIGNED) }
   }
 
   private val dispatcher = StandardTestDispatcher()
-  private val credentials = RecordingCredentials()
-  private val libraries = FakeLibraries()
+  private val callOrder = mutableListOf<String>()
+  private val credentials = RecordingCredentials(callOrder)
+  private val libraries = FakeLibraries(callOrder)
 
   @BeforeEach
   fun setUp() = Dispatchers.setMain(dispatcher)
@@ -94,6 +105,20 @@ class SetupViewModelTest {
   }
 
   @Test
+  fun `the server url is trimmed before it is stored`() = runTest(dispatcher) {
+    // `trimmedUrl`, not the raw parameter, is what becomes `SubsonicCredentials.baseUrl` --
+    // previously unobserved: the blank-url test passes with or without `.trim()`, because
+    // "   ".toHttpUrlOrNull() is null either way, so it alone cannot prove trimming happens.
+    libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+    val vm = viewModel(StubSource({ serverInfo() }))
+
+    vm.connect("  http://localhost:4533  ", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(credentials.saved?.baseUrl).isEqualTo("http://localhost:4533")
+  }
+
+  @Test
   fun `a successful connect saves the credentials and lists the libraries for tagging`() =
     runTest(dispatcher) {
       libraries.reported = listOf(
@@ -109,6 +134,10 @@ class SetupViewModelTest {
 
         val tagging = awaitItem() as SetupUiState.Tagging
         assertThat(tagging.serverInfo.type).isEqualTo("navidrome")
+        // Full equality, not just `.type`: SetupScreen renders serverVersion too
+        // ("Connected to ${type} ${serverVersion}"), and a mutant that kept `.type` correct while
+        // corrupting any other ServerInfo field previously passed every test.
+        assertThat(tagging.serverInfo).isEqualTo(serverInfo())
         assertThat(tagging.libraries.map { it.name }).containsExactly("Music", "Audiobooks")
         // Every library arrives untagged, and the flow cannot be finished until they are not.
         assertThat(tagging.libraries).allMatch { it.role == LibraryRole.UNASSIGNED }
@@ -124,7 +153,9 @@ class SetupViewModelTest {
   @Test
   fun `credentials are stored before the libraries are fetched`() = runTest(dispatcher) {
     // Not an ordering nicety: `LibraryRepository.refreshFromServer` reads the credential store,
-    // so fetching first would throw NotConfiguredException on every first run.
+    // so fetching first would throw NotConfiguredException on every first run. `callOrder` is
+    // what actually proves this -- a bare "both happened" assertion cannot tell this order from
+    // its reverse, and previously did not.
     libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
     val vm = viewModel(StubSource({ serverInfo() }))
 
@@ -133,6 +164,7 @@ class SetupViewModelTest {
 
     assertThat(credentials.saved).isNotNull
     assertThat(libraries.refreshed).isEqualTo(1)
+    assertThat(callOrder).containsExactly("save", "refreshFromServer")
   }
 
   @Test
@@ -233,6 +265,23 @@ class SetupViewModelTest {
     val tagging = vm.uiState.value as SetupUiState.Tagging
     assertThat(tagging.libraries).isEmpty()
     assertThat(tagging.canContinue).isFalse
+  }
+
+  @Test
+  fun `continuing with no libraries at all does nothing`() = runTest(dispatcher) {
+    // continueToLibrary's own `isNotEmpty() &&` guard, independent of tagging's: `current.none {
+    // UNASSIGNED }` is vacuously true over an empty list, so without this guard a server with
+    // zero libraries would reach Ready the moment this is called -- proved directly (before the
+    // fix) by reaching Ready here.
+    libraries.reported = emptyList()
+    val vm = viewModel(StubSource({ serverInfo() }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.continueToLibrary()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isInstanceOf(SetupUiState.Tagging::class.java)
   }
 
   @Test
