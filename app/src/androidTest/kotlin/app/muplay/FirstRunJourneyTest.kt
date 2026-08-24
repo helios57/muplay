@@ -1,6 +1,8 @@
 package app.muplay
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -67,6 +69,21 @@ class FirstRunJourneyTest {
     // renames Navidrome's pinned library 1 to "Music" and creates "Audiobooks" as library 2.
     composeRule.onNodeWithText("Music").assertIsDisplayed()
     composeRule.onNodeWithText("Audiobooks").assertIsDisplayed()
+  }
+
+  @Test
+  fun theFlowCannotBeFinishedUntilEveryLibraryIsTagged() {
+    connectAs(PASSWORD)
+
+    // Both libraries untagged: Continue is inert. This is the assertion that keeps the tagging
+    // step from becoming skippable, and an untagged library is invisible to browse and shuffle.
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsNotEnabled()
+
+    composeRule.onAllNodesWithText("Music")[MUSIC_ROLE_CHIP].performClick()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsNotEnabled()
+
+    composeRule.onAllNodesWithText("Audiobooks")[AUDIOBOOK_ROLE_CHIP].performClick()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled()
   }
 
   /**
@@ -136,6 +153,22 @@ class FirstRunJourneyTest {
     const val PASSWORD_LABEL = "Password"
     const val CONNECT_LABEL = "Connect"
     const val CONNECTING_LABEL = "Connecting…"
+    const val CONTINUE_LABEL = "Continue"
+
+    /**
+     * The library named "Music" renders its own name and a "Music" role chip, so
+     * `onAllNodesWithText("Music")` matches two nodes on this screen. Index 0 is the library
+     * name in the first row; index 1 is that row's "Music" chip. Same for "Audiobooks", whose
+     * row is second: index 0 is the "Audiobooks" chip in row one, index 1 the library name in
+     * row two, index 2 that row's chip.
+     *
+     * Indices rather than test tags, deliberately: this journey is a black-box walk through what
+     * a user sees, and adding tags to the production UI purely so a test can find things makes
+     * the test pass on a screen the user could not use. If these indices become fragile, add
+     * distinct visible labels ("Tag as Music") rather than invisible ones.
+     */
+    const val MUSIC_ROLE_CHIP = 1
+    const val AUDIOBOOK_ROLE_CHIP = 2
 
     /**
      * Generous on purpose. A first `ping` against an already-running container on a
