@@ -6,7 +6,10 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
+import app.muplay.network.DefaultSubsonicSourceFactory
+import app.muplay.network.SubsonicSourceFactory
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -47,6 +50,16 @@ object DataModule {
   @Provides
   fun provideMediaProgressDao(database: MuPlayDatabase): MediaProgressDao =
     database.mediaProgressDao()
+
+  @Provides
+  fun provideLibraryDao(database: MuPlayDatabase): LibraryDao = database.libraryDao()
+
+  /**
+   * `:core:network` is a plain Kotlin/JVM module with no Hilt and no Android dependency, and it
+   * stays that way — this is where its factory enters the graph.
+   */
+  @Provides
+  fun provideSubsonicSourceFactory(): SubsonicSourceFactory = DefaultSubsonicSourceFactory
 
   /**
    * One DataStore instance per process for this file. DataStore throws
