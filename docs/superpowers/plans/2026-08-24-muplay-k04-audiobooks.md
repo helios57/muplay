@@ -273,7 +273,10 @@ findings, three of them additive and one of them a design correction to Plan 3's
    current without a blocking read on the player's application thread — which Plan 3's own
    `ResumePolicy` doc demands — and "start this book from the beginning" is expressed by clearing
    progress, not by overriding a position (which the seam forbids, correctly). **Additive:** Task 2
-   adds `observeAll()`, `findAll(mediaIds)` and `clear(mediaIds)`.
+   adds `observeAll()`, `findIn(mediaIds)` and `clear(mediaIds)`. **`findIn`, not
+   `findAll(mediaIds)`** — `MediaProgressDao.findAll()` already exists on disk with no arguments, so
+   the second name would create an overload pair that reads as a mistake at every call site. Task 2's
+   Interfaces block and its KDoc both say `findIn`; this sentence was the outlier.
 4. **`MuPlaybackService` builds its player through `MuPlayerFactory.create()` and never keeps the
    `ExoPlayer`.** `setSkipSilenceEnabled` is on `ExoPlayer`, not on `Player`, so silence skipping
    is unreachable from what the service holds. **Additive:** Task 7 adds
@@ -336,10 +339,12 @@ Plan 4 is **audiobooks**. Explicitly **not** in this plan:
 | `core/model/src/main/kotlin/app/muplay/model/SleepTimer.kt` | **new** — `SleepTimerRequest`, `SleepTimerState` |
 | `core/database/src/main/kotlin/app/muplay/database/entity/BookSettingsEntity.kt` | **new** — table `book_settings`, keyed on the book id |
 | `core/database/src/main/kotlin/app/muplay/database/entity/ChapterEntity.kt` | **new** — table `chapters`, the parsed-once cache |
+| `core/database/src/main/kotlin/app/muplay/database/entity/ChapterScanEntity.kt` | **new** — table `chapter_scans`, the parent of `chapters` and the record that a file with no chapters *was* scanned |
 | `core/database/src/main/kotlin/app/muplay/database/dao/BookSettingsDao.kt` | **new** |
 | `core/database/src/main/kotlin/app/muplay/database/dao/ChapterDao.kt` | **new** |
-| `core/database/src/main/kotlin/app/muplay/database/dao/MediaProgressDao.kt` | **modify** — `observeAll`, `findAll(mediaIds)`, `clear(mediaIds)` |
-| `core/database/src/main/kotlin/app/muplay/database/MuPlayDatabase.kt` | **modify** — version **5**, two entities, `MIGRATION_4_5` |
+| `core/database/src/main/kotlin/app/muplay/database/dao/AudiobookDao.kt` | **new** — the shelf queries; adds no entity, so the schema version does not move again (Task 4) |
+| `core/database/src/main/kotlin/app/muplay/database/dao/MediaProgressDao.kt` | **modify** — `observeAll`, `findIn(mediaIds)`, `clear(mediaIds)` |
+| `core/database/src/main/kotlin/app/muplay/database/MuPlayDatabase.kt` | **modify** — version **5**, **three** entities (`BookSettingsEntity`, `ChapterEntity`, `ChapterScanEntity`), `MIGRATION_4_5`, and one dao accessor per new DAO |
 | `core/database/src/main/kotlin/app/muplay/database/Migrations.kt` | **new** — the project's first migration, SQL copied from the exported schema |
 | `core/database/src/main/kotlin/app/muplay/database/AudiobookRepository.kt` | **new** — what a book is, the shelf, the settings |
 | `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` | **modify** — the two new DAOs, the migration on the builder (Plan 2's destructive fallback is kept — Task 2 Step 5), and the `@Singleton Clock` moved down from `:core:media` (Task 4) |
@@ -355,7 +360,7 @@ Plan 4 is **audiobooks**. Explicitly **not** in this plan:
 | `core/media/src/main/kotlin/app/muplay/media/SleepTimerController.kt` | **new** — the countdown, the fade, end-of-chapter |
 | `core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt` | **new** — pure: accelerometer samples → "that was a shake" |
 | `core/media/src/main/kotlin/app/muplay/media/ShakeSensor.kt` | **new** — the `SensorEventListener` shim, and nothing else |
-| `core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt` | **modify** — `mediaType`, `speed` |
+| `core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt` | **modify** — `mediaType`, `speed`, and the computed `isAudiobook` — the class's first author branch, so its coverage floor moves LINE → BRANCH (Task 7 Step 6) |
 | `core/media/src/main/kotlin/app/muplay/media/PlaybackConnection.kt` | **modify** — map the two new fields |
 | `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt` | **modify** — `wrap(exoPlayer)` |
 | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | **modify** — snapshot, speed controller, sleep timer, `onPlaybackResumption` |
@@ -6044,7 +6049,8 @@ git commit -m "feat(media): books resume at their own exact position, and only b
   - `MuPlayerFactory.wrap(exoPlayer: ExoPlayer): MuPlayer`
   - `PlaybackState` gains `val mediaType: Int` and `val speed: Float`;
     `PlaybackState.NOTHING_PLAYING` gains `MediaMetadata.MEDIA_TYPE_MIXED` and `1.0f`
-  - `PlaybackState.isAudiobook: Boolean` (computed)
+  - `PlaybackState.isAudiobook: Boolean` (computed) — **the class's first author branch**, which is
+    why Step 6 moves `PlaybackState` off Plan 3's LINE floor row and onto the BRANCH one
 
 ### The trap that gives this task its name
 
@@ -6727,6 +6733,20 @@ Mutation 1 is JVM-side (`BookSpeedController.kt` into `revert()`'s list). Mutati
 device-side and go in the task report. Re-measure `:core:media`'s floors:
 `BookPlaybackSettings` is a JVM floor, `BookSpeedController` is instrumented, and `PlaybackState`'s
 new `isAudiobook` getter carries branches that need a floor of their own.
+
+**`PlaybackState` must move rows, and this is the task that moves it.** Plan 3's `:core:media` floor
+table puts it under *"Android plumbing with **no author conditional**"* → **LINE**, and gives the
+reason in the same row: *"a BRANCH rule over a zero-branch class matches only zero-total counters and
+passes silently at every minimum through JaCoCo's `isNaN` path."* That classification was correct
+when Plan 3 wrote it and stops being correct here: `isAudiobook` is this class's **first author
+branch**, and a LINE rule cannot see it — a getter that returned `true` unconditionally would keep
+every line covered and every floor green while sending every listener to the wrong player screen.
+
+So: **remove `"app.muplay.media.PlaybackState"` from the LINE rule's `includes` and add it to the
+BRANCH one**, measured like every other entry. Do not leave it in both — a class in two rules is two
+numbers for one fact, and the weaker one is the one nobody reads. Record the move and the measured
+ratio in the task report; Plan 3's table is a statement about the tree at Plan 3's time, and this is
+the change that dates it.
 
 ```bash
 git add core/media build.gradle.kts ci/mutation-probes.sh
