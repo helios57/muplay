@@ -111,8 +111,14 @@ Copied verbatim from the roadmap's **Definition of done, per plan**:
 | 8 | `UpnpPlayer` — a `SimpleBasePlayer` over the renderer, and the renderer that disappears | Media3 sees an ordinary `Player`; a dead speaker becomes an error, not silence |
 | 9 | Handover — the output switch, the one-shot resume target, and the progress row | casting mid-song lands on the same second, and a book's position is still written |
 | 10 | `:feature:castpicker` — the device list, the cast button, and volume | a user picks a speaker and hears it, and sees why when they cannot |
-| 12 | `RendererDirect` — the setting Task 7 calls a setting | the user can turn it on, knowing what it costs, and turn it off again |
 | 11 | The gates — the Tier 1 Cast job, the Tier 2 cast journey, the coverage floors, the spec corrections | the whole subsystem is gated, and the spec's §6 no longer contradicts itself |
+| 12 | `RendererDirect` — the setting Task 7 calls a setting | the user can turn it on, knowing what it costs, and turn it off again |
+
+> **Task 12 was added after this plan was written, and Task 11 kept its number.** A spec-coverage
+> audit found that Task 7's *"it is a setting, default off"* described something nobody had built.
+> Task 11 is referenced by number from Plan 3 Task 10 and from the audit itself, so nothing is
+> renumbered; Task 12 lands after the gates task and carries its own journey extension, floors and
+> spec correction rather than reaching back into Task 11's.
 
 ---
 
