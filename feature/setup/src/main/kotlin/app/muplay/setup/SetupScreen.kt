@@ -2,45 +2,66 @@ package app.muplay.setup
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import app.muplay.model.LibraryRole
 
 /**
  * The first-run setup screen: a server URL, username and password, and a Connect button that
- * reports [SetupUiState] back to the user — including, on success, the name of every library the
- * server returned. Deliberately thin — the only branching this file owns is which
- * `Text`/`Composable` to render for a given [SetupUiState], which genuinely needs Compose to
- * exercise and is covered by `FirstRunJourneyTest` on a real emulator (Tier 2); [SetupViewModel]
- * carries the state-machine logic, and the failure-to-message mapping lives in
- * `SetupFailureReason.toMessage` precisely so it does *not* need Compose or an emulator to test.
- * `viewModel()` uses the platform's default factory, which is able to construct [SetupViewModel]
- * because every one of its constructor parameters is defaulted.
+ * reports [SetupUiState] back to the user — including, once connected, every library the server
+ * returned, for the user to tag as Music or Audiobooks. Deliberately thin — the only branching
+ * this file owns is which `Text`/`Composable` to render for a given [SetupUiState], which
+ * genuinely needs Compose to exercise and is covered by `FirstRunJourneyTest` on a real emulator
+ * (Tier 2); [SetupViewModel] carries the state-machine logic, and the failure-to-message mapping
+ * lives in `SetupFailureReason.toMessage` precisely so it does *not* need Compose or an emulator
+ * to test.
+ * `hiltViewModel()` resolves [SetupViewModel] from the Hilt graph, which is what lets it reach
+ * `LibraryRepository` and `CredentialStore` through ordinary constructor injection.
  */
 @Composable
-fun SetupScreen(modifier: Modifier = Modifier, viewModel: SetupViewModel = viewModel()) {
+fun SetupScreen(
+  onSetupComplete: () -> Unit,
+  modifier: Modifier = Modifier,
+  viewModel: SetupViewModel = hiltViewModel(),
+) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  SetupScreen(uiState = uiState, onConnect = viewModel::connect, modifier = modifier)
+  LaunchedEffect(uiState) {
+    if (uiState is SetupUiState.Ready) onSetupComplete()
+  }
+  SetupScreen(
+    uiState = uiState,
+    onConnect = viewModel::connect,
+    onRoleChosen = viewModel::setRole,
+    onContinue = viewModel::continueToLibrary,
+    modifier = modifier,
+  )
 }
 
 @Composable
 private fun SetupScreen(
   uiState: SetupUiState,
   onConnect: (serverUrl: String, username: String, password: String) -> Unit,
+  onRoleChosen: (Int, LibraryRole) -> Unit,
+  onContinue: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // Server URL and username are not sensitive, so losing them on rotation would be a pure
@@ -97,20 +118,43 @@ private fun SetupScreen(
 
     when (uiState) {
       is SetupUiState.Idle, is SetupUiState.Connecting -> Unit
-      is SetupUiState.Success -> {
+      is SetupUiState.Tagging -> {
         Text(
           text = "Connected to ${uiState.serverInfo.type} ${uiState.serverInfo.serverVersion}",
           color = MaterialTheme.colorScheme.primary,
         )
-        // Each library's own name, one Text per library, exactly as the server reported them.
-        // No empty-state branch and no role label: `SetupUiState.Success.libraries` is what
-        // `getMusicFolders` returned (see its own doc), and what a library is *for* is not in
-        // that response at all. Turning this list into something the user picks from is the next
-        // plan's job; this task only has to show that the connection reached real server state.
+        // The server cannot tell us what a library holds -- Navidrome reports every file as
+        // `type: "music"` -- so the user decides, once, here. No name is inspected: "Hörbücher"
+        // is not "Audiobooks", and a wrong guess silently poisons shuffle scope.
+        Text(text = "What is each library for?", style = MaterialTheme.typography.titleMedium)
         uiState.libraries.forEach { library ->
-          Text(text = library.name, style = MaterialTheme.typography.bodyLarge)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(text = library.name, modifier = Modifier.weight(1f))
+            FilterChip(
+              selected = library.role == LibraryRole.MUSIC,
+              onClick = { onRoleChosen(library.id, LibraryRole.MUSIC) },
+              label = { Text("Music") },
+            )
+            FilterChip(
+              selected = library.role == LibraryRole.AUDIOBOOKS,
+              onClick = { onRoleChosen(library.id, LibraryRole.AUDIOBOOKS) },
+              label = { Text("Audiobooks") },
+            )
+          }
+        }
+        Button(
+          onClick = onContinue,
+          enabled = uiState.canContinue,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Continue")
         }
       }
+      is SetupUiState.Ready -> Text(text = "Setup complete")
       is SetupUiState.Failure ->
         Text(
           text = uiState.reason.toMessage(),

@@ -2,82 +2,73 @@ package app.muplay.setup
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.muplay.database.CredentialStore
+import app.muplay.database.LibraryRepository
+import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
-import app.muplay.model.ServerInfo
 import app.muplay.model.SubsonicCredentials
-import app.muplay.network.SubsonicClient
-import app.muplay.network.SubsonicErrorException
-import app.muplay.network.SubsonicHttpException
+import app.muplay.network.SubsonicSource
+import app.muplay.network.SubsonicSourceFactory
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
- * Drives the first-run setup screen: takes a server URL, username and password, calls `ping` then
- * `getMusicFolders`, and reports success or a typed failure as [uiState].
+ * Drives first run: connect, store the credentials, then have the user tag every library.
  *
- * [ping] and [fetchLibraries] are the seams that make this class testable without a mock framework
- * or a real network call: plain suspend functions, defaulted to real [SubsonicClient] calls, that
- * [SetupViewModelTest] replaces with hand-written fake lambdas per test. `SubsonicClient` itself
- * cannot be faked directly — it is a concrete, non-open class whose primary constructor already
- * builds a real Retrofit instance (see its own documentation) — so each seam sits one level up,
- * at exactly the two calls [connect] needs.
+ * Constructor-injected, replacing the defaulted-lambda seam this class used to carry. That seam
+ * existed because there was no DI graph to inject from; there is one now (Task 1's ruling), and
+ * three real interfaces are both easier to fake and honest about what this class needs.
  *
- * Two independent lambdas rather than one that returns both halves: keeping [ping]'s signature
- * exactly as it was means every existing test, and every existing call site, still says what it
- * meant. The cost is that the two defaults build a [SubsonicClient] each — two `Retrofit`
- * instances per connect attempt, on a flow a user runs once. `SubsonicClient` holds no per-call
- * state worth sharing (its one shared object, the `SecureRandom` behind salt generation, is
- * already a companion-level singleton), so this is a small allocation cost, not a correctness or
- * connection-reuse one.
- *
- * No repository, use-case, or domain layer sits between this ViewModel and [SubsonicClient]:
- * per this project's constraints, `core/network`'s client already *is* the entry point to data.
- *
- * `@JvmOverloads` is not decorative here: [SetupScreen] constructs this ViewModel with the plain
- * `viewModel()` composable, no custom factory. That default factory instantiates a ViewModel via
- * a genuine zero-argument JVM constructor found through reflection — a Kotlin constructor with
- * defaulted parameters compiles to a single constructor plus a synthetic `$default` bridge, not a
- * real no-arg overload, so without `@JvmOverloads` that reflective lookup fails at runtime. It is
- * `FirstRunJourneyTest` that actually proves this end to end: that journey reaches the real screen
- * through `viewModel()` on a real device, which no JVM test in this module can do.
+ * [createSource] is a lambda rather than the `SubsonicSourceFactory` type directly so a test can
+ * supply one without constructing credentials-shaped machinery; Hilt binds it from the real
+ * factory in the constructor below.
  */
-class SetupViewModel @JvmOverloads constructor(
-  private val ping: suspend (SubsonicCredentials) -> ServerInfo = { credentials ->
-    SubsonicClient(credentials).ping()
-  },
-  private val fetchLibraries: suspend (SubsonicCredentials) -> List<MusicLibrary> = { credentials ->
-    SubsonicClient(credentials).getMusicFolders()
-  },
+@HiltViewModel
+class SetupViewModel(
+  private val createSource: (SubsonicCredentials) -> SubsonicSource,
+  private val credentials: SetupCredentialSink,
+  private val libraries: SetupLibrarySink,
 ) : ViewModel() {
+
+  @Inject
+  constructor(
+    sourceFactory: SubsonicSourceFactory,
+    credentialStore: CredentialStore,
+    libraryRepository: LibraryRepository,
+  ) : this(
+    createSource = { sourceFactory.create(it) },
+    credentials = object : SetupCredentialSink {
+      override suspend fun save(credentials: SubsonicCredentials) = credentialStore.save(credentials)
+    },
+    libraries = object : SetupLibrarySink {
+      override suspend fun refreshFromServer() = libraryRepository.refreshFromServer()
+      override suspend fun setRole(musicFolderId: Int, role: LibraryRole) =
+        libraryRepository.setRole(musicFolderId, role)
+      override suspend fun current(): List<MusicLibrary> = libraryRepository.libraries.first()
+    },
+  )
 
   private val _uiState = MutableStateFlow<SetupUiState>(SetupUiState.Idle)
   val uiState: StateFlow<SetupUiState> = _uiState.asStateFlow()
 
+  private var serverInfo: app.muplay.model.ServerInfo? = null
+
   /**
-   * Validates [serverUrl] and, if it is a well-formed `http`/`https` URL, attempts to connect.
-   * A blank or malformed URL is rejected synchronously, before [ping] is ever called — see
-   * [SetupUiState.Failure] with [SetupFailureReason.InvalidUrl].
+   * Validates [serverUrl], connects, stores the credentials and lists the libraries for tagging.
    *
-   * Otherwise moves to [SetupUiState.Connecting] and, once [ping] and then [fetchLibraries]
-   * settle, to exactly one of:
-   * - [SetupUiState.Success], if both returned — carrying the server's identity *and* its
-   *   libraries. [fetchLibraries] runs only after [ping] has succeeded, and its failure is a
-   *   failure of the whole attempt: a setup that cannot list a single library has not produced
-   *   anything the user can go on to browse, and reporting it as a `Success` with an empty list
-   *   would be indistinguishable from a server that genuinely has none.
-   * - [SetupUiState.Failure] with [SetupFailureReason.Rejected], if either threw
-   *   [SubsonicErrorException] (a Subsonic-level error, e.g. wrong credentials) or
-   *   [SubsonicHttpException] (an unsuccessful HTTP status) — the server answered, on purpose.
-   * - [SetupUiState.Failure] with [SetupFailureReason.Unreachable] for anything else — a
-   *   transport failure or an unparseable response, where nothing came back to interpret at all.
+   * The order is load-bearing: the credentials are stored **before** the libraries are fetched,
+   * because `LibraryRepository.refreshFromServer` reads them back out of the store — fetching
+   * first would fail with `NotConfiguredException` on every first run.
    *
-   * A [CancellationException] is rethrown, not reported as a failure: cancelling the coroutine
-   * (e.g. the ViewModel being cleared mid-connect) is not the server saying anything at all, and
-   * must not flash an "unreachable" message a user never asked for.
+   * A [CancellationException] is rethrown rather than reported: cancelling the coroutine is not
+   * the server saying anything, and must not flash an "unreachable" message nobody asked for.
    */
   fun connect(serverUrl: String, username: String, password: String) {
     val trimmedUrl = serverUrl.trim()
@@ -88,13 +79,16 @@ class SetupViewModel @JvmOverloads constructor(
 
     _uiState.value = SetupUiState.Connecting
     viewModelScope.launch {
-      val credentials = SubsonicCredentials(trimmedUrl, username, password)
+      val entered = SubsonicCredentials(trimmedUrl, username, password)
       _uiState.value = try {
-        val serverInfo = ping(credentials)
-        SetupUiState.Success(serverInfo, fetchLibraries(credentials))
-      } catch (e: SubsonicErrorException) {
+        val info = createSource(entered).ping()
+        serverInfo = info
+        credentials.save(entered)
+        libraries.refreshFromServer()
+        tagging(info)
+      } catch (e: app.muplay.network.SubsonicErrorException) {
         SetupUiState.Failure(SetupFailureReason.Rejected(code = e.code, detail = e.message))
-      } catch (e: SubsonicHttpException) {
+      } catch (e: app.muplay.network.SubsonicHttpException) {
         SetupUiState.Failure(SetupFailureReason.Rejected(code = e.status, detail = e.message))
       } catch (e: CancellationException) {
         throw e
@@ -102,5 +96,36 @@ class SetupViewModel @JvmOverloads constructor(
         SetupUiState.Failure(SetupFailureReason.Unreachable)
       }
     }
+  }
+
+  /**
+   * Records the user's decision for one library. **Nothing here looks at the library's name** —
+   * a name heuristic would be silently wrong for any non-English library, and its only symptom
+   * would be audiobooks appearing in a music shuffle.
+   */
+  fun setRole(musicFolderId: Int, role: LibraryRole) {
+    viewModelScope.launch {
+      libraries.setRole(musicFolderId, role)
+      serverInfo?.let { _uiState.value = tagging(it) }
+    }
+  }
+
+  /** Leaves setup, but only once every library has a role. */
+  fun continueToLibrary() {
+    viewModelScope.launch {
+      val current = libraries.current()
+      if (current.none { it.role == LibraryRole.UNASSIGNED }) {
+        _uiState.value = SetupUiState.Ready
+      }
+    }
+  }
+
+  private suspend fun tagging(info: app.muplay.model.ServerInfo): SetupUiState.Tagging {
+    val current = libraries.current()
+    return SetupUiState.Tagging(
+      serverInfo = info,
+      libraries = current,
+      canContinue = current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED },
+    )
   }
 }
