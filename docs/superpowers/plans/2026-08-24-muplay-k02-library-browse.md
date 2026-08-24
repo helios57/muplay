@@ -8568,6 +8568,12 @@ class SettingsViewModel @Inject constructor(
       busy.value = false
     }
   }
+
+  private companion object {
+    const val STOP_TIMEOUT_MILLIS = 5_000L
+    const val CONNECTED_MESSAGE = "Connected."
+  }
+}
 ```
 
 - [ ] **Step 3: Write the screen and the slot**
