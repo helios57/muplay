@@ -146,6 +146,32 @@ touches configuration state must exercise all four combinations** — neither, L
 only, both — or explain in a comment why one of the four is genuinely not reachable from the code
 under test. A test file that only ever constructs "both configured" is rejected at review.
 
+### Spec §8's other two clauses, and where each is discharged
+
+> *"Both are opt-in, both **fail closed**, and neither may **block core playback**."*
+
+Those are three separate promises and each has a specific place it is kept.
+
+**Opt-in** is the severability contract above: nothing exists until credentials are saved, and the
+destination is not registered at all until they are (Task 10).
+
+**Fail closed** means every failure resolves toward *doing less*, never toward doing something
+unasked. Concretely, in this plan: a not-configured service yields `null` from its provider rather
+than a partially-built client (Task 4); one service throwing during a refresh leaves the other's
+requests updated and the failed one's rows **untouched** rather than marked failed (Task 9); an
+ambiguous or absent arrival match yields `null` rather than a best guess (Task 9); an unrecognised
+Lidarr download state reports progress rather than a verdict (Task 7); an unrecognised Bindery
+status reports `Requested`, the least-claiming member (Task 8); a stored URL that will not re-parse
+under the current cleartext policy reads as *not configured* rather than being used (Task 2); and a
+201 with no album id is a loud failure rather than `Added(0)` (Task 6). **Every one of those is a
+committed assertion**, not a habit.
+
+**Not blocking core playback** is structural rather than careful: this plan consumes nothing from
+Plans 3–6, imports no Media3 type, registers no service, starts no background work, and adds no
+`WorkManager` job (Task 9 says why). The only code that runs at all runs while the requests screen
+is on screen. `ConventionTest`'s severability rule makes the first half checkable; the absence of
+any scheduler makes the second half true by construction.
+
 ---
 
 ## What earlier plans hand this plan — consume it, do not rebuild it
@@ -311,19 +337,177 @@ decision the next spec reader will make differently.
 
 ## Research provenance
 
-<!--RESEARCH_PROVENANCE-->
+Spec §8 names two services and states one of them in a way that is wrong. Everything below was
+established from each project's **own source or generated API document** before a line of this plan
+was written, and every task cites what it rests on. Where something could not be established, it is
+in the last table and the task that needs it verifies it against a live instance as its first step.
+
+### Lidarr — `github.com/Lidarr/Lidarr`
+
+| Claim | Source |
+|---|---|
+| **Actively maintained, not archived.** `"archived": false`, `pushed_at` 2026-08-23 | `api.github.com/repos/Lidarr/Lidarr` |
+| Latest **stable** release `v3.1.0.4875` (2025-11-16); `develop` is `v3.1.4.5029` (2026-08-23) and every release after 4875 is `"prerelease": true` | GitHub releases API; `azure-pipelines.yml` on both branches |
+| **Readarr, by contrast, is archived** — `"archived": true`, last push 2025-06-27 | `api.github.com/repos/Readarr/Readarr` |
+| API version is still `v1` | `src/Lidarr.Http/ApiInfoController.cs` — `Current = "v1"` |
+| Auth accepts `X-Api-Key` header, `?apikey=` query, and `Authorization: Bearer` | `src/Lidarr.Http/Authentication/AuthenticationBuilderExtensions.cs`, `ApiKeyAuthenticationHandler.ParseApiKey` |
+| **Lidarr logs path + query string** to its trace log — the reason this client is header-only | `src/Lidarr.Http/Middleware/LoggingMiddleware.cs` |
+| A missing key and a wrong key both produce a **bare 401 with an empty body** | `ApiKeyAuthenticationHandler.HandleChallengeAsync` |
+| `AuthenticationRequired=DisabledForLocalAddresses` does **not** exempt the API — the bypass is on the `"UI"` policy only | `UiAuthorizationHandler`; `Startup.cs`'s `FallbackPolicy` |
+| `GET /ping` is the only `[AllowAnonymous]` endpoint, is **not** under `/api/v1`, returns `{"status":"OK"}` | `src/Lidarr.Http/Ping/PingController.cs` |
+| `GET /api/v1/system/status` fields incl. `appName`, `instanceName`, `version`, `urlBase`, `authentication` | `openapi.json` `SystemResource` |
+| A booting server answers **any** API call with `503 {"errorMessage":"Lidarr is starting up, please try again later"}` | `src/Lidarr.Http/Middleware/StartingUpMiddleware.cs` |
+| `ReturnHttpNotAcceptable = true` — no `Accept` can mean **406** | `src/Lidarr.Http/Startup.cs` |
+| A `urlBase` server answers unprefixed API paths with a **307**, method and body preserved | `src/Lidarr.Http/Middleware/UrlBaseMiddleware.cs` |
+| Serializer: camelCase, case-insensitive on input, enums as camelCase strings (integers also accepted), **null-valued fields omitted from responses** | `src/NzbDrone.Common/Serializer/System.Text.Json/STJson.cs` |
+| `POST /api/v1/album` required fields: `foreignAlbumId`, `artist.foreignArtistId`, `artist.qualityProfileId` (> 0, exists), `artist.metadataProfileId` (> 0, exists), and `artist.rootFolderPath` when `artist.path` is blank | `src/Lidarr.Api.V1/Albums/AlbumController.cs` `PostValidator` |
+| Success is **201** with the persisted resource; PUT is 202 | `src/Lidarr.Http/REST/RestController.cs` `Created(int id)` |
+| A duplicate add is **400**, message `"This album has already been added."` — no code, nothing structural | `AlbumExistsValidator.GetDefaultMessageTemplate` |
+| A 400 body is a bare JSON **array** of FluentValidation failures (`propertyName` PascalCase, dotted when nested) | `LidarrErrorPipeline.cs` — `STJson.ToJson(validationException.Errors)` |
+| `AddAlbumOptions` is `{ AddType, SearchForNewAlbum }` — **no `monitor`, no `monitored`** — and `addType` is overwritten to `Manual` server-side | `src/NzbDrone.Core/Music/Model/AddAlbumOptions.cs`; `AddAlbumService` |
+| **`artist.addOptions.searchForMissingAlbums = true` silently forces `album.addOptions.searchForNewAlbum = false`** | `src/NzbDrone.Core/Music/Services/AddAlbumService.cs`; open upstream issue Lidarr **#5012** |
+| `MonitorTypes` = `all, future, missing, existing, latest, first, none, unknown`; `NewItemMonitorTypes` = `all, none, new` | `src/NzbDrone.Core/Music/Model/MonitorTypes.cs` |
+| The add strategy is "decorate the lookup element", not "build a payload" | `frontend/src/Utilities/Album/getNewAlbum.js`, `Artist/getNewArtist.js`; `src/NzbDrone.Integration.Test/ApiTests/ArtistFixture.cs` |
+| **Album lookup sets `remoteCover`; only artist lookup sets `remotePoster`** | `AlbumLookupController.cs` vs `ArtistLookupController.cs` |
+| MBID term prefixes `lidarr:`, `lidarrid:`, `mbid:`; a slug that is not a GUID yields an **empty array, not an error** | `src/NzbDrone.Core/MetadataSource/SkyHook/SkyHookProxy.cs` |
+| Lookup proxies to `https://api.lidarr.audio/api/v0.4/…` and is rate-limited upstream | `src/NzbDrone.Common/Cloud/LidarrCloudRequestBuilder.cs`; `wiki.servarr.com/lidarr/metadata-troubleshooting` |
+| `RootFolderResource` carries `defaultQualityProfileId`, `defaultMetadataProfileId`, `defaultMonitorOption`, `defaultNewItemMonitorOption`, `accessible`, `freeSpace` | `src/Lidarr.Api.V1/RootFolders/RootFolderResource.cs` |
+| Queue is paged, **`pageSize` defaults to 10**; records carry `albumId`, `size`, **`sizeleft`** (lower-case `l`), `trackedDownloadState`, `trackedDownloadStatus`, `errorMessage`; queue `id` is not durable | `src/Lidarr.Http/PagingResource.cs`; `QueueResource.cs` |
+| `trackedDownloadState` enum: `downloading, downloadFailed, downloadFailedPending, importBlocked, importPending, importing, importFailed, imported, ignored` | `openapi.json` |
+| `AlbumStatisticsResource` carries `trackFileCount`, `totalTrackCount`; **`percentOfTracks` is 0–100, not 0–1** | `openapi.json`; `AlbumControllerWithSignalR` |
+| The API key is a **32-char lowercase hex** GUID with dashes removed, in `config.xml` | `ConfigFileProvider.cs` — `Guid.NewGuid().ToString().Replace("-", "")` |
+| No official Docker image; linuxserver and hotio both publish one | `wiki.servarr.com/lidarr/installation/docker` |
+| **`openapi.json` is Swashbuckle-generated, encodes no FluentValidation, declares zero required fields anywhere, and documents the POST response as 200 where the code returns 201** | the document itself, compared against the controllers |
+
+> **That last row is why this plan does not vendor Lidarr's OpenAPI as an oracle.** Spec §10's
+> whole argument for the OpenSubsonic spec is that *"the oracle's value is that it fails"*. An
+> oracle that is silent about every required field and actively wrong about the success status of
+> the one endpoint that matters would fail nothing and mislead about the crux.
+
+### Bindery — `github.com/vavallee/bindery`
+
+**Three unrelated projects are called Bindery**, and the wrong one is easier to find:
+`evanbrooks/bindery` (browser book layout, archived 2023) and `jarynclouatre/bindery` (an e-book
+format converter — and confusingly the only "Bindery" in awesome-selfhosted) are **not** this.
+
+| Claim | Status |
+|---|---|
+| MIT, ~408 stars, actively developed, **v1.32.1 (2026-08-20)**, `ghcr.io/vavallee/bindery`, port **8787** | Established |
+| **It is a Readarr replacement — acquisition automation, with no request or approval concept.** No request or approve routes in the router (the only `approve` is an import-review queue), none on the roadmap. **Adding a book *is* acquiring it.** | Established from source |
+| Base `/api/v1`; auth header `X-Api-Key`; `?apikey=` works on GET/HEAD/OPTIONS only and is **rejected on mutations** | Established from source |
+| **The API key is instance-wide and always treated as admin.** The users table has **no `api_key` column** across all 75 migrations, so the README's "per-account API key" claim is false | Established from source (`middleware.go`) |
+| `GET /api/v1/health`, unauthenticated → `{"status":"ok","version":"…"}` | Established from source |
+| `GET /api/v1/search/book?term=…` → a **bare array**. **The docs say `?q=` and are wrong** — the handler reads `term` | Established from source; the 400 on `?q=` was **read, not run** |
+| `POST /api/v1/author/book` (undocumented) → **201**. Body: `foreignBookId` (required), `foreignAuthorId`, `authorName`, `searchOnAdd`, `mediaType` ∈ `ebook \| audiobook \| both` | Established from source; the 201 was **read, not run** |
+| **`mediaType` defaults to `ebook`** — an omitted field silently acquires the wrong format | Established from source |
+| `GET /api/v1/book?status=…` → `{items,total,limit,offset}`; statuses `wanted \| downloading \| downloaded \| imported` | Established from source |
+| `asin` is top-level on a book; `foreignBookId` is namespaced `gb:` / `hc:` / `dnb:` / unprefixed-means-OpenLibrary | Established from source |
+| ISBN is **not** on `Book` (`ProviderISBNs` is `json:"-"`); it lives on editions via `GET /api/v1/book/{id}` | Established from source |
+| **There is no OpenAPI or Swagger document at all** | Established |
+
+### What could NOT be established, and where each is settled
+
+**This list is as important as the plan.** Nothing below is guessed at in any task; each is the
+first step of the task that needs it.
+
+| Unknown | Settled in | How |
+|---|---|---|
+| **The per-item field names of a Bindery search result and of a Bindery book** (`foreignBookId`, `title`, `authorName`, `foreignAuthorId`, `asin`, `id`, `status` are this plan's *expectations*, not observations) | Task 8 Step 1 | Capture `search/book` and `book?status=…` from a live instance; correct the DTOs to match. **Changing a field name there is a normal outcome, not a plan failure.** |
+| Whether Bindery's `?q=` really returns **400** | Task 8 Step 1; then permanently in `LiveBinderyTest` | `curl -o /dev/null -w '%{http_code}' '…/search/book?q=dune'` |
+| Whether `POST /api/v1/author/book` really returns **201**, and whether its body carries the created book's id | Task 8 Step 1; the id question decides `submitBook`'s return type in Step 6 | `curl -i -X POST …/api/v1/author/book` |
+| Where Bindery's API key comes from (settings UI / config file / env var) | Task 8 Step 1 and `ci/configure-bindery.sh` | Read Bindery's own docs against the running container |
+| Whether a query-string key on a Bindery **mutation** really is refused | Task 8 Step 1; then `LiveBinderyTest` | `curl -X POST '…/author/book?apikey=…'` |
+| Whether Lidarr's `GET /api` really returns 401 unauthenticated (derived from `ApiInfoController` lacking `[AllowAnonymous]` plus the fallback policy, **never observed**) | not used by this plan — the handshake is `system/status` | — |
+| The exact JSON key set of one FluentValidation failure (`propertyName` and `errorMessage` are confident; `attemptedValue`/`severity`/`errorCode`/`isWarning` are not) | Task 4 Step 3 capture; `LiveLidarrTest`'s empty-POST test | `curl -X POST …/api/v1/album -d '{}'` |
+| Whether `POST /api/v1/album` succeeds when the artist already exists but the nested `artist` omits the profile ids (the validators *read* unconditional; FluentValidation 9.x `.When()` on a nested path is worth confirming) | Task 6, and worth an explicit live check | POST with and without the profile ids and diff |
+| Whether `GET /api/v1/album/{id}` populates `statistics` (established for `?artistId=`; the single-id getter uses the same mapper but was not observed) | Task 7 Step 2 and `LiveLidarrTest` | `curl …/api/v1/album/1` |
+| Whether Lidarr's array query parameters bind as `albumIds=1&albumIds=2` or `albumIds[]=…` | **avoided** — this plan uses the single-id getter instead | — |
+| What HTTP status a lookup produces when `api.lidarr.audio` is unreachable (`SkyHookException` → ?) | Task 5 Step 1, recorded in the task report | Run the capture with the container's network detached |
+| Whether a request without `Accept` really gets 406 from this Lidarr build | `LiveLidarrTest` (which asserts `isIn(406, 200)` and asks for the real answer in the report) | — |
+| The exact linuxserver/hotio Lidarr image tag to pin, and the Bindery tag | Task 4 Step 3 and Task 11 Step 1 | List the registry's tags and record the choice |
+| Whether `mockwebserver3` 5.5.0 exposes a recorded body as `request.body.utf8()` | Task 6 Step 3 — a compile error is the cheapest way to find out | — |
 
 ---
 
 ## Task list
 
-<!--TASK_LIST-->
+| # | Task | Deliverable a reviewer can accept or reject on its own |
+|---|---|---|
+| 1 | `:integrations:core` — the module, the severability rule, and a base URL that cannot carry a secret | a URL type with no public constructor, a cleartext policy chosen by variant, and a build rule that fails if anything outside `integrations/` depends on this plan |
+| 2 | Integration credentials — the same seal as the Navidrome password, one Keystore key per service | forgetting one service provably leaves the other's key and entries untouched |
+| 3 | The request store — a separate one-table database, and a repository that cannot drop its argument | real Room, real SQL, order proven against insertion order, filter-by-service proven by two disjoint results |
+| 4 | `:integrations:lidarr` — the module, a key that never touches a URL, and the handshake | every request this client will ever make is asserted not to carry the key on its URL |
+| 5 | Lidarr — finding an album, and working out where to put it | the lookup element survives verbatim for the add; one root-folder pick satisfies every required field |
+| 6 | Lidarr — submitting the add, and proving the body carried the right identifier | the payload spec §8 called unverified, with a source per field and the search-cancelling trap pinned |
+| 7 | Lidarr — what happened to the request, mapped from a state nobody may invent | all nine `trackedDownloadState` values as one exact list; files-on-disk outranks the queue |
+| 8 | `:integrations:bindery` — asking for a book, where asking *is* acquiring | a second service, independently optional, with `mediaType` never left to its `ebook` default |
+| 9 | Arrival — the bridge to Navidrome's scan, and the composition that never guesses | exactly one match or no answer; a user with one service configured causes zero traffic to the other |
+| 10 | `:feature:requests` — a surface that is absent, not empty | with nothing configured there is no destination, no empty state, and one settings row |
+| 11 | The gates — real containers, a journey with nothing configured, and the spec correction | every claim this plan read from source but never ran, executed against a pinned container |
+
+**Tasks 4–7 are Lidarr and Task 8 is Bindery, and neither half depends on the other.** If Task 8's
+Step 1 cannot stand up a Bindery instance, **shipping Tasks 1–7 and 9–11 with Lidarr alone is a
+complete, coherent deliverable** — that is what "independently optional" means when it is built in
+rather than claimed.
 
 ---
 
 ## File Structure
 
-<!--FILE_STRUCTURE-->
+| File | Responsibility |
+|---|---|
+| `settings.gradle.kts` | **modify** — include `:integrations:core`, `:integrations:lidarr`, `:integrations:bindery`, `:integrations:requests`, `:feature:requests` |
+| `build.gradle.kts` | **modify** — five `coverageFloors` entries; the `liveLidarrTest` and `liveBinderyTest` tasks; the live-task name/tag map |
+| `build-logic/convention/src/main/kotlin/Testing.kt` | **modify** — generalise the single live-task constant into a name→tag map |
+| `app/src/test/kotlin/app/muplay/ConventionTest.kt` | **modify** — the severability rule, the cleartext-policy rule, and the widened live-task drift rule |
+| `app/build.gradle.kts` | **modify** — `:integrations:core`, `:integrations:requests`, `:feature:requests` |
+| `app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt` | **new** — provides `CleartextPolicy.Allowed`; the only variant that may |
+| `app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt` | **new** — provides `CleartextPolicy.Forbidden` |
+| `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` | **modify** — the settings affordance always; the requests destination only when something is configured |
+| `app/src/main/kotlin/app/muplay/ui/navigation/RequestsRoute.kt` | **new** — the two destinations |
+| `app/src/androidTest/kotlin/app/muplay/IntegrationsJourneyTest.kt` | **new** — Tier 2: absence, configuration, request, status |
+| `core/database/src/main/kotlin/app/muplay/database/KeystoreKeys.kt` | **new** — alias-parameterised Keystore key handling, extracted from `CredentialStore` |
+| `core/database/src/main/kotlin/app/muplay/database/CredentialStore.kt` | **modify** — delegate to `KeystoreKeys`; **no public API or behaviour change** |
+| `core/database/src/androidTest/kotlin/app/muplay/database/KeystoreKeysTest.kt` | **new** — two aliases throughout, never one |
+| `integrations/core/build.gradle.kts` | **new** |
+| `integrations/core/.../IntegrationService.kt` | **new** — the closed set of services, in render order |
+| `integrations/core/.../CleartextPolicy.kt` | **new** — a value, never a `BuildConfig.DEBUG` branch |
+| `integrations/core/.../IntegrationBaseUrl.kt` | **new** — private constructor; strips query, fragment and userinfo |
+| `integrations/core/.../IntegrationCredentials.kt` | **new** — sealed, one member per service, `toString()` redacted |
+| `integrations/core/.../IntegrationCredentialStore.kt` | **new** — one Keystore alias per service |
+| `integrations/core/.../IntegrationsClock.kt` | **new** — the qualifier that decouples this plan from Plan 3 |
+| `integrations/core/.../RequestStatus.kt` | **new** — five members, persisted as two TEXT columns |
+| `integrations/core/.../MediaRequest.kt` | **new** — the domain row; `id` is `SERVICE:externalId` |
+| `integrations/core/.../db/MediaRequestEntity.kt`, `MediaRequestDao.kt`, `IntegrationRequestsDatabase.kt` | **new** — a database of this plan's own, version 1 |
+| `integrations/core/.../MediaRequestRepository.kt` | **new** — the entry point; every argument proven to pass through |
+| `integrations/core/.../di/IntegrationsDataModule.kt` | **new** — qualified DataStore, the requests database, the clock |
+| `integrations/lidarr/build.gradle.kts` | **new** |
+| `integrations/lidarr/.../LidarrApi.kt`, `LidarrDto.kt` | **new** — the Retrofit surface and the wire shapes; every non-primitive nullable |
+| `integrations/lidarr/.../LidarrAuthInterceptor.kt` | **new** — `X-Api-Key` and `Accept`, in one place |
+| `integrations/lidarr/.../LidarrException.kt` | **new** — 401 / starting-up / validation / http |
+| `integrations/lidarr/.../LidarrSource.kt`, `LidarrClient.kt`, `LidarrSourceProvider.kt` | **new** — the port, the client, and a provider that returns `null` |
+| `integrations/lidarr/.../LidarrAddTargets.kt` | **new** — pure; where an added album goes |
+| `integrations/lidarr/.../LidarrAddPayload.kt` | **new** — pure; decorates the lookup element |
+| `integrations/lidarr/.../LidarrStatusMapper.kt` | **new** — pure; nine states onto five |
+| `integrations/lidarr/src/test/resources/fixtures/lidarr/*.json` | **new** — captured from a real instance, key-scrubbed |
+| `integrations/bindery/**` | **new** — the same shape, for a service with no OpenAPI document at all |
+| `integrations/requests/build.gradle.kts` | **new** |
+| `integrations/requests/.../MirrorPorts.kt` | **new** — four read-only single-method ports onto Plan 2 |
+| `integrations/requests/.../TitleMatching.kt` | **new** — pure; the one normalisation |
+| `integrations/requests/.../RequestArrivalDetector.kt` | **new** — exactly one match, or no answer |
+| `integrations/requests/.../RequestsRepository.kt` | **new** — the composition; polls only what is configured |
+| `integrations/requests/.../di/RequestsModule.kt` | **new** — binds the four ports to Plan 2's real collaborators |
+| `feature/requests/build.gradle.kts` | **new** |
+| `feature/requests/.../ConnectionCheck.kt` | **new** — five outcomes, none of which overclaims |
+| `feature/requests/.../RequestsUiState.kt`, `RequestsViewModel.kt`, `RequestsScreen.kt` | **new** — `NotConfigured` renders nothing |
+| `feature/requests/.../IntegrationSetupUiState.kt`, `IntegrationSetupViewModel.kt`, `IntegrationSetupScreen.kt` | **new** — URL, key, test, save |
+| `feature/requests/.../IntegrationsSettingsScreen.kt` | **new** — the one always-present affordance's destination |
+| `ci/lidarr.compose.yml`, `ci/configure-lidarr.sh` | **new** — a pinned container and its generated key |
+| `ci/bindery.compose.yml`, `ci/configure-bindery.sh` | **new** |
+| `ci/mutation-probes.sh` | **modify** — the ~20 probes this plan's values earn |
+| `.github/workflows/pr.yml` | **modify** — a `live-lidarr` and a `live-bindery` job |
+| `.github/workflows/e2e.yml` | **modify** — the Lidarr container and its `adb reverse` |
+| `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` | **modify** — §8 rewritten, §12 gains one risk row |
 
 ---
 
@@ -2944,6 +3128,12 @@ dependencies {
 ```
 
 - [ ] **Step 2: Write the failing auth test**
+
+> **`@StartStop` comes from `mockwebserver3-junit5`**, which is what `libs.okhttp.mockwebserver`
+> already resolves to (`com.squareup.okhttp3:mockwebserver3-junit5`). `:core:network`'s existing
+> tests start and stop the server by hand in `@BeforeEach`/`@AfterEach` instead. Use `@StartStop`
+> if it resolves; if it does not, copy `:core:network`'s manual pattern rather than adding a
+> dependency — and say which in the task report.
 
 `integrations/lidarr/src/test/kotlin/app/muplay/integrations/lidarr/LidarrAuthTest.kt`:
 
@@ -5909,6 +6099,7 @@ Expected: PASS. Re-measure the module floor.
 
 ```python
 LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
+LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrSource.kt"
 ```
 
 ```python
@@ -5919,8 +6110,7 @@ LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lid
      "if (progress?.isComplete == true) return RequestStatus.Imported",
      "if (false) return RequestStatus.Imported",
      "complete statistics report Imported even while a queue item still exists", 1),
-    ("integrations/lidarr-progress-zero-tracks", LIDARR_STATUS.replace(
-        "LidarrStatusMapper.kt", "LidarrSource.kt"),
+    ("integrations/lidarr-progress-zero-tracks", LIDARR_SOURCE,
      "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
      "get() = trackFileCount >= totalTrackCount",
      "an album with no tracks yet is not complete, however many files it has", 1),
@@ -6564,10 +6754,12 @@ key on mutations anyway."
   - `fun interface MirrorSync { suspend fun syncIfStale(): SyncState }`
   - `fun interface AlbumSearch { suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults }`
   - `fun interface LibraryRoles { suspend fun idsWithRole(role: LibraryRole): List<Int> }`
+  - `fun interface ConfiguredServices { val configured: Flow<Map<IntegrationService, IntegrationCredentials>> }`
+    — the fourth port, and the one that keeps `RequestsRepositoryTest` in Tier 1; see Step 5
   - `object TitleMatching` with `normalise(value: String): String`
   - `class RequestArrivalDetector @Inject constructor(sync, search, roles)` with
     `suspend fun locate(request: MediaRequest): String?`
-  - `class RequestsRepository @Inject constructor(requests, credentials, lidarr, bindery, arrival)`
+  - `class RequestsRepository @Inject constructor(requests: MediaRequestRepository, configured: ConfiguredServices, lidarr: LidarrSourceProvider, bindery: BinderySourceProvider, arrival: RequestArrivalDetector)`
     with `val configuredServices: Flow<Set<IntegrationService>>`,
     `val all: Flow<List<MediaRequest>>`, `suspend fun refresh(): RefreshReport`,
     `suspend fun recordLidarrAdd(...)`, `suspend fun recordBinderyAdd(...)`,
@@ -6592,11 +6784,12 @@ pulls to refresh.** For a feature whose entire payoff is "let me check on the th
 that is the right amount of machinery. If background polling is ever wanted, it is a plan of its
 own with a notification design attached.
 
-### The three ports, and why they are not over-abstraction
+### The four ports, and why they are not over-abstraction
 
-`RequestArrivalDetector` needs three things from Plan 2: a sync, a search, and the library roles.
-It takes them as three single-method interfaces it declares itself, with production adapters
-wired in `RequestsModule`.
+`RequestArrivalDetector` needs three things from Plan 2 — a sync, a search, and the library roles
+— and `RequestsRepository` needs a fourth from `:integrations:core`: which services are configured.
+All four are single-method interfaces this module declares itself, with production adapters wired
+in `RequestsModule`.
 
 This is the same argument `SubsonicSource` makes in `:core:network`, and it is the *only* reason:
 **a test needs a specific call to fail at a specific point** — `syncIfStale` returning
@@ -6604,6 +6797,11 @@ This is the same argument `SubsonicSource` makes in `:core:network`, and it is t
 with five constructor dependencies including a `SubsonicSourceProvider`. There is no mock framework
 in this build and there will not be one. Three `fun interface`s with hand-written fakes is the
 smallest thing that makes the whole detector Tier-1 testable.
+
+The fourth port has a second reason on top of that one: `IntegrationCredentialStore` reaches
+`AndroidKeystore`, so it is device-only. Behind `ConfiguredServices`, the four-configuration-
+combination test the severability contract demands is a **JVM** test rather than an emulator one —
+the difference between a rule that runs on every push and one that runs only in Tier 2.
 
 It also has a severability payoff worth naming: `:integrations:requests` touches `:core:database`
 through three methods, and every one of them is read-only. Nothing in this plan can change the
@@ -8297,3 +8495,115 @@ Lidarr payload is no longer unverified. Section 12 gains the metadata-lookup ris
 ```
 
 ---
+
+## Definition of done
+
+1. All eleven tasks' tests pass; **both tiers green**.
+2. Tier 2 carries this plan's three journeys, and **the first of them asserts an absence** — no
+   requests surface on a device with nothing configured — paired with a positive assertion so it
+   cannot pass on an app that failed to start.
+3. Coverage ≥ 0.90 on `:integrations:core`, `:integrations:lidarr`, `:integrations:bindery`,
+   `:integrations:requests` and `:feature:requests` — **branch** for the non-UI code, **line** for
+   the Compose code — every floor **measured** and every floor **watched fail once**.
+4. No mock framework has entered the dependency graph, and **no new third-party artifact of any
+   kind has**. `gradle/libs.versions.toml` gains no `[versions]` entry from this plan.
+5. Every external-API assumption is either backed by a live test against a pinned container of the
+   service in question, or is listed in **Research provenance → what could NOT be established**
+   with the task that settles it. There is no third category.
+6. Spec §8 is rewritten and §12 has its new row (Task 11 Step 8).
+7. `ConventionTest`'s `nothing outside integrations depends on an integration` passes, which is the
+   machine-checkable form of the roadmap's claim that this plan can be dropped.
+8. `./ci/mutation-probes.sh` reports every probe CAUGHT.
+
+---
+
+## Appendix A — the request/approval alternative, documented and deliberately not planned
+
+If a genuine **request-and-approve** workflow is ever wanted for books — a household where one
+person asks and another approves — Bindery cannot provide it, and neither can Audiobookshelf. The
+candidate is **AudioBookRequest (`github.com/markbeep/audiobookrequest`)**, and it is recorded here
+so the next person does not repeat the search.
+
+- It is the only candidate found with a real request concept **and** a complete, codegen-ready
+  **OpenAPI 3.1 document** (47 paths / 57 operations). The spec is **off by default** — enable with
+  `ABR_APP__OPENAPI_ENABLED=true` — but it can be generated offline for codegen without exposing it.
+- It has genuine permission tiers per endpoint: `POST /api/requests/{asin}` is **Untrusted**, so any
+  user may request; `/sources` and `/download` are **Admin**; `/auto-download` is **Trusted**. That
+  maps onto an approval model directly.
+- Its API key works on `/api/*` only — page routes reject a Bearer token — which is a useful
+  guardrail and means the UI cannot be scraped.
+- It identifies books by **ASIN** as the primary key, and its live search returns `asin`,
+  `narrators`, `runtime_length_min` and `downloaded`.
+- It requires **Python ≥ 3.14**, so pin the Docker tag rather than building it.
+
+**Audiobookshelf is not the answer**, and that is settled rather than assumed: its maintainer closed
+the "Global Book search and Wishlist" enhancement as `not_planned` with *"ABS does not support or
+promote piracy. It is designed to serve your own files, and does not include obtaining files."* It
+is a library and playback server. (It does fetch **podcast** episodes from RSS, admin-gated; there
+is no book equivalent.)
+
+**This appendix is documentation, not scope.** Nothing in this plan builds against AudioBookRequest,
+and adding it would be a plan of its own.
+
+---
+
+## Appendix B — spec defects found while writing this plan
+
+Recorded here as well as corrected in Task 11 Step 8, because a plan that quietly fixes a spec
+leaves nobody able to check the fix.
+
+1. **§8 describes Bindery as a request service. It is not.** `vavallee/bindery` is a Readarr
+   replacement — acquisition automation — with no request or approval concept in its router or on
+   its roadmap. Adding a book *is* acquiring it. The framing is not a small wording issue: taken
+   literally it would have produced a request/approval state machine in this app that the server
+   does not have and cannot ever satisfy.
+2. **§8 does not say *which* Bindery.** Three projects share the name, and the two wrong ones are
+   easier to find — `evanbrooks/bindery` is archived browser book-layout tooling, and
+   `jarynclouatre/bindery` is the only "Bindery" listed in awesome-selfhosted.
+3. **§8's "`POST /api/v1/album` payload is unverified against a live instance" is now answerable**,
+   and the answer includes two things nobody would have guessed: the nested `artist`'s profile ids
+   are validated **even when the artist already exists**, and setting
+   `artist.addOptions.searchForMissingAlbums = true` makes the server silently cancel the album
+   search — a 201, a monitored album, and no download.
+4. **§9's module list (`integrations/*  bindery, lidarr`) is one module short of what the work
+   needs.** The composition of two clients plus Plan 2's mirror has to live somewhere that can see
+   all three, which is neither `:integrations:core` (the clients depend on it) nor a Compose
+   feature module. This plan adds `:integrations:requests` and says why.
+5. **§9's stack table names WorkManager, which is not in `gradle/libs.versions.toml`.** This plan
+   does not add it — see Task 9 — but the table promises a dependency the build does not have, the
+   same shape of defect as §10's ktlint/detekt row that a previous correction already fixed.
+6. **§10's OpenAPI-oracle countermeasure does not generalise to these services, and §8 gives no
+   hint of that.** Lidarr publishes an OpenAPI document that is Swashbuckle-generated, declares
+   zero required fields, and documents a 200 where the code returns 201; Bindery publishes none at
+   all. The substitute — a pinned container plus fixtures captured from a real instance — is what
+   Task 11 builds, and §8 should say so rather than leaving a reader to assume the oracle covers
+   everything.
+
+---
+
+## Appendix C — is this plan worth executing?
+
+Written into the plan rather than left to the controller, because the roadmap explicitly allows
+dropping it and an executor deserves to know what they are being asked to build.
+
+**The case for.** It is the only plan on the roadmap that adds something a user *cannot already do
+another way from their phone*: without it, wanting an album means opening Lidarr's web UI in a
+browser. It is genuinely severable — Task 1 builds the check that keeps it so — so its risk to the
+rest of the app is close to zero, and its Lidarr half now rests on a payload established from the
+server's own validators rather than the "unverified" the spec has carried since day one. That
+research is done and will not need doing twice.
+
+**The case against, stated as plainly.** It is eleven tasks, five new modules and two new CI
+containers for a feature that is, by the spec's own framing, optional. Its cleartext resolution
+means the users most likely to want it — LAN-only, plain HTTP — **cannot use it in a release
+build**. Its Bindery half rests on field names this plan did not observe. And it competes for
+attention with Plan 5 (Android Auto and Wear OS), which serves the *core* listening experience the
+whole project exists for.
+
+**The honest recommendation: execute Tasks 1–7 and 9–11, and treat Task 8 as conditional.** The
+Lidarr half is well-founded, self-contained and complete on its own — the architecture makes
+"Lidarr only" a first-class outcome rather than a degraded one. Task 8 should proceed only once
+someone has a Bindery instance in front of them; without one, it is exactly the guessing this
+plan's brief forbids. **And if the choice is between this plan and Plan 5, do Plan 5 first.**
+Requesting music is a nice thing to be able to do from the sofa; playing an audiobook in a car is
+the thing the application exists for.
