@@ -5396,6 +5396,18 @@ git commit -m "test(media): gapless measured in PCM frames, and the analyser tha
     `fun flushBlocking()`, `companion object { const val TICK_MS = 5_000L }`
   - `MediaModule` provides `@Singleton java.time.Clock`
 
+**Forward requirement recorded by Plan 6 (casting) — do not design it out.** When playback moves
+to a Sonos or DLNA renderer, the local `Player` is replaced by a remote one, and **one**
+`ProgressWriter` must follow that switch — a second writer on a second player would race the first
+for the same `media_progress` row. Plan 6 therefore adds `fun attach(player: Player)` at the point
+it needs it.
+
+This plan does **not** add that method: an unused method would be untested and would sit under the
+coverage floors as dead weight, and this plan has no second player to attach. What this plan owes
+Plan 6 is only that `attach` remains *possible* — so do not capture the constructor's `player` in a
+way that a long-lived ticker coroutine closes over irreversibly. Hold it behind a field the class
+can repoint, and `start()`/`flushBlocking()` keep their meaning unchanged.
+
 ### The seam, and what it is actually for
 
 Spec §3: *"`MuPlayer` is a `ForwardingPlayer` overriding **all six** `setMediaItem(s)` overloads to
