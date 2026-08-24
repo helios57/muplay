@@ -227,6 +227,15 @@ private val generatedCodeExcludes = listOf(
   // own logic in every ratio.
   "**/*_Impl*.*",
   "**/ComposableSingletons\$*.*",
+  // `**/*_Factory.*` (above) excludes the generated Factory class itself but is suffix-anchored
+  // on "Factory", so it does not match that class's own nested `$InstanceHolder` -- the static
+  // holder Dagger emits for a no-arg, unscoped `@Provides` method to memoize its one Factory
+  // instance. `:core:database`'s Task 4 added the first such provider in this project
+  // (`DataModule.provideSubsonicSourceFactory`), and its generated
+  // `DataModule_ProvideSubsonicSourceFactoryFactory$InstanceHolder` was the first time this
+  // nested shape appeared in a report at all -- confirmed by its absence from every module's
+  // report before that provider existed. Same generated-code argument as every pattern above it.
+  "**/*Factory\$InstanceHolder.*",
 )
 
 /**
