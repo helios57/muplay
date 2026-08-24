@@ -59,7 +59,13 @@ class BrowseEndpointsTest {
   fun `getAlbumList2 sends the scope, the type, the page and full authentication`() = runTest {
     enqueue(fixture(ALBUM_LIST_MUSIC_FIXTURE))
 
-    client.getAlbumList2(musicFolderId = 1, type = AlbumListType.ALPHABETICAL_BY_NAME, size = 500, offset = 0)
+    // Deliberately not `size = 500, offset = 0`: those are the clamp ceiling and the clamp floor,
+    // so a client that hardcoded either would still satisfy this test. The whole class of defect
+    // this file exists to catch is a parameter that *executes* but is never *discriminated*, and
+    // a value that coincides with a constant discriminates nothing. See the companion test below,
+    // which sends an entirely different set, and `getAlbumList2 clamps ...`, which sends the
+    // boundaries: between the three, no fixed string satisfies any parameter.
+    client.getAlbumList2(musicFolderId = 1, type = AlbumListType.ALPHABETICAL_BY_NAME, size = 250, offset = 40)
 
     val url = assertAuthenticatedRequestTo("/rest/getAlbumList2")
     // The scope, on the wire, as a plain decimal integer. Navidrome silently ignores a
@@ -67,6 +73,30 @@ class BrowseEndpointsTest {
     // here would be a scope leak that no response assertion could ever catch.
     assertThat(url.queryParameter("musicFolderId")).isEqualTo("1")
     assertThat(url.queryParameter("type")).isEqualTo("alphabeticalByName")
+    assertThat(url.queryParameter("size")).isEqualTo("250")
+    // `offset` is the reconcile paging loop's entire mechanism. Asserted at a real page rather
+    // than at 0: with every offset assertion in this file expecting "0", replacing the whole
+    // expression with the constant `"0"` -- a client that can only ever fetch page one -- left
+    // all 95 tests green at 100% branch coverage. Found by the independent review, not by a gate.
+    assertThat(url.queryParameter("offset")).isEqualTo("40")
+  }
+
+  @Test
+  fun `getAlbumList2 sends whichever ordering, scope and page it is given`() = runTest {
+    enqueue(fixture(ALBUM_LIST_AUDIOBOOKS_FIXTURE))
+
+    client.getAlbumList2(musicFolderId = 2, type = AlbumListType.NEWEST, size = 500, offset = 0)
+
+    val url = assertAuthenticatedRequestTo("/rest/getAlbumList2")
+    // A second, disjoint set of values for all four parameters. That is what this test is for:
+    // every one of them was previously observed at exactly one value, so a hardcoded constant
+    // satisfied the suite. `NEWEST` in particular was sent by nothing at all -- corrupting its
+    // wire value to "nEwEsT_typo" left all 95 tests green, and because `AlbumListType` is a
+    // deliberate zero-branch coverage rider no floor could ever have moved for it either. The
+    // real server answers an unimplemented type with `status: "failed"`, error 0 (`LiveNavidromeTest`
+    // measures both directions), so the literal below is a protocol contract, not a spelling.
+    assertThat(url.queryParameter("type")).isEqualTo("newest")
+    assertThat(url.queryParameter("musicFolderId")).isEqualTo("2")
     assertThat(url.queryParameter("size")).isEqualTo("500")
     assertThat(url.queryParameter("offset")).isEqualTo("0")
   }
@@ -151,17 +181,26 @@ class BrowseEndpointsTest {
   // --- getAlbum ------------------------------------------------------------------------------
 
   @Test
-  fun `getAlbum sends only the album id and must not send a scope`() = runTest {
+  fun `getAlbum sends whichever album id it is given and must not send a scope`() = runTest {
+    enqueue(fixture(ALBUM_WITH_SONGS_FIXTURE))
     enqueue(fixture(ALBUM_WITH_SONGS_FIXTURE))
 
+    // Two calls with two different ids, for the reason the whole class exists: one call asserting
+    // one id proves only that *an* id arrived, which a hardcoded constant satisfies too. The
+    // second id is the real one Navidrome minted for the captured album, so this also pins that
+    // the client passes a base62 server id through untouched rather than normalising it.
     client.getAlbum(albumId = "abc123", musicFolderId = 1)
-
-    val url = assertAuthenticatedRequestTo("/rest/getAlbum")
-    assertThat(url.queryParameter("id")).isEqualTo("abc123")
+    val first = assertAuthenticatedRequestTo("/rest/getAlbum")
+    assertThat(first.queryParameter("id")).isEqualTo("abc123")
     // The spec gives getAlbum exactly one parameter. `musicFolderId` here is a *stamping*
     // argument -- the library the caller already scoped by -- and sending it would be inventing
     // a parameter the endpoint does not define.
-    assertThat(url.queryParameter("musicFolderId")).isNull()
+    assertThat(first.queryParameter("musicFolderId")).isNull()
+
+    client.getAlbum(albumId = CAPTURED_ALBUM_ID, musicFolderId = 2)
+    val second = assertAuthenticatedRequestTo("/rest/getAlbum")
+    assertThat(second.queryParameter("id")).isEqualTo(CAPTURED_ALBUM_ID)
+    assertThat(second.queryParameter("musicFolderId")).isNull()
   }
 
   @Test
@@ -227,6 +266,13 @@ class BrowseEndpointsTest {
     assertThat(results.artists).allMatch { it.libraryId == 3 }
     assertThat(results.albums).allMatch { it.libraryId == 3 }
     assertThat(results.songs).allMatch { it.libraryId == 3 }
+
+    // The stamp above is only trustworthy if the scope it claims to come from actually went out,
+    // so the request is asserted here too -- and a second query and a second scope mean no fixed
+    // string satisfies either parameter across this file.
+    val url = nextRequest().url
+    assertThat(url.queryParameter("query")).isEqualTo("Test")
+    assertThat(url.queryParameter("musicFolderId")).isEqualTo("3")
   }
 
   @Test
@@ -288,12 +334,17 @@ class BrowseEndpointsTest {
   fun `getRandomSongs clamps a non-positive size up to one`() = runTest {
     enqueue(fixture(RANDOM_SONGS_FIXTURE))
 
-    client.getRandomSongs(musicFolderId = 1, size = 0)
+    client.getRandomSongs(musicFolderId = 2, size = 0)
 
     // `size=0` is not a documented value and Navidrome's behaviour for it is unknown; asking for
     // one song is the smallest well-defined request, and it keeps a caller's arithmetic error
     // from turning into an undefined server-side one.
-    assertThat(nextRequest().url.queryParameter("size")).isEqualTo("1")
+    val url = nextRequest().url
+    assertThat(url.queryParameter("size")).isEqualTo("1")
+    // The second scope this command is ever observed at. Every other getRandomSongs call in this
+    // file passes 1, so without this a hardcoded `"musicFolderId" to "1"` -- shuffle that can
+    // only ever play library 1 -- would satisfy the whole suite.
+    assertThat(url.queryParameter("musicFolderId")).isEqualTo("2")
   }
 
   @Test
@@ -377,6 +428,19 @@ class BrowseEndpointsTest {
   @Test
   fun `the cover art url omits size when none is asked for`() {
     assertThat(client.coverArtUrl("al-abc_0", null).toHttpUrl().queryParameter("size")).isNull()
+  }
+
+  @Test
+  fun `the cover art url forwards whichever art id and size it is given`() {
+    // Same audit as every request test above, applied to the one URL this client builds rather
+    // than sends: `id` and `size` were each observed at exactly one value, so a constant
+    // satisfied both. A cover-art URL that always requests the same art, or always the same
+    // pixel size, is a defect no response assertion can see -- the bytes come back fine.
+    val url = client.coverArtUrl(CAPTURED_COVER_ART_ID, sizePx = 96).toHttpUrl()
+
+    assertThat(url.encodedPath).isEqualTo("/rest/getCoverArt")
+    assertThat(url.queryParameter("id")).isEqualTo(CAPTURED_COVER_ART_ID)
+    assertThat(url.queryParameter("size")).isEqualTo("96")
   }
 
   // --- the production factory ----------------------------------------------------------------
@@ -482,7 +546,16 @@ class BrowseEndpointsTest {
   private companion object {
     const val REQUEST_TIMEOUT_SECONDS = 5L
 
+    /**
+     * The ids Navidrome actually minted for the captured album, read out of
+     * `get-album-list2-music.json`. Used as the *second* value wherever an id parameter would
+     * otherwise be observed at exactly one, so no hardcoded constant can satisfy the suite.
+     */
+    const val CAPTURED_ALBUM_ID = "7orvCZZyWRqsduCdqXoguY"
+    const val CAPTURED_COVER_ART_ID = "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51"
+
     const val ALBUM_LIST_MUSIC_FIXTURE = "get-album-list2-music.json"
+    const val ALBUM_LIST_AUDIOBOOKS_FIXTURE = "get-album-list2-audiobooks.json"
     const val ALBUM_LIST_EMPTY_FIXTURE = "get-album-list2-empty.json"
     const val ALBUM_WITH_SONGS_FIXTURE = "get-album-with-songs.json"
     const val SEARCH3_FIXTURE = "search3-music.json"

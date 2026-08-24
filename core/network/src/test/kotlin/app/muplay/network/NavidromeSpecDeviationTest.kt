@@ -9,9 +9,17 @@ import org.junit.jupiter.api.Test
  * Where the real Navidrome and the vendored OpenSubsonic spec disagree, pinned.
  *
  * Every fixture this class names was captured from a running `deluan/navidrome:0.63.2` and is
- * committed **exactly as it came off the wire**. Three of them do not validate against the
- * vendored spec, and rather than editing the capture until the oracle is happy — which would
- * destroy the only external check this project has — each disagreement is asserted here by name.
+ * committed **exactly as it came off the wire**. **Five of the seven** do not validate against the
+ * vendored spec, for **two distinct reasons** — four on `userRating`, one on `scanStatus` — and
+ * rather than editing the capture until the oracle is happy, which would destroy the only external
+ * check this project has, each disagreement is asserted here by name.
+ *
+ * (Corrected after review. This KDoc, and commit `9a1f1c0`'s subject and body, all said "three":
+ * the subject counted the two *causes* as three, and the body's "four of the seven" was the
+ * `userRating` subtotal after `ALBUM_BEARING_FIXTURES` was widened from three captures to four,
+ * with the `scanStatus` capture never added back in. There is no third divergence. Two causes,
+ * five rejected captures, two accepted — the tally spec §10 gives, and the one an independent
+ * re-run of all seven captures through `OpenApiFixtureValidator` measured.)
  *
  * These assertions fail in both directions, which is the point. If Navidrome stops sending
  * `userRating: 0`, or the vendored spec is refreshed to model Navidrome's `scanStatus`
@@ -43,7 +51,8 @@ class NavidromeSpecDeviationTest {
   fun `navidrome sends userRating 0 which the spec forbids`() {
     // AlbumID3.userRating is `minimum: 1, maximum: 5` ("The user rating of the album. [1-5]").
     // Navidrome sends 0 for an unrated album, which is not in that range. Every album-bearing
-    // response is therefore rejected -- three endpoints, four captures, one cause.
+    // response is therefore rejected -- three endpoints, four captures, one cause. The fifth
+    // rejected capture is `get-scan-status.json`, for an unrelated reason, asserted below.
     ALBUM_BEARING_FIXTURES.forEach { (name, path) ->
       assertThatThrownBy { OpenApiFixtureValidator.assertValid(path, fixture(name)) }
         .describedAs(name)
