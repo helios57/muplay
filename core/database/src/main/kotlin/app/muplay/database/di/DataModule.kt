@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.dao.BrowseDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.network.DefaultSubsonicSourceFactory
@@ -53,6 +54,9 @@ object DataModule {
 
   @Provides
   fun provideLibraryDao(database: MuPlayDatabase): LibraryDao = database.libraryDao()
+
+  @Provides
+  fun provideBrowseDao(database: MuPlayDatabase): BrowseDao = database.browseDao()
 
   /**
    * `:core:network` is a plain Kotlin/JVM module with no Hilt and no Android dependency, and it
