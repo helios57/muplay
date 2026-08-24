@@ -25,6 +25,16 @@ import dagger.hilt.components.SingletonComponent
  * custom `AndroidJUnitRunner`, and a new `androidTestImplementation` dependency, none of which
  * this project has any other use for. `EntryPointAccessors.fromApplication` is Hilt's own smaller,
  * supported way to read one real binding from outside the graph without replacing anything in it.
+ *
+ * **N-8 (review round 1, task-8-review.md): this widens `:feature:setup`'s *release* API surface
+ * for a test's benefit, and it sits in the module that owns the setup screen rather than the one
+ * that owns [LibraryRepository].** Accepted for Task 8 on dependency-minimalism grounds (see
+ * above), but it is a real cost: anything holding the application `Context` can now pull
+ * [LibraryRepository] straight out of the singleton graph, bypassing constructor injection --
+ * the exact pattern this task's Hilt migration exists to *remove* from `SetupViewModel`. **Move
+ * this to `:core:database` (alongside [LibraryRepository] itself), or delete it in favour of a
+ * proper per-test app-data reset, the next time that module is open for other reasons.** Do not
+ * let it become permanent by default.
  */
 @EntryPoint
 @InstallIn(SingletonComponent::class)

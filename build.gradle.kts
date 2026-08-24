@@ -222,16 +222,27 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   builds two anonymous `SetupCredentialSink`/`SetupLibrarySink` objects from the now-injected
  *   `CredentialStore`/`LibraryRepository` — and gained real logic along with it: the tagging
  *   predicate, the continue guard, the widened catch cascade. The two prior *floors* this replaced
- *   — `SetupViewModel*1`/`SetupViewModel*2` at 0.55, matching the compiled *default*-lambda
- *   classes — matched classes that no longer exist after the seam changed, which would have left
- *   a `0/0` → `NaN` → "no violation" rule gating nothing; deleted rather than left to rot, per this
- *   table's own ruling on that failure mode above.
+ *   — `SetupViewModel*1`/`SetupViewModel*2` at 0.55, originally matching the compiled *default*-
+ *   lambda classes — were deleted. **Correction, found on re-review:** the deletion is still
+ *   right, but an earlier version of this comment justified it as "those patterns now match no
+ *   compiled class, a `0/0` → `NaN` → 'no violation' rule" — checked and found false. Both
+ *   patterns still match real classes: `SetupViewModel*1` matches the new `.connect.1`/
+ *   `.setRole.1`/`.continueToLibrary.1`/`.tagging.1` coroutine-body classes, and `*2` still
+ *   matches `.2` (the `SetupCredentialSink` anonymous object). The actual reason the deletion is
+ *   correct: every class either old pattern matches is *also* matched by the new
+ *   `SetupViewModel*` wildcard folded into the 0.90 rule directly below — a strict superset (it
+ *   additionally matches `.3`, the `SetupLibrarySink` anonymous object, which neither old pattern
+ *   did) — at a *stricter* minimum (0.90 vs 0.55). Keeping the old 0.55 floor alongside the new
+ *   0.90 one would have added no protection at all, only a lower, confusing ceiling.
  *
  *   `SetupViewModel` measures **12/12** BRANCH today: `connect`'s `InvalidUrl` check and its
  *   catch cascade (`SubsonicErrorException` / `SubsonicHttpException` /
  *   `CancellationException`-rethrow / generic `Exception`), `tagging`'s `isNotEmpty() &&
  *   none { UNASSIGNED }` conjunction, `setRole`'s `serverInfo?.let` null guard, and
- *   `continueToLibrary`'s `none`-check. Two of those branches measured **0%** the moment their own
+ *   `continueToLibrary`'s own `isNotEmpty() && none { UNASSIGNED }` guard (added in review round
+ *   1 -- N-2 found `continueToLibrary` relying on `none` alone, vacuously true over an empty
+ *   list, closed by `continuing with no libraries at all does nothing`). Two of those branches
+ *   measured **0%** the moment their own
  *   tests did not exist — found by reading the XML report directly, not by inspection —
  *   and were closed by name: `a cancelled connection is never reported as a failure` (the
  *   `CancellationException` rethrow; without it, a broad `catch (e: Exception)` below would
@@ -241,7 +252,7 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   compiled nested classes the new seam and each `viewModelScope.launch` body produce — the two
  *   `@Inject`-constructor anonymous sink objects (`SetupViewModel$2`/`$3`, 2/2 and 4/4 LINE, no
  *   branches of their own) and four per-method coroutine bodies (`$connect$1` 17/17 LINE;
- *   `$setRole$1` 2/2 BRANCH; `$continueToLibrary$1` 4/4 BRANCH; `$tagging$1`, no counters at all)
+ *   `$setRole$1` 2/2 BRANCH; `$continueToLibrary$1` 8/8 BRANCH; `$tagging$1`, no counters at all)
  *   — the same zero-branch-rider pattern `SetupUiState*` already uses below: harmless (`NaN` → no
  *   violation for the branch-less ones) and it is what keeps `warnUngatedClasses` quiet about
  *   them. `SetupFailureReasonKt` (7/8, floor 0.85, untouched by Task 8): `toMessage`'s
@@ -379,7 +390,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // 12/12 -- SetupViewModel's own branches: connect's InvalidUrl check and its widened catch
     // cascade (SubsonicErrorException / SubsonicHttpException / CancellationException-rethrow /
     // generic Exception), tagging's isNotEmpty()-&&-none{UNASSIGNED} conjunction, setRole's
-    // serverInfo?.let null guard, and continueToLibrary's none-check -- all fully covered by
+    // serverInfo?.let null guard, and continueToLibrary's own isNotEmpty()-&&-none guard --
+    // all fully covered by
     // SetupViewModelTest, including two that measured 0% before their own tests existed (see
     // coverageFloors's own doc above for which tests and why).
     //
@@ -388,7 +400,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // secondary constructor's anonymous SetupCredentialSink/SetupLibrarySink objects
     // (SetupViewModel$2 2/2 LINE, SetupViewModel$3 4/4 LINE, no branches of their own) and four
     // per-method coroutine bodies (SetupViewModel$connect$1 17/17 LINE, no branches at this level;
-    // $setRole$1 2/2 BRANCH; $continueToLibrary$1 4/4 BRANCH; $tagging$1, no counters at all).
+    // $setRole$1 2/2 BRANCH; $continueToLibrary$1 8/8 BRANCH; $tagging$1, no counters at all).
     // None of these existed under the defaulted-lambda seam this task removed -- see this file's
     // own note on the SetupViewModel*1/*2 floor (0.55) this replaces, deleted rather than left to
     // rot once the classes it matched stopped existing.
@@ -440,8 +452,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // known about them.
     //
     // SetupScreenKt* rides along, matching the LaunchedEffect(uiState) { ... } body Task 8 added
-    // (SetupScreenKt$SetupScreen$1$1, 3/3 LINE). Both classes' BRANCH counters (81/49 and 3/1
-    // respectively) are deliberately left ungated: Compose codegen, not author logic.
+    // (SetupScreenKt$SetupScreen$1$1, 3/3 LINE). Both classes' BRANCH counters -- 81/130 and 3/4
+    // respectively, covered/total like every other ratio in this file (an earlier version of this
+    // comment wrote them covered/missed, 81/49 and 3/1, which reads as a ratio above 1 and was
+    // corrected on re-review) -- are deliberately left ungated: Compose codegen, not author logic.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",

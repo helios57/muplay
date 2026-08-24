@@ -297,19 +297,26 @@ private fun Project.debugClassesFileTree(commonExtension: CommonExtension): Prov
   // Not always `transformDebugClassesWithAsm`: Hilt's Gradle plugin rewrites a Hilt-annotated
   // module's classes via a bytecode transform (e.g. `MuPlayApplication`'s superclass, `Application`
   // -> its generated `Hilt_MuPlayApplication`) that only runs, and only registers this task, when
-  // the Hilt Gradle plugin is applied. `:app` applies `muplay.android.hilt`; `:feature:setup` and
-  // `:core:designsystem` do not (see `AndroidHiltConventionPlugin` — only `:app` uses it today), so
-  // that task does not exist in their projects at all — confirmed empirically: configuring
-  // `jacocoTestReport` against a hardcoded `tasks.named("transformDebugClassesWithAsm")` failed
-  // `:feature:setup`'s configuration outright with "Task with name 'transformDebugClassesWithAsm'
-  // not found in project ':feature:setup'". `tasks.names` (a name lookup, not `tasks.named(...)`)
-  // reports registered-but-not-yet-created lazy task names without realizing them, so branching on
-  // it here stays safe to evaluate eagerly. Where it is absent, `compileDebugKotlin`'s own output
-  // directory is exactly what testDebugUnitTest's classpath loads for that module — there is no
-  // post-compile bytecode transform standing between them the way Hilt's ASM step interposes for
-  // `:app` — verified: `:feature:setup`'s own namespace package
-  // (`build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes/app/muplay/setup/`)
-  // contains exactly its own compiled classes, not a merged/repackaged jar.
+  // the Hilt Gradle plugin is applied. `:app` applies `muplay.android.hilt`, and so does
+  // `:feature:setup` as of Plan 2 Task 8 (its `SetupViewModel` moved onto Hilt constructor
+  // injection, which is what this comment used to say made `:feature:setup` the *without*-Hilt
+  // case — checked on review and found stale, corrected here); `:core:designsystem` still does
+  // not. Where the plugin is absent, that task does not exist in the project at all — confirmed
+  // empirically: configuring `jacocoTestReport` against a hardcoded
+  // `tasks.named("transformDebugClassesWithAsm")` failed `:core:designsystem`'s configuration
+  // outright with "Task with name 'transformDebugClassesWithAsm' not found in project
+  // ':core:designsystem'". `tasks.names` (a name lookup, not `tasks.named(...)`) reports
+  // registered-but-not-yet-created lazy task names without realizing them, so branching on it here
+  // stays safe to evaluate eagerly. Where it is absent, `compileDebugKotlin`'s own output directory
+  // is exactly what testDebugUnitTest's classpath loads for that module — there is no post-compile
+  // bytecode transform standing between them the way Hilt's ASM step interposes for `:app` and
+  // `:feature:setup` — verified for `:core:designsystem`: its own namespace package
+  // (`build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes/app/muplay/designsystem/`)
+  // contains exactly its own compiled classes, not a merged/repackaged jar. This branch is why
+  // `:feature:setup`'s coverage floors measure Hilt-transformed classes (its compiled
+  // `SetupViewModel` and friends, post-ASM) rather than the raw `compileDebugKotlin` output a
+  // Hilt-less module like `:core:designsystem` measures — a real difference in which bytes JaCoCo
+  // instruments, not just an implementation detail.
   val classesTaskName = if (tasks.names.contains("transformDebugClassesWithAsm")) {
     "transformDebugClassesWithAsm"
   } else {
