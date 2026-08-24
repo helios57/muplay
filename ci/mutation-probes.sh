@@ -82,6 +82,7 @@ FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 CLIENT = "core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt"
 AUTH = "core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt"
 TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
+MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -195,6 +196,42 @@ PROBES = [
     ("type/newest-typo", TYPE,
      'NEWEST("newest"),', 'NEWEST("nEwEsT_typo"),',
      "getAlbumList2 sends whichever ordering, scope and page it is given", 1),
+
+    # ---- N4-1 / N4-1b, round 5: collection order, and a multi-album getAlbumList2 body -------
+    # Every list assertion in this file was order-blind except getMusicFolders's (order-sensitive
+    # by accident of a positional `containsExactly`, not by design) -- reversing getAlbum's,
+    # search3's or getAlbumList2's mapped list left `check` at exit 0. getAlbumList2's own reversal
+    # was additionally *degenerate* against the two original captures: both held exactly one album,
+    # so a one-element list reversed is the identity and exit 0 proved nothing.
+    # `get-album-list2-music-multi.json` is a genuine second capture (two albums) that makes this
+    # probe non-degenerate -- see order-unit-report.md for how it was taken. Representative, one
+    # per command whose order is meaningful; getRandomSongs is deliberately excluded, because its
+    # order carries no meaning at all (also explained there).
+    ("order/getAlbum-songs", CLIENT,
+     "songs = album.song.map { it.toSong(musicFolderId) },",
+     "songs = album.song.reversed().map { it.toSong(musicFolderId) },",
+     "getAlbum maps the album and its songs and stamps both with the library", 1),
+    ("order/search3-songs", CLIENT,
+     "songs = result?.song.orEmpty().map { it.toSong(musicFolderId) },",
+     "songs = result?.song.orEmpty().reversed().map { it.toSong(musicFolderId) },",
+     "search3 maps artists, albums and songs and stamps all three", 1),
+    ("order/getAlbumList2-multi", CLIENT,
+     "return body.albumList2?.album.orEmpty().map { it.toAlbum(musicFolderId) }",
+     "return body.albumList2?.album.orEmpty().reversed().map { it.toAlbum(musicFolderId) }",
+     "getAlbumList2 preserves wire order and maps every field across a genuine multi-album body", 1),
+
+    # ---- N4-2 / N4-3, round 5: absence -- a nullable field collapsing to "", and a DTO default --
+    # Representative, not exhaustive, same stance as N3-1's three probes above. The full set closed
+    # is Album.artistId/artistName and Song.suffix (N4-2: a nullable mapped field must stay null,
+    # not collapse through a stray `?: ""`), plus AlbumBody.songCount/duration, ArtistBody.
+    # albumCount and ChildBody.duration (N4-3: an absent-key DTO default must be read, not replaced
+    # by a different constant) -- all ten measured individually in order-unit-report.md.
+    ("nullability/Song.suffix", CLIENT,
+     "    suffix = suffix,", '    suffix = suffix ?: "",',
+     "absent optional fields default rather than degrading a null into an empty string", 1),
+    ("default/ArtistBody.albumCount", MODEL,
+     "  val albumCount: Int = 0,", "  val albumCount: Int = 99,",
+     "absent optional fields default rather than degrading a null into an empty string", 1),
 ]
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's
@@ -212,6 +249,14 @@ AUTH_PROBE = ("auth/empty-authParams", AUTH,
               # 15 as of 7f27d4a. See the note on `expected failures` above before changing this.
               "the password never appears in the parameters", 15)
 
+# Every probe that lives outside the PROBES table, because it needs more than one text
+# substitution (AUTH_PROBE takes two edits, not one) and so does not fit that table's shape. A list,
+# not a bare `1`: N4-4, round 5 -- `len(PROBES) + 1` hardcoded "there is exactly one probe outside
+# the table" below, silently wrong (not crashing) the moment a second one was added. `len(PROBES) +
+# len(EXTRA_PROBES)` cannot go stale that way; add a new out-of-table probe to this list, not to
+# the `+ 1`.
+EXTRA_PROBES = [AUTH_PROBE]
+
 
 def apply(path, old, new):
     src = open(path).read()
@@ -221,7 +266,7 @@ def apply(path, old, new):
 
 
 def revert():
-    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE], check=True)
+    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL], check=True)
 
 
 def failures():
@@ -279,7 +324,7 @@ finally:
 
 missed = results.count(False)
 print(f"\n{len(results) - missed}/{len(results)} probes caught "
-      f"(of {len(PROBES) + 1} in the list).")
+      f"(of {len(PROBES) + len(EXTRA_PROBES)} in the list).")
 if missed:
     print("A MISSED probe means a defect this project already found once is no longer detected.")
     raise SystemExit(1)
