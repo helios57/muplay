@@ -43,6 +43,16 @@ jobs:
         # AndroidApplicationConventionPlugin.
         run: ./gradlew :app:verifyReleaseManifest
 
+      - name: No destructive migration without a named exemption
+        # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a
+        # release build (see VerifyNoDestructiveMigrationTask): the first post-release schema bump
+        # would silently delete every stored audiobook position. The call is legitimately present
+        # throughout this pre-release plan, so this passes today only because
+        # core/database/DESTRUCTIVE_MIGRATION_EXEMPTION.md exists — and prints a loud warning
+        # naming that file every time it does, so the exemption cannot go unnoticed. Deleting that
+        # file without replacing the call with real Migration objects is what turns this step red.
+        run: ./gradlew :core:database:verifyReleaseNoDestructiveMigration
+
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
