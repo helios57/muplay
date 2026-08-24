@@ -70,12 +70,31 @@ class CredentialStoreTest {
   fun thePasswordIsNotOnDiskInPlaintext() = runTest {
     store.save(credentials)
 
-    val onDisk = file.readBytes().toString(Charsets.ISO_8859_1)
-    assertThat(onDisk).doesNotContain("Ünïcödé-pässwörd-🎵")
-    assertThat(onDisk).doesNotContain("pässwörd")
-    // The non-secret half is deliberately stored in the clear, so this assertion also proves the
-    // test is looking at the right file rather than at an empty one.
-    assertThat(onDisk).contains("admin")
+    // Compared as BYTES, not as a decoded string. The first version of this test read the file
+    // with `toString(Charsets.ISO_8859_1)` and searched it for Unicode needles -- and since the
+    // password is written as UTF-8, a multi-byte character can never match its ISO-8859-1
+    // decoding, so all three assertions passed against a file that literally contained the
+    // plaintext. A review proved that on-device by planting the password in the file. The
+    // property held; the test did not test it.
+    //
+    // Searching for the UTF-8 bytes is the question actually worth asking, because those are the
+    // bytes `save` would write if the sealing were removed.
+    val onDisk = file.readBytes()
+    val secret = credentials.password.toByteArray(Charsets.UTF_8)
+    assertThat(onDisk.indexOfSlice(secret))
+      .describedAs("the plaintext password's UTF-8 bytes in %s", file.name)
+      .isEqualTo(-1)
+    // A prefix too, so a future password whose full bytes happen not to appear contiguously still
+    // fails if a recognisable run of it does.
+    assertThat(onDisk.indexOfSlice("pässwörd".toByteArray(Charsets.UTF_8)))
+      .describedAs("a recognisable run of the plaintext password")
+      .isEqualTo(-1)
+    // The non-secret half is deliberately stored in the clear. This is the control: it proves the
+    // search works and is looking at a file with real content, so the two assertions above are
+    // negative results rather than a search that can never match anything.
+    assertThat(onDisk.indexOfSlice(credentials.username.toByteArray(Charsets.UTF_8)))
+      .describedAs("the username, which is stored in the clear on purpose")
+      .isNotEqualTo(-1)
   }
 
   @Test
@@ -156,6 +175,18 @@ class CredentialStoreTest {
     }
 
     assertThat(store.load()).isNull()
+  }
+
+  /** Index of [needle] in this array, or -1. `ByteArray` has no `indexOf` for a subsequence. */
+  private fun ByteArray.indexOfSlice(needle: ByteArray): Int {
+    if (needle.isEmpty() || needle.size > size) return -1
+    outer@ for (start in 0..size - needle.size) {
+      for (offset in needle.indices) {
+        if (this[start + offset] != needle[offset]) continue@outer
+      }
+      return start
+    }
+    return -1
   }
 
 }

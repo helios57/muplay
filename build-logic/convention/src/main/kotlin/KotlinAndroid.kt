@@ -81,6 +81,7 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
   commonExtension.testCoverage.jacocoVersion = libs.findVersion("jacoco").get().requiredVersion
 
   configureJUnit5()
+  excludeByteBuddyFromInstrumentedTests()
   configureJacoco()
   configureAndroidJacocoReport(commonExtension)
   configureAndroidJacocoCoverageVerification(commonExtension)

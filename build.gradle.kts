@@ -876,6 +876,7 @@ object CoverageGateNotice {
    */
   fun report(
     modulePath: String,
+    hasJvmTestSource: Boolean,
     verificationTaskName: String,
     reportTaskName: String?,
     reportXmlFile: File?,
@@ -906,7 +907,9 @@ object CoverageGateNotice {
     }
 
     val presentExecutionData = executionData.filter { it.exists() }
-    if (presentExecutionData.isEmpty() && evaluatedFloors.isEmpty() && deferredTo != null) {
+    if (presentExecutionData.isEmpty() && evaluatedFloors.isEmpty() && deferredTo != null &&
+      !hasJvmTestSource
+    ) {
       // Skipped, but this gate was owed nothing: every one of this module's floors needs
       // instrumented data, so the tier below has no rule of its own to evaluate whether execution
       // data exists or not. `:core:database` is the first module in this shape -- Room needs the
@@ -920,6 +923,16 @@ object CoverageGateNotice {
       // which fires constantly becomes noise and takes the mechanism down with it. The state is
       // still announced -- silence is never the answer here -- but it is announced as the
       // unremarkable fact it is, and it still names the gate that does the work.
+      //
+      // `!hasJvmTestSource` is load-bearing and was missing from the first version of this branch.
+      // Without it the condition tested for *absent execution data* while the message asserted
+      // *absent test sources*, so a module that HAD JVM tests and then lost them -- deleted,
+      // renamed, all `@Disabled` -- got this reassuring message instead of the loud one. A review
+      // reproduced exactly that by deleting `:core:designsystem`'s `ThemeTest`: it printed "the
+      // expected steady state ... not a missing-test warning" and exited 0. That made the fix for
+      // the twelfth instance of this project's silent-gate family into the thirteenth, which is
+      // the fourth time in this codebase that a fix for one instance created the next. The test
+      // and the claim must be the same question.
       CoverageWarning.emit(
         logger,
         onGitHubActions,
@@ -1195,9 +1208,16 @@ subprojects {
           tasks.named(it, JacocoReport::class.java).get().reports.xml.outputLocation.get().asFile
         }
 
+        // Resolved eagerly at configuration time, like `reportXmlFile` above and for the same
+        // serialization reason. This is what separates "this module never had JVM tests" from
+        // "this module's JVM tests just vanished" -- see the quiet branch in
+        // `CoverageGateNotice.report`, which a review found could not tell those apart.
+        val hasJvmTestSource = projectDir.resolve("src/test").isDirectory
+
         doLast {
           CoverageGateNotice.report(
             modulePath = modulePath,
+            hasJvmTestSource = hasJvmTestSource,
             verificationTaskName = verificationTaskName,
             reportTaskName = reportTaskName,
             reportXmlFile = reportXmlFile,

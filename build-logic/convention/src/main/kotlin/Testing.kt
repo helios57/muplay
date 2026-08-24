@@ -40,6 +40,31 @@ internal const val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
  * included and excluded. This will result in the tag being excluded" with no error to fail the
  * build on.
  */
+/**
+ * Keeps Byte Buddy off every **instrumented** test classpath, project-wide.
+ *
+ * `assertj-core` declares a compile-scope dependency on `net.bytebuddy:byte-buddy`, which AGP
+ * cannot dex: a module that puts AssertJ on `androidTestImplementation` fails
+ * `mergeExtDexDebugAndroidTest` with *"Execution failed for JacocoTransform:
+ * byte-buddy-1.18.3.jar"*. Byte Buddy backs only AssertJ's proxying features (soft assertions and
+ * `assertThatThrownBy`'s proxy form); plain `assertThat(...)` needs none of it, and a test that
+ * did would fail loudly with `NoClassDefFoundError` rather than silently.
+ *
+ * Applied here rather than per module, deliberately. `:core:database` was the first module in the
+ * project to put AssertJ on a device and solved this in its own build file -- which meant every
+ * later module doing the same thing would rediscover the same failure and paste the same
+ * `exclude`. This project's whole convention-plugin layer exists to stop exactly that, and a
+ * review flagged the per-module fix as re-arming for the eight tasks still to come.
+ *
+ * Scoped to `androidTest*` configurations only: Byte Buddy on a JVM test classpath is harmless,
+ * and removing it there would break AssertJ's proxy-based assertions for no reason.
+ */
+internal fun Project.excludeByteBuddyFromInstrumentedTests() {
+  configurations.matching { it.name.startsWith("androidTest") }.configureEach {
+    exclude(mapOf("group" to "net.bytebuddy", "module" to "byte-buddy"))
+  }
+}
+
 internal fun Project.configureJUnit5() {
   tasks.withType<Test>().configureEach {
     useJUnitPlatform {

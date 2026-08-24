@@ -35,19 +35,9 @@ dependencies {
   // JUnit 4 arrives transitively through the two AndroidX test artifacts above, so nothing here
   // pins a version of its own. AssertJ is added explicitly because `configureJUnit5` only puts
   // it on `testImplementation`, not `androidTestImplementation`.
-  //
-  // Byte Buddy is excluded, and this is not optional: `assertj-core` declares a *compile-scope*
-  // dependency on `net.bytebuddy:byte-buddy`, which AGP then tries to dex for the device and
-  // cannot -- `mergeExtDexDebugAndroidTest` fails with "Execution failed for JacocoTransform:
-  // byte-buddy-1.18.3.jar". Byte Buddy backs only AssertJ's proxying features (soft assertions,
-  // `assertThatThrownBy`'s proxy form); every assertion this module's tests use is plain
-  // reflection-free `assertThat(...)`, so removing it costs nothing here and the tests fail
-  // loudly with NoClassDefFoundError if that ever stops being true.
-  //
-  // `:app`'s own androidTest never met this because it asserts through Compose's test API and
-  // JUnit, never AssertJ -- so this is the first instrumented source set in the project to put
-  // AssertJ on a device.
-  androidTestImplementation(libs.assertj) {
-    exclude(group = "net.bytebuddy", module = "byte-buddy")
-  }
+  // Byte Buddy is kept off this classpath by `excludeByteBuddyFromInstrumentedTests` in
+  // build-logic, not here: assertj-core drags in a compile-scope dependency AGP cannot dex, and
+  // every module that puts AssertJ on a device would otherwise rediscover the same failure. See
+  // that function for the full account.
+  androidTestImplementation(libs.assertj)
 }
