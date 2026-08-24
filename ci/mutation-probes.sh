@@ -105,6 +105,7 @@ CLIENT = "core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt"
 AUTH = "core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt"
 TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
 MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
+MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -260,7 +261,62 @@ PROBES = [
     ("default/ArtistBody.albumCount", MODEL,
      "  val albumCount: Int = 0,", "  val albumCount: Int = 99,",
      "absent optional fields default rather than degrading a null into an empty string", 1),
+
+    # ---- N-2/N-6/N-9, fix round 1: MirrorMapper -- every forward/reverse field observed at
+    # exactly one fixture, and searchPattern's own trim/escape logic. All twelve field mutations
+    # here are the review's own C/D/E/I/J/K/L/M (forward) and REV-1/2/3/4 (reverse); the two
+    # searchPattern mutations are N-7 (trim) and the %/_ escape chain N-9 moved onto the JVM tier.
+    ("mapper/song-discNumber-fwd", MIRROR,
+     "    discNumber = song.discNumber,", "    discNumber = null,",
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/song-discNumber-rev", MIRROR,
+     "    discNumber = entity.discNumber,", "    discNumber = null,",
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/song-trackNumber-fwd", MIRROR,
+     "    trackNumber = song.trackNumber,", "    trackNumber = 1,",
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/album-name-fwd", MIRROR,
+     "    name = album.name,", '    name = "Test Album",',
+     "a second album, every field disjoint from the first, still round-trips", 1),
+    ("mapper/song-suffix-fwd", MIRROR,
+     "    suffix = song.suffix,", '    suffix = "mp3",',
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/song-durationSeconds-fwd", MIRROR,
+     "    durationSeconds = song.durationSeconds,", "    durationSeconds = 5,",
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/artistEntities-albumCount", MIRROR,
+     "          albumCount = ordered.size,", "          albumCount = 2,",
+     "a derived artist takes its library id from its albums", 1),
+    ("mapper/artistEntities-libraryId", MIRROR,
+     "          libraryId = ordered.first().libraryId,", "          libraryId = 9,",
+     "artists are derived from the albums of one library", 1),
+    ("mapper/album-songCount-rev", MIRROR,
+     "    songCount = entity.songCount,", "    songCount = 3,",
+     "a second album, every field disjoint from the first, still round-trips", 1),
+    ("mapper/album-coverArtId-rev", MIRROR,
+     "    artistName = entity.artistName,\n    coverArtId = entity.coverArtId,",
+     '    artistName = entity.artistName,\n    coverArtId = "al-a1",',
+     "a second album, every field disjoint from the first, still round-trips", 1),
+    ("mapper/artist-albumCount-rev", MIRROR,
+     "    albumCount = entity.albumCount,", "    albumCount = 5,",
+     "a second artist entity, every field disjoint from the first, maps field by field", 1),
+    ("mapper/album-durationSeconds-rev", MIRROR,
+     "    songCount = entity.songCount,\n    durationSeconds = entity.durationSeconds,\n  )",
+     "    songCount = entity.songCount,\n    durationSeconds = 15,\n  )",
+     "a second album, every field disjoint from the first, still round-trips", 1),
+    ("mapper/searchPattern-trim", MIRROR,
+     "    val trimmed = query.trim()", "    val trimmed = query",
+     # 2, not 1: an all-whitespace query is no longer trimmed to empty, so the blank-query test
+     # ("   " -> null) fails alongside the dedicated trim test -- measured, not assumed.
+     "searchPattern trims surrounding whitespace before building the pattern", 2),
+    ("mapper/searchPattern-escape", MIRROR,
+     r'    return "%" + trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"',
+     r'    return "%" + trimmed + "%"',
+     # 2, not 1: removing the whole escape chain also breaks the backslash-ordering test (a
+     # literal backslash no longer gets doubled first) -- measured, not assumed.
+     "searchPattern escapes the caller's own percent and underscore", 2),
 ]
+
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's
 # 81 tests green at 100% branch coverage, because nothing in the build inspected a request. It
@@ -294,7 +350,7 @@ def apply(path, old, new):
 
 
 def revert():
-    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL], check=True)
+    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
