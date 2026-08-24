@@ -1,0 +1,43 @@
+{
+    "subsonic-response": {
+        "status": "ok",
+        "version": "1.16.1",
+        "type": "navidrome",
+        "serverVersion": "0.63.2 (be10f89c)",
+        "openSubsonic": true,
+        "albumList2": {
+            "album": [
+                {
+                    "id": "7uq0TWT0LFFT65BHbdgSkX",
+                    "name": "Test Book",
+                    "artist": "Test Author",
+                    "artistId": "7eIHgZMdjeuvfHmXT3Z8kj",
+                    "coverArt": "al-7uq0TWT0LFFT65BHbdgSkX_6a89053c",
+                    "songCount": 1,
+                    "duration": 15,
+                    "created": "2026-08-23T20:34:38.186951758Z",
+                    "userRating": 0,
+                    "genres": [],
+                    "musicBrainzId": "",
+                    "isCompilation": false,
+                    "sortName": "test book",
+                    "discTitles": [],
+                    "originalReleaseDate": {},
+                    "releaseDate": {},
+                    "releaseTypes": [],
+                    "recordLabels": [],
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "7eIHgZMdjeuvfHmXT3Z8kj",
+                            "name": "Test Author"
+                        }
+                    ],
+                    "displayArtist": "Test Author",
+                    "explicitStatus": "",
+                    "version": ""
+                }
+            ]
+        }
+    }
+}

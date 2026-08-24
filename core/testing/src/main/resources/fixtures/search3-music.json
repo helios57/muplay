@@ -1,0 +1,217 @@
+{
+    "subsonic-response": {
+        "status": "ok",
+        "version": "1.16.1",
+        "type": "navidrome",
+        "serverVersion": "0.63.2 (be10f89c)",
+        "openSubsonic": true,
+        "searchResult3": {
+            "artist": [
+                {
+                    "id": "4kqFOAfzcbEE22Bin8jHjV",
+                    "name": "Test Artist",
+                    "coverArt": "ar-4kqFOAfzcbEE22Bin8jHjV_0",
+                    "albumCount": 1,
+                    "artistImageUrl": "http://localhost:4533/share/img/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImFyLTRrcUZPQWZ6Y2JFRTIyQmluOGpIalZfMCIsImlzcyI6Ik5EIn0.H6ZYrZBNOE5M2hGqBpUx0L7SzhuJOpK24BMMvSSVIaM?size=600",
+                    "musicBrainzId": "",
+                    "sortName": "test artist",
+                    "roles": [
+                        "albumartist",
+                        "artist",
+                        "maincredit"
+                    ]
+                }
+            ],
+            "album": [
+                {
+                    "id": "7orvCZZyWRqsduCdqXoguY",
+                    "name": "Test Album",
+                    "artist": "Test Artist",
+                    "artistId": "4kqFOAfzcbEE22Bin8jHjV",
+                    "coverArt": "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51",
+                    "songCount": 3,
+                    "duration": 15,
+                    "created": "2026-08-23T20:34:36.232674711Z",
+                    "userRating": 0,
+                    "genres": [],
+                    "musicBrainzId": "",
+                    "isCompilation": false,
+                    "sortName": "test album",
+                    "discTitles": [],
+                    "originalReleaseDate": {},
+                    "releaseDate": {},
+                    "releaseTypes": [],
+                    "recordLabels": [],
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayArtist": "Test Artist",
+                    "explicitStatus": "",
+                    "version": ""
+                }
+            ],
+            "song": [
+                {
+                    "id": "ISdyB6J3mLnrWAyON36CmS",
+                    "parent": "7orvCZZyWRqsduCdqXoguY",
+                    "isDir": false,
+                    "title": "Track 1",
+                    "album": "Test Album",
+                    "artist": "Test Artist",
+                    "track": 1,
+                    "coverArt": "al-7orvCZZyWRqsduCdqXoguY_0",
+                    "size": 40638,
+                    "contentType": "audio/mpeg",
+                    "suffix": "mp3",
+                    "duration": 5,
+                    "bitRate": 64,
+                    "path": "Test Artist/Test Album/01 - Track 1.mp3",
+                    "created": "2026-08-23T20:34:36.247844134Z",
+                    "albumId": "7orvCZZyWRqsduCdqXoguY",
+                    "artistId": "4kqFOAfzcbEE22Bin8jHjV",
+                    "type": "music",
+                    "bpm": 0,
+                    "comment": "",
+                    "sortName": "track 1",
+                    "mediaType": "song",
+                    "musicBrainzId": "",
+                    "isrc": [],
+                    "genres": [],
+                    "replayGain": {},
+                    "channelCount": 1,
+                    "samplingRate": 44100,
+                    "bitDepth": 0,
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayArtist": "Test Artist",
+                    "albumArtists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayAlbumArtist": "Test Artist",
+                    "contributors": [],
+                    "displayComposer": "",
+                    "explicitStatus": "",
+                    "groupings": [],
+                    "works": [],
+                    "movements": []
+                },
+                {
+                    "id": "lVRD350pWtCAVghRIDit88",
+                    "parent": "7orvCZZyWRqsduCdqXoguY",
+                    "isDir": false,
+                    "title": "Track 2",
+                    "album": "Test Album",
+                    "artist": "Test Artist",
+                    "track": 2,
+                    "coverArt": "al-7orvCZZyWRqsduCdqXoguY_0",
+                    "size": 40638,
+                    "contentType": "audio/mpeg",
+                    "suffix": "mp3",
+                    "duration": 5,
+                    "bitRate": 64,
+                    "path": "Test Artist/Test Album/02 - Track 2.mp3",
+                    "created": "2026-08-23T20:34:36.243653731Z",
+                    "albumId": "7orvCZZyWRqsduCdqXoguY",
+                    "artistId": "4kqFOAfzcbEE22Bin8jHjV",
+                    "type": "music",
+                    "bpm": 0,
+                    "comment": "",
+                    "sortName": "track 2",
+                    "mediaType": "song",
+                    "musicBrainzId": "",
+                    "isrc": [],
+                    "genres": [],
+                    "replayGain": {},
+                    "channelCount": 1,
+                    "samplingRate": 44100,
+                    "bitDepth": 0,
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayArtist": "Test Artist",
+                    "albumArtists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayAlbumArtist": "Test Artist",
+                    "contributors": [],
+                    "displayComposer": "",
+                    "explicitStatus": "",
+                    "groupings": [],
+                    "works": [],
+                    "movements": []
+                },
+                {
+                    "id": "nMjRRkwKXrriyQyMKTI2JJ",
+                    "parent": "7orvCZZyWRqsduCdqXoguY",
+                    "isDir": false,
+                    "title": "Track 3",
+                    "album": "Test Album",
+                    "artist": "Test Artist",
+                    "track": 3,
+                    "coverArt": "al-7orvCZZyWRqsduCdqXoguY_0",
+                    "size": 40638,
+                    "contentType": "audio/mpeg",
+                    "suffix": "mp3",
+                    "duration": 5,
+                    "bitRate": 64,
+                    "path": "Test Artist/Test Album/03 - Track 3.mp3",
+                    "created": "2026-08-23T20:34:36.246243713Z",
+                    "albumId": "7orvCZZyWRqsduCdqXoguY",
+                    "artistId": "4kqFOAfzcbEE22Bin8jHjV",
+                    "type": "music",
+                    "bpm": 0,
+                    "comment": "",
+                    "sortName": "track 3",
+                    "mediaType": "song",
+                    "musicBrainzId": "",
+                    "isrc": [],
+                    "genres": [],
+                    "replayGain": {},
+                    "channelCount": 1,
+                    "samplingRate": 44100,
+                    "bitDepth": 0,
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayArtist": "Test Artist",
+                    "albumArtists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayAlbumArtist": "Test Artist",
+                    "contributors": [],
+                    "displayComposer": "",
+                    "explicitStatus": "",
+                    "groupings": [],
+                    "works": [],
+                    "movements": []
+                }
+            ]
+        }
+    }
+}
