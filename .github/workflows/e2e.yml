@@ -52,6 +52,15 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Verify audio fixtures
+        # `ci/fixtures.md5` is written by `ci/seed-fixtures.sh` and, until this step existed, read
+        # by nothing — a checksum file with no verifier, which is the same shape as a floor that
+        # cannot fail. The four files it covers are the audio Navidrome scans: `LiveNavidromeTest`
+        # asserts on the libraries built from them and the Tier 2 journey asserts on their names,
+        # so a corrupted or re-encoded fixture would move what both tiers measure. The script's
+        # `-bitexact` ffmpeg flags exist precisely so these checksums are reproducible.
+        run: md5sum -c ci/fixtures.md5
+
       - name: Start Navidrome
         run: docker compose -f ci/navidrome.compose.yml up -d --wait
 
@@ -116,6 +125,19 @@ jobs:
           fi
           exit "$status"
 
+      # The two most likely first failures on a runner this job has never run on are the
+      # 45-minute timeout and disk exhaustion during the ~2 GB system-image pull — and neither
+      # would be diagnosable after the fact, because an emulator killed by memory or disk pressure
+      # produces the same `INSTRUMENTATION_ABORTED: System has crashed` signature as the gralloc
+      # bug `ci/prepare-emulator.sh` documents. This job was developed on 24 cores / 47 GB;
+      # `ubuntu-latest` is 4 cores / 16 GB with ~14 GB free. Recording the numbers costs a second
+      # and makes the first failure readable.
+      - name: Host capacity
+        run: |
+          df -h
+          free -h
+          nproc
+
       - name: First-run journey
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -156,9 +178,17 @@ jobs:
           # container started above. A missing reverse forward does not fail loudly — the app's
           # connection attempt simply times out — so this is not something to leave to a separate
           # step that could be reordered away from the test.
+          #
+          # The logcat dump has to happen *here*, inside the action's own step, because the action
+          # shuts the emulator down as that step ends — a later `adb logcat` step would find no
+          # device. `parseScript` runs each line as its own `sh -c` that throws on a non-zero
+          # status, so the `|| { …; exit 1; }` keeps the failure while capturing the one artifact
+          # that distinguishes an emulator the host killed from an app that crashed: both surface
+          # as the same `INSTRUMENTATION_ABORTED: System has crashed` this project has already
+          # chased once (see `ci/prepare-emulator.sh`).
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :app:connectedDebugAndroidTest
+            ./gradlew :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
@@ -184,3 +214,4 @@ jobs:
           path: |
             app/build/reports/androidTests/**
             **/build/reports/jacoco/**
+            emulator-logcat.txt

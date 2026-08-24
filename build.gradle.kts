@@ -70,6 +70,11 @@ data class CoverageFloor(
   val element: String = "BUNDLE",
   val includes: List<String> = emptyList(),
   val excludes: List<String> = emptyList(),
+  /**
+   * Whether this floor can only be measured with instrumented execution data, i.e. whether it
+   * belongs to Tier 2 alone rather than to both tiers — see [isEnforceableWithoutAnEmulator].
+   */
+  val requiresInstrumentedData: Boolean = false,
 )
 
 /**
@@ -114,22 +119,23 @@ fun jvmOnly(executionData: FileCollection): FileCollection =
  * Whether [floor] can be enforced without an emulator, i.e. whether it belongs to Tier 1's
  * [JVM_COVERAGE_VERIFICATION_TASK_NAME] as well as to the full gate.
  *
- * **Derived from the counter, not declared per entry**, because in this table the counter *is*
- * the statement of which kind of code a floor covers (see [coverageFloors]'s own doc): a LINE
- * floor exists here only where the code is `@Composable`, and `@Composable` code only executes
- * inside a real composition — an emulator. A BRANCH floor exists only over non-UI code, which the
- * JVM runs perfectly well. Nothing restates the table.
+ * **Declared per entry, not derived from the counter.** It used to read
+ * `floor.counter == "BRANCH"`, on the reasoning that a LINE floor existed in this table only over
+ * `@Composable` code and `@Composable` code only executes inside a real composition. That was true
+ * of every entry at the time and stopped being true the moment `:core:model` got a LINE floor over
+ * `SubsonicCredentials` — a plain JVM class with no Compose anywhere near it, whose floor the fast
+ * tier can and should enforce. The proxy would have quietly moved a security control's floor into
+ * the 45-minute tier and told the reader it "needs an emulator", which is simply false. A property
+ * of the entry belongs on the entry.
  *
- * The evidence, not the reasoning, is what settled this. Deleting the instrumented `.ec` and
- * running the whole build fails exactly the three LINE floors (`:app`, `:core:designsystem`,
- * `:feature:setup`'s `SetupScreenKt`) and passes every BRANCH floor in the table, including all
- * three of `:feature:setup`'s.
+ * Every `true` below is a measurement, not a judgement: deleting the instrumented `.ec` and
+ * running the whole build fails exactly those floors and passes every other entry in the table.
  *
- * Getting this predicate wrong fails in the safe direction. A BRANCH floor that turned out to
- * need instrumented data would fail Tier 1 loudly rather than pass quietly; a LINE floor that did
- * not need it is still enforced, just by Tier 2 alone.
+ * Getting a value wrong still fails in the safe direction. A floor left at `false` that turns out
+ * to need instrumented data fails Tier 1 loudly rather than passing quietly; one set to `true`
+ * that did not need it is still enforced, just by Tier 2 alone.
  */
-fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = floor.counter == "BRANCH"
+fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requiresInstrumentedData
 
 /**
  * Coverage floors, keyed by project path. Enforced by two tasks, one a strict subset of the other:
@@ -270,7 +276,45 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = floor.counte
  *   all), so a BRANCH floor here would measure the Compose compiler.
  */
 val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
-  ":core:model" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+  // Two `"CLASS"`-element rules, not one `"BUNDLE"` rule, and the difference is the whole point --
+  // see this table's own doc above for what the BUNDLE form was hiding here.
+  ":core:model" to listOf(
+    // 10/10 -- `ServerCapabilities.supports`'s two null-safe chains, this module's entire branch
+    // population, covered by `ServerCapabilitiesTest`.
+    //
+    // `ServerInfo`, `MusicLibrary` and `LibraryRole` ride along, the same way `SetupUiState` rides
+    // along in `:feature:setup`'s rule: they carry zero branches, so they cannot move this ratio,
+    // and including them is what keeps `warnUngatedClasses` from flagging them on every run. That
+    // is honest for these three specifically because they contain **no author-written executable
+    // code at all** -- read them: two are `data class` declarations with no body and the third is a
+    // three-entry `enum class` with no body, so every line JaCoCo counts in them is compiler-
+    // generated `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that would be
+    // gating the Kotlin compiler, the same argument this table already makes about Compose's
+    // synthetic branches. If any of them grows a body, it needs a rule of its own.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.ServerCapabilities",
+        "app.muplay.model.ServerInfo",
+        "app.muplay.model.MusicLibrary",
+        "app.muplay.model.LibraryRole",
+      ),
+    ),
+    // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
+    // a `toString()` override whose only job is keeping a plaintext password out of logs. It has
+    // no branches, so a BRANCH rule cannot gate it; LINE can, and must, because it is a security
+    // control. Until `SubsonicCredentialsTest` was added it measured 0/5 here -- its only
+    // assertion lived in `:core:network`, which is a different module's execution data -- and
+    // deleting that assertion left both tiers green.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.model.SubsonicCredentials"),
+    ),
+  ),
   ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
   ":core:testing" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
   // See coverageFloors's own doc above for why three CLASS-element rules, not one BUNDLE rule.
@@ -342,6 +386,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.setup.SetupScreenKt"),
+      // Composed only by FirstRunJourneyTest, on a device. 0/54 from the JVM alone.
+      requiresInstrumentedData = true,
     ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
@@ -358,12 +404,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.designsystem.theme.ColorKt",
         "app.muplay.designsystem.theme.TypeKt",
       ),
+      // MuPlayTheme is composed only by the emulator journey; from the JVM alone ThemeKt measures
+      // 0.65 and TypeKt 0.00.
+      requiresInstrumentedData = true,
     ),
   ),
   // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
   // why there is no BRANCH entry.
-  ":app" to listOf(CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"))),
+  // `requiresInstrumentedData`: every line here is Compose/DI wiring the emulator journey runs;
+  // from the JVM alone this module measures 1/21 = 0.04.
+  ":app" to listOf(
+    CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
+  ),
 )
 
 /**
@@ -382,6 +435,33 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
  * calling `UngatedClassChecker.warnUngatedCoverage(...)` from `doLast { }` references only that
  * object's own singleton, never this script, which the configuration cache serializes fine.
  */
+/**
+ * Every `COVERAGE:` warning this build raises, emitted so it is visible in the one place that
+ * decides merges.
+ *
+ * `logger.warn` alone puts these in a thousand-line CI log where nobody reads them — which is
+ * exactly how a module could land with no coverage floor and a green build. GitHub Actions'
+ * workflow-command form (`::warning::…`) surfaces the same text as an annotation on the run and
+ * the pull request. Both are emitted: the plain line for a local build and for any other CI, the
+ * annotation only when `GITHUB_ACTIONS` is set, so a developer's terminal does not fill with
+ * `::warning::` noise.
+ *
+ * Annotations must be one line — `%0A` is the only way to encode a newline in one — and every
+ * message this build produces already is, being built by string concatenation.
+ */
+object CoverageWarning {
+  /**
+   * [annotate] is `true` for a condition someone should act on and `false` for one this build
+   * expects on every run. Both still get a `logger.warn`; only the first becomes an annotation.
+   * The distinction matters because an annotation that appears on every pull request stops being
+   * read, which is the same failure as the log line it was meant to escape.
+   */
+  fun emit(logger: Logger, annotate: Boolean, message: String) {
+    logger.warn(message)
+    if (annotate) logger.warn("::warning::$message")
+  }
+}
+
 object UngatedClassChecker {
   /**
    * How many matched class names a vacuous-floor warning spells out before it summarises the rest.
@@ -509,6 +589,7 @@ object UngatedClassChecker {
     modulePath: String,
     classes: List<ClassCoverage>,
     floors: List<CoverageFloor>,
+    onGitHubActions: Boolean,
     logger: Logger,
   ) {
     for (classCoverage in classes) {
@@ -522,7 +603,9 @@ object UngatedClassChecker {
         if (branchTotal > 0) "branch ${classCoverage.covered("BRANCH")}/$branchTotal" else "branch n/a"
       val lineSummary =
         if (lineTotal > 0) "line ${classCoverage.covered("LINE")}/$lineTotal" else "line n/a"
-      logger.warn(
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
         "COVERAGE: $modulePath's ${classCoverage.binaryName} is not covered by any rule in " +
           "`coverageFloors` (root build.gradle.kts) -- measured $branchSummary, $lineSummary. If " +
           "that is deliberate (a genuinely 0%-covered Composable file, say), no action needed; if " +
@@ -576,6 +659,7 @@ object UngatedClassChecker {
     modulePath: String,
     classes: List<ClassCoverage>,
     floors: List<CoverageFloor>,
+    onGitHubActions: Boolean,
     logger: Logger,
   ) {
     for (floor in floors) {
@@ -595,7 +679,9 @@ object UngatedClassChecker {
         else -> "all ${matchedNames.size} classes it matches ($shownSummary) have zero " +
           "${floor.counter} counters"
       }
-      logger.warn(
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
         "COVERAGE: $modulePath's floor ${describeFloor(floor)} in `coverageFloors` (root " +
           "build.gradle.kts) currently enforces nothing: $matchedSummary, so the floor's own " +
           "${floor.counter} total across everything it matches is 0. JaCoCo reports no violation " +
@@ -627,6 +713,7 @@ object UngatedClassChecker {
     xmlFile: File,
     allFloors: List<CoverageFloor>,
     evaluatedFloors: List<CoverageFloor>,
+    onGitHubActions: Boolean,
     logger: Logger,
   ) {
     if (!xmlFile.isFile) {
@@ -634,7 +721,9 @@ object UngatedClassChecker {
       // anyone who has not read this function's own source, which is the same silent-gate shape
       // this entire mechanism was built to close. `-x`-style invocations that skip the report task
       // are the one way the caller's own `dependsOn` cannot guarantee this file exists.
-      logger.warn(
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
         "COVERAGE: $modulePath's $reportTaskName XML ($xmlFile) does not exist -- neither the " +
           "ungated-class check nor the vacuous-floor check could run at all. If $reportTaskName " +
           "was deliberately skipped (e.g. -x $reportTaskName), this module's per-class coverage " +
@@ -656,8 +745,8 @@ object UngatedClassChecker {
     // matching no class passes at every minimum (see [warnVacuousFloors]'s own doc), so a gate
     // reporting "enforced all N of its floors" without this check is asserting something it never
     // verified. So [warnVacuousFloors] gets [evaluatedFloors].
-    warnUngatedClasses(modulePath, classes, allFloors, logger)
-    warnVacuousFloors(modulePath, classes, evaluatedFloors, logger)
+    warnUngatedClasses(modulePath, classes, allFloors, onGitHubActions, logger)
+    warnVacuousFloors(modulePath, classes, evaluatedFloors, onGitHubActions, logger)
   }
 }
 
@@ -715,6 +804,7 @@ object CoverageGateNotice {
     executionData: Collection<File>,
     deferredTo: String?,
     perClassChecksRunBy: String?,
+    onGitHubActions: Boolean,
     logger: Logger,
   ) {
     if (allFloors.isEmpty()) {
@@ -724,7 +814,9 @@ object CoverageGateNotice {
       // and no comment explaining why. Every module has a measured floor today, `:app` included,
       // so this fires for nothing right now; it exists for the next module to arrive. Not a build
       // failure -- an ungated module is a real, sometimes-correct state.
-      logger.warn(
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
         "COVERAGE: $modulePath has no entry in `coverageFloors` (root build.gradle.kts) -- its " +
           "branch and line coverage is unenforced in both tiers. If that is deliberate, say so " +
           "at that table -- every entry there documents the choices behind its own numbers, " +
@@ -738,7 +830,9 @@ object CoverageGateNotice {
       // The state this whole task exists for. Nothing below can be said honestly: no rule was
       // evaluated and no report was produced, so the module's floors are simply unchecked this
       // run -- and, without this line, indistinguishable from all of them passing.
-      logger.warn(
+      CoverageWarning.emit(
+        logger,
+        onGitHubActions,
         "COVERAGE: $modulePath -- $verificationTaskName did NOT run, so none of its " +
           "${allFloors.size} coverage floors were evaluated. Gradle skipped it through the " +
           "`onlyIf(\"Any of the execution data files exists\")` its own JacocoReportBase " +
@@ -765,7 +859,14 @@ object CoverageGateNotice {
     }.orEmpty()
     when {
       evaluatedFloors.isEmpty() ->
-        logger.warn(
+        // `annotate = false`: this is the designed steady state for `:app` and
+        // `:core:designsystem`, whose every floor is a Compose LINE floor only the emulator tier
+        // can measure, so it would appear on every single pull request. Still `warn` in the log --
+        // the point stands that this task passing says nothing about those modules -- but an
+        // annotation nobody can act on trains people to ignore the ones they can.
+        CoverageWarning.emit(
+          logger,
+          false,
           "COVERAGE: $modulePath -- $verificationTaskName evaluated 0 of its ${allFloors.size} " +
             "coverage floors: every one of them needs an emulator. They are enforced instead by " +
             "${deferredTo.orEmpty()}. This task passing says nothing about $modulePath's coverage.",
@@ -790,6 +891,7 @@ object CoverageGateNotice {
       xmlFile = reportXmlFile,
       allFloors = allFloors,
       evaluatedFloors = evaluatedFloors,
+      onGitHubActions = onGitHubActions,
       logger = logger,
     )
   }
@@ -963,6 +1065,12 @@ subprojects {
         // for its gate, including a configuration-cache reuse run (task execution still happens on
         // a cache hit -- the cache skips reconfiguring, not rerunning).
         outputs.upToDateWhen { false }
+
+        // Read through `providers.environmentVariable` rather than `System.getenv` in the task
+        // action: this makes the value a declared configuration-cache input, so an entry stored
+        // locally is not silently reused in CI with annotations switched off. GitHub Actions sets
+        // `GITHUB_ACTIONS=true` on every runner.
+        val onGitHubActions = providers.environmentVariable("GITHUB_ACTIONS").orNull == "true"
         if (reportTaskName != null) dependsOn(reportTaskName)
 
         val verification =
@@ -992,6 +1100,7 @@ subprojects {
             executionData = gatedExecutionData.files,
             deferredTo = deferredTo,
             perClassChecksRunBy = perClassChecksRunBy,
+            onGitHubActions = onGitHubActions,
             logger = logger,
           )
         }
@@ -1104,6 +1213,35 @@ project(":core:network") {
       useJUnitPlatform {
         includeTags("live")
       }
+
+      // The eleventh silent gate, and the one guarding the claim the spec singles out ("anything
+      // whose subject is Navidrome's behaviour is tested against a pinned Navidrome container").
+      // Without this the gate passes with **no Navidrome at all**. Measured, container stopped and
+      // port dead:
+      //
+      //     ./gradlew :core:network:liveNavidromeTest                 -> UP-TO-DATE, BUILD SUCCESSFUL
+      //     (delete this task's outputs) ... --build-cache            -> FROM-CACHE, BUILD SUCCESSFUL
+      //
+      // The second is the CI-reachable one: `gradle.properties` sets `org.gradle.caching=true`,
+      // `gradle/actions/setup-gradle@v6` restores the Gradle user home (which holds
+      // `caches/build-cache-1`) between runs, and `Test` is a `@CacheableTask` -- so any later run
+      // whose `:core:network` inputs are unchanged (a docs-only PR, a workflow-only PR, a re-run of
+      // a flaked job) restores this task and never opens a socket, while `Start Navidrome` and
+      // `Configure libraries` above it become decoration.
+      //
+      // A task whose *whole subject* is a live server has no legitimate up-to-date or cached
+      // answer: the inputs Gradle hashes say nothing about whether the container is running or what
+      // it contains. So this task always executes. Verified after adding this line, container still
+      // stopped: `3 tests completed, 3 failed`, BUILD FAILED, under both invocations above.
+      //
+      // Not the same case as the `onlyIf` caveat on the JaCoCo tasks elsewhere in this file: this
+      // is a plain `Test` task with no `onlyIf`, so nothing short-circuits its actions.
+      //
+      // `cacheIf { false }` as well as `upToDateWhen { false }`, rather than trusting one to imply
+      // the other -- they are separate decisions in Gradle (is this task up to date; may its result
+      // be stored/loaded) and the failure this closes came from the second one.
+      outputs.upToDateWhen { false }
+      outputs.cacheIf { false }
     }
   }
 }

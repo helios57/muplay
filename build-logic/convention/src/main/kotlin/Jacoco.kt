@@ -48,10 +48,13 @@ internal fun Project.configureJacoco() {
 
   // ---------------------------------------------------------------------------------------------
   // What is verified, what is measured, and what is not understood. Read this before touching the
-  // three blocks below, and especially before "simplifying" any of them.
+  // declaration, force and assertion blocks below, and especially before "simplifying" any of them.
   //
-  // VERIFIED, by reading bytecode. Three different things write `JacocoPluginExtension.toolVersion`
-  // in an Android module of this build:
+  // VERIFIED, by reading bytecode. **Four** different things write
+  // `JacocoPluginExtension.toolVersion` in an Android module of this build -- the fourth is
+  // Gradle's own `JacocoPlugin.apply`, which seeds it with `DEFAULT_JACOCO_VERSION` before any of
+  // the three below run, and which matters because that default is the *same string* AGP
+  // hardcodes (see the note under this list):
   //
   //   1. `configureJacoco` -- this function, the line above, with the catalogue's pin.
   //   2. AGP's `DependencyConfigurator.configureJacocoTransforms`

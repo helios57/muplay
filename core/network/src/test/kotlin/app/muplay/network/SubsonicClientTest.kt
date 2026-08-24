@@ -4,6 +4,8 @@ import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.SubsonicCredentials
 import app.muplay.testing.OpenApiFixtureValidator
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -342,6 +344,121 @@ class SubsonicClientTest {
 
     assertThat(extensions).isEmpty()
   }
+
+  // --- What goes out on the wire ----------------------------------------------------------------
+  //
+  // Everything above this line asserts what the client does with a *response*. Until these tests
+  // existed, nothing in the entire build asserted what it *sends* -- `grep -rn takeRequest` across
+  // the repository returned nothing -- and MockWebServer's default dispatcher answers any request
+  // with the next queued response regardless of path, method or query string, so a real socket
+  // proved the response was parsed and said nothing about the request. Two mutations, both
+  // measured before these tests were written:
+  //
+  //   - `SubsonicAuth.authParams(...) = emptyMap()` (zero credentials on the wire): all 81 JVM
+  //     tests and the whole Tier 1 coverage gate stayed green. Only the live container caught it.
+  //   - `@GET("rest/getOpenSubsonicExtensions")` -> `@GET("rest/thisEndpointDoesNotExist")`:
+  //     *nothing in the build* caught it, live job included, because `LiveNavidromeTest` covers
+  //     only ping and getMusicFolders and that command has no production caller yet.
+  //
+  // ...while `:core:network` reported 100% branch coverage against a green 0.90 floor. Coverage
+  // measures execution, not assertion.
+  //
+  // One test per command that exists today. Plan 2 adds ten more commands and the
+  // `musicFolderId` parameter -- the library-scoped-shuffle feature's only mechanism, and a
+  // *request* parameter -- and each of those needs the same treatment as it lands.
+
+  @Test
+  fun `ping requests the ping path with full Subsonic authentication`() = runTest {
+    enqueue(fixture(PING_SUCCESS_FIXTURE))
+
+    client.ping()
+
+    assertAuthenticatedRequestTo("/rest/ping")
+  }
+
+  @Test
+  fun `getMusicFolders requests the getMusicFolders path with full Subsonic authentication`() = runTest {
+    enqueue(fixture(MUSIC_FOLDERS_SUCCESS_FIXTURE))
+
+    client.getMusicFolders()
+
+    assertAuthenticatedRequestTo("/rest/getMusicFolders")
+  }
+
+  @Test
+  fun `getOpenSubsonicExtensions requests its own path with full Subsonic authentication`() = runTest {
+    enqueue(fixture(EXTENSIONS_SUCCESS_FIXTURE))
+
+    client.getOpenSubsonicExtensions()
+
+    assertAuthenticatedRequestTo("/rest/getOpenSubsonicExtensions")
+  }
+
+  // The salt is the one auth parameter that must differ per request. `SubsonicAuth`'s own doc says
+  // so ("Production wiring must generate a fresh salt per request with SecureRandom -- never cache
+  // or reuse one") and `SubsonicClient.generateSalt` implements it, but until this test nothing
+  // checked it on the wire: a cached salt turns token auth into a replayable constant and every
+  // other assertion in this section would still pass.
+  @Test
+  fun `every request carries a fresh salt`() = runTest {
+    enqueue(fixture(PING_SUCCESS_FIXTURE))
+    enqueue(fixture(PING_SUCCESS_FIXTURE))
+
+    client.ping()
+    client.ping()
+
+    val firstSalt = server.takeRequest().url.queryParameter("s")
+    val secondSalt = server.takeRequest().url.queryParameter("s")
+    assertThat(firstSalt).isNotBlank()
+    assertThat(secondSalt).isNotBlank()
+    assertThat(firstSalt).isNotEqualTo(secondSalt)
+  }
+
+  /**
+   * Asserts that the single request this test made went to [expectedPath] carrying every parameter
+   * the Subsonic token-authentication scheme and the OpenSubsonic spec require, and nothing that
+   * would leak the password.
+   *
+   * `v` and `c` are asserted as **literals**, deliberately, rather than through
+   * `SubsonicAuth.PROTOCOL_VERSION`/`CLIENT_NAME`: they are constraints imposed from outside this
+   * codebase, and reading them from the constant under test would let a change to that constant
+   * pass unnoticed. `c=MuPlay` in particular has a real consequence -- Navidrome strips the whole
+   * OpenSubsonic field block from every response for client ids matching its `LegacyClients` /
+   * `MinimalClients` defaults, so this value is load-bearing, not decorative.
+   *
+   * `t` is checked against a digest this test computes itself from the salt actually sent, so the
+   * assertion is on the bytes on the wire rather than on `authParams()` agreeing with itself.
+   */
+  private fun assertAuthenticatedRequestTo(expectedPath: String) {
+    val request = server.takeRequest()
+    assertThat(request.method).isEqualTo("GET")
+
+    val url = request.url
+    assertThat(url.encodedPath).isEqualTo(expectedPath)
+
+    val salt = url.queryParameter("s")
+    assertThat(salt).describedAs("salt (s)").isNotNull().matches("[0-9a-f]{16}")
+
+    assertThat(url.queryParameter("u")).isEqualTo("alice")
+    assertThat(url.queryParameter("t")).isEqualTo(md5Hex("sesame" + salt))
+    assertThat(url.queryParameter("v")).isEqualTo("1.16.1")
+    assertThat(url.queryParameter("c")).isEqualTo("MuPlay")
+    assertThat(url.queryParameter("f")).isEqualTo("json")
+
+    // Plaintext auth is a different Subsonic scheme and this client must never fall back to it.
+    assertThat(url.queryParameter("p")).describedAs("plaintext password parameter").isNull()
+    assertThat(url.query).describedAs("query string").doesNotContain("sesame")
+  }
+
+  /**
+   * `hex(md5(utf8(input)))`, computed here rather than by calling [SubsonicAuth.token], so that
+   * this file is an independent oracle for what the client puts on the wire instead of asserting
+   * the implementation against itself.
+   */
+  private fun md5Hex(input: String): String =
+    MessageDigest.getInstance("MD5")
+      .digest(input.toByteArray(StandardCharsets.UTF_8))
+      .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
   // Every other test in this class builds its client from MockWebServer's own server.url("/"),
   // which HttpUrl always normalizes with a trailing slash — so buildApi's own

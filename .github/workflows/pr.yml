@@ -117,6 +117,15 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
 
+      - name: Verify audio fixtures
+        # `ci/fixtures.md5` is written by `ci/seed-fixtures.sh` and, until this step existed, read
+        # by nothing — a checksum file with no verifier, which is the same shape as a floor that
+        # cannot fail. The four files it covers are the audio Navidrome scans: `LiveNavidromeTest`
+        # asserts on the libraries built from them and the Tier 2 journey asserts on their names,
+        # so a corrupted or re-encoded fixture would move what both tiers measure. The script's
+        # `-bitexact` ffmpeg flags exist precisely so these checksums are reproducible.
+        run: md5sum -c ci/fixtures.md5
+
       - name: Start Navidrome
         run: docker compose -f ci/navidrome.compose.yml up -d --wait
 
@@ -141,12 +150,17 @@ jobs:
           name: live-navidrome-reports
           path: core/network/build/reports/tests/liveNavidromeTest/**
 
-  # "Contract": every fixture validated against the vendored OpenSubsonic OpenAPI spec (see
-  # docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md's own test-tier table). That oracle
-  # -- OpenApiFixtureValidator -- and its own test suite live entirely in :core:testing, so this
-  # job's one purpose is proving the oracle itself is sound, isolated from the much larger
-  # unit+integration run so a drift in the vendored spec's meaning is visible as its own failing
-  # gate, not buried inside a 70-plus-test run covering five other modules too.
+  # "Contract": this job proves the *oracle* is sound -- `OpenApiFixtureValidator` and its own test
+  # suite, both of which live entirely in :core:testing, over inline JSON of its own. Isolated from
+  # the much larger unit+integration run so a drift in the vendored spec's meaning is visible as
+  # its own failing gate rather than buried in a 70-plus-test run across five other modules.
+  #
+  # It validates **no committed fixture**, and an earlier version of this comment said it did
+  # ("every fixture validated against the vendored OpenSubsonic OpenAPI spec") while contradicting
+  # itself two sentences later. All eight fixture validations are `assertValid` calls in
+  # `core/network/.../SubsonicClientTest.kt`, which the `unit-integration` job above runs -- so
+  # they are genuinely checked on every PR, just not here. If `:core:network`'s tests were ever
+  # disabled, the job named `contract` would still be green.
   contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -158,7 +172,7 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: OpenAPI fixture contract tests
+      - name: OpenAPI oracle self-tests
         run: ./gradlew :core:testing:test
 
       - name: Upload reports

@@ -45,6 +45,10 @@ class ConventionTest {
   fun `the scan finds build files at all`() {
     // A rule that silently scans nothing is the failure mode every rule here guards against.
     assertThat(moduleBuildFiles()).isNotEmpty()
+    // ...and `buildLogicFiles()` was not covered by that, though two rules below scan it: a
+    // relocated or renamed `build-logic` would silently reduce the mock-framework and kapt rules
+    // to scanning nothing and both would go on passing.
+    assertThat(buildLogicFiles()).describedAs("build-logic sources").isNotEmpty()
   }
 
   @Test
@@ -61,13 +65,43 @@ class ConventionTest {
     // minSdk, compileOptions, buildFeatures, ... all still belong in a convention plugin.
     val offenders = moduleBuildFiles()
       .filter { it.parentFile.name != "build-logic" }
-      .filter { f ->
-        val text = f.readText()
-        val bannedBlock = Regex("""^\s*(compileOptions|kotlinOptions|compilerOptions)\s*\{""", RegexOption.MULTILINE)
-          .containsMatchIn(text)
-        bannedBlock || androidBlockOffends(text)
-      }
+      .filter { f -> configurationOffences(f.readText()).isNotEmpty() }
     assertThat(offenders).describedAs("configure these in a convention plugin").isEmpty()
+  }
+
+  /**
+   * Every way this file has been shown to be evadable, closed. Each entry below was verified by
+   * appending the offending line to a real module build file and running this suite: before these
+   * patterns existed all three passed.
+   *
+   * 1. **The property-access form.** `androidBlockOffends` only looks inside a braced
+   *    `android { … }` block, so `android.buildFeatures.buildConfig = true` — real Android
+   *    configuration, in a module build file, which is the entire thing this rule bans — was
+   *    invisible. So are `androidComponents { }` and
+   *    `extensions.configure<ApplicationExtension> { }`, which reach the same DSL by other routes.
+   * 2. **The rule's own name.** It is called "no module configures android or *kotlin* blocks
+   *    directly" while banning three identifiers, so `kotlin { jvmToolchain(21) }`,
+   *    `kotlin { explicitApi() }` and `kotlin { sourceSets { … } }` all passed. A name that
+   *    promises more than the code delivers is the same defect class this project fixed once
+   *    already in Task 1's "on any classpath" wording.
+   * 3. **The line anchor.** `^\s*compilerOptions\s*\{` misses the inlined one-line form
+   *    `kotlin { compilerOptions { … } }`.
+   *
+   * Returns the offending snippets rather than a boolean so a failure names what it found.
+   */
+  private fun configurationOffences(text: String): List<String> {
+    val patterns = listOf(
+      // Not line-anchored: the inlined `kotlin { compilerOptions { ... } }` form evaded that.
+      Regex("""(^|\s)(compileOptions|kotlinOptions|compilerOptions)\s*\{"""),
+      // The `kotlin { }` half the rule's own name has always promised.
+      Regex("""(^|\s)kotlin\s*\{"""),
+      // Property-access and alternative-entry-point forms of the same configuration.
+      Regex("""(^|\s)android\s*\."""),
+      Regex("""(^|\s)androidComponents\s*[{.]"""),
+      Regex("""extensions\s*\.\s*(configure|getByType|findByType)"""),
+    )
+    val bodyOffences = patterns.flatMap { it.findAll(text).map { match -> match.value.trim() } }
+    return bodyOffences + if (androidBlockOffends(text)) listOf("android { }") else emptyList()
   }
 
   /**
@@ -144,17 +178,26 @@ class ConventionTest {
   fun `no mock framework is declared in any build file or convention plugin`() {
     // A textual scan of *declared* dependencies — the catalogue, every module build file, and
     // every build-logic source — not a resolved-classpath check, so on its own it cannot catch a
-    // mock framework arriving transitively through some other dependency. Verified empirically
-    // instead, once, for this catalogue's actual resolved test classpaths:
-    // `./gradlew :app:dependencies --configuration debugUnitTestRuntimeClasspath` and
-    // `:core:model:dependencies --configuration testRuntimeClasspath` both resolve to
-    // junit-jupiter/junit-platform/opentest4j/kotlin-stdlib only. A real per-build
-    // resolved-classpath guard (a Gradle task that resolves each module's test classpath and
-    // inspects the resolved artifacts, wired into `check`) is a reasonable Task 7 addition once
-    // there are enough modules and dependencies for the transitive risk to be more than
-    // theoretical — building that now, against a four-module graph with no real transitive
-    // candidates, would be exercising code paths nothing here can actually prove correct.
-    val banned = listOf("mockito", "mockk", "easymock", "powermock")
+    // mock framework arriving transitively through some other dependency.
+    //
+    // An earlier version of this comment claimed those classpaths "both resolve to
+    // junit-jupiter/junit-platform/opentest4j/kotlin-stdlib only", and used that to argue a
+    // resolved-classpath guard was not worth building. That was false, and it was the stated
+    // reason for not building the stronger check. `:core:model`'s `testRuntimeClasspath` also
+    // carries `org.assertj:assertj-core` and, transitively under it, `net.bytebuddy:byte-buddy`
+    // — the bytecode engine Mockito is built on — and `:app`'s `debugUnitTestRuntimeClasspath`
+    // resolves 141 artifacts, not four.
+    //
+    // The *conclusion* survives: a whole-graph resolution across every `testRuntimeClasspath`,
+    // `testDebugRuntimeClasspath` and `androidTestDebugRuntimeClasspath` in the build finds no
+    // Mockito, MockK, EasyMock, PowerMock, JMockit or Objenesis; Byte Buddy's only parent is
+    // AssertJ. But the graph is no longer four modules with no transitive candidates, so a real
+    // per-build resolved-classpath guard wired into `check` is now worth writing rather than
+    // argued away — carried forward, not done here.
+    //
+    // The list below is *declared* names. Mokkery and Mockative are the two Kotlin mocking
+    // libraries a contributor is most likely to reach for now; neither was covered.
+    val banned = listOf("mockito", "mockk", "easymock", "powermock", "mokkery", "mockative", "jmockit")
     val catalogue = File(repoRoot(), "gradle/libs.versions.toml").readText().lowercase()
     banned.forEach { assertThat(catalogue).doesNotContain(it) }
     (moduleBuildFiles() + buildLogicFiles()).forEach { f ->
@@ -260,8 +303,15 @@ class ConventionTest {
     // `kapt { correctErrorTypes = true }` — kapt immediately followed by `(`, `"`, or `{`, which
     // prose describing kapt does not do (an earlier version of this regex, `kapt\s*[("]`, missed
     // the bare-block form entirely — verified missing, then fixed, by injection: see the report).
-    val kaptUsage = Regex("""kapt\s*[("{]""")
-    (moduleBuildFiles() + buildLogicFiles()).forEach {
+    //
+    // Two gaps closed after the whole-branch review: the scan never included
+    // `gradle/libs.versions.toml`, and the pattern could not match `alias(libs.plugins.kapt)` —
+    // so the catalogue-alias route into kapt was open on both counts. The character class now
+    // also admits `)` and `,` (`libs.plugins.kapt)` , `useVersion("...", kapt)`), and the
+    // catalogue is scanned alongside the build files.
+    val kaptUsage = Regex("""kapt\s*[("{),]""")
+    val scanned = moduleBuildFiles() + buildLogicFiles() + File(repoRoot(), "gradle/libs.versions.toml")
+    scanned.forEach {
       assertThat(kaptUsage.containsMatchIn(it.readText())).describedAs(it.path).isFalse()
     }
   }

@@ -63,8 +63,10 @@ Both must be green to merge. Neither is nightly and neither is advisory.
 
 - **Tier 1** ([`pr.yml`](.github/workflows/pr.yml)) — under ten minutes, no
   emulator: convention rules, Android Lint, the release-manifest check, every JVM
-  test, the coverage floors that need no device, the OpenAPI fixture contract
-  tests, and `LiveNavidromeTest` against a pinned Navidrome container.
+  test, the coverage floors that need no device, the OpenAPI oracle's own
+  self-tests, and `LiveNavidromeTest` against a pinned Navidrome container. (The
+  committed response fixtures are validated against the vendored spec too, by
+  `:core:network`'s own tests rather than by the `contract` job.)
 - **Tier 2** ([`e2e.yml`](.github/workflows/e2e.yml)) — the first-run journey on
   a real API 37 emulator against that same real container, plus the rest of the
   coverage table: the floors over `@Composable` code, which only a real

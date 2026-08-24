@@ -429,7 +429,7 @@ Quality outranks gate speed. Both tiers must be green to merge.
 
 | Job | Content |
 |---|---|
-| Static | ktlint/detekt, convention-plugin checks |
+| Static | Android Lint, convention-plugin checks (`ConventionTest`), release-manifest check |
 | Unit + integration | mappers, token derivation, queue logic, resume maths |
 | Live server | JVM tests against the **pinned Navidrome container** |
 | Contract | every fixture validated against the vendored OpenAPI spec |
@@ -481,6 +481,13 @@ Tier 2 grows with each plan. **A plan is not done until its journeys are in it.*
   which one wins is *not understood*. The assertions hold precisely because they
   make no claim about that ordering. Every floor is measured against one JaCoCo
   version; changing it changes every number in the table.
+- **No ktlint, detekt or spotless yet, and the spec used to say otherwise.** The Tier 1 "Static"
+  row above promised *"ktlint/detekt"*; there is none in the repository — no plugin, no catalogue
+  entry, no `.editorconfig`. What exists, and what the row now says, is Android Lint plus
+  `ConventionTest` plus the release-manifest check. The codebase is uniformly formatted today by
+  discipline alone, which is exactly what the convention-plugin layer exists because it does *not*
+  survive ten modules and seven plans, so adding a formatter is worth doing — but the spec must
+  not claim it before it is there.
 - **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin
   is `0.0.1-alpha16` and Canary-only. Screenshots come from `captureToImage()`
   inside the emulator suite, with a small golden-diff helper — no new framework.
