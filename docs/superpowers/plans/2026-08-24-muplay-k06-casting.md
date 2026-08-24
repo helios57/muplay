@@ -133,7 +133,7 @@ differently, use the real one and record it in the task report. Do not add a sec
 | `MuPlayDataSourceFactory`, `MediaCache`, `TrackIdCacheKeyFactory` | `:core:media` | Tasks 2–3 |
 | `MediaItems.of(song, streamUri, artworkUri, isAudiobook)` | `:core:media` | Tasks 4, 6 — **this plan adds a fifth parameter in Task 4** |
 | `PlaybackQueue(songs, startIndex)`, `QueueRepository.mediaItems(queue)` | `:core:media` | Task 4 |
-| `MuPlayerFactory.create(): ExoPlayer` | `:core:media` | Task 5 |
+| **`MuPlayerFactory(context, dataSourceFactory, loadErrorPolicy, resumePolicy)`** with **`create(): MuPlayer`** and `createExoPlayer(): ExoPlayer` | `:core:media` | Task 5, **rewritten by Task 8** |
 | `MuPlaybackService : MediaLibraryService`, `PlaybackNotification` | `:core:media` | Task 5 |
 | `PlaybackState(...)`, `PlaybackState.NOTHING_PLAYING`, `PlaybackConnection` | `:core:media` | Task 5 |
 | `PlaybackAudioAttributes`, `ContentTypeSwitcher` | `:core:media` | Task 6 |
@@ -9875,8 +9875,10 @@ git commit -m "feat(cast): a renderer that is a Media3 Player, and a speaker tha
   - **`MuPlayer(player: Player, resumePolicy: ResumePolicy) : ForwardingPlayer`** — Task 8.
   - **`ProgressWriter(player, dao, clock, scope)`** with `start()`,
     `write(mediaId, positionMs, finished)`, `flushBlocking()` — Task 8.
-  - `MuPlayerFactory.create(): ExoPlayer` — Task 5. `MuPlaybackService`, `PlaybackConnection` —
-    Task 5.
+  - **`MuPlayerFactory.create(): MuPlayer`** and `createExoPlayer(): ExoPlayer` — Task 5 as
+    rewritten by **Task 8**, which also gives the factory a fourth `resumePolicy`
+    constructor parameter. `create()` is the one this task installs; see Step 4.
+    `MuPlaybackService`, `PlaybackConnection` — Task 5.
   - `MediaProgressDao` (`:core:database`, committed) — used only through `ProgressWriter`.
 - Consumes from this plan: `UpnpPlayer`, `CastSessionState` (Task 8); `UpnpRenderer` (Task 5);
   `CastRouter`, `MediaProxyServer`, `ProxyRegistry` (Tasks 6–7); `CastDevice` (Task 2).
@@ -9959,7 +9961,8 @@ is what Google's own Cast integration does. `MuPlaybackService` observes
   worth an assertion because "nothing to do" and "quietly broken" look the same.
 - **the `MediaController` in the UI.** Also from the session. Also automatic. Also asserted.
 
-The **local** `ExoPlayer` is **paused, not released**, while casting. Releasing it would mean
+The **local player** — the `MuPlayer` from `MuPlayerFactory.create()`, wrapping an `ExoPlayer` —
+is **paused, not released**, while casting. Releasing it would mean
 rebuilding it — and rebinding the audio focus handling, the cache-backed data source and the
 becoming-noisy receiver — on every handover back. Paused, it holds no audio focus and decodes
 nothing.
@@ -10525,10 +10528,17 @@ class CastSessionManager @Inject constructor(
 ```
 
 `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` — in `onCreate`, after the local
-player and session are built:
+player and session are built. **The player installed here is the one `playerFactory.create()`
+returns — a `MuPlayer`, not the raw `ExoPlayer` from `createExoPlayer()`.** Plan 3 Task 8 renamed
+the factory's two methods apart for exactly this reason: `createExoPlayer()` is for the two
+instrumented tests whose subject *is* `ExoPlayer` behaviour, and every other caller takes the seam.
+Installing the unwrapped player here would put the one position-setting code path back into the
+switch — the defect `MuPlayer` exists to prevent, and the one this task's own prose forbids
+("the fix is **not** to bypass the seam with an unwrapped player"). In Plan 3's `onCreate` the local
+is `val player = playerFactory.create()`; use whatever name that line landed with.
 
 ```kotlin
-    outputSwitch.installLocal(muPlayer)
+    outputSwitch.installLocal(player) // the `MuPlayer` from `playerFactory.create()`
     // The session follows the switch. `MediaSession.setPlayer` is Media3's supported way to change
     // what a session drives, and it is what Google's own Cast integration does -- the notification,
     // the media buttons, the lock screen and every `MediaController` come along without any of them
