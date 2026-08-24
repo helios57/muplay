@@ -1,5 +1,6 @@
 package app.muplay.database
 
+import app.muplay.database.entity.ArtistEntity
 import app.muplay.model.Album
 import app.muplay.model.Song
 import org.assertj.core.api.Assertions.assertThat
@@ -123,5 +124,65 @@ class MirrorMapperTest {
     )
 
     assertThat(artists.single().name).isEqualTo("artist-1")
+  }
+
+  @Test
+  fun `a derived artist's borrowed cover art skips albums that have none of their own`() {
+    // `firstNotNullOfOrNull` has to keep looking past a null before it can borrow from the next
+    // album -- every other test in this file gives every album a cover art id, which never
+    // exercises that "keep looking" step at all (measured: 2 of 4 branches missed on this exact
+    // line before this test existed).
+    val artists = MirrorMapper.artistEntities(
+      listOf(
+        album("a1", "First", coverArtId = null),
+        album("a2", "Second", coverArtId = "al-a2"),
+      ),
+    )
+
+    assertThat(artists.single().coverArtId).isEqualTo("al-a2")
+  }
+
+  @Test
+  fun `a derived artist has no cover art when none of its albums do`() {
+    val artists = MirrorMapper.artistEntities(
+      listOf(album("a1", "First", coverArtId = null)),
+    )
+
+    assertThat(artists.single().coverArtId).isNull()
+  }
+
+  // `MirrorMapper.album(entity)` and `.artist(entity)` -- the reverse direction `BrowseRepository`
+  // uses to map every DAO row back to a domain model -- had no JVM test at all: `MirrorMapperTest`
+  // exercised the forward direction and the `song` round trip, but nothing here ever called
+  // either reverse function, so both measured 0/17 LINE from this file alone (only reachable
+  // through `BrowseRepositoryTest`, an instrumented-only suite). The brief requires this class's
+  // floor to stay JVM-measurable, so these two close that gap here rather than leaving it to the
+  // emulator tier.
+
+  @Test
+  fun `an album round-trips through its entity unchanged`() {
+    val original = album("a1", "Test Album")
+
+    assertThat(MirrorMapper.album(MirrorMapper.albumEntity(original))).isEqualTo(original)
+  }
+
+  @Test
+  fun `an artist entity maps to its domain model field by field`() {
+    val entity = ArtistEntity(
+      id = "artist-1",
+      libraryId = 3,
+      name = "Test Artist",
+      coverArtId = "art-1",
+      albumCount = 5,
+      sortName = "test artist",
+    )
+
+    val artist = MirrorMapper.artist(entity)
+
+    assertThat(artist.id).isEqualTo("artist-1")
+    assertThat(artist.libraryId).isEqualTo(3)
+    assertThat(artist.name).isEqualTo("Test Artist")
+    assertThat(artist.coverArtId).isEqualTo("art-1")
+    assertThat(artist.albumCount).isEqualTo(5)
   }
 }

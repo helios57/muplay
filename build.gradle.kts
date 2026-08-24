@@ -427,26 +427,64 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:core:database` (Plan 2 Tasks 1-4). Six rules, because the module now holds three different
+  // `:core:database` (Plan 2 Tasks 1-5). Nine rules, because the module now holds three different
   // kinds of code and one blended floor would hide a regression in any of them behind the others.
   //
   // Measured, all of them, from a merged JVM + instrumented report (see task-2's transcript for
-  // Tasks 1-2's numbers; task-4's own transcript for what follows): KeystoreCipher BRANCH 4/4
-  // and LINE 15/15; CredentialStore BRANCH 16/16 and LINE 37/37; MuPlayDatabase 1/1, DataModule
-  // 9/9, MediaProgressEntity 9/9, LibraryDao 5/5, LibraryEntity 5/5, NotConfiguredException 2/2
-  // LINE; LibraryRepository BRANCH 2/2 and LINE 14/15; SubsonicSourceProvider BRANCH 2/2 and
-  // LINE 5/5; and the coroutine/`Flow.map` codegen classes at 0.50-0.67 LINE.
+  // Tasks 1-2's numbers; task-4's own transcript for Task 4's; task-5's for what follows):
+  // KeystoreCipher BRANCH 4/4 and LINE 15/15; CredentialStore BRANCH 16/16 and LINE 37/37;
+  // MuPlayDatabase 1/1, DataModule 9/9, MediaProgressEntity 9/9, LibraryDao 5/5, LibraryEntity
+  // 5/5, NotConfiguredException 2/2 LINE; LibraryRepository BRANCH 2/2 and LINE 14/15;
+  // SubsonicSourceProvider BRANCH 2/2 and LINE 5/5; the coroutine/`Flow.map` codegen classes at
+  // 0.50-0.67 LINE; MirrorMapper BRANCH 12/12 and LINE 72/72; ArtistEntity/AlbumEntity/SongEntity
+  // LINE 8/8, 11/11, 15/15; BrowseDao LINE 17/17; MirrorReplacement LINE 7/7; BrowseRepository
+  // BRANCH 6/6 and LINE 18/18.
   ":core:database" to listOf(
-    // The only floor in this module Tier 1 can enforce, and the only one that is not
-    // `requiresInstrumentedData`. KeystoreCipher takes a `SecretKey` rather than fetching one
-    // from AndroidKeyStore precisely so its cryptographic contract is testable off-device, and
-    // KeystoreCipherTest reaches 4/4 branches from a plain JVM run. Gating it in the fast tier is
-    // the whole payoff of that design.
+    // The only floor in this module Tier 1 could enforce through Task 4, and one of two as of
+    // Task 5. KeystoreCipher takes a `SecretKey` rather than fetching one from AndroidKeyStore
+    // precisely so its cryptographic contract is testable off-device, and KeystoreCipherTest
+    // reaches 4/4 branches from a plain JVM run. Gating it in the fast tier is the whole payoff
+    // of that design.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.database.KeystoreCipher"),
+    ),
+    // `MirrorMapper` is the second: a plain `object` with no injected collaborators and no
+    // Android/SQLite dependency, so its own JVM `MirrorMapperTest` reaches 12/12 branches with no
+    // emulator. `MirrorMapper*` (not the bare name) because `artistEntities`'s `sortedBy` call
+    // compiles to a nested lambda class (`MirrorMapper$artistEntities$lambda$2$$inlined$sortedBy$1`)
+    // that a bare `"app.muplay.database.MirrorMapper"` include would not match at all and
+    // `warnUngatedClasses` would then flag on every run; it carries 0 branches of its own (JaCoCo's
+    // isNaN pass) so widening the pattern costs nothing. `MirrorMapper.album(entity)` and
+    // `.artist(entity)` -- the reverse direction only `BrowseRepository` originally called --
+    // measured 0/17 LINE from `MirrorMapperTest` alone until this task added direct tests for
+    // both, specifically so this class could stay JVM-measurable rather than moving to the
+    // `requiresInstrumentedData` rule below (confirmed by physically removing the instrumented
+    // `.ec` file and re-running `jacocoTestReport`; see task-5-report.md).
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.MirrorMapper*"),
+    ),
+    // The three mirror row entities -- unlike `LibraryEntity`/`MediaProgressEntity` below, these
+    // have no branches of their own (plain `data class`es) but *are* JVM-measurable: `MirrorMapper`
+    // constructs all three directly (`albumEntity`, `songEntity`, `artistEntities`), and
+    // `MirrorMapperTest` also constructs an `ArtistEntity` by hand to test `MirrorMapper.artist`
+    // field by field. Measured 8/8, 11/11, 15/15 LINE with the instrumented `.ec` file physically
+    // absent -- not inferred from the merged report, which cannot distinguish "reachable from the
+    // JVM" from "reachable only from the emulator".
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.entity.ArtistEntity",
+        "app.muplay.database.entity.AlbumEntity",
+        "app.muplay.database.entity.SongEntity",
+      ),
     ),
     // CredentialStore's own author-written branches: 16/16 after Task 2 added the partial-write,
     // missing-key and unopenable-blob recovery paths. Those five branches were genuinely
@@ -482,12 +520,29 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.database.SubsonicSourceProvider"),
       requiresInstrumentedData = true,
     ),
+    // `BrowseRepository`'s only author-written conditional: `search`'s blank-query short circuit
+    // (`if (trimmed.isEmpty()) return ...`). Every other method is a straight-line delegation to
+    // `BrowseDao`/`SubsonicSourceProvider` through `MirrorMapper` -- proven to actually forward
+    // its arguments rather than hardcode them by 13 mutations in `BrowseRepositoryTest`, none of
+    // which this BRANCH rule alone could tell apart from a hardcoded constant (a mutated
+    // `observeArtists(1)` still compiles to the same branch count as `observeArtists(libraryId)`).
+    // See task-5-report.md for the per-mutation proof. Measured 6/6.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.BrowseRepository"),
+      requiresInstrumentedData = true,
+    ),
     // Everything whose value is "did this line run at all": the Room database class, the Hilt
-    // providers, the entities, the DAO, the two Task 4 classes with no branch of their own
-    // (LibraryEntity, NotConfiguredException), and every class above that also has its own
-    // BRANCH rule. No separate BRANCH entry for LibraryDao/LibraryEntity/MediaProgressEntity --
-    // they contain no author-written conditional, so a BRANCH rule would match only zero-total
-    // counters and pass silently at every minimum through JaCoCo's isNaN branch.
+    // providers, the entities that need an emulator to be reached at all (LibraryEntity,
+    // MediaProgressEntity -- unlike the three mirror entities above, nothing JVM-side ever
+    // constructs these), the DAOs, the Task 4/5 classes with no branch of their own
+    // (LibraryEntity, NotConfiguredException, MirrorReplacement), and every class above that also
+    // has its own BRANCH rule. No separate BRANCH entry for LibraryDao/BrowseDao/LibraryEntity/
+    // MediaProgressEntity/MirrorReplacement -- they contain no author-written conditional, so a
+    // BRANCH rule would match only zero-total counters and pass silently at every minimum through
+    // JaCoCo's isNaN branch.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -500,22 +555,28 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.entity.MediaProgressEntity",
         "app.muplay.database.entity.LibraryEntity",
         "app.muplay.database.dao.LibraryDao",
+        "app.muplay.database.dao.BrowseDao",
+        "app.muplay.database.dao.MirrorReplacement",
         "app.muplay.database.LibraryRepository",
         "app.muplay.database.SubsonicSourceProvider",
+        "app.muplay.database.BrowseRepository",
         "app.muplay.database.NotConfiguredException",
       ),
       requiresInstrumentedData = true,
     ),
     // The Kotlin compiler's own output for `suspend` bodies and for `Flow.map`: the
-    // `save$2`/`clear$2`/`CredentialStore$special$$inlined$map$1*` family, and now
-    // `LibraryRepository`'s own `Flow.map` lambda (`LibraryRepository$special$$inlined$map$1*`)
-    // and its `refreshFromServer`/`hasUnassignedLibraries` suspend continuations. Measured
-    // 0.50-0.67 LINE across both families alike, floored at 0.50 -- a real number this run
-    // produced, not a round one. `SubsonicSourceProvider*` rides along in the same rule: its own
-    // `current$1` continuation carries no LINE counter of its own (0/0, JaCoCo's isNaN branch, see
-    // `warnVacuousFloors`'s own doc for why that is not the same thing as "excluded"), so it costs
-    // nothing to include and keeps this rule's reasoning -- "one rule for every suspend/Flow.map
-    // artefact in this module" -- true without a second near-duplicate rule.
+    // `save$2`/`clear$2`/`CredentialStore$special$$inlined$map$1*` family, `LibraryRepository`'s
+    // own `Flow.map` lambda (`LibraryRepository$special$$inlined$map$1*`) and its
+    // `refreshFromServer`/`hasUnassignedLibraries` suspend continuations, and now
+    // `BrowseRepository`'s four `Flow.map` lambdas (`artists`/`albums`/`albumsByArtist`/`songs`,
+    // each compiling to its own `$$inlined$map$1`/`$1$2` pair) plus its `album`/`search`/
+    // `coverArtUrl` suspend continuations. Measured 0.50-0.67 LINE across all three families
+    // alike, floored at 0.50 -- a real number this run produced, not a round one.
+    // `SubsonicSourceProvider*` rides along in the same rule: its own `current$1` continuation
+    // carries no LINE counter of its own (0/0, JaCoCo's isNaN branch, see `warnVacuousFloors`'s
+    // own doc for why that is not the same thing as "excluded"), so it costs nothing to include
+    // and keeps this rule's reasoning -- "one rule for every suspend/Flow.map artefact in this
+    // module" -- true without a second near-duplicate rule.
     //
     // Gated rather than excluded, and gated low rather than not at all. Excluding them the way
     // Room's `_Impl` and Hilt's generated types are excluded would be defensible, but those have
@@ -532,12 +593,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.CredentialStore*",
         "app.muplay.database.LibraryRepository*",
         "app.muplay.database.SubsonicSourceProvider*",
+        "app.muplay.database.BrowseRepository*",
       ),
       excludes = listOf(
         "app.muplay.database.CredentialStore",
         "app.muplay.database.CredentialStore*Companion",
         "app.muplay.database.LibraryRepository",
         "app.muplay.database.SubsonicSourceProvider",
+        "app.muplay.database.BrowseRepository",
       ),
       requiresInstrumentedData = true,
     ),
