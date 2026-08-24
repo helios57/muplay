@@ -9842,8 +9842,8 @@ item 6, these are corrected **in the spec**, not recorded in a report.
    > are per book**, on `book_settings`, keyed on the book id (the album id of a book in a library
    > the user tagged Audiobooks). `media_progress.speed` and `.skipSilence` remain as columns but
    > are not the authority for a book and are written by nothing; `media_progress.gainDb` is
-   > genuinely per-file (ReplayGain is a property of the file) and is **unwritten and unapplied** —
-   > applying it means a gain stage in the audio pipeline, which no plan has yet taken.
+   > genuinely per-file (ReplayGain is a property of the file) and is **written and applied by the
+   > playback plan**, which owns the audio pipeline's gain stage.
 2. **§3, the `MuPlayer` paragraph.** It says the seam discards *"the caller's index and position"*.
    Plan 3 already flagged the index half; Plan 4 completes it with the reason. Reword to:
    > `MuPlayer` is a `ForwardingPlayer` overriding all six `setMediaItem(s)` overloads to discard
