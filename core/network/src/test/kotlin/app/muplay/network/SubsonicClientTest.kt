@@ -230,6 +230,12 @@ class SubsonicClientTest {
 
     val libraries = client.getMusicFolders()
 
+    // `containsExactly` here is order-sensitive on purpose (N4-1): a reversed or re-sorted mapper
+    // would fail this the moment the two rows' names differ, which round 4's re-review noted this
+    // is the *only* list assertion in the whole browse test suite that happened to have that
+    // property -- and it had it by accident of comparing full `MusicLibrary` values positionally,
+    // not because anyone set out to pin `getMusicFolders`'s order. Recorded here so it stays that
+    // way deliberately rather than by accident the next time this test is touched.
     assertThat(libraries).containsExactly(
       MusicLibrary(id = 1, name = "Music", role = LibraryRole.UNASSIGNED),
       MusicLibrary(id = 2, name = "Audiobooks", role = LibraryRole.UNASSIGNED),

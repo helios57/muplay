@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test
  * Where the real Navidrome and the vendored OpenSubsonic spec disagree, pinned.
  *
  * Every fixture this class names was captured from a running `deluan/navidrome:0.63.2` and is
- * committed **exactly as it came off the wire**. **Five of the seven** do not validate against the
- * vendored spec, for **two distinct reasons** — four on `userRating`, one on `scanStatus` — and
+ * committed **exactly as it came off the wire**. **Eight of the ten** do not validate against the
+ * vendored spec, for **two distinct reasons** — six on `userRating`, two on `scanStatus` — and
  * rather than editing the capture until the oracle is happy, which would destroy the only external
  * check this project has, each disagreement is asserted here by name.
  *
@@ -18,8 +18,11 @@ import org.junit.jupiter.api.Test
  * the subject counted the two *causes* as three, and the body's "four of the seven" was the
  * `userRating` subtotal after `ALBUM_BEARING_FIXTURES` was widened from three captures to four,
  * with the `scanStatus` capture never added back in. There is no third divergence. Two causes,
- * five rejected captures, two accepted — the tally spec §10 gives, and the one an independent
- * re-run of all seven captures through `OpenApiFixtureValidator` measured.)
+ * originally five rejected captures against two accepted — the tally spec §10 gave at the time,
+ * measured by an independent re-run of all seven captures through `OpenApiFixtureValidator`.
+ * `ALBUM_BEARING_FIXTURES` has since grown twice more — `search3-audiobooks.json` in round 4,
+ * `get-album-list2-music-multi.json` for N4-1b — each rejected the same way, each recounted here
+ * rather than left to go stale a second time: eight rejected, two accepted, ten total.)
  *
  * These assertions fail in both directions, which is the point. If Navidrome stops sending
  * `userRating: 0`, or the vendored spec is refreshed to model Navidrome's `scanStatus`
@@ -51,8 +54,8 @@ class NavidromeSpecDeviationTest {
   fun `navidrome sends userRating 0 which the spec forbids`() {
     // AlbumID3.userRating is `minimum: 1, maximum: 5` ("The user rating of the album. [1-5]").
     // Navidrome sends 0 for an unrated album, which is not in that range. Every album-bearing
-    // response is therefore rejected -- three endpoints, five captures, one cause. The fifth
-    // rejected capture is `get-scan-status.json`, for an unrelated reason, asserted below.
+    // response is therefore rejected -- three endpoints, six captures, one cause. Both
+    // `getScanStatus` captures are rejected too, for an unrelated reason, asserted below.
     ALBUM_BEARING_FIXTURES.forEach { (name, path) ->
       assertThatThrownBy { OpenApiFixtureValidator.assertValid(path, fixture(name)) }
         .describedAs(name)
@@ -117,6 +120,7 @@ class NavidromeSpecDeviationTest {
   private companion object {
     const val ALBUM_LIST_MUSIC_FIXTURE = "get-album-list2-music.json"
     const val ALBUM_LIST_AUDIOBOOKS_FIXTURE = "get-album-list2-audiobooks.json"
+    const val ALBUM_LIST_MUSIC_MULTI_FIXTURE = "get-album-list2-music-multi.json"
     const val ALBUM_LIST_EMPTY_FIXTURE = "get-album-list2-empty.json"
     const val ALBUM_WITH_SONGS_FIXTURE = "get-album-with-songs.json"
     const val SEARCH3_FIXTURE = "search3-music.json"
@@ -127,16 +131,17 @@ class NavidromeSpecDeviationTest {
 
     /**
      * Every captured response that carries an `AlbumID3` anywhere in it, with the spec path it
-     * would be validated against. All five committed album-bearing captures are here, not just
+     * would be validated against. All six committed album-bearing captures are here, not just
      * the three the two assertions above strictly need to make their point: a fixture this
      * project commits and never puts in front of the oracle is a fixture nobody is checking, and
      * `get-album-list2-audiobooks.json` (this project's only capture of library 2, and so the
      * only evidence that the audiobook library is reachable at all) would otherwise be exactly
-     * that.
+     * that. `get-album-list2-music-multi.json` (N4-1b) is the newest addition, for the same reason.
      */
     val ALBUM_BEARING_FIXTURES = listOf(
       ALBUM_LIST_MUSIC_FIXTURE to "/rest/getAlbumList2",
       ALBUM_LIST_AUDIOBOOKS_FIXTURE to "/rest/getAlbumList2",
+      ALBUM_LIST_MUSIC_MULTI_FIXTURE to "/rest/getAlbumList2",
       ALBUM_WITH_SONGS_FIXTURE to "/rest/getAlbum",
       SEARCH3_FIXTURE to "/rest/search3",
       SEARCH3_AUDIOBOOKS_FIXTURE to "/rest/search3",

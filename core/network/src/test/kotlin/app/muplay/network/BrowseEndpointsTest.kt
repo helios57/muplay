@@ -166,6 +166,57 @@ class BrowseEndpointsTest {
   }
 
   @Test
+  fun `getAlbumList2 preserves wire order and maps every field across a genuine multi-album body`() = runTest {
+    // N4-1 / N4-1b. Both existing albumList2 captures hold exactly one album each, so neither this
+    // command's order nor its per-element mapping was ever observed against a body with more than
+    // one row: reversing the mapped list left `check` at exit 0 against the old fixtures, but that
+    // mutation was *degenerate* there -- a one-element list reversed is the identity, so exit 0
+    // proved nothing. `getAlbumList2`'s order is exactly what the reconcile paging loop's `offset`
+    // depends on: an unstably-ordered list duplicates and drops rows across pages, which is the
+    // sync bug class Task 6 exists to avoid.
+    //
+    // This fixture is a genuine second capture, not a hand-edit of an existing one: the live
+    // container was given a temporary second album (two new tracks seeded under
+    // "Music/Another Artist/Another Album"), a full rescan was triggered and polled to completion,
+    // `getAlbumList2` was captured over the real response, and the temporary files were then
+    // removed and the container rescanned back to its original single-album-per-library state --
+    // see order-unit-report.md for the transcript. Every mapped `Album` field on the new row is
+    // disjoint from both existing captures (id, name, artistId, artistName, coverArtId, songCount,
+    // durationSeconds all differ), so this is a real second observation, not a repeat.
+    enqueue(fixture(ALBUM_LIST_MUSIC_MULTI_FIXTURE))
+
+    val albums = client.getAlbumList2(1, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
+
+    // Order first -- `containsExactly`, not `containsExactlyInAnyOrder`. The server's own
+    // alphabeticalByName sort put "Another Album" before "Test Album" (sortName "another album" <
+    // "test album", confirmed against the live container), and this is the one list assertion in
+    // the whole file a reversed or re-sorted mapper cannot survive against a genuinely
+    // multi-row body.
+    assertThat(albums.map { it.name }).containsExactly("Another Album", "Test Album")
+
+    // Per-element field mapping, both rows.
+    val first = albums[0]
+    assertThat(first.id).isEqualTo("1oCWyplxCCQRLuP0UCQvps")
+    assertThat(first.name).isEqualTo("Another Album")
+    assertThat(first.artistId).isEqualTo("4CezS1A1Y1282maT5EaVlW")
+    assertThat(first.artistName).isEqualTo("Another Artist")
+    assertThat(first.coverArtId).isEqualTo("al-1oCWyplxCCQRLuP0UCQvps_6a8c95f5")
+    assertThat(first.songCount).isEqualTo(2)
+    assertThat(first.durationSeconds).isEqualTo(7)
+    assertThat(first.libraryId).isEqualTo(1)
+
+    val second = albums[1]
+    assertThat(second.id).isEqualTo(MUSIC_ALBUM_ID)
+    assertThat(second.name).isEqualTo("Test Album")
+    assertThat(second.artistId).isEqualTo(MUSIC_ARTIST_ID)
+    assertThat(second.artistName).isEqualTo("Test Artist")
+    assertThat(second.coverArtId).isEqualTo(MUSIC_ALBUM_COVER_ART_ID)
+    assertThat(second.songCount).isEqualTo(3)
+    assertThat(second.durationSeconds).isEqualTo(15)
+    assertThat(second.libraryId).isEqualTo(1)
+  }
+
+  @Test
   fun `an albumList2 container with no album key maps to no albums, not to a failure`() = runTest {
     // Captured live from a past-the-end offset: `"albumList2": {}`. The reconcile paging loop in
     // the sync engine terminates on exactly this, so mapping it to an error would make a full
@@ -251,9 +302,17 @@ class BrowseEndpointsTest {
     // list, and while the `hasSize(3)` above happens to guard these today, that guard is
     // positional -- delete or reorder it and they go silent without anything failing.
     assertThat(result.songs.map { it.libraryId }).containsExactly(7, 7, 7)
-    assertThat(result.songs.map { it.title })
-      .containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
-    assertThat(result.songs.map { it.trackNumber }).containsExactlyInAnyOrder(1, 2, 3)
+    // Order-sensitive on purpose, not `containsExactlyInAnyOrder`: this list *is* the track order
+    // a queue built from it plays, and the fixture's wire order (Track 1, 2, 3) is not alphabetical
+    // or otherwise self-enforcing, so `containsExactly` is what actually catches a mapper that
+    // reverses or re-sorts the songs. Round 4's re-review found every list assertion in this file
+    // order-blind except `getMusicFolders`'s -- and that one was order-sensitive by accident of
+    // using a literal `containsExactly` list, not by intent. See N4-1.
+    assertThat(result.songs.map { it.title }).containsExactly("Track 1", "Track 2", "Track 3")
+    assertThat(result.songs.map { it.trackNumber }).containsExactly(1, 2, 3)
+    // `suffix` stays `containsExactly` on three *identical* values deliberately, not as an order
+    // assertion: all three rows carry "mp3", so no assertion shape here could ever discriminate
+    // order -- this line proves cardinality and value only, same as before.
     assertThat(result.songs.map { it.suffix }).containsExactly("mp3", "mp3", "mp3")
 
     // Every remaining `Song` field, on one track, at its literal. `albumId`, `albumName`,
@@ -333,8 +392,10 @@ class BrowseEndpointsTest {
 
     assertThat(results.artists.map { it.name }).contains("Test Artist")
     assertThat(results.albums.map { it.name }).contains("Test Album")
-    assertThat(results.songs.map { it.title })
-      .containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
+    // Order-sensitive for the same reason as `getAlbum`'s equivalent assertion above (N4-1): a
+    // caller building a track list from search results sees the server's own order, and
+    // `containsExactly` is what a reversed or re-sorted mapper would actually fail here.
+    assertThat(results.songs.map { it.title }).containsExactly("Track 1", "Track 2", "Track 3")
     // Same reason as above, and here the guard was even thinner: these three were non-vacuous only
     // because the `contains(...)` assertions above happen to run first and happen to establish
     // non-emptiness. That is an accident of ordering, not a property of the assertion.
@@ -468,7 +529,57 @@ class BrowseEndpointsTest {
     assertThat(results.songs.single().discNumber).isEqualTo(3)
   }
 
+  @Test
+  fun `absent optional fields default rather than degrading a null into an empty string`() = runTest {
+    // N4-2 and N4-3 together: both are the same "absence" question -- does the mapper read what
+    // the body actually said, including "it said nothing at all" -- for the two Kotlin shapes that
+    // question can take. N4-2: a nullable mapped field (`Album.artistId`, `Album.artistName`,
+    // `Song.suffix`) must stay null, not collapse through a stray `artistId ?: ""` into a
+    // real-looking empty value. N4-3: an `Int` DTO field with a default (`AlbumBody.songCount`/
+    // `duration`, `ArtistBody.albumCount`, `ChildBody.duration`) must fall back to that default,
+    // not to some other constant a mapper could hardcode instead. Neither is producible by the
+    // live container: every seeded file has a known artist and suffix, and Navidrome always sends
+    // songCount/duration/albumCount for a real album or artist. So, same footing as
+    // SEARCH3_WITH_UNCAPTURABLE_FIELDS above -- synthetic, labelled at both the constant and here,
+    // asserting only the fields this question is about. (`ChildBody.isDir` is the fifth default
+    // N4-3 names; it is modelled and mapped nowhere at all -- see its own KDoc in
+    // SubsonicResponse.kt -- so there is no mapped field for a wrong default to reach, and no
+    // assertion here could observe one.)
+    //
+    // Also the fixture for a second, easily-missed fact: this file's `:core:network` BRANCH floor
+    // (root `build.gradle.kts`'s `coverageFloors["core:network"]`, `>= 0.90`) reads a *measured*
+    // `1.0000` at HEAD -- confirmed by round 4's re-review two independent ways (bytecode opcode
+    // diffing and a direct JaCoCo run with the `?: ""` defect live, both `0/56`). A `?: ""` on a
+    // nullable field is the one shape of mutation in this class that *adds* a branch, so it is the
+    // one shape a coverage floor could in principle notice -- and with five missed branches of
+    // headroom before 0.90 trips, it still would not have. A passing floor is not "no uncovered
+    // branch"; this test, not the floor, is what actually closes N4-2.
+    enqueue(SEARCH3_WITH_ABSENT_OPTIONAL_FIELDS)
+
+    val results = client.search3("anything", musicFolderId = 1, artistCount = 5, albumCount = 5, songCount = 5)
+
+    // N4-3: the DTO default, read because the wire omitted the key -- `= 99` in AlbumBody or
+    // ArtistBody would satisfy every other test in this file.
+    assertThat(results.artists.single().albumCount).isEqualTo(0)
+    assertThat(results.albums.single().songCount).isEqualTo(0)
+    assertThat(results.albums.single().durationSeconds).isEqualTo(0)
+    assertThat(results.songs.single().durationSeconds).isEqualTo(0)
+    // N4-2: nullable mapped fields stay null on an absent key, rather than a stray `?: ""`.
+    assertThat(results.albums.single().artistId).isNull()
+    assertThat(results.albums.single().artistName).isNull()
+    assertThat(results.songs.single().suffix).isNull()
+  }
+
   // --- getRandomSongs ------------------------------------------------------------------------
+  //
+  // Deliberately no order assertion anywhere below (N4-1): a shuffle's whole point is that its
+  // order carries no meaning a caller could rely on, so pinning an exact order here would assert
+  // an accident of one server response, not a contract. The committed fixture is itself evidence
+  // of that: its three songs arrive Track 1, Track 3, Track 2 -- not the sequential order every
+  // other capture in this file happens to use -- because the server already does not promise
+  // anything positional for this command. The cardinality (`hasSize`/`containsExactly` on
+  // three-of-the-same-value) and stamp assertions below are what this command actually needs to
+  // prove; a reversed or re-sorted mapper is invisible here on purpose, not by oversight.
 
   @Test
   fun `getRandomSongs sends whichever scope and size it is given`() = runTest {
@@ -822,6 +933,17 @@ class BrowseEndpointsTest {
 
     const val ALBUM_LIST_MUSIC_FIXTURE = "get-album-list2-music.json"
     const val ALBUM_LIST_AUDIOBOOKS_FIXTURE = "get-album-list2-audiobooks.json"
+
+    /**
+     * A genuine second capture of `getAlbumList2` for the "Music" library, taken while a
+     * temporary second album ("Another Album" / "Another Artist", 2 tracks) was seeded into the
+     * live container alongside the permanent fixture set, then removed again once this capture
+     * was taken -- see `order-unit-report.md` for the full transcript. `get-album-list2-music.json`
+     * and `get-album-list2-audiobooks.json` each hold exactly one album, so this is the only
+     * fixture in the suite where `getAlbumList2`'s order and per-element mapping are observed
+     * against more than one row (N4-1b).
+     */
+    const val ALBUM_LIST_MUSIC_MULTI_FIXTURE = "get-album-list2-music-multi.json"
     const val ALBUM_LIST_EMPTY_FIXTURE = "get-album-list2-empty.json"
     const val ALBUM_WITH_SONGS_FIXTURE = "get-album-with-songs.json"
     const val SEARCH3_FIXTURE = "search3-music.json"
@@ -850,6 +972,21 @@ class BrowseEndpointsTest {
         """"artist":[{"id":"ar-synthetic","name":"Synthetic Artist","albumCount":7}],""" +
         """"album":[{"id":"al-synthetic","name":"Synthetic Album","songCount":9,"duration":4242}],""" +
         """"song":[{"id":"so-synthetic","title":"Synthetic Track","discNumber":3,"isDir":false}]}}}"""
+
+    /**
+     * A synthetic `search3` body carrying one artist, album and song each with every *optional*
+     * field the DTOs model left off the wire entirely -- no real Navidrome capture can produce
+     * this: every seeded file has a known artist and file suffix, and Navidrome always sends
+     * songCount/duration/albumCount for a real album or artist. Synthetic on purpose and used by
+     * exactly one test (N4-2, N4-3), whose KDoc explains why a live capture is neither available
+     * nor required for the question it asks.
+     */
+    const val SEARCH3_WITH_ABSENT_OPTIONAL_FIELDS =
+      """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
+        """"serverVersion":"0.63.2 (be10f89c)","openSubsonic":true,"searchResult3":{""" +
+        """"artist":[{"id":"ar-nodefaults","name":"No Defaults Artist"}],""" +
+        """"album":[{"id":"al-nodefaults","name":"No Defaults Album"}],""" +
+        """"song":[{"id":"so-nodefaults","title":"No Defaults Track"}]}}}"""
 
     /**
      * A spec-valid success envelope with no command payload at all. Synthetic, and deliberately

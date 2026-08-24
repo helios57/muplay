@@ -1,0 +1,73 @@
+{
+    "subsonic-response": {
+        "status": "ok",
+        "version": "1.16.1",
+        "type": "navidrome",
+        "serverVersion": "0.63.2 (be10f89c)",
+        "openSubsonic": true,
+        "albumList2": {
+            "album": [
+                {
+                    "id": "1oCWyplxCCQRLuP0UCQvps",
+                    "name": "Another Album",
+                    "artist": "Another Artist",
+                    "artistId": "4CezS1A1Y1282maT5EaVlW",
+                    "coverArt": "al-1oCWyplxCCQRLuP0UCQvps_6a8c95f5",
+                    "songCount": 2,
+                    "duration": 7,
+                    "created": "2026-08-24T19:05:29.878240559Z",
+                    "userRating": 0,
+                    "genres": [],
+                    "musicBrainzId": "",
+                    "isCompilation": false,
+                    "sortName": "another album",
+                    "discTitles": [],
+                    "originalReleaseDate": {},
+                    "releaseDate": {},
+                    "releaseTypes": [],
+                    "recordLabels": [],
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4CezS1A1Y1282maT5EaVlW",
+                            "name": "Another Artist"
+                        }
+                    ],
+                    "displayArtist": "Another Artist",
+                    "explicitStatus": "",
+                    "version": ""
+                },
+                {
+                    "id": "7orvCZZyWRqsduCdqXoguY",
+                    "name": "Test Album",
+                    "artist": "Test Artist",
+                    "artistId": "4kqFOAfzcbEE22Bin8jHjV",
+                    "coverArt": "al-7orvCZZyWRqsduCdqXoguY_6a8bbb51",
+                    "songCount": 3,
+                    "duration": 15,
+                    "created": "2026-08-23T20:34:36.232674711Z",
+                    "userRating": 0,
+                    "genres": [],
+                    "musicBrainzId": "",
+                    "isCompilation": false,
+                    "sortName": "test album",
+                    "discTitles": [],
+                    "originalReleaseDate": {},
+                    "releaseDate": {},
+                    "releaseTypes": [],
+                    "recordLabels": [],
+                    "moods": [],
+                    "artists": [
+                        {
+                            "id": "4kqFOAfzcbEE22Bin8jHjV",
+                            "name": "Test Artist"
+                        }
+                    ],
+                    "displayArtist": "Test Artist",
+                    "explicitStatus": "",
+                    "version": ""
+                }
+            ]
+        }
+    }
+}

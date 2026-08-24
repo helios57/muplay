@@ -125,6 +125,14 @@ data class AlbumBody(
  * [type] is modelled and then deliberately ignored by every mapper: Navidrome hardcodes it to
  * `"music"` for every media file including audiobooks, so reading it would be reading a constant.
  * It is kept so the next reader can see that it was considered rather than missed.
+ *
+ * [isDir], likewise, is modelled — the schema requires it, and a compliant decoder needs somewhere
+ * to put it — but mapped nowhere at all: `Song` has no such property, and nothing in this client
+ * ever reads it. Its `false` default is therefore not a gap the way the other defaults in this file
+ * are (N4-3): there is no mapped field a wrong default could reach, and so no assertion anywhere
+ * could observe one either. If a future caller starts distinguishing folders from files, this is
+ * the field to start reading, and it will need the same absence-tested treatment the rest of this
+ * class gets then.
  */
 @Serializable
 data class ChildBody(
