@@ -107,11 +107,18 @@ class LibraryRepositoryTest {
       MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
     )
     repository.refreshFromServer()
+    repository.setRole(1, LibraryRole.MUSIC)
     repository.setRole(2, LibraryRole.AUDIOBOOKS)
 
     repository.refreshFromServer()
 
+    // Two distinct, non-empty values for the same delegating method
+    // (`LibraryRepository.idsWithRole` -> `libraryDao.idsWithRole`): a build that ignored the
+    // `role` argument and hardcoded `AUDIOBOOKS` would make the MUSIC assertion below fail --
+    // before this fix, MUSIC was observed at exactly one value in the whole suite, the empty
+    // list, which a hardcoded AUDIOBOOKS answers just as well as a real implementation does.
     assertThat(repository.idsWithRole(LibraryRole.AUDIOBOOKS)).containsExactly(2)
+    assertThat(repository.idsWithRole(LibraryRole.MUSIC)).containsExactly(1)
   }
 
   @Test
@@ -195,6 +202,27 @@ class LibraryRepositoryTest {
 
     assertThat(repository.libraries.first().first { it.id == 9 }.role)
       .isEqualTo(LibraryRole.MUSIC)
+  }
+
+  /**
+   * `allIds()` was in the brief's own `Produces` list but had no test at all -- JaCoCo measured
+   * it 0/1 LINE, invisible behind `LibraryRepository`'s other, well-exercised lines. It is the
+   * "every library" scope a cross-library search or a shuffle-everything path will iterate; a
+   * build where it returned the wrong set produced silently empty results with nothing here
+   * going red.
+   */
+  @Test
+  fun allIdsReportsEveryLibraryRegardlessOfRole() = runTest {
+    signIn()
+    source.musicFolders = listOf(
+      MusicLibrary(1, "Music", LibraryRole.UNASSIGNED),
+      MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
+    )
+    repository.refreshFromServer()
+    repository.setRole(1, LibraryRole.MUSIC)
+    repository.setRole(2, LibraryRole.AUDIOBOOKS)
+
+    assertThat(repository.allIds()).containsExactly(1, 2)
   }
 
   /**
