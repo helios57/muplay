@@ -42,8 +42,8 @@
 # are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
 # Navidrome container.
 #
-# USAGE:  ./ci/mutation-probes.sh            # all probes, ~4 minutes
-#         ./ci/mutation-probes.sh offset     # only probes whose id contains "offset"
+# USAGE:  ./ci/mutation-probes.sh            # all probes; MEASURED ~13 min for 17 (~46 s each)
+#         ./ci/mutation-probes.sh stamp      # only probes whose id contains "stamp"
 #
 # The tree must be clean: every probe reverts with `git checkout --`, which cannot tell a probe
 # from uncommitted work. Committing before mutating is a standing rule on this project because
@@ -112,7 +112,7 @@ PROBES = [
     ("wire/getRandomSongs-musicFolderId", CLIENT,
      '"size" to size.coerceIn(1, MAX_RANDOM_SONGS).toString(),\n          "musicFolderId" to musicFolderId.toString(),',
      '"size" to size.coerceIn(1, MAX_RANDOM_SONGS).toString(),\n          "musicFolderId" to "1",',
-     "getRandomSongs clamps a non-positive size up to one", 1),
+     "getRandomSongs sends whichever scope and size it is given", 1),
     ("wire/coverArt-id", CLIENT,
      '.addQueryParameter("id", coverArtId)', '.addQueryParameter("id", "al-abc_0")',
      "the cover art url forwards whichever art id and size it is given", 1),
@@ -141,6 +141,19 @@ PROBES = [
      "return body.randomSongs?.song.orEmpty().map { it.toSong(1) }",
      "getRandomSongs stamps every song with the library it was scoped to", 1),
 
+    # ---- N2-1, round 3: ScanStatus -- the watermark Task 6's sync engine is built on ----------
+    # All three hardcoded together left `./gradlew check` at exit 0 with 101 tests green and
+    # 56/56 branch coverage. `lastScan` was asserted only isNotNull/isNotBlank, never at a value.
+    ("watermark/lastScan", CLIENT,
+     "lastScan = status.lastScan,", 'lastScan = "anything-non-blank",',
+     "getScanStatus maps navidrome's lastScan watermark", 2),
+    ("watermark/isScanning", CLIENT,
+     "isScanning = status.scanning,", "isScanning = false,",
+     "getScanStatus maps a scan in progress, watermark and all", 1),
+    ("watermark/scannedCount", CLIENT,
+     "scannedCount = status.count,", "scannedCount = 4,",
+     "getScanStatus maps a scan in progress, watermark and all", 1),
+
     # ---- N-2, round 2: the cover-art origin --------------------------------------------------
     ("origin/coverArt-host", CLIENT,
      "val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()",
@@ -161,8 +174,12 @@ AUTH_PROBE = ("auth/empty-authParams", AUTH,
               [('mapOf(\n      "u" to credentials.username,',
                 'emptyMap<String, String>().plus(mapOf(\n      "u" to credentials.username,'),
                ('      "f" to "json",\n    )\n}', '      "f" to "json",\n    )).let { emptyMap() }\n}')],
-              # 14 as of 402401d. See the note on `expected failures` above before changing this.
-              "getAlbumList2 sends the scope, the type, the page and full authentication", 14)
+              # Named test is `SubsonicAuthTest`'s security assertion on purpose: until round 3 it
+              # was vacuously green (`doesNotContainKey` + `noneMatch`, both true of an empty map)
+              # and this exact mutation did NOT redden it. Pinning it here makes "that test is no
+              # longer vacuous" a permanent check rather than a one-off fix.
+              # 15 as of 7f27d4a. See the note on `expected failures` above before changing this.
+              "the password never appears in the parameters", 15)
 
 
 def apply(path, old, new):
