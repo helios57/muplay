@@ -304,10 +304,13 @@ Plan 4 is **audiobooks**. Explicitly **not** in this plan:
   `LibraryRepository` and `BrowseDao`; it does not rebuild either, and it adds no second shuffle.
 - **Core playback, the queue, the notification, gapless and the media cache** — **Plan 3's**. This
   plan consumes `MuPlaybackService`, `QueueRepository`, `MuPlayer` and `MediaCache`.
-- **ReplayGain.** `media_progress.gainDb` stays unwritten and unapplied. Spec §4 says the client
-  applies ReplayGain; that is a gain stage in the audio pipeline and it is nobody's task yet.
-  Task 2 states what the column means and Task 10 records it in the spec as still deferred, rather
-  than leaving a column that looks implemented.
+- **ReplayGain — Plan 3's, as of a coverage audit.** `media_progress.gainDb` is written and
+  applied by **Plan 3 Task 11**, which adds the model field, parses `replayGain` against the
+  vendored oracle and applies it as a `GainAudioProcessor`. An earlier draft of this plan said the
+  column "stays unwritten and unapplied … nobody's task yet", and Plan 3 said the same while
+  pointing at Plan 4 — a spec-coverage audit found the requirement was consequently owned by
+  neither. **Task 10 must NOT record it in the spec as deferred**; Plan 3 Task 11 corrects §4 and
+  §5 instead. Task 2 still states what the column means.
 - **Server-side progress sync.** Spec §4 and §11 rule it out. **Task 6 makes that checkable**
   rather than promised: no `createBookmark`, no `savePlayQueue`, no `savePlayQueueByIndex`, no
   `scrobble`. If you find yourself reading spec §4's note about `createBookmark.position` being in
@@ -1145,10 +1148,11 @@ plan does two things about it:
    `media_progress.speed` is set to `2.0f` directly in the database still plays at
    `book_settings.speed`. If someone later wires the item column back in, that test goes red.
 
-`media_progress.gainDb` stays unwritten and unapplied — ReplayGain is genuinely per-track (it is a
-property of the file, measured by the tagger), so that column is at the right grain; it is simply
-nobody's task yet. Task 10 records that in the spec rather than leaving a column that looks
-implemented.
+`media_progress.gainDb` is at the right grain — ReplayGain is genuinely per-track, a property of
+the file measured by whatever tagged it — and **Plan 3 Task 11 writes and applies it**. It is not
+this plan's, and it is no longer nobody's: a spec-coverage audit found both plans pointing at each
+other, and the ruling gave it to Plan 3, which owns the audio pipeline. Task 10 records nothing
+about it.
 
 ### Why `chapters` is cached in Room, and why the negative result needs a row
 
@@ -1503,10 +1507,10 @@ package app.muplay.model
  * transition to chapter 4. This type, and the `book_settings` table behind it, are at the grain
  * the setting actually has. Spec section 3 and section 5 are corrected accordingly (Task 10).
  *
- * `gainDb` is deliberately absent: ReplayGain is a property of the individual file, measured by
- * whatever tagged it, so `media_progress.gainDb` is at the right grain already. It is unwritten
- * and unapplied because applying it means a gain stage in the audio pipeline, which is nobody's
- * task yet.
+ * `gainDb` is deliberately absent from [BookSettings]: ReplayGain is a property of the individual
+ * file, measured by whatever tagged it, so `media_progress.gainDb` is at the right grain already.
+ * Applying it means a gain stage in the audio pipeline, which belongs to Plan 3 Task 11 — this
+ * plan neither writes nor reads the column.
  */
 data class BookSettings(
   val bookId: String,
