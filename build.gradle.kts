@@ -402,8 +402,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // per-method coroutine bodies (SetupViewModel$connect$1 17/17 LINE, no branches at this level;
     // $setRole$1 2/2 BRANCH; $continueToLibrary$1 8/8 BRANCH; $tagging$1, no counters at all).
     // None of these existed under the defaulted-lambda seam this task removed -- see this file's
-    // own note on the SetupViewModel*1/*2 floor (0.55) this replaces, deleted rather than left to
-    // rot once the classes it matched stopped existing.
+    // own note (coverageFloors's own doc above) on why the SetupViewModel*1/*2 floor (0.55) this
+    // replaces was deleted: not because its patterns stopped matching anything (they did not --
+    // that was this comment's own original, incorrect claim, corrected on re-review), but because
+    // every class either pattern still matches is also matched by this wider rule at a stricter
+    // minimum, making the old floor pure redundancy.
     //
     // SetupUiState/SetupUiState* ride along in the same rule (0 branches of their own, so they can
     // never move this ratio) purely so warnUngatedClasses never has to flag their own
