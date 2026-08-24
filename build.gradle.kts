@@ -742,10 +742,12 @@ object CoverageGateNotice {
         "COVERAGE: $modulePath -- $verificationTaskName did NOT run, so none of its " +
           "${allFloors.size} coverage floors were evaluated. Gradle skipped it through the " +
           "`onlyIf(\"Any of the execution data files exists\")` its own JacocoReportBase " +
-          "attaches, because every execution data file this task reads is absent (looked for: " +
-          "${executionData.joinToString { it.name }.ifEmpty { "none declared" }}). Usually that " +
-          "means the module's tests did not run or no longer exist. This build says nothing " +
-          "about $modulePath's coverage.",
+          "attaches, because every execution data file this task reads is absent. It looked for " +
+          "${executionData.joinToString { it.name }.ifEmpty { "no named file" }}, and for any " +
+          "`**/*.ec` under every module's build/outputs/code_coverage -- that glob contributes " +
+          "no files at all when those directories are absent, so it never appears by name here. " +
+          "Usually this means the module's tests did not run or no longer exist. This build " +
+          "says nothing about $modulePath's coverage.",
       )
       return
     }
@@ -887,6 +889,7 @@ subprojects {
         "-- the Tier 1 subset of $FULL_COVERAGE_VERIFICATION_TASK_NAME. See root build.gradle.kts."
 
       dependsOn("test")
+      dependsOn(FULL_COVERAGE_REPORT_TASK_NAME)
 
       // Read here, inside the registration block, so it runs at realization time: `.get()`
       // realizes the full task, which applies the `configureEach` above to it first, so what is
@@ -1014,31 +1017,34 @@ subprojects {
     registerNotice(
       noticeTaskName = JVM_COVERAGE_NOTICE_TASK_NAME,
       verificationTaskName = JVM_COVERAGE_VERIFICATION_TASK_NAME,
-      // Deliberately no report, which means deliberately no vacuous-floor or ungated-class check
-      // in Tier 1 -- and the message says so rather than implying otherwise. The review's
-      // preferred fix was to run those checks in both tiers, and this is why that is not what
-      // happened.
+      // Reads the same report the full gate's notice does, and runs the same two per-class
+      // checks. Both tiers, deliberately: `warnVacuousFloors` is exactly the check that detects a
+      // floor which cannot fail at any minimum, and the one time this build had such a floor it
+      // was in the *Tier 1* subset -- `:feature:setup`'s `SetupViewModel*1`/`*2` BRANCH floor,
+      // which passed Tier 1 at a minimum of 0.99 while Tier 2 failed it at 0.60, because Tier 1
+      // was silently analysing with an unpinned JaCoCo (see `configureJacoco` in build-logic).
+      // The check was switched off on the only tier that had the defect.
       //
-      // The checks need a JaCoCo XML report, so running them here means putting
-      // `jacocoTestReport` into a task graph that contains `$JVM_COVERAGE_VERIFICATION_TASK_NAME`
-      // but not `$FULL_COVERAGE_VERIFICATION_TASK_NAME`. In exactly that graph shape, and only in
-      // it, `jacocoTestReport` analyses bytecode that does not match the class files it was
-      // handed: `:feature:setup`'s `SetupViewModel$1` comes out as 18 instructions on one line
-      // with no branches, against a class file that really has 42 instructions, two lines and
-      // five branches -- which turns a healthy 3/5 BRANCH floor into a false "this floor enforces
-      // nothing" warning. Reproduced deterministically with the build cache off, with parallelism
-      // off, whole-project and single-module, having first confirmed the task's own resolved
-      // `classDirectories` is the same 15 files with the same md5 in both shapes; and reproduced
-      // at commit 98263eb, before any of this round's changes, by adding nothing but the single
-      // edge `jacocoJvmCoverageVerification.dependsOn("jacocoTestReport")`. So it is a property of
-      // the existing wiring rather than of this notice, it is not root-caused, and the honest
-      // response is not to create that graph shape -- a warning built on an input that behaves
-      // like that would be the very defect this finding is about. See task-8-report.md.
-      reportTaskName = null,
+      // A previous round wired this to `null` on the grounds that pulling `jacocoTestReport` into
+      // a Tier 1 task graph made it "analyse bytecode that does not match the class files it was
+      // handed". That was a misdiagnosis: the bytecode was byte-identical (same 16 files, same
+      // md5, same `<sessioninfo>`) and the difference was the analyzer version, 0.8.14 versus the
+      // pinned 0.8.12, resolved differently depending on the task graph. With the pin actually
+      // binding, this report is now byte-for-byte the same numbers in either invocation shape --
+      // re-tested, `SetupViewModel$1` 37/42 INSTRUCTION, 3/5 BRANCH, 2/2 LINE via both
+      // `jacocoJvmCoverageVerification` and `jacocoTestReport`.
+      //
+      // Sound despite the two tiers gating on different execution data, for a reason that is
+      // narrow and worth stating: the only figures either check reads are `missed + covered`
+      // totals, and a total is a property of the analysed bytecode, not of the execution data --
+      // exec data moves coverage between "missed" and "covered" without changing their sum. The
+      // Tier 1 *gate* still enforces over `jvmOnly` data and stays independent of any emulator run.
+      reportTaskName = FULL_COVERAGE_REPORT_TASK_NAME,
       evaluatedFloors = jvmFloors,
       deferredTo = "`$FULL_COVERAGE_VERIFICATION_TASK_NAME`, which needs the instrumented " +
         "execution data only the emulator journey produces (.github/workflows/e2e.yml)",
-      perClassChecksRunBy = "`$FULL_COVERAGE_NOTICE_TASK_NAME` (Tier 2)",
+      // Runs the per-class checks itself now, so it has no caveat to add either.
+      perClassChecksRunBy = null,
     )
 
     // Into `check`, unlike the full task, which cannot run without a device. This is what makes

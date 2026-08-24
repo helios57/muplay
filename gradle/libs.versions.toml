@@ -35,6 +35,13 @@ androidxTestExt = "1.3.0"
 # assertion runs -- observed directly on `muplay37` before this pin existed. 3.7.0 is the latest
 # published stable (dl.google.com androidx/test/espresso/espresso-core/maven-metadata.xml).
 espresso = "3.7.0"
+# Not merely declared: `configureJacoco` (build-logic) declares `jacocoAnt`/`jacocoAgent`
+# explicitly from this number and forces every `org.jacoco` module to it, then asserts on every
+# JaCoCo task that the *resolved* jars really are this version. All three are needed -- AGP
+# overwrites the Gradle jacoco plugin's `toolVersion` with its own 0.8.14, and for a while this
+# build's Tier 1 gate analysed three modules with that instead, which is how a floor ended up
+# passing at a minimum of 0.99. Changing this number changes every measured floor in
+# `coverageFloors`; re-measure them, do not just bump it.
 jacoco = "0.8.12"
 openapiValidator = "3.0.0"
 

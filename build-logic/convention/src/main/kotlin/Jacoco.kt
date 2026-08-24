@@ -1,12 +1,15 @@
 import com.android.build.api.dsl.CommonExtension
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.file.FileTree
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.util.PatternSet
 import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.dependencies
 import org.gradle.testing.jacoco.plugins.JacocoPluginExtension
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+import org.gradle.testing.jacoco.tasks.JacocoBase
 import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
 import org.gradle.testing.jacoco.tasks.JacocoReport
 
@@ -29,8 +32,101 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
 internal fun Project.configureJacoco() {
   pluginManager.apply("jacoco")
 
+  val pinnedJacocoVersion = libs.findVersion("jacoco").get().requiredVersion
+
+  // Setting `toolVersion` is necessary and *not sufficient*, which is the whole point of the two
+  // blocks after it. AGP overwrites this value: `DependencyConfigurator.configureJacocoTransforms`
+  // does, unconditionally and without consulting `android.testCoverage.jacocoVersion`,
+  //
+  //     project.extensions.findByType(JacocoPluginExtension::class.java)?.setToolVersion("0.8.14")
+  //
+  // -- read straight out of `com.android.tools.build:gradle:9.3.1`'s bytecode (`ldc_w "0.8.14"`
+  // followed by `invokevirtual JacocoPluginExtension.setToolVersion`), not inferred. Measured
+  // effect before this was fixed: after evaluation `toolVersion` was `0.8.14` in `:app`,
+  // `:core:designsystem` and `:feature:setup` and `0.8.12` in the three JVM modules, while
+  // `android.testCoverage.jacocoVersion` stayed `0.8.12` in all three Android ones.
+  //
+  // It is still set here because it is what `JacocoTaskExtension`/the agent and AGP's own
+  // `getUnitTestJacocoVersion` read, and because leaving it wrong would be a second lie to
+  // whoever reads it.
   extensions.configure<JacocoPluginExtension> {
-    toolVersion = libs.findVersion("jacoco").get().requiredVersion
+    toolVersion = pinnedJacocoVersion
+  }
+
+  // What actually binds the version. `JacocoPlugin` gives `jacocoAnt`/`jacocoAgent` a
+  // `defaultDependencies` block that reads `toolVersion` *at the moment the configuration's
+  // dependency set is first observed* -- so which of the two values above got baked in depended on
+  // whether that observation happened before or after AGP's overwrite, i.e. on the task graph.
+  // Measured, before this fix, `org.jacoco.ant` resolved to:
+  //
+  //     ./gradlew jacocoJvmCoverageVerification        Android modules 0.8.14, JVM modules 0.8.12
+  //     ./gradlew jacocoTestCoverageVerification       every module 0.8.12
+  //     ./gradlew jacocoJvmCoverageVerification jacocoTestReport jacocoTestCoverageVerification
+  //                                                    Android modules 0.8.14 for *every* jacoco
+  //                                                    task, including the full gate
+  //
+  // A `defaultDependencies` block only contributes when the configuration has no declared
+  // dependency, so declaring one here retires that whole ordering question: there is nothing left
+  // for the timing to decide. The `eachDependency` rule is the belt to that braces -- it also
+  // covers `org.jacoco.core`/`org.jacoco.report`, which arrive transitively and which nothing else
+  // here names.
+  //
+  // `jacocoAgent` gets the same treatment even though it was measured as *not* affected: probing
+  // both configurations before and after this fix, the agent resolved `org.jacoco.agent-0.8.12`
+  // in every module either way, because the agent configuration is first observed while the
+  // `jacoco` plugin wires `JacocoTaskExtension` onto each `Test` task -- during plugin apply,
+  // before AGP's overwrite -- whereas `jacocoAnt` is not observed until a Jacoco task actually
+  // runs, by which time the overwrite has happened. That timing difference is the whole bug, and
+  // it is not something to leave depending on.
+  dependencies {
+    add("jacocoAnt", "org.jacoco:org.jacoco.ant:$pinnedJacocoVersion")
+    add("jacocoAgent", "org.jacoco:org.jacoco.agent:$pinnedJacocoVersion")
+  }
+  listOf("jacocoAnt", "jacocoAgent").forEach { configurationName ->
+    configurations.named(configurationName).configure {
+      resolutionStrategy.eachDependency {
+        if (requested.group == "org.jacoco") useVersion(pinnedJacocoVersion)
+      }
+    }
+  }
+
+  // And the pin is asserted from the *resolved artifact*, because the property lied: `toolVersion`
+  // read back as the pinned version at the moment this function assigns it, while the jar that
+  // actually did the analysis was a different one. A pin asserted from a configured property
+  // rather than from what was resolved is not a pin.
+  //
+  // This is not the "warn, never fail" posture the coverage notices use, and the difference is
+  // deliberate: an absent `.exec` is a legitimate state, whereas an analyzer that is not the one
+  // every floor in `coverageFloors` was measured against makes every number in that table a
+  // different measurement. 0.8.14's Kotlin-coroutine and Compose filters, for one measured
+  // example, take `:feature:setup`'s `SetupViewModel$1` from 5 branches to 0 -- which turned that
+  // class's floor into one that could pass at a minimum of 0.99.
+  //
+  // On `doFirst` rather than a notice task: unlike the coverage notices, this asserts a
+  // precondition of work the task is about to do. A task Gradle skips analyses nothing, so there
+  // is no analyzer for it to be wrong about, and nothing to report.
+  tasks.withType(JacocoBase::class.java).configureEach {
+    val taskPath = "$path"
+    doFirst {
+      // Every `org.jacoco.*` jar on the analysis classpath, not just `org.jacoco.ant`: `core` and
+      // `report` are where the filters that changed the numbers actually live, and they arrive
+      // transitively, so pinning only the one artifact this build names by hand would leave the
+      // ones that matter to whatever the graph resolved.
+      val wrong = jacocoClasspath.files
+        .map { it.name }
+        .filter { it.startsWith("org.jacoco.") }
+        .filterNot { it.endsWith("-$pinnedJacocoVersion.jar") }
+      if (wrong.isNotEmpty()) {
+        throw GradleException(
+          "$taskPath resolved $wrong, but every org.jacoco artifact must be " +
+            "$pinnedJacocoVersion (gradle/libs.versions.toml). Every floor in `coverageFloors` " +
+            "(root build.gradle.kts) was measured with JaCoCo $pinnedJacocoVersion, and a " +
+            "different analyzer measures different numbers -- see `configureJacoco` in " +
+            "build-logic for how AGP overwrites the pin and what that cost last time. Fix the " +
+            "pin; do not re-measure the floors against whatever resolved.",
+        )
+      }
+    }
   }
 
   tasks.withType(JacocoReport::class.java).configureEach {

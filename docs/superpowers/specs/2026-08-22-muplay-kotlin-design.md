@@ -469,7 +469,15 @@ Tier 2 grows with each plan. **A plan is not done until its journeys are in it.*
   tasks carry an `onlyIf` ("any execution data exists") that short-circuits their
   actions, so each gate is *finalized by* a plain reporting task that always runs
   and says, per module, how many floors were evaluated, how many were left to the
-  other tier, and — loudly — when the gate did not run at all.
+  other tier, and — loudly — when the gate did not run at all. Both tiers run the
+  per-class checks (ungated class, vacuous floor), because the one time this build
+  had a floor that could not fail it was in the fast tier's own subset.
+- **A pin asserted from a configured property is not a pin.** The JaCoCo version
+  is declared as a real dependency, forced, *and* asserted from the resolved
+  artifact on every JaCoCo task, because AGP overwrites the Gradle plugin's
+  `toolVersion` and the property read back correctly while a different jar did the
+  analysis. Every floor is measured against one analyzer version; changing it
+  changes every number in the table.
 - **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin
   is `0.0.1-alpha16` and Canary-only. Screenshots come from `captureToImage()`
   inside the emulator suite, with a small golden-diff helper — no new framework.

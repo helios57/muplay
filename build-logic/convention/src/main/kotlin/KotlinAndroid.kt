@@ -62,6 +62,11 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
   // same: AGP 9.3.1's own default is 0.8.14 (`JacocoOptions.DEFAULT_VERSION`, read out of
   // `com.android.tools.build:gradle:9.3.1`), while `libs.versions.toml` pins 0.8.12.
   //
+  // This line pins only AGP's *own* use of JaCoCo. It does not stop AGP overwriting the Gradle
+  // `jacoco` plugin's `toolVersion` -- `DependencyConfigurator.configureJacocoTransforms` does
+  // that unconditionally, with a hardcoded 0.8.14, without reading the property assigned here.
+  // Binding that half is `configureJacoco`'s job; see its own comments for the measured damage.
+  //
   // Nothing is broken by that particular pair today -- `ExecutionDataWriter.FORMAT_VERSION` is
   // 0x1007 in both 0.8.12 and 0.8.14, checked in the bytecode of both jars -- but the mismatch is
   // exactly the kind that stops being harmless silently: `ExecutionDataReader.read` compares the
