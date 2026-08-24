@@ -56,4 +56,21 @@ class DataModuleTest {
     assertThat(database.openHelper.databaseName).isEqualTo(MuPlayDatabase.DATABASE_NAME)
     assertThat(MuPlayDatabase.DATABASE_NAME).isEqualTo("muplay.db")
   }
+  @Test
+  fun theProvidedCredentialDataStoreWritesWhereTheAppExpects() = runTest {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val expected = java.io.File(context.filesDir, "credentials.preferences_pb")
+    expected.delete()
+
+    val dataStore = DataModule.provideCredentialDataStore(context)
+    // Exercised, not merely constructed: DataStore creates its file lazily on first access, so
+    // constructing one proves nothing about where it would write.
+    CredentialStore(dataStore).save(
+      app.muplay.model.SubsonicCredentials("https://music.example", "alice", "sesame"),
+    )
+
+    assertThat(expected).describedAs("the file the shipped app reads credentials from").exists()
+    expected.delete()
+  }
+
 }

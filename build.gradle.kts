@@ -400,34 +400,72 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:core:database` (Plan 2 Task 1). One CLASS-element LINE rule covering all three classes that
-  // report counters, each measuring 1.0000 (MuPlayDatabase 1/1, DataModule 3/3,
-  // MediaProgressEntity 9/9) against a 0.90 floor.
+  // `:core:database` (Plan 2 Tasks 1-2). Four rules, because the module now holds three different
+  // kinds of code and one blended floor would hide a regression in any of them behind the others.
   //
-  // LINE and not BRANCH, and this is a measurement rather than a preference: the module contains
-  // no author-written conditional at all -- an @Entity data class, an abstract @Database, a @Dao
-  // interface and two Hilt providers -- so the report carries no BRANCH counter for any of them.
-  // A BRANCH rule here would match classes with a zero counter total, which JaCoCo passes
-  // silently through `Limit.check`'s `isNaN` branch at every minimum. That is the vacuous floor
-  // `warnVacuousFloors` exists to catch, and adding one deliberately would be absurd.
-  //
-  // `MediaProgressDao` has no rule because it has no counters: it is an interface, and Room's
-  // generated `MediaProgressDao_Impl` is excluded as generated code (`Jacoco.kt`'s
-  // `**/*_Impl*.*`) by the same argument the Hilt exclusions rest on.
-  //
-  // `requiresInstrumentedData`: Room needs the Android framework's SQLite and Robolectric is
-  // banned project-wide, so every test in this module is instrumented. From a plain
-  // `./gradlew :core:database:test` all three classes measure 0 -- the module has no JVM tests at
-  // all -- so this floor is Tier 2's alone and Tier 1 must say so rather than pass quietly.
+  // Measured, all of them, from a merged JVM + instrumented report (see task-2's transcript):
+  // KeystoreCipher BRANCH 4/4 and LINE 15/15; CredentialStore BRANCH 16/16 and LINE 37/37;
+  // MuPlayDatabase 1/1, DataModule 6/6, MediaProgressEntity 9/9 LINE; and the coroutine codegen
+  // classes at 0.50-0.67 LINE.
   ":core:database" to listOf(
+    // The only floor in this module Tier 1 can enforce, and the only one that is not
+    // `requiresInstrumentedData`. KeystoreCipher takes a `SecretKey` rather than fetching one
+    // from AndroidKeyStore precisely so its cryptographic contract is testable off-device, and
+    // KeystoreCipherTest reaches 4/4 branches from a plain JVM run. Gating it in the fast tier is
+    // the whole payoff of that design.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.KeystoreCipher"),
+    ),
+    // CredentialStore's own author-written branches: 16/16 after Task 2 added the partial-write,
+    // missing-key and unopenable-blob recovery paths. Those five branches were genuinely
+    // untested rather than codegen -- the class measured 11/16 before them -- which is why this
+    // is a BRANCH rule and not an excuse for one.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.CredentialStore"),
+      requiresInstrumentedData = true,
+    ),
+    // Everything whose value is "did this line run at all": the Room database class, the Hilt
+    // providers, the entity, and CredentialStore's own lines. No BRANCH entry for the first
+    // three -- they contain no author-written conditional, so a BRANCH rule would match only
+    // zero-total counters and pass silently at every minimum through JaCoCo's isNaN branch.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.database.MuPlayDatabase",
+        "app.muplay.database.CredentialStore",
+        "app.muplay.database.CredentialStore*Companion",
         "app.muplay.database.di.DataModule",
         "app.muplay.database.entity.MediaProgressEntity",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The Kotlin compiler's own output for `suspend` bodies and for `Flow.map`: the
+    // `save$2`/`clear$2` continuation classes and the `$special$$inlined$map$1` pair. Measured
+    // 0.50-0.67 LINE, floored at 0.50 -- a real number this run produced, not a round one.
+    //
+    // Gated rather than excluded, and gated low rather than not at all. Excluding them the way
+    // Room's `_Impl` and Hilt's generated types are excluded would be defensible, but those have
+    // dedicated, stable name shapes; a pattern broad enough to catch every coroutine artefact
+    // would also catch author-written nested classes, and this project would rather carry an
+    // honest low floor than a silent hole. Leaving them ungated instead would make
+    // `warnUngatedCoverage` print four lines on every run forever, which is how a warning
+    // mechanism dies.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.50"),
+      includes = listOf("app.muplay.database.CredentialStore*"),
+      excludes = listOf(
+        "app.muplay.database.CredentialStore",
+        "app.muplay.database.CredentialStore*Companion",
       ),
       requiresInstrumentedData = true,
     ),
