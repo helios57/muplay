@@ -1851,7 +1851,9 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
 > and record the difference in the task report; a mismatch is Room telling you something about its
 > own code generation, not about this plan.
 
-`DataModule` — the builder gains the migration:
+`DataModule` — the builder gains the migration. **Plan 2's
+`.fallbackToDestructiveMigration(dropAllTables = true)` line stays, and that is a decision rather
+than an oversight** — read the paragraph under this snippet before deciding it looks wrong.
 
 ```kotlin
   @Provides
@@ -1859,10 +1861,15 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
   fun provideDatabase(@ApplicationContext context: Context): MuPlayDatabase =
     Room.databaseBuilder(context, MuPlayDatabase::class.java, MuPlayDatabase.DATABASE_NAME)
       // Without this, a device carrying the version-4 database from an earlier build crashes on
-      // first open with IllegalStateException, and `fallbackToDestructiveMigration()` would
-      // silently delete every listener's book position -- which is the one thing this application
-      // exists to keep.
+      // first open with IllegalStateException, and the destructive fallback below would silently
+      // delete every listener's book position -- which is the one thing this application exists
+      // to keep. `addMigrations` is consulted first: Room looks for a migration path and only
+      // falls back when it cannot find one, so 4 -> 5 is served here and never destructively.
       .addMigrations(MIGRATION_4_5)
+      // Plan 2's line, unchanged and still needed -- see below. Versions 1 -> 2, 2 -> 3 and 3 -> 4
+      // have no `Migration` objects, so this is what a developer's device and the Tier 2 emulator
+      // still rely on when they arrive from an older build.
+      .fallbackToDestructiveMigration(dropAllTables = true)
       .build()
 
   @Provides
@@ -1871,6 +1878,44 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
   @Provides
   fun provideChapterDao(db: MuPlayDatabase): ChapterDao = db.chapterDao()
 ```
+
+#### Why Plan 2's destructive fallback is kept, and what this plan owes because of it
+
+Applied as a diff, this snippet leaves **both** lines in `provideDatabase`. That is intentional and
+it is written down here because the alternative — a snippet that silently omits the fallback — reads
+identically to a deletion and would be applied either way by different implementers.
+
+**It is not removable by this plan.** Plan 2 Tasks 4, 5 and 6 take the schema from 1 to 4 and write
+no `Migration` for any of those steps. This plan writes exactly one, `MIGRATION_4_5`. Delete the
+fallback and a device holding a version-2 or version-3 database — every developer's phone and the
+emulator image the Tier 2 gate runs on — stops opening the database at all:
+`IllegalStateException: A migration from 2 to 5 was required but not found`. Nothing is made safer
+by that; the versions with no migration path simply move from "dropped" to "crash".
+
+**The line is already gated, and the gate is not this plan's to disarm.** `build-logic`'s
+`VerifyNoDestructiveMigrationTask` fails the **release** variant on any
+`fallbackToDestructiveMigration` in what that variant compiles, unless
+`core/database/DESTRUCTIVE_MIGRATION_EXEMPTION.md` is present — and it prints a loud, unmissable
+warning naming that file on every run where it passes by exemption. The marker's own text lists
+what must land before it is deleted: a real `Migration` for **every** version this app has shipped
+with, `provideDatabase` no longer calling the fallback, and the marker deleted in the same change.
+This plan satisfies one third of one of those conditions. Removing the call without deleting the
+marker would leave a committed file describing a call site that no longer exists and a gate that
+passes by exemption for no reason — a *worse* state than the honest exempted one, because the next
+reader would trust it.
+
+**So what this plan owes instead is a test that can see the interaction**, because that is the part
+that really was missing. `addMigrations(MIGRATION_4_5)` winning over the fallback for the 4 -> 5
+path is the *entire* reason a listener's positions survive this schema bump, and
+`everyProgressRowSurvivesTheMoveToFive` cannot see it: `MigrationTestHelper.runMigrationsAndValidate`
+is handed `MIGRATION_4_5` by name and never consults `DataModule`'s builder at all. Step 6 adds
+`theRealBuilderMigratesRatherThanDropping` for that, and Step 8's mutation 6 becomes a probe that
+fires instead of a known-ungated line.
+
+**Record in the task report** that the fallback survived this plan deliberately, so that whoever
+writes the release-prep change finds one statement of the remaining work rather than reconstructing
+it: migrations 1 -> 2, 2 -> 3 and 3 -> 4 are still owed, `MIGRATION_4_5` already exists, and the
+marker is deleted in the same change as the last of them.
 
 - [ ] **Step 6: Write the migration test**
 
@@ -1970,8 +2015,52 @@ class MigrationTest {
       assertThat(c.getFloat(0)).isEqualTo(1.4f)
     }
   }
+
+  @Test
+  fun theRealBuilderMigratesRatherThanDropping() {
+    // The two tests above are handed `MIGRATION_4_5` by name, so they prove the migration is
+    // *correct* and prove nothing about whether the app installs it. `DataModule.provideDatabase`
+    // also carries Plan 2's `fallbackToDestructiveMigration(dropAllTables = true)`, deliberately
+    // (see Task 2 Step 5). Room consults `addMigrations` first and falls back only when it finds
+    // no path -- so dropping the `addMigrations` line turns this schema bump from "migrated" into
+    // "every listener's book position deleted", and every other assertion in this class stays
+    // green while it happens. This is the only test that can tell those two apart.
+    helper.createDatabase(BUILDER_DB, 4).use { db ->
+      db.execSQL(
+        "INSERT INTO media_progress " +
+          "(mediaId, positionMs, isFinished, lastPlayedAtEpochMs, speed, skipSilence, gainDb) " +
+          "VALUES ('chapter-14', 3600000, 0, 1700000000000, 1.4, 1, 6.0)",
+      )
+    }
+
+    // The real builder, byte for byte what `DataModule.provideDatabase` builds, over that file.
+    val room = Room.databaseBuilder(context, MuPlayDatabase::class.java, BUILDER_DB)
+      .addMigrations(MIGRATION_4_5)
+      .fallbackToDestructiveMigration(dropAllTables = true)
+      .build()
+
+    try {
+      val row = runBlocking { room.mediaProgressDao().find("chapter-14") }
+      // Exact values, not a null check: a destructive fallback leaves an empty table, and so does
+      // a migration that silently recreated it.
+      assertThat(row).describedAs("the destructive fallback ran instead of MIGRATION_4_5").isNotNull
+      assertThat(row!!.positionMs).isEqualTo(3_600_000L)
+      assertThat(row.speed).isEqualTo(1.4f)
+      // ...and the new tables really are there, so this did not pass by never migrating at all.
+      runBlocking { room.bookSettingsDao().upsert(BookSettingsEntity("book-1", 1.4f, true)) }
+    } finally {
+      room.close()
+    }
+  }
 }
 ```
+
+> `theRealBuilderMigratesRatherThanDropping` needs `BUILDER_DB` beside `TEST_DB` in the companion
+> (a **second** database name — `MigrationTestHelper` owns `TEST_DB` and deletes it between tests),
+> plus `context` from `ApplicationProvider.getApplicationContext()` and the `Room`,
+> `runBlocking` and `BookSettingsEntity` imports. Keep it in this class rather than starting a new
+> one: it is a statement about the same migration, and a reader comparing "migrates correctly" with
+> "is actually installed" should find both in one file.
 
 > `MigrationTestHelper`'s constructor changed across Room versions. In 2.8.4 the two-argument
 > `(Instrumentation, Class<out RoomDatabase>)` form exists; if the resolved signature wants an
@@ -1986,7 +2075,7 @@ class MigrationTest {
 ./gradlew :core:database:connectedDebugAndroidTest
 ```
 
-Expected: PASS — `ChapterDaoTest` 6/6, `BookSettingsDaoTest` 4/4, `MigrationTest` 2/2,
+Expected: PASS — `ChapterDaoTest` 6/6, `BookSettingsDaoTest` 4/4, `MigrationTest` 3/3,
 `MediaProgressDaoTest` (Plan 2's tests plus the three added above), and every Plan 2 suite still
 green.
 
@@ -2009,11 +2098,15 @@ One mutation at a time, reverted after each:
 5. Change `MIGRATION_4_5`'s `book_settings.speed` column to `INTEGER NOT NULL`. Expect
    `runMigrationsAndValidate` to fail with a schema mismatch naming the column. **Record the
    message** — it is what the second migration's author will be reading.
-6. Replace `MIGRATION_4_5` in `DataModule` with `fallbackToDestructiveMigration()`. Expect
-   `everyProgressRowSurvivesTheMoveToFive` to keep passing (it names the migration explicitly) and
-   record that as a **known ungated line**: the destructive fallback is a `DataModule` decision no
-   test in this task can see. Task 10's journey, which runs against a real installed app, is where
-   it would surface. Honesty about an ungated line beats a probe that cannot fire.
+6. Remove `.addMigrations(MIGRATION_4_5)` from `DataModule.provideDatabase`, leaving Plan 2's
+   `.fallbackToDestructiveMigration(dropAllTables = true)` — which is the state this task's diff
+   would produce if a worker read the snippet in Step 5 as "the builder now looks like this"
+   rather than "the builder gains this line". Expect `theRealBuilderMigratesRatherThanDropping` to
+   fail on a null row, and **`everyProgressRowSurvivesTheMoveToFive` and
+   `theNewTablesExistAndAcceptRowsAfterTheMigration` to keep passing** — they are handed the
+   migration by name and never touch the builder. That divergence is the whole reason the third
+   test exists, and it is what turns "the destructive fallback is a `DataModule` decision no test
+   can see" into a line this task gates.
 
 - [ ] **Step 9: Re-measure and commit**
 
