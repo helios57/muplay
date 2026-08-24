@@ -65,7 +65,11 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
   // This line pins only AGP's *own* use of JaCoCo. It does not stop AGP overwriting the Gradle
   // `jacoco` plugin's `toolVersion` -- `DependencyConfigurator.configureJacocoTransforms` does
   // that unconditionally, with a hardcoded 0.8.14, without reading the property assigned here.
-  // Binding that half is `configureJacoco`'s job; see its own comments for the measured damage.
+  // Binding that half is `configureJacoco`'s job; see its own comments for the measured damage,
+  // and for the two further facts that make this assignment less isolated than it looks: AGP's
+  // `AndroidUnitTest$CreationAction.configure` reads *this* value back into the Gradle plugin's
+  // `toolVersion` at task realization, and Gradle's own `JacocoPlugin.DEFAULT_JACOCO_VERSION` is
+  // the same string AGP hardcodes, so observing "0.8.14" never identifies which of them wrote it.
   //
   // Nothing is broken by that particular pair today -- `ExecutionDataWriter.FORMAT_VERSION` is
   // 0x1007 in both 0.8.12 and 0.8.14, checked in the bytecode of both jars -- but the mismatch is

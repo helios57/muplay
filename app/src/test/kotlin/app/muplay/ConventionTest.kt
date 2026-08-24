@@ -73,55 +73,72 @@ class ConventionTest {
   /**
    * True if [text] contains an `android { }` block whose content is anything other than the
    * allow-listed per-module identity values (see the test above for why exactly these four).
+   *
+   * **Every** `android { }` block in the file, not the first one. Kotlin DSL happily accepts more
+   * than one, and every one of them takes effect, so a rule that stopped at the first had a
+   * reachable blind spot: appending a second `android { buildFeatures { buildConfig = true } }` to
+   * a module that already had `android { namespace = ... }` left this suite green, while putting
+   * the identical property inside the existing block failed it. Same for `defaultConfig { }`
+   * nested inside one `android { }` block -- [bracedBlockBodies] returns all of them and
+   * [withoutBracedBlocks] removes all of them, so neither can hide behind a sibling.
    */
-  private fun androidBlockOffends(text: String): Boolean {
-    val androidBody = bracedBlockBody(text, "android") ?: return false
-    val defaultConfigBody = bracedBlockBody(androidBody, "defaultConfig")
-    val outerBody = if (defaultConfigBody != null) withoutBracedBlock(androidBody, "defaultConfig") else androidBody
+  private fun androidBlockOffends(text: String): Boolean =
+    bracedBlockBodies(text, "android").any(::androidBodyOffends)
+
+  /** True if one `android { }` block's interior contains anything outside the allow-list. */
+  private fun androidBodyOffends(androidBody: String): Boolean {
+    val defaultConfigBodies = bracedBlockBodies(androidBody, "defaultConfig")
+    val outerBody = withoutBracedBlocks(androidBody, "defaultConfig")
 
     val outerAllowed = Regex("""^namespace\s*=\s*"[^"]*"$""")
     val innerAllowed = Regex("""^(applicationId|versionName)\s*=\s*"[^"]*"$|^versionCode\s*=\s*\d+$""")
 
     val outerOffenders = significantLines(outerBody).filterNot(outerAllowed::matches)
-    val innerOffenders = significantLines(defaultConfigBody ?: "").filterNot(innerAllowed::matches)
+    val innerOffenders = defaultConfigBodies.flatMap(::significantLines).filterNot(innerAllowed::matches)
     return outerOffenders.isNotEmpty() || innerOffenders.isNotEmpty()
   }
 
   private fun significantLines(text: String): List<String> =
     text.lineSequence().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("//") }.toList()
 
-  /** The interior of the first `name { ... }` block in [text] (braces excluded), or null if absent. */
-  private fun bracedBlockBody(text: String, name: String): String? {
-    val open = Regex("""(^|\s)$name\s*\{""").find(text) ?: return null
-    val braceIndex = open.range.last
-    var depth = 1
-    var i = braceIndex + 1
-    while (i < text.length && depth > 0) {
-      when (text[i]) {
-        '{' -> depth++
-        '}' -> depth--
+  /**
+   * The character ranges of every `name { ... }` block in [text], braces included, outermost only
+   * (the brace counter walks past any nested block of the same name, so a `defaultConfig` inside a
+   * `defaultConfig` is part of its parent's range rather than a second entry).
+   */
+  private fun bracedBlockRanges(text: String, name: String): List<IntRange> {
+    val ranges = mutableListOf<IntRange>()
+    var searchFrom = 0
+    while (searchFrom < text.length) {
+      val open = Regex("""(^|\s)$name\s*\{""").find(text, searchFrom) ?: break
+      val braceIndex = open.range.last
+      var depth = 1
+      var i = braceIndex + 1
+      while (i < text.length && depth > 0) {
+        when (text[i]) {
+          '{' -> depth++
+          '}' -> depth--
+        }
+        i++
       }
-      i++
+      ranges += open.range.first until i
+      searchFrom = i
     }
-    return text.substring(braceIndex + 1, i - 1)
+    return ranges
   }
 
-  /** [text] with the first `name { ... }` block (braces included) removed. */
-  private fun withoutBracedBlock(text: String, name: String): String {
-    val open = Regex("""(^|\s)$name\s*\{""").find(text) ?: return text
-    val declStart = open.range.first
-    val braceIndex = open.range.last
-    var depth = 1
-    var i = braceIndex + 1
-    while (i < text.length && depth > 0) {
-      when (text[i]) {
-        '{' -> depth++
-        '}' -> depth--
-      }
-      i++
+  /** The interior of every `name { ... }` block in [text] (braces excluded). */
+  private fun bracedBlockBodies(text: String, name: String): List<String> =
+    bracedBlockRanges(text, name).map { range ->
+      val braceIndex = text.indexOf('{', range.first)
+      text.substring(braceIndex + 1, range.last)
     }
-    return text.removeRange(declStart, i)
-  }
+
+  /** [text] with every `name { ... }` block (braces included) removed. */
+  private fun withoutBracedBlocks(text: String, name: String): String =
+    bracedBlockRanges(text, name).reversed().fold(text) { acc, range ->
+      acc.removeRange(range.first, range.last + 1)
+    }
 
   @Test
   fun `no mock framework is declared in any build file or convention plugin`() {

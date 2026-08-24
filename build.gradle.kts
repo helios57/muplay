@@ -935,14 +935,17 @@ subprojects {
     // counters at all" have the same answer whichever tier's data produced the report, while the
     // Tier 1 *gate* keeps enforcing over `jvmOnly` data and stays independent of any emulator run.
     //
-    // A dedicated JVM-only report was built first and then removed: on some whole-project
-    // invocations it analysed bytecode that matched nothing on disk (`SetupViewModel$1` reported
-    // as 18 instructions on one line with no branches, against a class file that really has 42
-    // instructions, two lines and five branches -- while its own `doFirst` printed exactly the
-    // right class file as its input), and it did so reproducibly but only when `jacocoTestReport`
-    // was absent from the same invocation. Basing a *warning* on an input that cannot be vouched
-    // for would have shipped false "this floor enforces nothing" messages, which is the same
-    // defect as a message asserting what its mechanism never verified. See task-8-report.md.
+    // A dedicated JVM-only report was built first and then removed, and the reason recorded here
+    // at the time was wrong, so it is worth stating what actually happened. The symptom was real:
+    // in some invocation shapes a report came out with `SetupViewModel$1` at 18 instructions on
+    // one line with no branches, against a class file that really has 42 instructions, two lines
+    // and five branches. The cause was **not** that anything analysed the wrong bytecode -- the
+    // class inputs were byte-identical across the two runs, same files, same md5, same
+    // `<sessioninfo>`. It was that the two runs used different JaCoCo versions, 0.8.14 against the
+    // pinned 0.8.12, and 0.8.14's Kotlin-coroutine and Compose filters simply report different
+    // numbers. That is fixed at its root in `configureJacoco` (build-logic), which is why both
+    // notices can now read one report; the second report task bought nothing once the analyzer
+    // stopped varying. See task-8-report.md.
     fun registerNotice(
       noticeTaskName: String,
       verificationTaskName: String,
