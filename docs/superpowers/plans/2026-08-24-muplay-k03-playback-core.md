@@ -99,6 +99,17 @@ Copied verbatim from the roadmap's **Definition of done, per plan**:
 | 8 | `MuPlayer` — the `ForwardingPlayer` seam and the progress writer | all six overloads go through the policy; `media_progress` is written |
 | 9 | `:feature:player` — the Compose player UI over a `MediaController` | a player and a mini player, with no `ExoPlayer` reachable from a feature |
 | 10 | The gates — Tier 2 playback journeys, the coverage table, the spec corrections | audio advances on a real screen, in the background, and the spec is fixed |
+| 11 | ReplayGain — parsed, mirrored, and applied as a gain stage | two identical sine tracks, one tagged −6 dB, render at half the amplitude |
+
+> **Why 11 comes after the gates task, and why nothing was renumbered.** A spec-coverage audit
+> (`.superpowers/sdd/2026-08-24-muplay-k02-library-browse/spec-coverage-audit.md`) found spec §4's
+> ReplayGain sentence owned by **no** plan: this plan deferred it to Plan 4, and Plan 4 deferred it
+> back. The ruling put it here, because this plan owns audio processing. It arrives as Task 11
+> rather than being slotted in beside the tasks it belongs next to because **four plans this repair
+> may not edit reference this plan's tasks by number** — Plan 4 builds on "Plan 3 Task 8", Plan 6 on
+> "Plan 3 Task 9" and "Plan 3 Task 10". Renumbering would silently redirect every one of those. So
+> the numbers stand, and Task 11 carries **its own** journey, coverage-floor and spec-correction
+> steps rather than reaching back into Task 10's.
 
 ---
 
@@ -117,7 +128,7 @@ landed it yet, the row says so, and the task that consumes it says so again at t
 
 | Symbol | Module | Status when this plan was written |
 |---|---|---|
-| `Song(id, libraryId, title, albumId, albumName, artistId, artistName, trackNumber, discNumber, durationSeconds, suffix, coverArtId)` | `:core:model` | **Committed.** Read the file; do not restate it. |
+| `Song(id, libraryId, title, albumId, albumName, artistId, artistName, trackNumber, discNumber, durationSeconds, suffix, coverArtId)` | `:core:model` | **Committed.** Read the file; do not restate it. **Task 11 adds one field to it** (`replayGain: ReplayGain?`) and says why the addition is this plan's rather than Plan 2's. |
 | `Album`, `AlbumWithSongs`, `Artist`, `MusicLibrary`, `LibraryRole`, `SearchResults`, `ScanStatus`, `AlbumListType`, `SubsonicCredentials` | `:core:model` | **Committed.** |
 | `SubsonicSource` (`ping`, `getMusicFolders`, `getScanStatus`, `getAlbumList2`, `getAlbum`, `search3`, `getRandomSongs`, `coverArtUrl`) | `:core:network` | **Committed.** Task 1 adds exactly one method to it. |
 | `SubsonicSourceFactory`, `DefaultSubsonicSourceFactory`, `SubsonicClient`, `SubsonicAuth`, `SubsonicErrorException`, `SubsonicHttpException`, `SubsonicMalformedResponseException` | `:core:network` | **Committed.** |
@@ -132,10 +143,21 @@ landed it yet, the row says so, and the task that consumes it says so again at t
 | `StartDestination`, `StartDestinationViewModel`, `MuPlayApp`, `LibraryRoute`, `AlbumRoute` | `:app` | **Plan 2 Task 10.** |
 | Room schema version **4** (`media_progress`, `libraries`, `artists`, `albums`, `songs`, `sync_watermark`) | `:core:database` | **Plan 2 Task 6 leaves it at 4.** |
 
-**This plan adds no table and no column, so the schema version does not move.** `media_progress`
-has existed since Plan 2 Task 1 and Task 8 below is the first code in the project to write a row
-into it. If you find yourself writing a Room migration in this plan, stop — you have added a
-column that belongs in Plan 4.
+**Tasks 1–10 add no table and no column, so through Task 10 the schema version does not move.**
+`media_progress` has existed since Plan 2 Task 1 and Task 8 below is the first code in the project
+to write a row into it. If you find yourself writing a Room migration anywhere in Tasks 1–10, stop
+— you have added a column that belongs in Plan 4.
+
+**Task 11 is the single exception, and it is a deliberate one.** ReplayGain is a property of the
+*file*, reported by the server on every browse response, and the player needs it **before** the
+track has ever been played — a shuffled library is exactly the case where every track is a first
+play. So it has to live on the library mirror: `songs` gains three nullable columns and the schema
+moves **4 → 5**. Like every schema bump in Plan 2 it writes **no `Migration`** — `provideDatabase`
+still carries the pre-release `fallbackToDestructiveMigration(dropAllTables = true)` escape hatch,
+nothing has shipped, and the mirror is a cache of the server that costs one sync to rebuild. Task 11
+restates that at the point it bumps the version, because "no schema change in this plan" was true
+when this plan was written and is the kind of sentence that gets quoted at someone doing the right
+thing.
 
 ### Hard facts, re-verified while this plan was written
 
@@ -223,11 +245,19 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 - **Offline downloads** — deferred by spec §9. No `DownloadService`, no `JobScheduler`.
 - **`media3-inspector`** — chapters are Plan 4's. Adding the artifact here would be an unused
   dependency, which the constraints call out by name.
-- **ReplayGain.** Spec §4 says *"ReplayGain is exposed but **not applied** server-side; the client
-  applies it"*, and applying it means a gain stage in the audio pipeline driven by
-  `media_progress.gainDb` — a column spec §5 groups with per-item speed and silence skipping, i.e.
-  with Plan 4. Task 8 makes sure the progress writer **preserves** `gainDb` rather than resetting
-  it, which is this plan's whole responsibility toward it. Applying it is not.
+- ~~**ReplayGain.**~~ **Corrected — ReplayGain is this plan's, and it is Task 11.** This paragraph
+  used to defer it to Plan 4 on the grounds that spec §5 groups `gainDb` with per-item speed and
+  silence skipping. Plan 4 read the same sentence and deferred it back — its Scope discipline says
+  *"it is nobody's task yet"* — so nothing parsed the value, nothing stored it, `Song` carried no
+  field for it, and nothing applied it. Two plans each pointing at the other is how a requirement
+  ships as a defect. **Library-scoped shuffle is this application's headline feature, and loudness
+  whiplash across a shuffled library degrades exactly that**, while the tags that fix it are already
+  sitting in the user's own files and already on the wire in every browse response. Applying a gain
+  is audio processing, and audio processing is this plan. Task 11 owns it end to end: the model
+  field, the OpenSubsonic `replayGain` object parsed against the vendored oracle, the mirror columns
+  the shuffle path reads before a track has ever been played, and the gain stage itself. Task 8's
+  responsibility toward `gainDb` changes accordingly — it **stamps** the column from the item now
+  rather than merely preserving it; see Task 8's own trap section.
 - **`savePlayQueue` / `createBookmark` / any server-side progress sync.** Spec §4 and §11 rule this
   out outright, and spec §4 records the specific hazards (`createBookmark.position` in
   milliseconds against `bookmarkPosition` in seconds; Navidrome's `savePlayQueue` mapping a track
@@ -278,7 +308,16 @@ Plan 3 is **playback core**. Explicitly **not** in this plan:
 | `app/src/androidTest/kotlin/app/muplay/PlaybackJourneyTest.kt` | **new** — Tier 2: audio advances, notification, backgrounding |
 | `.github/workflows/e2e.yml` | **modify** — `:core:media:connectedDebugAndroidTest`, `pm grant` for notifications |
 | `ci/mutation-probes.sh` | **modify** — the probes this plan's fields earn |
-| `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` | **modify** — §10's Tier 1/Tier 2 tables, and the corrections Task 10 lists |
+| `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md` | **modify** — §10's Tier 1/Tier 2 tables, and the corrections Tasks 10 and 11 list |
+| `core/model/src/main/kotlin/app/muplay/model/ReplayGain.kt` | **new** (Task 11) — the four numbers the server reports, and nothing else |
+| `core/model/src/main/kotlin/app/muplay/model/Song.kt` | **modify** (Task 11) — one nullable `replayGain` field |
+| `core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt` | **modify** (Task 11) — the OpenSubsonic `replayGain` object on `Child` |
+| `core/database/src/main/kotlin/app/muplay/database/entity/SongEntity.kt` | **modify** (Task 11) — three nullable columns, schema 4 → 5 |
+| `core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt` | **new** (Task 11) — dB to a linear multiplier, clamped by peak. Pure, no Android type |
+| `core/media/src/main/kotlin/app/muplay/media/GainAudioProcessor.kt` | **new** (Task 11) — the gain stage in the audio pipeline |
+| `core/media/src/main/kotlin/app/muplay/media/ReplayGainController.kt` | **new** (Task 11) — sets the stage's gain from the current item |
+| `ci/seed-fixtures.sh`, `ci/fixtures.md5`, `ci/configure-libraries.sh` | **modify** (Task 11) — one ReplayGain-tagged track, and the scan count that waits for it |
+| `app/src/androidTest/kotlin/app/muplay/ReplayGainJourneyTest.kt` | **new** (Task 11) — the measurement, on a real decoder |
 
 ---
 
@@ -5460,11 +5499,20 @@ Spec §3 lists seven, plus a 5–10 s ticker, and one of them carries a footnote
 inch a book forward every time it skipped a pause.
 
 The trap that is *not* in the spec, and that this task must not fall into:
-**`media_progress` already has columns this plan does not own.** `speed`, `skipSilence` and
-`gainDb` are per-item settings Plan 4 writes. A writer that constructs a fresh
+**`media_progress` already has columns this task does not write.** `speed` and `skipSilence` are
+per-item settings **Plan 4** writes; `gainDb` is **this plan's**, and **Task 11** is the task that
+starts writing it. Either way this task writes none of the three. A writer that constructs a fresh
 `MediaProgressEntity(mediaId, positionMs, false, now, 1f, false, 0f)` and upserts it **resets a
 listener's per-book speed every five seconds**. So every write is a read-modify-write that
-preserves the columns it does not own, and `ProgressWriterTest` asserts exactly that.
+preserves the columns it does not write, and `ProgressWriterTest` asserts exactly that.
+
+> **Task 11 changes exactly one line of this, and nothing else.** When ReplayGain lands,
+> `gainDb = existing?.gainDb ?: DEFAULT_GAIN_DB` becomes a stamp from the currently-playing item, so
+> the row records the gain the item was actually played at. `speed` and `skipSilence` stay
+> preserved-not-written for as long as Plan 4 has not landed. Task 11 makes that edit, extends
+> `aWriteDoesNotClobberTheColumnsThisPlanDoesNotOwn` to match, and does not touch anything else in
+> this file — the read-modify-write shape, and the reason for it, are this task's and stay this
+> task's.
 
 `isFinished` gets the same treatment in the other direction: it is set to `true` at `STATE_ENDED`
 and otherwise **preserved**, never written as `false`. A ticker that wrote `false` would un-finish
@@ -5952,10 +6000,11 @@ class ProgressWriterTest {
   }
 
   /**
-   * The trap. `media_progress` carries `speed`, `skipSilence` and `gainDb` — per-item settings the
-   * audiobook plan owns. A writer that constructs a fresh entity and upserts it resets a
-   * listener's per-book speed **every five seconds**, which is a data-loss bug that no test of
-   * this plan's own fields would ever catch.
+   * The trap. `media_progress` carries `speed`, `skipSilence` and `gainDb` — none of which this
+   * task writes. `speed` and `skipSilence` are the audiobook plan's; `gainDb` is this plan's, and
+   * Task 11 is where it starts being written. A writer that constructs a fresh entity and upserts
+   * it resets a listener's per-book speed **every five seconds**, which is a data-loss bug that no
+   * test of this task's own fields would ever catch.
    */
   @Test
   fun aWriteDoesNotClobberTheColumnsThisPlanDoesNotOwn() = runBlocking {
@@ -6191,9 +6240,10 @@ import kotlinx.coroutines.runBlocking
  *    coroutine launched into a scope that is about to be cancelled writes nothing.
  *
  * Every write is a **read-modify-write**. `media_progress` carries `speed`, `skipSilence` and
- * `gainDb`, which the audiobook plan owns; constructing a fresh entity here would reset a
- * listener's per-book speed every five seconds. And `isFinished` is only ever set to `true` —
- * writing `false` on a ticker would un-finish a completed book.
+ * `gainDb`, none of which this class writes today: the first two belong to the audiobook plan, and
+ * `gainDb` is stamped from the playing item once ReplayGain lands. Constructing a fresh entity here
+ * would reset a listener's per-book speed every five seconds. And `isFinished` is only ever set to
+ * `true` — writing `false` on a ticker would un-finish a completed book.
  */
 class ProgressWriter(
   private val player: Player,
@@ -6267,7 +6317,9 @@ class ProgressWriter(
         // Only ever set, never cleared. See the class documentation.
         isFinished = finished || (existing?.isFinished ?: false),
         lastPlayedAtEpochMs = clock.millis(),
-        // Columns the audiobook plan owns. Preserved, not defaulted.
+        // Columns this class does not write. Preserved, not defaulted. `speed` and `skipSilence`
+        // are the audiobook plan's; `gainDb` is this plan's and Task 11 turns this line into a
+        // stamp from the playing item.
         speed = existing?.speed ?: DEFAULT_SPEED,
         skipSilence = existing?.skipSilence ?: false,
         gainDb = existing?.gainDb ?: DEFAULT_GAIN_DB,
@@ -7726,12 +7778,915 @@ git commit -m "ci: tier 2 playback journeys, the completed coverage table, and t
 
 ---
 
+## Task 11: ReplayGain — parsed, mirrored, and applied as a gain stage
+
+**Files:**
+- Create: `core/model/src/main/kotlin/app/muplay/model/ReplayGain.kt`
+- Modify: `core/model/src/main/kotlin/app/muplay/model/Song.kt`
+- Modify: `core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt`
+- Modify: `core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt`
+- Create: `core/network/src/test/kotlin/app/muplay/network/ReplayGainMappingTest.kt`
+- Create: `core/testing/src/main/resources/fixtures/get-album-replay-gain.json`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/entity/SongEntity.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/MuPlayDatabase.kt` (version 4 → 5)
+- Create: `core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/GainAudioProcessor.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/ReplayGainController.kt`
+- Create: `core/media/src/main/kotlin/app/muplay/media/MuPlayRenderersFactory.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MediaItems.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt`
+- Modify: `core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt` (one line — see Task 8)
+- Test: `core/media/src/test/kotlin/app/muplay/media/ReplayGainPolicyTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/GainAudioProcessorTest.kt`
+- Test: `core/media/src/androidTest/kotlin/app/muplay/media/ProgressWriterTest.kt` (extend)
+- Create: `app/src/androidTest/kotlin/app/muplay/ReplayGainJourneyTest.kt`
+- Modify: `ci/seed-fixtures.sh`, `ci/fixtures.md5`, `ci/configure-libraries.sh`
+- Modify: `build.gradle.kts`, `ci/mutation-probes.sh`, `.github/workflows/e2e.yml`
+- Modify: `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`
+
+**Interfaces:**
+- Consumes: `Song` (`:core:model`, Plan 2 Task 3), `SongEntity` and `MirrorMapper` (`:core:database`,
+  Plan 2 Task 5), `MuPlayDataSourceFactory` (Task 2), `MuPlayerFactory` (Tasks 5–8),
+  `ProgressWriter` and `DEFAULT_GAIN_DB` (Task 8), `CapturingAudioSink` and `PlayerHarness`
+  (Tasks 2 and 7), `MediaProgressEntity` / `MediaProgressDao` (`:core:database`, Plan 2 Task 1).
+- Produces:
+  - `data class ReplayGain(val trackGainDb: Float?, val albumGainDb: Float?, val peakAmplitude: Float?)`
+    in `:core:model`
+  - `Song.replayGain: ReplayGain?`
+  - `SongEntity.replayGainTrackDb`, `.replayGainAlbumDb`, `.replayGainPeak` — three nullable
+    `Float` columns; `MuPlayDatabase` version **5**
+  - `object ReplayGainPolicy` with `fun gainDbFor(replayGain: ReplayGain?): Float?`,
+    `fun linearGain(gainDb: Float?, peakAmplitude: Float?): Float`, and
+    `const val UNCHANGED = 1.0f`, `MIN_GAIN_DB = -24.0f`, `MAX_GAIN_DB = 12.0f`
+  - `class GainAudioProcessor : BaseAudioProcessor` with `fun setLinearGain(gain: Float)`
+  - `class ReplayGainController(processor: GainAudioProcessor) : Player.Listener` with
+    `fun applyTo(mediaItem: MediaItem?)`
+  - `class MuPlayRenderersFactory(context, gainProcessor, extraProcessors)` — an **audio-only**
+    `RenderersFactory` for production
+  - `MediaItems.KEY_REPLAY_GAIN_DB`, `MediaItems.KEY_REPLAY_GAIN_PEAK` — the two `MediaMetadata`
+    extras the controller reads
+- **Plan 4 interaction:** Plan 4's Scope discipline says *"`media_progress.gainDb` stays unwritten
+  and unapplied … it is nobody's task yet"*, and Plan 4 Task 10 is scheduled to write those words
+  into spec §5. **That sentence is false once this task lands.** Plan 4's grain correction (speed and
+  `skipSilence` moving to `book_settings`) stands untouched and is still Plan 4's; only the five
+  words "unwritten and unapplied" must go. This plan does not edit Plan 4 — Task 11 Step 11 corrects
+  the **spec** directly, which is the artefact both plans are correcting, so whichever lands second
+  finds the sentence already right.
+
+### Why this is here at all, and why it is not a loudness engine
+
+Spec §4: *"ReplayGain is exposed but **not applied** server-side; the client applies it."* Nothing in
+this project applied it, and the reason it went unnoticed for seven plans is instructive: this plan's
+Scope discipline pointed at Plan 4 because spec §5 lists gain beside per-item speed, and Plan 4's
+Scope discipline pointed back with *"it is nobody's task yet"*. `Song` carried no field for the
+value, so it was never even parsed off a response that was already carrying it.
+
+**The user impact is on the headline feature.** Library-scoped shuffle draws fifty tracks from across
+a whole library — different albums, different masters, different decades. That is precisely the
+situation ReplayGain exists for, and precisely the situation where its absence is loudest: the user
+reaches for the volume knob every third track, in an app whose reason to exist is that the shuffle is
+better here. The tags are already in their files and already on the wire.
+
+**And it is a gain adjustment, nothing more.** No loudness analysis, no scanning, no EBU R128
+measurement, no normalisation of untagged material, no album-versus-track *mode* the user chooses.
+Three numbers off the response, one multiply per sample, and a clamp so a corrupt tag cannot deafen
+anyone. Album-gain mode is a **stated non-goal**: the policy prefers the track gain and falls back to
+the album gain only when a file carries no track gain, because a shuffled queue has no album to be
+consistent within, and that is the queue this feature exists for.
+
+### The one place this gets structurally interesting
+
+The value has to be available **before the track has ever been played**. That rules out
+`media_progress`, whose rows only exist for items with a history — every track in a fresh shuffle is
+a first play. So the value rides the same path as every other fact about a song: response → `Song` →
+mirror → `MediaItem`. `songs` gains three nullable columns and the schema moves **4 → 5**, with no
+`Migration`, for exactly the reason Plan 2 gives every time it does this: nothing has shipped,
+`provideDatabase` still carries the pre-release `fallbackToDestructiveMigration(dropAllTables = true)`
+escape hatch, and the mirror is a cache of the server that costs one sync to rebuild. **That escape
+hatch must still be deleted before the first release** — this task does not make it more permanent,
+it makes it load-bearing one more time.
+
+`media_progress.gainDb` is then written for the first time in the project's life, by Task 8's writer,
+as a **record of the gain the item was played at** — one authority (the file's tag), one writer (the
+`ProgressWriter`, because Plan 6 needs exactly one writer following the player switch), and a column
+that stops being decoration.
+
+### What the gate can see, and what it cannot
+
+| Claim | Where it is proved |
+|---|---|
+| the server reports `replayGain` and the client parses every field | Tier 1 — a fixture captured from the pinned container, validated against the vendored OpenAPI oracle, plus a mapping test per field |
+| dB becomes the right linear multiplier, and a peak clamps it | Tier 1 — `ReplayGainPolicyTest`, pure arithmetic with no Android type |
+| the multiplier reaches the PCM | Tier 2 — `GainAudioProcessorTest` on a real decoder, comparing **two identical sine tracks that differ only in their tag** |
+| the whole chain, from a browse response to what comes out | Tier 2 — `ReplayGainJourneyTest` |
+| a real user's real library sounds level | nothing in CI can see this. It is one seeded fixture, not a corpus. Stated here rather than implied by a green build. |
+
+- [ ] **Step 1: Add the tagged fixture, and prove Navidrome reports it**
+
+`ci/seed-fixtures.sh` — add a **second album** rather than tagging an existing track. Track 2 stays
+byte-identical, and that is the whole point: the new file is the *same waveform, same encoder
+settings*, differing only in a tag, which makes it a control rather than a comparison across two
+different recordings.
+
+```bash
+# One more track, in its own album so that "Test Album" keeps its three tracks and Task 7's
+# gapless arithmetic keeps its inputs. Same 440 Hz sine and the same encoder settings as
+# Track 2 -- the ONLY difference is the ReplayGain tag, which is what makes the gain test a
+# controlled experiment rather than a comparison of two different recordings.
+mkdir -p "$OUT/Music/Test Artist/Gain Album"
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=5:sample_rate=44100" \
+  -c:a libmp3lame -b:a 64k -ac 1 -bitexact -map_metadata -1 \
+  -metadata title="Quiet Track" -metadata artist="Test Artist" \
+  -metadata album="Gain Album" -metadata track="1" \
+  -metadata REPLAYGAIN_TRACK_GAIN="-6.00 dB" \
+  -metadata REPLAYGAIN_TRACK_PEAK="0.500000" \
+  "$OUT/Music/Test Artist/Gain Album/01 - Quiet Track.mp3"
+```
+
+`ci/configure-libraries.sh` — the scan-convergence loop waits for `"count":4`. It is now **five**.
+Change the literal in both the `[ "$count" = "4" ]` test and the failure message. A hardcoded 4 with
+a fifth file on disk makes `configure-libraries.sh` fail after five scan attempts, which reads as a
+Navidrome bug and is not one.
+
+Regenerate the checksums and confirm the four existing lines did not move:
+
+```bash
+./ci/seed-fixtures.sh
+git diff ci/fixtures.md5    # exactly one added line; the four existing hashes UNCHANGED
+```
+
+**If any existing hash moved, stop.** Task 7's gapless measurement is arithmetic over those exact
+bytes, and a re-encode invalidates every frame count in this plan.
+
+Then prove the server actually reports the tag — this is the assumption the whole task rests on and
+it is one `curl` away:
+
+```bash
+docker compose -f ci/navidrome.compose.yml up -d --wait && ./ci/configure-libraries.sh
+curl -s "http://localhost:4533/rest/getAlbumList2.view?type=alphabeticalByName&musicFolderId=1&<auth>" | grep -i replaygain
+```
+
+**If Navidrome reports no `replayGain` object, that is the finding and it belongs in the task
+report and in the spec**, not in a relaxed assertion. The fallback is to tag with a tool whose output
+Navidrome does read (verify against Navidrome's own tag mapping) — never to weaken the test until the
+absence passes. Record which tag writer produced the file that worked.
+
+- [ ] **Step 2: Write the failing policy test**
+
+`core/media/src/test/kotlin/app/muplay/media/ReplayGainPolicyTest.kt`:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.model.ReplayGain
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.within
+import org.junit.jupiter.api.Test
+
+/**
+ * Pure arithmetic, no Android type, Tier 1. The decisions here are the ones that can be wrong
+ * quietly: a sign error halves everything instead of doubling it, and a missing clamp turns a
+ * corrupt tag into a burst of full-scale noise in someone's headphones.
+ */
+class ReplayGainPolicyTest {
+
+  @Test
+  fun `the track gain is preferred over the album gain`() {
+    // Two observations, so a policy that always returned one of the two fields fails here.
+    assertThat(ReplayGainPolicy.gainDbFor(ReplayGain(-6.0f, -3.0f, null))).isEqualTo(-6.0f)
+    assertThat(ReplayGainPolicy.gainDbFor(ReplayGain(-9.0f, -3.0f, null))).isEqualTo(-9.0f)
+  }
+
+  @Test
+  fun `the album gain is the fallback and only the fallback`() {
+    // A shuffled queue has no album to be consistent within, so track gain is the right default.
+    // Album gain still beats nothing at all for a file that only carries one.
+    assertThat(ReplayGainPolicy.gainDbFor(ReplayGain(null, -3.0f, null))).isEqualTo(-3.0f)
+    assertThat(ReplayGainPolicy.gainDbFor(ReplayGain(null, -7.5f, null))).isEqualTo(-7.5f)
+  }
+
+  @Test
+  fun `an untagged file and an absent object are both no decision at all`() {
+    assertThat(ReplayGainPolicy.gainDbFor(null)).isNull()
+    assertThat(ReplayGainPolicy.gainDbFor(ReplayGain(null, null, 0.9f))).isNull()
+  }
+
+  @Test
+  fun `no decision means the samples are not touched`() {
+    // Not "gain of 0 dB, applied": literally the multiplicative identity, which the processor
+    // fast-paths. An untagged library must be bit-identical to no gain stage at all.
+    assertThat(ReplayGainPolicy.linearGain(null, null)).isEqualTo(ReplayGainPolicy.UNCHANGED)
+  }
+
+  @Test
+  fun `minus six dB is half the amplitude and plus six is double`() {
+    // The one piece of arithmetic in the whole feature. 10^(-6/20) = 0.5012.
+    assertThat(ReplayGainPolicy.linearGain(-6.0f, null)).isCloseTo(0.5012f, within(0.001f))
+    assertThat(ReplayGainPolicy.linearGain(6.0f, null)).isCloseTo(1.9953f, within(0.001f))
+    // Sign check, stated separately because a sign error is the defect that produces a plausible
+    // but exactly-wrong result: a track tagged quiet gets louder and nobody reads it as a bug.
+    assertThat(ReplayGainPolicy.linearGain(-6.0f, null)).isLessThan(1.0f)
+    assertThat(ReplayGainPolicy.linearGain(6.0f, null)).isGreaterThan(1.0f)
+  }
+
+  @Test
+  fun `a peak clamps a positive gain to the point of clipping and no further`() {
+    // +6 dB on a file that already peaks at 0.9 would clip. The clamp is 1/peak, and it is
+    // asserted at two peaks so a hardcoded 1.0 cannot satisfy it.
+    assertThat(ReplayGainPolicy.linearGain(6.0f, 0.9f)).isCloseTo(1.1111f, within(0.001f))
+    assertThat(ReplayGainPolicy.linearGain(6.0f, 0.5f)).isCloseTo(1.9953f, within(0.001f))
+  }
+
+  @Test
+  fun `a peak never pushes a gain up`() {
+    // The clamp is a ceiling, not a target. A quiet-tagged track with a low peak must stay quiet;
+    // "normalise everything to full scale" is a different feature and not this one.
+    assertThat(ReplayGainPolicy.linearGain(-6.0f, 0.1f)).isCloseTo(0.5012f, within(0.001f))
+  }
+
+  @Test
+  fun `an absent or nonsensical peak is ignored rather than trusted`() {
+    assertThat(ReplayGainPolicy.linearGain(3.0f, null)).isCloseTo(1.4125f, within(0.001f))
+    assertThat(ReplayGainPolicy.linearGain(3.0f, 0.0f)).isCloseTo(1.4125f, within(0.001f))
+    assertThat(ReplayGainPolicy.linearGain(3.0f, -1.0f)).isCloseTo(1.4125f, within(0.001f))
+  }
+
+  @Test
+  fun `a corrupt tag cannot deafen anyone`() {
+    // A tag reading "+90 dB" is a real thing that happens to real files. Clamped at both ends,
+    // asserted at both ends, because a one-sided clamp reads as correct until the day it isn't.
+    assertThat(ReplayGainPolicy.linearGain(90.0f, null))
+      .isEqualTo(ReplayGainPolicy.linearGain(ReplayGainPolicy.MAX_GAIN_DB, null))
+    assertThat(ReplayGainPolicy.linearGain(-90.0f, null))
+      .isEqualTo(ReplayGainPolicy.linearGain(ReplayGainPolicy.MIN_GAIN_DB, null))
+  }
+}
+```
+
+Run: `./gradlew :core:media:test --tests '*ReplayGainPolicyTest*'`
+Expected: FAIL — `Unresolved reference: ReplayGainPolicy`.
+
+- [ ] **Step 3: Write the model and the policy**
+
+`core/model/src/main/kotlin/app/muplay/model/ReplayGain.kt`:
+
+```kotlin
+package app.muplay.model
+
+/**
+ * The ReplayGain values a server reports for one file.
+ *
+ * Spec section 4: **ReplayGain is exposed but not applied server-side; the client applies it.**
+ * Navidrome reads these out of the file's own tags and hands them over on every browse response;
+ * nothing computes them here and nothing ever will — this project does no loudness analysis.
+ *
+ * Every field is nullable because every field is genuinely optional: an untagged file reports
+ * none of them, and a file tagged by an album-oriented tool may carry an album gain and no track
+ * gain. `null` means "the file does not say", which is a different fact from `0.0f` ("the file
+ * says no adjustment is needed") and the two must not be collapsed.
+ *
+ * @property trackGainDb the adjustment for this file played on its own, in decibels.
+ * @property albumGainDb the adjustment for this file played as part of its album, in decibels.
+ * @property peakAmplitude the file's highest sample as a fraction of full scale, so that a
+ *   positive gain can be clamped short of clipping. Taken from the track peak, falling back to the
+ *   album peak.
+ */
+data class ReplayGain(
+  val trackGainDb: Float?,
+  val albumGainDb: Float?,
+  val peakAmplitude: Float?,
+)
+```
+
+`core/model/src/main/kotlin/app/muplay/model/Song.kt` — one field, at the end of the parameter list
+so no positional call site moves:
+
+```kotlin
+  /**
+   * What the file's own ReplayGain tags say, or `null` for an untagged file.
+   *
+   * Carried on the song rather than on `media_progress` because the player needs it **before** the
+   * track has ever been played: every track in a fresh library-scoped shuffle is a first play, and
+   * a shuffled library is the exact situation ReplayGain exists for.
+   */
+  val replayGain: ReplayGain? = null,
+```
+
+`core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt`:
+
+```kotlin
+package app.muplay.media
+
+import app.muplay.model.ReplayGain
+import kotlin.math.pow
+
+/**
+ * Turns what a file's tags say into the number the gain stage multiplies samples by.
+ *
+ * Pure, and deliberately in a file with no Android import: this is where the defects that matter
+ * live — a sign error, a missing clamp — and Tier 1 can see all of them.
+ *
+ * **Track gain is preferred and album gain is only a fallback.** There is no album-versus-track
+ * *mode* for the user to choose, and that is a stated decision rather than an oversight: the queue
+ * this feature exists to fix is a library-scoped shuffle, which has no album to be consistent
+ * within. A file that carries only an album gain still gets it, because that beats nothing.
+ */
+object ReplayGainPolicy {
+
+  /** The multiplicative identity. An untagged library is bit-identical to having no gain stage. */
+  const val UNCHANGED: Float = 1.0f
+
+  /** A tag below this is a corrupt tag, not a quiet file. */
+  const val MIN_GAIN_DB: Float = -24.0f
+
+  /** A tag above this is a corrupt tag, not a quiet file — and it is the one that hurts. */
+  const val MAX_GAIN_DB: Float = 12.0f
+
+  private const val DB_PER_AMPLITUDE_DECADE = 20.0f
+
+  /** The decibel adjustment to apply, or `null` when the file does not say. */
+  fun gainDbFor(replayGain: ReplayGain?): Float? =
+    replayGain?.trackGainDb ?: replayGain?.albumGainDb
+
+  /**
+   * [gainDb] as a linear multiplier, clamped so that a corrupt tag cannot deafen anyone and a
+   * positive gain cannot push a known peak past full scale.
+   *
+   * The peak clamp is a **ceiling, not a target**: a quiet-tagged track with a low peak stays
+   * quiet. Normalising everything to full scale is a different feature and is not this one.
+   */
+  fun linearGain(gainDb: Float?, peakAmplitude: Float?): Float {
+    if (gainDb == null) return UNCHANGED
+    val clamped = gainDb.coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)
+    val linear = 10.0f.pow(clamped / DB_PER_AMPLITUDE_DECADE)
+    // A peak of zero or a negative one is a nonsensical tag, not a silent file: ignore it rather
+    // than dividing by it.
+    if (peakAmplitude == null || peakAmplitude <= 0.0f) return linear
+    return minOf(linear, 1.0f / peakAmplitude)
+  }
+}
+```
+
+Run: `./gradlew :core:media:test --tests '*ReplayGainPolicyTest*'` — PASS, 9/9.
+
+- [ ] **Step 4: Write the failing mapping test, and record the fixture**
+
+Capture `getAlbum` for `Gain Album` off the live container into
+`core/testing/src/main/resources/fixtures/get-album-replay-gain.json`, **exactly as it came off the
+wire**, the way Plan 2 Task 3 records every capture.
+
+`core/network/src/test/kotlin/app/muplay/network/ReplayGainMappingTest.kt`:
+
+```kotlin
+package app.muplay.network
+
+import app.muplay.testing.OpenApiFixtureValidator
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.within
+import org.junit.jupiter.api.Test
+
+/**
+ * The `replayGain` object, from the wire to [app.muplay.model.Song].
+ *
+ * Every field gets its own assertion at **two** values wherever two are available, because Plan 2
+ * Task 3's four review rounds established the rule this whole plan is written against: a mapped
+ * field replaced by a constant leaves a suite green, and a `replayGain` block mapped to
+ * `ReplayGain(-6f, null, null)` regardless of input would pass any single-value check.
+ */
+class ReplayGainMappingTest {
+
+  @Test
+  fun `the recorded capture is what the oracle says a getAlbum response looks like`() {
+    // The external oracle, on a body nobody wrote by hand. If Navidrome's `replayGain` block does
+    // not validate, that is evidence about the vendored spec and belongs in
+    // `NavidromeSpecDeviationTest` as a named, committed deviation -- never in a loosened
+    // validator.
+    OpenApiFixtureValidator.assertValid("/rest/getAlbum", fixture("get-album-replay-gain.json"))
+  }
+
+  @Test
+  fun `every replay gain field arrives on the song`() {
+    val song = client(fixture("get-album-replay-gain.json")).getAlbum("al-gain", musicFolderId = 1)
+      .songs.single { it.title == "Quiet Track" }
+    val gain = checkNotNull(song.replayGain)
+
+    assertThat(gain.trackGainDb).isCloseTo(-6.0f, within(0.01f))
+    assertThat(gain.peakAmplitude).isCloseTo(0.5f, within(0.01f))
+  }
+
+  @Test
+  fun `each field comes from its own key and not from a neighbour`() {
+    // Four distinct values in one inline body: a mapper that read `albumGain` into `trackGainDb`,
+    // or `albumPeak` into the track peak, passes the capture test above and fails here.
+    val song = client(
+      """
+      {"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"al-1","name":"A",
+      "songCount":1,"duration":5,"song":[{"id":"s-1","title":"T","isDir":false,
+      "replayGain":{"trackGain":-6.0,"albumGain":-3.0,"trackPeak":0.5,"albumPeak":0.9}}]}}}
+      """.trimIndent(),
+    ).getAlbum("al-1", musicFolderId = 1).songs.single()
+    val gain = checkNotNull(song.replayGain)
+
+    assertThat(gain.trackGainDb).isEqualTo(-6.0f)
+    assertThat(gain.albumGainDb).isEqualTo(-3.0f)
+    assertThat(gain.peakAmplitude).isEqualTo(0.5f)
+  }
+
+  @Test
+  fun `the album peak is the fallback for a file with no track peak`() {
+    val song = client(
+      """
+      {"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"al-1","name":"A",
+      "songCount":1,"duration":5,"song":[{"id":"s-1","title":"T","isDir":false,
+      "replayGain":{"trackGain":-6.0,"albumPeak":0.8}}]}}}
+      """.trimIndent(),
+    ).getAlbum("al-1", musicFolderId = 1).songs.single()
+
+    assertThat(checkNotNull(song.replayGain).peakAmplitude).isEqualTo(0.8f)
+  }
+
+  @Test
+  fun `an untagged file carries no replay gain at all, rather than zeroes`() {
+    // `null` means "the file does not say"; `0.0` means "the file says no adjustment is needed".
+    // Collapsing the two would apply a decision nobody made, to every untagged library there is.
+    val song = client(
+      """
+      {"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"al-1","name":"A",
+      "songCount":1,"duration":5,"song":[{"id":"s-1","title":"T","isDir":false}]}}}
+      """.trimIndent(),
+    ).getAlbum("al-1", musicFolderId = 1).songs.single()
+
+    assertThat(song.replayGain).isNull()
+  }
+
+  @Test
+  fun `an empty replay gain object is also no decision`() {
+    val song = client(
+      """
+      {"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"al-1","name":"A",
+      "songCount":1,"duration":5,"song":[{"id":"s-1","title":"T","isDir":false,"replayGain":{}}]}}}
+      """.trimIndent(),
+    ).getAlbum("al-1", musicFolderId = 1).songs.single()
+
+    assertThat(song.replayGain).isNull()
+  }
+}
+```
+
+> `client(body)` and `fixture(name)` are Plan 2 Task 3's helpers in this source set — a
+> `MockWebServer` enqueueing one body and a classpath resource reader. **Reuse them; do not fork
+> them.** If their names differ on disk, use the real ones and say so in the task report.
+
+Run: `./gradlew :core:network:test --tests '*ReplayGainMappingTest*'`
+Expected: FAIL — `Unresolved reference: replayGain`.
+
+- [ ] **Step 5: Parse it, mirror it, and move the schema to 5**
+
+`core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt` — model the object the
+**vendored spec** declares, not a subset of it, and add it to `Child`:
+
+```kotlin
+/**
+ * OpenSubsonic's `ReplayGain` object, as the vendored spec declares it. Modelled whole rather than
+ * trimmed to the fields this client uses, because the oracle validates against the whole thing and
+ * a partial model is a fixture that silently stops being validated.
+ */
+@Serializable
+data class ReplayGainBody(
+  val trackGain: Float? = null,
+  val albumGain: Float? = null,
+  val trackPeak: Float? = null,
+  val albumPeak: Float? = null,
+  val baseGain: Float? = null,
+  val fallbackGain: Float? = null,
+)
+```
+
+with `val replayGain: ReplayGainBody? = null` on `Child`.
+
+`core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt` — in the existing `Child` → `Song`
+mapping:
+
+```kotlin
+  /**
+   * `null` rather than an all-null [ReplayGain]: "this file carries no gain tags" and "this file
+   * carries tags whose every value happens to be absent" are the same fact, and the player's one
+   * question is "is there a decision to apply". `baseGain` and `fallbackGain` are parsed by
+   * [ReplayGainBody] so the oracle keeps validating the whole object, and deliberately dropped
+   * here — they configure a *server-side* normaliser this client does not use.
+   */
+  private fun ReplayGainBody?.toDomain(): ReplayGain? {
+    val trackGainDb = this?.trackGain
+    val albumGainDb = this?.albumGain
+    val peak = this?.trackPeak ?: this?.albumPeak
+    if (trackGainDb == null && albumGainDb == null) return null
+    return ReplayGain(trackGainDb = trackGainDb, albumGainDb = albumGainDb, peakAmplitude = peak)
+  }
+```
+
+`core/database/.../entity/SongEntity.kt` — three nullable columns, and the reason on the class:
+
+```kotlin
+  /**
+   * The file's own ReplayGain, mirrored so the player has it **before** the track is first played.
+   *
+   * Three columns rather than an `@Embedded ReplayGain` because two of the three are independently
+   * nullable and an embedded all-null instance is indistinguishable from an absent one — the exact
+   * collapse `SubsonicClient` refuses to make one layer up.
+   */
+  val replayGainTrackDb: Float? = null,
+  val replayGainAlbumDb: Float? = null,
+  val replayGainPeak: Float? = null,
+```
+
+`MirrorMapper` carries them both ways. `MuPlayDatabase` moves to `version = 5` and writes **no**
+`Migration`, for the reason stated at the head of this task; confirm the exported schema JSON in
+`core/database/schemas/` gains a `5.json` and that `provideDatabase` still carries the pre-release
+`fallbackToDestructiveMigration(dropAllTables = true)` line **with its "must be removed before the
+first release" comment intact**.
+
+`MediaItems.kt` — the two extras the controller reads, on `MediaMetadata`:
+
+```kotlin
+    val extras = Bundle().apply {
+      // ... whatever Task 4 already puts here
+      ReplayGainPolicy.gainDbFor(song.replayGain)?.let { putFloat(KEY_REPLAY_GAIN_DB, it) }
+      song.replayGain?.peakAmplitude?.let { putFloat(KEY_REPLAY_GAIN_PEAK, it) }
+    }
+```
+
+with `const val KEY_REPLAY_GAIN_DB = "app.muplay.replayGainDb"` and
+`KEY_REPLAY_GAIN_PEAK = "app.muplay.replayGainPeak"`. **Absent keys, not sentinel values** — a
+`-100f` sentinel is a number the policy would happily clamp and apply.
+
+Run: `./gradlew :core:network:test :core:media:test :core:database:connectedDebugAndroidTest` — green,
+including Plan 2's mirror round-trip tests, which now have three more fields to carry.
+
+- [ ] **Step 6: Write the failing gain measurement**
+
+`core/media/src/androidTest/kotlin/app/muplay/media/GainAudioProcessorTest.kt` — on the device, with
+a real decoder, a real Navidrome behind it and Task 7's `CapturingAudioSink`.
+
+**This is the assertion the whole task exists for, and it is a controlled experiment**: two files
+with the same waveform and the same encoder settings, one tagged `-6.00 dB`. Anything else — an
+assertion that the processor was constructed, that `setLinearGain` was called, that a `Player` was
+asked to play — is satisfied by a gain stage that multiplies by 1.
+
+```kotlin
+  /**
+   * The measurement. Track 2 and "Quiet Track" are the same 440 Hz sine at the same bitrate; the
+   * only difference between the files is a tag. So the ratio of their rendered amplitudes **is**
+   * the gain, with no calibration and no golden file.
+   */
+  @Test
+  fun aTaggedTrackRendersAtTheAmplitudeItsTagAsksFor() {
+    val untagged = captureRms(songIdByTitle("Track 2"))
+    val tagged = captureRms(songIdByTitle("Quiet Track"))
+
+    // -6.00 dB is 0.5012 of the amplitude. Generous tolerance: the two files are separately
+    // encoded, so their decoded amplitudes are close but not identical, and lossy coding of a
+    // pure tone is where that shows.
+    assertThat(tagged / untagged).isCloseTo(0.5012f, within(0.06f))
+    // ...and stated as an inequality too, because a ratio assertion with a wide tolerance is
+    // satisfiable by two silences.
+    assertThat(untagged).isGreaterThan(1000f)
+    assertThat(tagged).isGreaterThan(400f)
+  }
+
+  /**
+   * The control, and the reason the ratio above is not an artefact of the two files: with the gain
+   * stage told to leave the samples alone, the two tracks measure the *same*.
+   */
+  @Test
+  fun withNoGainAppliedTheTwoTracksMeasureTheSame() {
+    val untagged = captureRms(songIdByTitle("Track 2"), applyReplayGain = false)
+    val tagged = captureRms(songIdByTitle("Quiet Track"), applyReplayGain = false)
+
+    assertThat(tagged / untagged).isCloseTo(1.0f, within(0.06f))
+  }
+
+  /**
+   * An untagged library must be **bit-identical** to having no gain stage at all, not merely close
+   * to it. `GainAudioProcessor` fast-paths a gain of exactly 1.0 into a buffer copy, and this is
+   * what stops that fast path being quietly removed as a micro-optimisation nobody needed.
+   */
+  @Test
+  fun anUntaggedTrackIsBitIdenticalWithAndWithoutTheGainStage() {
+    val withStage = capturePcm(songIdByTitle("Track 2"), applyReplayGain = true)
+    val withoutStage = capturePcm(songIdByTitle("Track 2"), applyReplayGain = false)
+
+    assertThat(withStage).isEqualTo(withoutStage)
+    assertThat(withStage.size).isGreaterThan(100_000)
+  }
+
+  /**
+   * The gain follows the item, which is the property a per-track adjustment actually needs. One
+   * queue, two tracks, one capture: the second half of the capture is quieter than the first.
+   *
+   * **Known and stated:** the controller sets the gain on `onMediaItemTransition`, and up to one
+   * audio buffer already in flight can still carry the previous item's gain -- tens of
+   * milliseconds at the boundary. The window either side of the transition is excluded from this
+   * measurement for that reason, and the reason is written here rather than discovered later as a
+   * flake. It is well under the 10 ms of silence Task 7 measures across the same boundary.
+   */
+  @Test
+  fun theGainFollowsTheItemAcrossATransition() {
+    val pcm = capturePcm(queueOf("Track 2", "Quiet Track"), applyReplayGain = true)
+    val boundary = pcm.size / 2
+
+    val first = rmsOf(pcm, from = 0, to = boundary - GUARD_BYTES)
+    val second = rmsOf(pcm, from = boundary + GUARD_BYTES, to = pcm.size)
+
+    assertThat(second / first).isCloseTo(0.5012f, within(0.06f))
+  }
+```
+
+with, in the companion, `/** One audio buffer at 44.1 kHz mono 16-bit, rounded up. */ const val GUARD_BYTES = 8_192`.
+
+`captureRms` / `capturePcm` build the player the way Task 7's `runExperiment` does — a
+`DefaultAudioSink` whose processor chain holds **both** the `GainAudioProcessor` under test and a
+`TeeAudioProcessor` feeding a `CapturingAudioSink`, with the gain processor **first** so the capture
+sees what the sink would have received. `songIdByTitle` resolves against the real Navidrome, so the
+test names files rather than assuming an ordering.
+
+Run: `./gradlew :core:media:connectedDebugAndroidTest --tests '*GainAudioProcessorTest*'`
+Expected: FAIL — `Unresolved reference: GainAudioProcessor`.
+
+- [ ] **Step 7: Write the gain stage and put it in the production pipeline**
+
+`core/media/src/main/kotlin/app/muplay/media/GainAudioProcessor.kt`:
+
+```kotlin
+package app.muplay.media
+
+import androidx.media3.common.C
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.util.UnstableApi
+import java.nio.ByteBuffer
+
+/**
+ * The gain stage spec section 4 asks for: *"ReplayGain is exposed but not applied server-side; the
+ * client applies it."*
+ *
+ * One multiply per sample, sitting in the audio processor chain upstream of the `AudioTrack` — the
+ * same place Task 7's `TeeAudioProcessor` sits, which is why the measurement in
+ * `GainAudioProcessorTest` can see this and works on the `-no-audio` CI emulator.
+ *
+ * **[isActive] returns `true` unconditionally, and that is deliberate.** A processor's activity is
+ * decided when the chain is configured, and the gain changes per *item* long after that; a stage
+ * that deactivated itself for a track with no tag would be absent from the chain when the next
+ * track needed it. The cost of staying in the chain is paid back by [queueInput]'s fast path,
+ * which copies rather than multiplies when the gain is exactly [ReplayGainPolicy.UNCHANGED] — so
+ * an untagged library is bit-identical to having no gain stage at all, and
+ * `anUntaggedTrackIsBitIdenticalWithAndWithoutTheGainStage` asserts precisely that.
+ *
+ * Only 16-bit PCM is handled. Anything else is refused loudly through
+ * [AudioProcessor.UnhandledAudioFormatException] rather than passed through unchanged, because
+ * "the gain silently did not apply" is the failure this whole task exists to remove.
+ */
+@UnstableApi
+class GainAudioProcessor : BaseAudioProcessor() {
+
+  /** Written from the application thread by [ReplayGainController], read on the playback thread. */
+  @Volatile private var linearGain: Float = ReplayGainPolicy.UNCHANGED
+
+  fun setLinearGain(gain: Float) {
+    linearGain = gain
+  }
+
+  override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
+    if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT) inputAudioFormat
+    else throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
+
+  override fun isActive(): Boolean = true
+
+  override fun queueInput(inputBuffer: ByteBuffer) {
+    val limit = inputBuffer.limit()
+    val output = replaceOutputBuffer(limit - inputBuffer.position())
+    val gain = linearGain
+
+    if (gain == ReplayGainPolicy.UNCHANGED) {
+      output.put(inputBuffer)
+    } else {
+      var position = inputBuffer.position()
+      while (position < limit) {
+        val scaled = (inputBuffer.getShort(position) * gain).toInt()
+          .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+        output.putShort(scaled.toShort())
+        position += Short.SIZE_BYTES
+      }
+      inputBuffer.position(limit)
+    }
+    output.flip()
+  }
+}
+```
+
+`core/media/src/main/kotlin/app/muplay/media/ReplayGainController.kt`:
+
+```kotlin
+package app.muplay.media
+
+import android.os.Bundle
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+
+/**
+ * Points [GainAudioProcessor] at whatever the current item's tags asked for.
+ *
+ * A `Player.Listener` rather than something the queue builder calls, because the current item
+ * changes for reasons no caller announces — an automatic transition, a `seekToNext`, a media
+ * button on a headset.
+ */
+class ReplayGainController(private val processor: GainAudioProcessor) : Player.Listener {
+
+  override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = applyTo(mediaItem)
+
+  fun applyTo(mediaItem: MediaItem?) {
+    val extras: Bundle? = mediaItem?.mediaMetadata?.extras
+    val gainDb = extras?.takeIf { it.containsKey(MediaItems.KEY_REPLAY_GAIN_DB) }
+      ?.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)
+    val peak = extras?.takeIf { it.containsKey(MediaItems.KEY_REPLAY_GAIN_PEAK) }
+      ?.getFloat(MediaItems.KEY_REPLAY_GAIN_PEAK)
+    processor.setLinearGain(ReplayGainPolicy.linearGain(gainDb, peak))
+  }
+}
+```
+
+`core/media/src/main/kotlin/app/muplay/media/MuPlayRenderersFactory.kt` — production now needs a
+processor chain, which means production now needs its own `RenderersFactory`:
+
+```kotlin
+package app.muplay.media
+
+import android.content.Context
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+
+/**
+ * An **audio-only** `RenderersFactory` carrying [GainAudioProcessor].
+ *
+ * Supplying a custom `AudioSink` is the supported way to insert a processor into the chain, and
+ * until this task the production player used `DefaultRenderersFactory` with no chain of its own —
+ * Task 7 built one, but only inside a test. That also makes spec section 11's *"Video"* non-goal a
+ * **production** property rather than a test-only observation: there is no video renderer in this
+ * array to construct one.
+ *
+ * Confirm `MediaCodecAudioRenderer`'s and `DefaultAudioSink.Builder`'s exact shapes against the
+ * resolved Media3 1.11.0 sources before assuming this compiles, exactly as Task 7 says for the
+ * same two constructors.
+ */
+@UnstableApi
+class MuPlayRenderersFactory(
+  private val context: Context,
+  private val gainProcessor: GainAudioProcessor,
+) : RenderersFactory by RenderersFactory({ handler, _, audioListener, _, _ ->
+  val audioSink = DefaultAudioSink.Builder(context)
+    .setAudioProcessorChain(DefaultAudioSink.DefaultAudioProcessorChain(gainProcessor))
+    .build()
+  arrayOf(MediaCodecAudioRenderer(context, MediaCodecSelector.DEFAULT, handler, audioListener, audioSink))
+})
+```
+
+> **If `RenderersFactory` cannot be delegated that way in 1.11.0**, write it as a plain class with a
+> single `createRenderers` override doing the same thing. The shape is not the point; a production
+> player with a gain stage in its chain is.
+
+`MuPlayerFactory` — one processor and one controller per player, both `@Singleton`-free because they
+belong to the player they were built for:
+
+```kotlin
+  fun createExoPlayer(): ExoPlayer {
+    val gainProcessor = GainAudioProcessor()
+    return ExoPlayer.Builder(context, MuPlayRenderersFactory(context, gainProcessor))
+      /* ...the rest of Tasks 5 and 6's body, unchanged... */
+      .build()
+      .also { it.addListener(ReplayGainController(gainProcessor)) }
+  }
+```
+
+- [ ] **Step 8: Stamp `gainDb`, and extend Task 8's own assertion**
+
+Spec section 5 puts a per-item gain on the progress row. It has never been written. Now that a value
+exists, `ProgressWriter.write` stamps it — **one** writer, because Plan 6 needs exactly one following
+the player switch:
+
+```kotlin
+        // Columns this class does not own the *meaning* of. `speed` and `skipSilence` are the
+        // audiobook plan's and stay preserved-not-written. `gainDb` is this plan's: it records the
+        // gain the item was actually played at, so the row stops being decoration and Plan 5's
+        // watch snapshot carries something true.
+        speed = existing?.speed ?: DEFAULT_SPEED,
+        skipSilence = existing?.skipSilence ?: false,
+        gainDb = currentItemGainDb() ?: existing?.gainDb ?: DEFAULT_GAIN_DB,
+```
+
+with
+
+```kotlin
+  /** The playing item's ReplayGain decision, or `null` when the item carries none. */
+  private fun currentItemGainDb(): Float? =
+    player.currentMediaItem?.mediaMetadata?.extras
+      ?.takeIf { it.containsKey(MediaItems.KEY_REPLAY_GAIN_DB) }
+      ?.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)
+```
+
+Extend Task 8's `aWriteDoesNotClobberTheColumnsThisPlanDoesNotOwn` rather than replacing it: `speed`
+and `skipSilence` must still survive untouched, and add a second test asserting that a write **for an
+item carrying a tag** stores that tag's value, at two different values so a constant cannot satisfy
+it, and that a write for an untagged item preserves whatever was there.
+
+- [ ] **Step 9: The Tier 2 journey**
+
+`app/src/androidTest/kotlin/app/muplay/ReplayGainJourneyTest.kt` — the whole chain on a real screen,
+reusing Plan 2 Task 10's `reachLibraryScreen` helper and Plan 3 Task 10's playback helpers. It plays
+"Quiet Track" from the real UI against the real Navidrome and asserts the rendered amplitude ratio
+against "Track 2" played the same way — the same measurement as Step 6, but through browse, the
+mirror, the session and the service instead of through a hand-built player.
+
+Its value over Step 6 is precisely the parts Step 6 skips: that `getAlbum`'s `replayGain` survived
+the **mirror round trip** and the `MediaItem` mapping. A defect that drops the columns in
+`MirrorMapper` leaves every unit test green and this one red.
+
+- [ ] **Step 10: Prove each new assertion can fail**
+
+One mutation at a time, restored after each, message recorded in the task report:
+
+1. In `ReplayGainPolicy.linearGain`, negate the exponent. Expect
+   `minus six dB is half the amplitude and plus six is double`, both device measurements, and the
+   journey to fail. **This is the sign error**, and it is the one that would otherwise ship as
+   "ReplayGain works, but backwards".
+2. In `ReplayGainPolicy.linearGain`, return `UNCHANGED` always. Expect every device measurement to
+   fail and `withNoGainAppliedTheTwoTracksMeasureTheSame` to still pass — the control staying green
+   is what proves the experiment is controlled.
+3. In `ReplayGainPolicy.gainDbFor`, return `albumGainDb ?: trackGainDb`. Expect
+   `the track gain is preferred over the album gain` to fail.
+4. Delete the peak clamp. Expect `a peak clamps a positive gain to the point of clipping` to fail.
+5. In `GainAudioProcessor.isActive`, return `linearGain != UNCHANGED`. Expect
+   `theGainFollowsTheItemAcrossATransition` to fail — this is the trap the KDoc describes, and it
+   must be a test, not a comment.
+6. In `MirrorMapper`, drop the three columns on the way in. Expect the journey to fail and every
+   `:core:network` test to stay green — which is exactly why the journey exists.
+7. In `SubsonicClient`'s mapping, return `ReplayGain(-6f, null, null)` unconditionally. Expect
+   `each field comes from its own key and not from a neighbour` and
+   `an untagged file carries no replay gain at all` to fail.
+
+Record 1, 2, 5 and 6 in `ci/mutation-probes.sh`.
+
+- [ ] **Step 11: Floors, the spec, and commit**
+
+Add `"app.muplay.media.ReplayGainPolicy"`, `"app.muplay.media.GainAudioProcessor"` and
+`"app.muplay.media.ReplayGainController"` to `:core:media`'s **BRANCH** floor includes, and
+`"app.muplay.model.ReplayGain"` to `:core:model`'s. Measure from a real report; if a measured ratio
+is under 0.90 the answer is another test, not a lower floor. `GainAudioProcessor` needs instrumented
+data, so set its `requiresInstrumentedData` by **measuring** — delete the `.ec` files, run
+`jacocoJvmCoverageVerification`, and set the flag on exactly the floors that fail.
+
+`.github/workflows/e2e.yml` — `ReplayGainJourneyTest` is in `:app`'s suite, which the workflow
+already runs whole; confirm rather than assume, and confirm the fixture checksum step still passes
+with the fifth file.
+
+Then the spec, `docs/superpowers/specs/2026-08-22-muplay-kotlin-design.md`:
+
+1. **§4, Streaming, the ReplayGain line.** *"ReplayGain is exposed but not applied server-side; the
+   client applies it"* is right and now has an owner. Say what applying it means, so the next reader
+   does not have to guess and no plan has to defer it again:
+   > ReplayGain is exposed but **not applied server-side; the client applies it** — as a gain stage
+   > in the audio processor chain, upstream of the `AudioTrack`, driven by the file's own
+   > `replayGain` tags carried on the library mirror so a shuffled queue has them before a track is
+   > first played. Track gain is preferred, album gain is the fallback for a file that carries no
+   > track gain, and a positive gain is clamped by the file's peak. **No loudness analysis** is
+   > performed here and none is planned: an untagged file is played unchanged.
+2. **§5, "Per-item speed, silence skipping and gain, all stored on the progress row."** The gain half
+   is now true — `media_progress.gainDb` records the gain the item was played at. Say where the
+   *authority* is, because the row is a record and not the source:
+   > Per-item gain is applied from the file's own ReplayGain tags (§4) and recorded on the progress
+   > row; the file is the authority, the row is the log.
+
+   Leave the `speed` / `skipSilence` half of that sentence alone — Plan 4 Task 10 owns its
+   correction to `book_settings` and the two must not collide.
+
+```bash
+./gradlew :core:model:test :core:network:test :core:media:test
+./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew jacocoTestReport jacocoTestCoverageVerification
+git add core ci build.gradle.kts docs/superpowers/specs app
+git commit -m "feat(media): apply ReplayGain, from the file's own tags to the audio pipeline"
+```
+
+---
+
 ## Definition of done
 
 1. All tasks' tests pass; **both tiers green**.
-2. **Tier 2 carries this plan's journeys**: `PlaybackJourneyTest` and `MuPlaybackServiceTest` in
-   `:app`'s emulator suite, plus `:core:media`'s eight instrumented classes, and **each has been
-   watched go red**.
+2. **Tier 2 carries this plan's journeys**: `PlaybackJourneyTest`, `MuPlaybackServiceTest` and
+   `ReplayGainJourneyTest` (Task 11) in `:app`'s emulator suite, plus `:core:media`'s instrumented
+   classes, and **each has been watched go red**.
 3. Coverage ≥ 90% on every module this plan touched — **branch** for non-UI code, **line** for
    `@Composable`-bearing files and for Android plumbing that carries no author-written conditional.
    Every floor measured from a real report, every `requiresInstrumentedData` flag measured rather
@@ -7761,5 +8716,16 @@ git commit -m "ci: tier 2 playback journeys, the completed coverage table, and t
 10. **`media_progress` is written at spec §3's persistence points without clobbering the columns
     this plan does not own**, and one item's progress survives another item playing — the property
     the whole architecture rests on, asserted today even though honouring it is Plan 4's.
-11. Anything discovered to be wrong in the spec is corrected **in the spec** — the nine items in
-    Task 10 Step 5, at minimum.
+    `gainDb` stops being decoration: Task 11 stamps it from the item's own ReplayGain, through the
+    one writer, so that Plan 5's watch snapshot carries something true.
+11. **ReplayGain is applied, and the proof is a controlled experiment** (Task 11): two files with
+    the same waveform and the same encoder settings, differing only in a tag, render at amplitudes
+    whose ratio is the tag. The untagged control measures the same with and without the stage, and
+    an untagged track is **bit-identical** with the gain stage in the chain.
+12. **The CI corpus can see the case the code handles.** It gained a ReplayGain-tagged track whose
+    only difference from Track 2 is a tag, `ci/fixtures.md5` regenerated with **no existing hash
+    moved**, and `ci/configure-libraries.sh`'s scan-convergence count moved with it. A gate that
+    cannot see the failing case is not a gate, and this feature was unowned for exactly as long as
+    no fixture could show it failing.
+13. Anything discovered to be wrong in the spec is corrected **in the spec** — the nine items in
+    Task 10 Step 5 and the two in Task 11 Step 11, at minimum.
