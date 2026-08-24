@@ -204,6 +204,21 @@ class SetupViewModelTest {
   }
 
   @Test
+  fun `a server with no libraries at all has nothing to continue past`() = runTest(dispatcher) {
+    // `current.none { UNASSIGNED }` is vacuously true over an empty list, so canContinue's
+    // emptiness guard is the only thing standing between "no libraries" and a false "all tagged".
+    libraries.reported = emptyList()
+    val vm = viewModel(StubSource({ serverInfo() }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val tagging = vm.uiState.value as SetupUiState.Tagging
+    assertThat(tagging.libraries).isEmpty()
+    assertThat(tagging.canContinue).isFalse
+  }
+
+  @Test
   fun `a rejected sign-in reports the server's own code and stores nothing`() = runTest(dispatcher) {
     val vm = viewModel(StubSource({ throw SubsonicErrorException(40, "Wrong username or password") }))
 

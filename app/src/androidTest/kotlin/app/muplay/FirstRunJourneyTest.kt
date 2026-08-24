@@ -67,8 +67,16 @@ class FirstRunJourneyTest {
 
     // The contract on server state: both seeded libraries, by name. `ci/configure-libraries.sh`
     // renames Navidrome's pinned library 1 to "Music" and creates "Audiobooks" as library 2.
-    composeRule.onNodeWithText("Music").assertIsDisplayed()
-    composeRule.onNodeWithText("Audiobooks").assertIsDisplayed()
+    //
+    // Not a bare `onNodeWithText`: every library row also renders a "Music" role chip and an
+    // "Audiobooks" role chip (see SetupScreen's Tagging branch), so with two libraries the exact
+    // text "Music" appears three times (the Music row's own name, plus one role chip per row)
+    // and likewise for "Audiobooks" -- `onNodeWithText` demands exactly one match and throws on
+    // the ambiguity. Observed directly: the first run of this test failed with "Expected at most
+    // 1 node but found 3 nodes". `MUSIC_LIBRARY_NAME`/`AUDIOBOOKS_LIBRARY_NAME` pick out the name
+    // specifically, per the ordering documented on those constants.
+    composeRule.onAllNodesWithText("Music")[MUSIC_LIBRARY_NAME].assertIsDisplayed()
+    composeRule.onAllNodesWithText("Audiobooks")[AUDIOBOOKS_LIBRARY_NAME].assertIsDisplayed()
   }
 
   @Test
@@ -156,18 +164,22 @@ class FirstRunJourneyTest {
     const val CONTINUE_LABEL = "Continue"
 
     /**
-     * The library named "Music" renders its own name and a "Music" role chip, so
-     * `onAllNodesWithText("Music")` matches two nodes on this screen. Index 0 is the library
-     * name in the first row; index 1 is that row's "Music" chip. Same for "Audiobooks", whose
-     * row is second: index 0 is the "Audiobooks" chip in row one, index 1 the library name in
-     * row two, index 2 that row's chip.
+     * Every library row renders **both** role chips ("Music" and "Audiobooks"), so with the two
+     * seeded libraries the exact text "Music" appears three times in document order: the Music
+     * row's own name (index 0), that row's "Music" chip (index 1), and the Audiobooks row's
+     * "Music" chip (index 2). "Audiobooks" is the mirror image: the Audiobooks row's "Audiobooks"
+     * chip is first (index 0, it is the *second* row but its chip is the *first* node with this
+     * exact text -- the Music row has no "Audiobooks"-labelled node before it), then the
+     * Audiobooks row's own name (index 1), then that row's "Audiobooks" chip (index 2).
      *
      * Indices rather than test tags, deliberately: this journey is a black-box walk through what
      * a user sees, and adding tags to the production UI purely so a test can find things makes
      * the test pass on a screen the user could not use. If these indices become fragile, add
      * distinct visible labels ("Tag as Music") rather than invisible ones.
      */
+    const val MUSIC_LIBRARY_NAME = 0
     const val MUSIC_ROLE_CHIP = 1
+    const val AUDIOBOOKS_LIBRARY_NAME = 1
     const val AUDIOBOOK_ROLE_CHIP = 2
 
     /**
