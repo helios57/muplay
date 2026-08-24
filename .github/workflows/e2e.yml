@@ -31,6 +31,9 @@ jobs:
       EMULATOR_API_LEVEL: "37.0"
       EMULATOR_TARGET: google_apis
       EMULATOR_ARCH: x86_64
+      # The emulator the Minigbm workaround below was measured against, pinned like
+      # `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator 37.1.11.
+      EMULATOR_BUILD: "15917651"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -98,6 +101,19 @@ jobs:
               status=1
             fi
           done
+          # The pinned emulator is *not* an SDK package: the action downloads it straight from
+          # dl.google.com with `curl -fo`, at a URL it builds from the build id (for a build id
+          # >= 8000000 on non-ARM Linux, exactly the path below). A wrong or withdrawn id would
+          # therefore die deep inside the action with no name attached -- structurally the same
+          # failure as `api-level: 37` was -- so it is resolved here beside the two packages
+          # rather than left as the one coordinate nothing checks.
+          emulator_zip="https://dl.google.com/android/repository/emulator-linux_x64-$EMULATOR_BUILD.zip"
+          if curl -fsI "$emulator_zip" > /dev/null; then
+            echo "ok: emulator build $EMULATOR_BUILD"
+          else
+            echo "::error::emulator build '$EMULATOR_BUILD' is not downloadable at $emulator_zip"
+            status=1
+          fi
           exit "$status"
 
       - name: First-run journey
@@ -114,12 +130,11 @@ jobs:
           system-image-api-level: ${{ env.EMULATOR_API_LEVEL }}
           target: ${{ env.EMULATOR_TARGET }}
           arch: ${{ env.EMULATOR_ARCH }}
-          # Pinned, like `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator
-          # 37.1.11 — the build the Minigbm workaround below was measured against. Without this
-          # the action installs whatever the stable channel offers on the day, and the one thing
-          # this gate cannot afford is a silently-changing emulator underneath a workaround for an
-          # emulator bug.
-          emulator-build: "15917651"
+          # Without this the action installs whatever the stable channel offers on the day, and
+          # the one thing this gate cannot afford is a silently-changing emulator underneath a
+          # workaround for an emulator bug. Read from the job `env:` above so the preflight step
+          # checks the same value the action downloads; `ConventionTest` asserts that.
+          emulator-build: ${{ env.EMULATOR_BUILD }}
           # Headless, no audio device, and swiftshader for GL: a CI runner has no display, no
           # sound card and no GPU. `-no-snapshot` keeps every run from a clean boot rather than a
           # saved image whose state nothing in this repository controls.

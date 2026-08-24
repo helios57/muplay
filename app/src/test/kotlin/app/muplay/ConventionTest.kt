@@ -218,6 +218,10 @@ class ConventionTest {
       "system-image-api-level" to "EMULATOR_API_LEVEL",
       "target" to "EMULATOR_TARGET",
       "arch" to "EMULATOR_ARCH",
+      // No counterpart in prepare-emulator.sh -- an emulator build id is not something a booted
+      // device reports -- so this one is only held to reading the job `env:`, which is what keeps
+      // the workflow's preflight check and the action's own download pointed at the same value.
+      "emulator-build" to "EMULATOR_BUILD",
     ).forEach { (input, variable) ->
       val line = Regex(
         """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",

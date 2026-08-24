@@ -464,9 +464,12 @@ Tier 2 grows with each plan. **A plan is not done until its journeys are in it.*
   the line the data draws**: Tier 1 enforces every floor a JVM run can measure —
   all the branch floors — against JVM execution data alone, and Tier 2 enforces
   the whole table, including the line floors over `@Composable` code, which
-  measure ~0% without a real composition. Neither tier may skip its half quietly:
-  the Tier 1 task reports, per module, how many floors it enforced and how many it
-  left to Tier 2.
+  measure ~0% without a real composition. **Neither tier may skip its half
+  quietly**, and that has to survive Gradle skipping the gate itself: the JaCoCo
+  tasks carry an `onlyIf` ("any execution data exists") that short-circuits their
+  actions, so each gate is *finalized by* a plain reporting task that always runs
+  and says, per module, how many floors were evaluated, how many were left to the
+  other tier, and — loudly — when the gate did not run at all.
 - **Roborazzi is Robolectric-based**, so it is out. Google's own screenshot plugin
   is `0.0.1-alpha16` and Canary-only. Screenshots come from `captureToImage()`
   inside the emulator suite, with a small golden-diff helper — no new framework.
