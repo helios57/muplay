@@ -6359,6 +6359,38 @@ boundaries, which this build's coverage wiring makes awkward (a JVM module's JaC
 only their own `.exec`, never the instrumented `.ec`, so a shared fake in `:core:testing` could
 never be measured as covered).
 
+### Why there is a Refresh action, and why it is a button
+
+`SyncEngine.syncIfStale()` has exactly **one** caller — `LibraryViewModel.init`. There is no
+periodic poll, no pull-to-refresh, and nothing that re-checks. Add an album to Navidrome mid-session
+and it never appears. Worse, the `ScanInProgress` branch used to render *"The server is scanning;
+your library will update shortly"*: **a promise no code kept.** A user whose first launch happens to
+land during a server scan sees a partial library, is told it will fix itself, and it never does —
+until they force-stop the app. That is the worst kind of defect this project recognises, because the
+user has been given a reason not to investigate.
+
+Two things fix it, and both are in this task. The copy now describes the situation and **names the
+control that resolves it**, and the control exists.
+
+**It is an explicit button, not a pull-to-refresh gesture, for three stated reasons.**
+
+1. **A gesture is invisible.** The user this fixes is precisely the one who does not know the app —
+   they opened it during a scan on day one. Discoverability is the whole requirement, and an
+   affordance you have to already know about does not have it.
+2. **This screen's scroll container is not the screen.** `LibraryScreen` is a `Column` holding a
+   chip row, a search field, the actions and *then* a `LazyColumn`. `PullToRefreshBox` wants to own
+   the scrollable, so the gesture would either restructure the screen or attach to the album list
+   only — a pull that works in one region and silently does nothing eight dp higher.
+3. **A label is assertable.** Tier 2 asserts it by name with no gesture timing, and this project's
+   journeys are black-box walks through visible strings for exactly that reason.
+
+**And there is deliberately no background poller.** Spec §4's *"poll"* is about `getScanStatus`'s
+watermark being the only delta primitive Subsonic offers — it is a statement about *what to ask*,
+not about asking on a timer. A periodic wake-up that asks a question nobody is waiting for costs
+battery on a user who is not looking at the screen, and the spec does not ask for one. The user
+asks; the app answers. Should a poller ever be wanted, `refresh()` is already the single entry point
+it would call.
+
 ### The cover-art cache key, and the defect it prevents
 
 `SubsonicSource.coverArtUrl` puts a **fresh salt** in every URL — token auth requires it, and
@@ -6651,6 +6683,13 @@ sealed interface LibraryUiState {
    *   [query]. One list, so the screen has no branch of its own to get wrong.
    * @property discardedOutOfScope how many songs the last shuffle dropped because the mirror did
    *   not place them in the selected library. Normally zero.
+   * @property syncMessage what the last [LibraryViewModel.refresh] found, or `null` when there is
+   *   nothing to say. **Every value of it must be true at the moment it is shown**, which is not a
+   *   platitude: this string used to read *"your library will update shortly"* while no code
+   *   anywhere re-checked, so a user who first opened the app during a server scan was stranded
+   *   with a partial library until they force-stopped it. Nothing here may promise a future the
+   *   app does not bring about; where an outcome depends on the user, the message names the
+   *   control that produces it.
    */
   data class Content(
     val libraries: List<MusicLibrary>,
@@ -6890,12 +6929,27 @@ class LibraryViewModel @Inject constructor(
     }
   }
 
-  /** Reconciles the mirror if the server has rescanned since the last committed sync. */
+  /**
+   * Reconciles the mirror if the server has rescanned since the last committed sync.
+   *
+   * **This is the only thing in the app that syncs, and it only runs when something calls it** —
+   * once from [init], and once per tap of the screen's Refresh action. There is deliberately no
+   * periodic poller: spec §4's *"poll"* is about `getScanStatus`'s watermark being the delta
+   * primitive, not about a background service, and a timer that wakes to ask a question nobody is
+   * waiting for is battery spent on a user who is not looking at the screen. The user asks; the
+   * app answers.
+   *
+   * Every message below is true when it is shown. [SyncState.ScanInProgress] used to read *"your
+   * library will update shortly"*, which was a promise no code kept — nothing re-checked, ever. It
+   * now describes the situation and names the control that resolves it.
+   */
   fun refresh() {
     viewModelScope.launch {
+      syncMessage.value = SYNCING_MESSAGE
       syncMessage.value = when (val state = syncEngine.syncIfStale()) {
         SyncState.UpToDate, is SyncState.Synced -> null
-        SyncState.ScanInProgress -> "The server is scanning; your library will update shortly."
+        SyncState.ScanInProgress ->
+          "The server is still scanning, so some albums may be missing. Tap $REFRESH_LABEL when it has finished."
         is SyncState.Failed -> "Could not reach the server. Showing your last synced library."
       }
     }
@@ -6911,6 +6965,13 @@ class LibraryViewModel @Inject constructor(
   private companion object {
     const val STOP_TIMEOUT_MILLIS = 5_000L
     const val SEARCH_LIMIT = 50
+
+    /**
+     * Shown while a refresh is in flight. It is the only feedback the action gives, and it is
+     * enough: the alternative was a fourth field on `LibraryUiState.Content` and a signature
+     * change to the pure builder, for a spinner.
+     */
+    const val SYNCING_MESSAGE = "Checking the server for changes…"
   }
 }
 ```
@@ -7003,6 +7064,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -7026,6 +7088,7 @@ fun LibraryScreen(
     onLibrarySelected = viewModel::selectLibrary,
     onQueryChanged = viewModel::search,
     onShuffle = viewModel::shuffle,
+    onRefresh = viewModel::refresh,
     onAlbumClick = onAlbumClick,
     coverArtUrl = viewModel::coverArtUrl,
     modifier = modifier,
@@ -7038,6 +7101,7 @@ private fun LibraryScreen(
   onLibrarySelected: (Int) -> Unit,
   onQueryChanged: (String) -> Unit,
   onShuffle: () -> Unit,
+  onRefresh: () -> Unit,
   onAlbumClick: (String) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
@@ -7067,11 +7131,20 @@ private fun LibraryScreen(
           modifier = Modifier.fillMaxWidth(),
         )
 
-        Button(onClick = onShuffle, modifier = Modifier.fillMaxWidth()) {
-          Text(SHUFFLE_LABEL)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+          Button(onClick = onShuffle, modifier = Modifier.weight(1f)) { Text(SHUFFLE_LABEL) }
+          // The only way a user has to pick up a change made on the server after the app started.
+          // See "Why there is a Refresh action, and why it is a button" above.
+          OutlinedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) { Text(REFRESH_LABEL) }
         }
 
-        uiState.syncMessage?.let { Text(text = it, color = MaterialTheme.colorScheme.error) }
+        // `onSurfaceVariant`, not `error`. All four of this string's values are *states* — checking,
+        // the server is mid-scan, the server was unreachable, or nothing to say — and three of them
+        // are ordinary. Painting "the server is scanning" red tells the user something is broken
+        // when nothing is.
+        uiState.syncMessage?.let {
+          Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
         if (uiState.shuffled.isNotEmpty()) {
           Text(text = SHUFFLE_HEADING, style = MaterialTheme.typography.titleMedium)
@@ -7117,6 +7190,9 @@ private fun LibraryScreen(
 
 private const val SEARCH_LABEL = "Search this library"
 private const val SHUFFLE_LABEL = "Shuffle this library"
+/** `internal`, not `private`: [LibraryViewModel]'s scan-in-progress message names this control, and
+ *  a message that names a button by a string typed twice is a message that drifts. */
+internal const val REFRESH_LABEL = "Refresh library"
 private const val SHUFFLE_HEADING = "Shuffled"
 private const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
 private const val OPEN_LABEL = "Open"
@@ -7551,6 +7627,62 @@ class BrowseJourneyTest {
   }
 
   /**
+   * The user has a way to pick up a server-side change, and it is on the screen.
+   *
+   * `syncIfStale()` had exactly one caller — `LibraryViewModel.init` — so before this journey
+   * existed, an album added to Navidrome mid-session never appeared, and the `ScanInProgress`
+   * branch told the user their library would "update shortly" while nothing re-checked. This test
+   * is the standing guarantee that the control the copy names is really there: delete the button
+   * and it goes red, which is the point.
+   */
+  @Test
+  fun theLibraryCanBeRefreshedFromTheScreen() {
+    reachLibraryScreen()
+
+    composeRule.onNodeWithText(REFRESH_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithText(REFRESH_LABEL).performClick()
+
+    // A refresh against an up-to-date mirror settles back to no message at all. Waiting for the
+    // message to *clear* is what proves the call completed rather than that a button existed:
+    // `syncIfStale` sets the "checking" message first, so a click that reached nothing would
+    // leave that string on screen.
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SYNCING_MESSAGE).fetchSemanticsNodes().isEmpty()
+    }
+    composeRule.onNodeWithText("Test Album").assertIsDisplayed()
+  }
+
+  /**
+   * Spec §7: *"Predictive back is default-on and must be implemented."*
+   *
+   * Plan 1 set `android:enableOnBackInvokedCallback="true"` and this plan gives `NavDisplay` a real
+   * back stack with `onBack` — so the phone side works. **No plan named it as a deliverable and no
+   * journey asserted it**, which is how a working behaviour becomes an unnoticed regression: the
+   * day someone replaces `backStack.removeLastOrNull()` with a no-op, every test stays green and
+   * the back gesture closes the app from the album screen. Plan 5 owns the watch side properly;
+   * this is the phone side, and it is one assertion.
+   */
+  @Test
+  fun backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp() {
+    reachLibraryScreen()
+    composeRule.onAllNodesWithText("Open")[FIRST_ALBUM].performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText("Track 1").fetchSemanticsNodes().isNotEmpty()
+    }
+
+    androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+      .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+
+    // Back to the library, still inside the app. `SHUFFLE_LABEL` is only on the library screen, so
+    // finding it proves both halves at once — and the activity not having been destroyed is what
+    // `composeRule` finding anything at all proves.
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText("Test Album").assertIsDisplayed()
+  }
+
+  /**
    * Drives the app from whatever state it opened in to the library screen.
    *
    * The app opens on setup when no credentials are stored **or** any library is still untagged,
@@ -7595,6 +7727,8 @@ class BrowseJourneyTest {
     const val CONTINUE_LABEL = "Continue"
     const val SEARCH_LABEL = "Search this library"
     const val SHUFFLE_LABEL = "Shuffle this library"
+    const val REFRESH_LABEL = "Refresh library"
+    const val SYNCING_MESSAGE = "Checking the server for changes…"
 
     /** See FirstRunJourneyTest for why these are indices; verify them by running, not by reasoning. */
     const val MUSIC_ROLE_CHIP = 1
@@ -7766,7 +7900,7 @@ docker compose -f ci/navidrome.compose.yml up -d --wait
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-Expected: PASS — `FirstRunJourneyTest` 3/3, `BrowseJourneyTest` 5/5,
+Expected: PASS — `FirstRunJourneyTest` 3/3, `BrowseJourneyTest` 7/7,
 `ScopedShuffleJourneyTest` 3/3.
 
 Then **prove each can fail**, restoring after each:
@@ -7781,6 +7915,15 @@ Then **prove each can fail**, restoring after each:
    time out — spike S1's finding, that a blocked connection manifests as a **silent connect
    timeout** rather than an error, is why this shows up as a `waitUntil` timeout and not as
    anything naming the real cause. Record the message so the next person recognises it.
+4. Delete the Refresh button from `LibraryScreen`. Expect `theLibraryCanBeRefreshedFromTheScreen`
+   to fail. Then restore the button and make `LibraryViewModel.refresh` a no-op body: expect the
+   same test to fail on the *second* assertion, because the "checking" message never clears. The
+   two halves are separate defects — a control that is not there, and a control that does nothing
+   — and each has to be independently visible.
+5. Replace `onBack = { backStack.removeLastOrNull() }` in `MuPlayApp` with `onBack = {}`. Expect
+   `backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp` to fail. This is the assertion spec
+   §7's predictive-back requirement never had; before it, the behaviour worked by construction and
+   nothing would have noticed it stopping.
 
 - [ ] **Step 5: Build the resolved-classpath mock guard**
 
@@ -7959,7 +8102,8 @@ lists `Browse` and `Library-scoped shuffle` as journeys. Both are now real, so n
 adding there — but the "Tier 2 grows with each plan" line means the table should say which suite
 holds them. Add a line under the table:
 
-> Plan 2 added `BrowseJourneyTest` (browse, search, album detail, cover art) and
+> Plan 2 added `BrowseJourneyTest` (browse, search, album detail, cover art, **the Refresh action**,
+> and **phone predictive back** — spec §7 requires it and no plan had ever asserted it) and
 > `ScopedShuffleJourneyTest` (shuffle Music repeatedly; assert no audiobook ever appears, with the
 > Audiobooks library as the control that keeps the assertion non-vacuous), plus
 > `:core:database`'s instrumented Room suite. Tier 1 gained `:core:network`'s live scoping
@@ -7994,7 +8138,10 @@ git commit -m "ci: tier 2 browse and scoped-shuffle journeys, resolved-classpath
 1. All tasks' tests pass; **both tiers green**.
 2. **Tier 2 carries this plan's journeys**: `BrowseJourneyTest` and `ScopedShuffleJourneyTest`
    in the emulator suite, plus `:core:database`'s instrumented Room suite, and each has been
-   watched go red.
+   watched go red. `BrowseJourneyTest` includes the two assertions this plan added last: that the
+   user has a **Refresh** control on screen and that it really re-syncs, and that **back from an
+   album returns to the library** rather than leaving the app (spec §7's predictive-back
+   requirement, which no plan previously named as a deliverable).
 3. Coverage ≥ 90% on every module this plan touched — **branch** for non-UI code, **line** for
    `@Composable`-bearing files. Every floor measured from a real report, every
    `requiresInstrumentedData` flag measured rather than judged, and **every floor watched fail
