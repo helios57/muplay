@@ -190,14 +190,24 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  * than one entry — never one blended rule that would hide a UI-only regression behind a
  * healthy-looking ViewModel average, or vice versa.
  *
- * - **`:core:model`, `:core:network`, `:core:testing`** — no `@Composable` code at all (none of
- *   the three modules even applies the Compose convention plugin). Unchanged: a single `"BUNDLE"`-
- *   element BRANCH rule (an aggregate across the whole module — correct here, since there is
- *   nothing to separate it from), measuring 100% today (10/10, 30/30, 6/6 real branches) against
- *   the full 0.90 target. Every gap Task 7 found in them was closable from the JVM alone, so it
- *   was closed rather than excused: see `ServerCapabilitiesTest`, `SubsonicClientTest`'s new
+ * - **`:core:network`, `:core:testing`** — no `@Composable` code at all (neither module even
+ *   applies the Compose convention plugin), and nothing within them that needs separating: a
+ *   single `"BUNDLE"`-element BRANCH rule each (an aggregate across the whole module), measuring
+ *   100% today (30/30 and 6/6 real branches) against the full 0.90 target.
+ *
+ * - **`:core:model`** — no `@Composable` code either, but **no longer one `"BUNDLE"` rule**. The
+ *   final whole-branch review showed why that shape was wrong here: a BUNDLE aggregate over this
+ *   module measured exactly one of its five classes, because all 10 branches live in
+ *   `ServerCapabilities` and the other four classes contributed nothing to the ratio — deleting
+ *   `SubsonicCredentials`'s password-redaction test left both gates green. It is now `"CLASS"`-
+ *   element rules, so each gated class must clear its floor individually and a new class shows up
+ *   as ungated instead of being silently absorbed. Both properties were verified by deletion and
+ *   by adding a class.
+ *
+ *   Across all three modules, every gap Task 7 found was closable from the JVM alone, so it was
+ *   closed rather than excused: see `ServerCapabilitiesTest`, `SubsonicClientTest`'s
  *   non-compliant-response and no-trailing-slash-baseUrl tests, and
- *   `OpenApiFixtureValidatorTest`'s new `readSpec`/blank-path tests.
+ *   `OpenApiFixtureValidatorTest`'s `readSpec`/blank-path tests.
  *
  * - **`:feature:setup`** — four `"CLASS"`-element rules: three BRANCH, one per non-`@Composable`
  *   class here that has branches of its own, and one LINE over `SetupScreenKt`, this module's one

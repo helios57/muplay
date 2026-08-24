@@ -432,7 +432,7 @@ Quality outranks gate speed. Both tiers must be green to merge.
 | Static | Android Lint, convention-plugin checks (`ConventionTest`), release-manifest check |
 | Unit + integration | mappers, token derivation, queue logic, resume maths |
 | Live server | JVM tests against the **pinned Navidrome container** |
-| Contract | every fixture validated against the vendored OpenAPI spec |
+| Contract | the OpenAPI **oracle itself** — `OpenApiFixtureValidator` and its own suite, over inline JSON. It validates no committed fixture: the fixture `assertValid` calls live in `:core:network`'s tests and run in Unit + integration |
 | Playback goldens | `PlaybackOutput` dumps; gapless byte-compare; chapter assertions on the M4B fixture |
 | Session | browse tree and `onPlaybackResumption`; `isAutomotiveController` branching |
 | Cast | in-process fake renderer on `127.0.0.1:0` — SOAPACTION quoting, DIDL escaping round-trip, `protocolInfo` vs served `Content-Type`, Range → 206/416/HEAD |

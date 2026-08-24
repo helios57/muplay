@@ -6,9 +6,11 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.testing.OpenApiFixtureValidator
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.entry
 import org.junit.jupiter.api.AfterEach
@@ -407,8 +409,8 @@ class SubsonicClientTest {
     client.ping()
     client.ping()
 
-    val firstSalt = server.takeRequest().url.queryParameter("s")
-    val secondSalt = server.takeRequest().url.queryParameter("s")
+    val firstSalt = nextRequest().url.queryParameter("s")
+    val secondSalt = nextRequest().url.queryParameter("s")
     assertThat(firstSalt).isNotBlank()
     assertThat(secondSalt).isNotBlank()
     assertThat(firstSalt).isNotEqualTo(secondSalt)
@@ -430,7 +432,7 @@ class SubsonicClientTest {
    * assertion is on the bytes on the wire rather than on `authParams()` agreeing with itself.
    */
   private fun assertAuthenticatedRequestTo(expectedPath: String) {
-    val request = server.takeRequest()
+    val request = nextRequest()
     assertThat(request.method).isEqualTo("GET")
 
     val url = request.url
@@ -448,6 +450,25 @@ class SubsonicClientTest {
     // Plaintext auth is a different Subsonic scheme and this client must never fall back to it.
     assertThat(url.queryParameter("p")).describedAs("plaintext password parameter").isNull()
     assertThat(url.query).describedAs("query string").doesNotContain("sesame")
+  }
+
+  /**
+   * The next request the client actually sent, or a failed assertion if it sent none within
+   * [REQUEST_TIMEOUT_SECONDS].
+   *
+   * Deliberately not the no-argument `takeRequest` overload: that one blocks **forever** on an
+   * empty queue, so the exact regression these wire assertions exist to catch -- a code path that
+   * stops issuing a request at all -- would hang the build until the CI job's own timeout killed
+   * it, surfacing as an infrastructure failure rather than as this test failing. The timeout below
+   * is deliberately generous against requests that complete in single-digit milliseconds on an
+   * in-process server, so it can only fire on a genuine absence, never on a slow machine.
+   */
+  private fun nextRequest(): RecordedRequest {
+    val request = server.takeRequest(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    assertThat(request)
+      .describedAs("a request within %d s -- the client sent none", REQUEST_TIMEOUT_SECONDS)
+      .isNotNull()
+    return request!!
   }
 
   /**
@@ -479,6 +500,7 @@ class SubsonicClientTest {
   }
 
   private companion object {
+    const val REQUEST_TIMEOUT_SECONDS = 5L
     const val PING_SUCCESS_FIXTURE = "ping-success.json"
     const val PING_FAILED_FIXTURE = "ping-failed-wrong-credentials.json"
     const val PING_LEGACY_FIXTURE = "ping-success-legacy-subsonic.json"
