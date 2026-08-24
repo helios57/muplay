@@ -33,6 +33,9 @@
 # ADD A PROBE whenever a review or an audit finds a value that one constant could satisfy. That is
 # the only way this file stays worth running.
 #
+# Exits non-zero if any probe is not caught -- verified, not assumed: the first run of the full
+# list exited 1 on the stale `auth/empty-authParams` count above.
+#
 # SCOPE. Production-code mutations only. The falsifiability probes for `LiveNavidromeTest`'s six
 # scoping assertions are *test-side* (they change which musicFolderId the test sends, to prove the
 # assertion discriminates rather than that the client is right), so they do not belong here; they
@@ -56,7 +59,9 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 2
 fi
 
-exec python3 - "${1:-}" <<'PY'
+# -u: without it Python buffers stdout through a pipe and a four-minute run prints nothing
+# until it is over, which makes an interrupted run impossible to interpret.
+exec python3 -u - "${1:-}" <<'PY'
 import glob, html, re, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -70,6 +75,13 @@ TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
 # `expected failures` is asserted too, not just "the named test failed": a mutation that reddens
 # half the suite is not the precise discrimination these tests claim to provide, and a probe that
 # only checked its own test would not notice that.
+#
+# It also means the counts are MEASUREMENTS, and they go stale when tests are added. The first full
+# run of this script reported `auth/empty-authParams` as MISSED at 13 because round 2 had added a
+# fourteenth request-asserting test since that number was measured -- the named test failed exactly
+# as intended. So: if a probe reports MISSED but its named test *is* in the failing list, the count
+# is out of date, not the code. Re-measure and update the number here; do not delete the check.
+# Every other probe expects 1, and for those a count above 1 is a real signal worth reading.
 PROBES = [
     # ---- F-4, round 1: ten values each observed at exactly one value on the wire -------------
     ("wire/getAlbumList2-offset", CLIENT,
@@ -149,7 +161,8 @@ AUTH_PROBE = ("auth/empty-authParams", AUTH,
               [('mapOf(\n      "u" to credentials.username,',
                 'emptyMap<String, String>().plus(mapOf(\n      "u" to credentials.username,'),
                ('      "f" to "json",\n    )\n}', '      "f" to "json",\n    )).let { emptyMap() }\n}')],
-              "getAlbumList2 sends the scope, the type, the page and full authentication", 13)
+              # 14 as of 402401d. See the note on `expected failures` above before changing this.
+              "getAlbumList2 sends the scope, the type, the page and full authentication", 14)
 
 
 def apply(path, old, new):
