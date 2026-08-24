@@ -14,15 +14,26 @@ missed.
 
 ## Sequence
 
-| # | Plan | Produces | Depends on |
-|---|---|---|---|
-| **1** | **Foundation + Subsonic client** | Kotlin/Compose skeleton, convention plugins, talks to a real Navidrome, both CI tiers live | — |
-| **2** | Library mirror + browse | Browsable, searchable library with **library-scoped shuffle** | 1 |
-| **3** | Playback core | Plays music. Background, notification, lock screen, gapless, cache. | 2 |
-| **4** | Audiobooks | Per-book resume, M4B chapters, speed, sleep timer, smart rewind | 3 |
-| **5** | Android Auto + Wear OS | Car and watch playback with resume progress | 3 (better after 4) |
-| **6** | Casting — Sonos + DLNA | Cast across all three network situations | 3 |
-| **7** | Bindery + Lidarr | Request books and music from inside the app | 2 |
+| # | Plan | Produces | Depends on | State |
+|---|---|---|---|---|
+| **1** | **Foundation + Subsonic client** | Kotlin/Compose skeleton, convention plugins, talks to a real Navidrome, both CI tiers live | — | **implemented** |
+| **2** | Library mirror + browse | Browsable, searchable library with **library-scoped shuffle** | 1 | **tasks 1–4 implemented**, 5–10 written |
+| **3** | Playback core | Plays music. Background, notification, lock screen, gapless, cache. | 2 | written — 10 tasks |
+| **4** | Audiobooks | Per-book resume, M4B chapters, speed, sleep timer, smart rewind | 3 | written — 10 tasks |
+| **5** | Android Auto + Wear OS | Car and watch playback with resume progress | 3 (better after 4) | written — 11 tasks |
+| **6** | Casting — Sonos + DLNA | Cast across all three network situations | 3 | written — 11 tasks |
+| **7** | Bindery + Lidarr | Request books and music from inside the app | 2 | written — 11 tasks, **conditional** |
+
+All seven plans are written: roughly 65,000 lines across Plans 2–7. What remains
+is execution, starting at Plan 2 Task 5.
+
+**Plan 7 is conditional.** Its own authoring found that `vavallee/bindery` is not
+a request service at all — it is a Readarr replacement with no request or approval
+concept — so its Bindery half should not begin without a live instance in front of
+the implementer, or it becomes the guessing its brief forbade. Its Lidarr half is
+well-founded. Its author's recommendation, adopted here: **execute Plan 5 before
+Plan 7.** Requesting music from the sofa is a convenience; playing an audiobook in
+a car is what this application is for.
 
 **Why this order.** Plan 1 de-risks everything downstream. Plans 2–3 build the
 app you can actually use. Plan 4 delivers the headline feature. Plans 5–7 are
