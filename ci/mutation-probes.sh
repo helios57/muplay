@@ -50,6 +50,22 @@
 # are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
 # Navidrome container.
 #
+# INSTRUMENTED-TIER MODULES ARE NOT TRACKED HERE AT ALL, AND THAT IS A GAP, NOT A DESIGN CHOICE
+# THIS SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below is hardcoded to
+# `./gradlew :core:network:test :core:model:test` -- a plain JVM `test` invocation -- and
+# `failures()` only globs `core/*/build/test-results/test/`. `:core:database` has no JVM test
+# source at all (Room needs the Android framework's SQLite, and Robolectric is banned
+# project-wide), so every one of its defects -- and a re-review's Task 4 findings landed several,
+# all caught only by a hand-run mutation against `:core:database:connectedDebugAndroidTest` on a
+# real emulator -- is structurally invisible to this runner. A green run of this script says
+# nothing about whether `LibraryRepository.idsWithRole` still discriminates its argument; it
+# cannot say anything about that, by construction, and did not before this paragraph existed
+# either -- the gap is being named here, not introduced. Extending this script to run instrumented
+# suites would need an emulator this runner does not assume it has (see `ci/prepare-emulator.sh`);
+# until that happens, the instrumented-tier record of "a defect that was found and must not come
+# back" lives in each task's own `task-N-report.md` instead, the same way `LiveNavidromeTest`'s
+# test-side probes already do above.
+#
 # USAGE:  ./ci/mutation-probes.sh            # every probe; budget ~45 s each (one full JVM test
 #                                            # run per probe). Measured end-to-end at 13 min and
 #                                            # at 8.5 min on two different machines -- so size the
