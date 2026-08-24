@@ -342,7 +342,7 @@ Plan 4 is **audiobooks**. Explicitly **not** in this plan:
 | `core/database/src/main/kotlin/app/muplay/database/MuPlayDatabase.kt` | **modify** — version **5**, two entities, `MIGRATION_4_5` |
 | `core/database/src/main/kotlin/app/muplay/database/Migrations.kt` | **new** — the project's first migration, SQL copied from the exported schema |
 | `core/database/src/main/kotlin/app/muplay/database/AudiobookRepository.kt` | **new** — what a book is, the shelf, the settings |
-| `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` | **modify** — the two new DAOs, and the migration on the builder |
+| `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` | **modify** — the two new DAOs, the migration on the builder (Plan 2's destructive fallback is kept — Task 2 Step 5), and the `@Singleton Clock` moved down from `:core:media` (Task 4) |
 | `core/media/build.gradle.kts` | **modify** — `media3-inspector` |
 | `core/media/src/main/kotlin/app/muplay/media/ChapterReader.kt` | **new** — `MetadataRetriever` with an explicit `MediaSourceFactory` |
 | `core/media/src/main/kotlin/app/muplay/media/ChapterRepository.kt` | **new** — parse once, then serve from Room |
@@ -359,7 +359,7 @@ Plan 4 is **audiobooks**. Explicitly **not** in this plan:
 | `core/media/src/main/kotlin/app/muplay/media/PlaybackConnection.kt` | **modify** — map the two new fields |
 | `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt` | **modify** — `wrap(exoPlayer)` |
 | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | **modify** — snapshot, speed controller, sleep timer, `onPlaybackResumption` |
-| `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | **modify** — the resume-policy binding is swapped |
+| `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | **modify** — the resume-policy binding is swapped (Task 6); `provideClock` is **removed** and re-declared in `:core:database`'s `DataModule` (Task 4) |
 | `feature/book/build.gradle.kts` | **new** |
 | `feature/book/src/main/kotlin/app/muplay/book/BookshelfUiState.kt` | **new** |
 | `feature/book/src/main/kotlin/app/muplay/book/BookshelfViewModel.kt` | **new** |
@@ -2145,7 +2145,9 @@ git commit -m "feat(database): book_settings, chapters, and the first Room migra
   - `SubsonicSourceProvider.current()` (Plan 2 Task 4), `SubsonicSource.streamUrl(songId, format)`
     (Plan 3 Task 1), `StreamFormat.forSuffix(suffix, bitrate)` (Plan 3 Task 1).
   - `app.muplay.model.Song` — Plan 2 Task 3.
-  - `java.time.Clock` from `MediaModule` — Plan 3 Task 8.
+  - `java.time.Clock` — Plan 3 Task 8. Declared in `MediaModule` when Plan 3 lands; **Task 4 of
+    this plan moves the binding down into `:core:database`'s `DataModule`.** Either way it is the
+    same unqualified `@Singleton Clock` and this consumer is unaffected.
   - `app.muplay.testing.BookFixtures` — Task 1.
 - Produces:
   - `internal data class RawChapter(val startMs: Long, val endMs: Long?, val title: String?)`
@@ -3321,7 +3323,10 @@ git commit -m "feat(media): chapters out of the file's own bytes, and a timeline
 - Create: `core/database/src/main/kotlin/app/muplay/database/BookSummaries.kt`
 - Create: `core/database/src/main/kotlin/app/muplay/database/AudiobookRepository.kt`
 - Modify: `core/database/src/main/kotlin/app/muplay/database/MuPlayDatabase.kt` (one dao accessor)
-- Modify: `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt`
+- Modify: `core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` (the dao accessor,
+  **and the `Clock` binding moved down from `:core:media` — see Step 5**)
+- Modify: `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` (`provideClock` **removed**;
+  it moves to `DataModule`)
 - Test: `core/database/src/test/kotlin/app/muplay/database/BookSummariesTest.kt`
 - Test: `core/database/src/androidTest/kotlin/app/muplay/database/AudiobookRepositoryTest.kt`
 - Modify: `build.gradle.kts`, `ci/mutation-probes.sh`
@@ -3330,7 +3335,10 @@ git commit -m "feat(media): chapters out of the file's own bytes, and a timeline
 - Consumes: `LibraryRole` (Plan 2), `AlbumEntity`, `SongEntity` (Plan 2 Task 5),
   `MediaProgressEntity`, `MediaProgressDao.observeAll/findIn/clear/upsert` (Task 2),
   `BookSettingsEntity`, `BookSettingsDao` (Task 2), `BookSettings` (Task 2),
-  `MirrorMapper.song(entity)` (Plan 2 Task 5), `java.time.Clock` (Plan 3 Task 8).
+  `MirrorMapper.song(entity)` (Plan 2 Task 5), `java.time.Clock` — **declared by Plan 3 Task 8 in
+  `:core:media`'s `MediaModule`, and moved down into this module's `DataModule` by this task.** See
+  Step 5; this is the first `:core:database` class to take a `Clock` and the module boundary does
+  not survive leaving the binding above it.
 - Produces:
   - `data class BookSummary(bookId, libraryId, title, author, coverArtId, fileCount, durationMs,
     positionMs, isFinished, lastPlayedAtEpochMs)` with `val remainingMs: Long`,
@@ -4292,6 +4300,58 @@ class AudiobookRepository @Inject constructor(
 **No entity is added, so the schema version does not move** — `AudiobookDao` only queries tables
 Task 2 and Plan 2 already created.
 
+#### Move Plan 3's `Clock` binding down into this module
+
+`AudiobookRepository` above is the **first class in `:core:database` to take a `java.time.Clock`**,
+and Plan 3 Task 8 declares that binding one module *up*, in `:core:media`'s `MediaModule`
+(`@Provides @Singleton fun provideClock(): Clock = Clock.systemUTC()`). `:core:media` depends on
+`:core:database` — `ProgressWriter` takes a `MediaProgressDao` — so as it stands the binding sits
+above the module that needs it.
+
+**Why it does not simply work.** It resolves in `:app`, where one `SingletonComponent` is assembled
+from every `@InstallIn` module on the classpath, so the app build stays green and this looks like a
+non-problem. It is not one below `:app`: any `@HiltAndroidTest` in `:core:database` has no
+`MediaModule` on its classpath and fails with *"Clock cannot be provided without an @Provides-annotated
+method"*, and `:core:database` can no longer be built or tested without `:core:media` present — the
+dependency arrow pointing the wrong way.
+
+**Do not add a second `@Provides Clock` here.** Two unqualified bindings of one type is a Hilt
+duplicate-binding failure, and qualifying one of them (the way Plan 7 does with `@IntegrationsClock`,
+for a `Clock` that is genuinely a *different* clock) would buy an annotation to describe two things
+that are the same clock. Move it:
+
+`core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` — **delete** `provideClock` and its
+KDoc, leaving a one-line note in its place so the next reader does not re-add it:
+
+```kotlin
+  // `provideClock` moved to `:core:database`'s `DataModule` (Plan 4 Task 4): `AudiobookRepository`
+  // lives there, and a binding declared above its consumer breaks that module's Hilt tests.
+```
+
+`core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt` — add it, carrying Plan 3's
+reasoning across unchanged:
+
+```kotlin
+  /**
+   * Global constraint: *"Inject a `Clock`; no direct wall-clock reads outside the injection
+   * point."* This is that injection point. Declared **here**, in the lowest module that consumes
+   * it, rather than in `:core:media` where Plan 3 first needed it: `:core:media` depends on this
+   * module, so this binding is visible to `ProgressWriter` and to `SleepTimerController`, while
+   * the reverse placement leaves every `@HiltAndroidTest` in `:core:database` without a `Clock`.
+   *
+   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
+   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
+   * library plus a Room type converter would be bought for nothing.
+   */
+  @Provides
+  @Singleton
+  fun provideClock(): Clock = Clock.systemUTC()
+```
+
+**Record this in the task report as an edit to Plan 3's file**, so a reviewer diffing Plan 3's own
+task list against the tree finds the reason rather than a missing provider. Nothing else about the
+`Clock` changes: same type, same instance, same unqualified binding, same consumers.
+
 - [ ] **Step 6: Run the repository suite**
 
 Run: `./gradlew :core:database:connectedDebugAndroidTest --tests '*AudiobookRepositoryTest*'`
@@ -4644,7 +4704,9 @@ git commit -m "feat(media): the smart rewind table, and its boundaries"
   - `SmartRewind.resumePositionMs(storedPositionMs, awayMs)` — Task 5.
   - `QueueRepository.mediaItems(queue)`, `PlaybackQueue.of(songs, startIndex)` — Plan 3 Tasks 4, 6.
   - `MuPlayerFactory`, `PlayerHarness`, `RealTrackBytes` — Plan 3 Tasks 5, 2, 3.
-  - `java.time.Clock` from `MediaModule` — Plan 3 Task 8.
+  - `java.time.Clock` — Plan 3 Task 8. Declared in `MediaModule` when Plan 3 lands; **Task 4 of
+    this plan moves the binding down into `:core:database`'s `DataModule`.** Either way it is the
+    same unqualified `@Singleton Clock` and this consumer is unaffected.
 - Produces:
   - `data class AudiobookItem(val mediaId: String, val bookId: String, val positionMs: Long,
     val lastPlayedAtEpochMs: Long, val isFinished: Boolean, val speed: Float, val skipSilence: Boolean)`
