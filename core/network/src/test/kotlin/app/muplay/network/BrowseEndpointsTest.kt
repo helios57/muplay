@@ -134,6 +134,20 @@ class BrowseEndpointsTest {
     assertThat(nextRequest().url.queryParameter("size")).isEqualTo("500")
   }
 
+  @Test
+  fun `getAlbumList2 clamps a non-positive size up to one and a negative offset up to zero`() = runTest {
+    enqueue(fixture(ALBUM_LIST_MUSIC_FIXTURE))
+
+    client.getAlbumList2(1, AlbumListType.ALPHABETICAL_BY_NAME, size = 0, offset = -10)
+
+    // The mirror image of the 500 clamp, and the same argument: neither value is documented, so
+    // rather than letting the server decide what a negative offset means, the client asks the
+    // smallest well-defined question -- one album, from the start of the list.
+    val url = nextRequest().url
+    assertThat(url.queryParameter("size")).isEqualTo("1")
+    assertThat(url.queryParameter("offset")).isEqualTo("0")
+  }
+
   // --- getAlbum ------------------------------------------------------------------------------
 
   @Test
@@ -229,6 +243,20 @@ class BrowseEndpointsTest {
     assertThat(results.artists).isEmpty()
     assertThat(results.albums).isEmpty()
     assertThat(results.songs).isEmpty()
+  }
+
+  @Test
+  fun `search3 clamps negative counts to zero`() = runTest {
+    enqueue(fixture(SEARCH3_FIXTURE))
+
+    client.search3("Test", musicFolderId = 1, artistCount = -1, albumCount = -5, songCount = -20)
+
+    // Zero of a kind is a request Subsonic defines ("do not return any artists"); a negative
+    // count is not, and sending one would leave the number of results entirely to the server.
+    val url = nextRequest().url
+    assertThat(url.queryParameter("artistCount")).isEqualTo("0")
+    assertThat(url.queryParameter("albumCount")).isEqualTo("0")
+    assertThat(url.queryParameter("songCount")).isEqualTo("0")
   }
 
   // --- getRandomSongs ------------------------------------------------------------------------
@@ -404,13 +432,12 @@ class BrowseEndpointsTest {
     assertThat(url.queryParameter("f")).isEqualTo("json")
     assertThat(url.queryParameter("p")).describedAs("plaintext password parameter").isNull()
     assertThat(url.query).describedAs("query string").doesNotContain("sesame")
-    recorded = request
     return url
   }
 
   private var recorded: RecordedRequest? = null
 
-  /** The request [assertAuthenticatedRequestTo] just examined, for assertions on its raw query. */
+  /** The last request [nextRequest] returned, for assertions on its raw, undecoded query. */
   private fun request(): RecordedRequest = checkNotNull(recorded) { "no request examined yet" }
 
   /**
