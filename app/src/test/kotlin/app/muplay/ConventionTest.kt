@@ -293,6 +293,39 @@ class ConventionTest {
     }
   }
 
+  /**
+   * `verifyReleaseNoDestructiveMigration` is a real `GradleException`-throwing gate
+   * (`VerifyNoDestructiveMigrationTask`), but a gate nothing in CI ever invokes is exactly the
+   * "reports the absence of a problem" failure this project has already spent multiple rounds
+   * eliminating -- see that task's own doc. Nothing but this test stops the ten lines that wire it
+   * into `pr.yml` from being deleted (or silently reverted to the module-qualified form
+   * `:core:database:verifyReleaseNoDestructiveMigration`, which would stop covering any second
+   * Room module) with every other test still green. Same shape as the emulator-coordinates test
+   * above: a workflow file is a build artifact this class already checks, not a place a scan
+   * conveniently stops.
+   */
+  @Test
+  fun `pr yml still runs the destructive-migration gate, unqualified`() {
+    val workflow = File(repoRoot(), ".github/workflows/pr.yml").readText()
+
+    // The bare task name, not module-qualified: AndroidRoomConventionPlugin registers this task
+    // per module, and only the unqualified form (`./gradlew verifyReleaseNoDestructiveMigration`)
+    // resolves it against *every* module that applies `muplay.android.room`, present or future.
+    // Whole-line match, not `contains`, for the same reason the emulator test above insists on
+    // whole-line matches: a step that runs `./gradlew :core:database:verifyReleaseNoDestructiveMigration`
+    // still *contains* the unqualified task name as a substring.
+    val line = Regex(
+      """^\s*run:\s*\./gradlew verifyReleaseNoDestructiveMigration\s*$""",
+      RegexOption.MULTILINE,
+    )
+    assertThat(line.containsMatchIn(workflow))
+      .describedAs(
+        "${File(repoRoot(), ".github/workflows/pr.yml").path} must run " +
+          "`./gradlew verifyReleaseNoDestructiveMigration` (unqualified) as an explicit step",
+      )
+      .isTrue()
+  }
+
   @Test
   fun `no module or convention plugin uses kapt`() {
     // A word-boundary-aware pattern, not a bare substring: this convention plugins' own comments
