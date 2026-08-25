@@ -9,9 +9,9 @@ media cache, a player UI and proven gapless playback.
 
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 10 of 12 | 8b blocked on the keystone fix (`MuPlaybackService.kt`); 11 and 12 blocked on 8b |
+| 3 — playback core | 11 of 12 | keystone fix in; 8b in flight, 11 and 12 behind it |
 | 6 — Sonos/DLNA casting | 4 of 12 | codec, SSDP, SOAP, DIDL-Lite in; SOAP hardening + proxy in flight |
-| 5 — Auto/Wear | 3 of 11 | `BrowseId`, browse tree, browse surfaces in; T4 blocked on the keystone fix |
+| 5 — Auto/Wear | 3 of 11 | `BrowseId`, browse tree, browse surfaces in; T4 queued behind 8b for `MuPlaybackService.kt` |
 | 7 — integrations | 2 of 11 | `:integrations:core` + credential store in; request store in flight |
 | 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** — see below |
 
@@ -19,16 +19,23 @@ media cache, a player UI and proven gapless playback.
 
 | Worktree | Task | State |
 | --- | --- | --- |
-| `p3t5fix` | Keystone security: `onConnect`, controller race, entry points → `src/debug/`, `build-logic` test source set | in flight; **holds `MuPlaybackService.kt`, `ConventionTest.kt`, `build-logic/`** |
-| `p3t10` | P3 T10 the gates (Tier 2 journey) | in flight |
+| `p3t10` | P3 T10 the gates (Tier 2 journey) | in flight; **holds `ConventionTest.kt`, `app/androidTest/`** |
+| `p3t8b` | P3 T8b `MuPlayer` + `ProgressWriter` | dispatched; **holds `MuPlaybackService.kt`, `MediaModule.kt`** |
 | `p6t3fix` | SOAP hardening: escape argument values, make the "strict" fake actually strict | dispatched |
 | `p6t6` | P6 T6 the media proxy — range serving, the token that is not a track id | dispatched |
 | `p7t3` | P7 T3 the request store | dispatched |
 | `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
 
-**What unblocks when the keystone lane lands:** Plan 3 Task 8b (`MuPlayer` +
-`ProgressWriter`), and behind it Tasks 11 and 12; and Plan 5 Task 4
-(`BrowseItems` + `MuPlayLibraryCallback`), which needs the session callback.
+**Landed from the keystone lane:** `onConnect` is now gated on
+`isTrusted || packageName == LEGACY_CONTROLLER` — Media3's own platform-computed
+predicate, not a package allow-list. Every Hilt entry point moved from `src/main`
+to `src/debug`, enforced by a new `ConventionTest` rule. `PlaybackConnection`'s
+race is fixed, and **`controller()` now throws `CancellationException` if
+`release()` races it** — Task 8b and anything else holding a controller should
+know. `:core:media` is at 24 floors.
+
+**Queued behind `p3t8b`:** Plan 5 Task 4 (`BrowseItems` + `MuPlayLibraryCallback`)
+needs the same `MuPlaybackService.kt`. Dispatch it when 8b lands.
 
 ## Merge routine that this session settled on
 
