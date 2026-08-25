@@ -90,6 +90,23 @@ dependencies {
   // touches DataStore.
   androidTestImplementation(libs.datastore.preferences)
 
+  // Plan 3 Task 7. `GaplessTest` reads its whole claim through `PcmAnalysis`, and that analyser
+  // lives in `:core:testing` rather than beside the test for a reason this module cannot supply on
+  // its own: `longestZeroRunFrames` is a check that reports the *absence* of a problem, so it needs
+  // its own tests, and an instrumented source set cannot see this module's `src/test`. A shared JVM
+  // module is the only place its correctness is a Tier 1 concern.
+  //
+  // `:core:testing` also carries `OpenApiFixtureValidator`, whose `implementation(libs.openapi
+  // .validator)` stays on a consumer's *runtime* classpath -- swagger-parser, jackson, and their
+  // duplicated `META-INF` entries, all of it dragged into this APK behind one pure-Kotlin object.
+  // That is the same shape as the `mockwebserver3-junit5` duplicate-LICENSE.md failure recorded in
+  // CLAUDE.md, so it is excluded deliberately rather than discovered later: nothing in this module's
+  // instrumented sources references `OpenApiFixtureValidator`, and excluding the validator's root
+  // artifact takes its whole transitive subtree with it.
+  androidTestImplementation(project(":core:testing")) {
+    exclude(group = "com.atlassian.oai", module = "openapi-request-validator-core")
+  }
+
   // Plan 3 Task 5. `PlaybackConnection` is the first production class in this module that imports
   // `kotlinx.coroutines` at all -- `MutableStateFlow`, `CoroutineScope`, `launch`, `delay`,
   // `withContext` -- so the comment above, which said this module deliberately keeps coroutines off

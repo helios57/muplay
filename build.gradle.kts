@@ -1409,16 +1409,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
     // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 45/45
     // and its four compiled lambdas (`controller$2` 7/7, `listener$1` 2/2, `connect$2$1` 2/2,
-    // `startTicker$1` 3/3), `MuPlayerFactory` 10/10, and the service's two nested types
+    // `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's two nested types
     // (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 1/1 -- the "not supported" browse
     // answer Plan 5 will fill in).
     //
     // `MuPlayerFactory` has **zero BRANCH counters**, so LINE is the only counter that can gate it
     // at all -- the vacuous-floor shape this table's own doc describes, checked rather than assumed.
-    // That matters more than ten lines suggest: those ten lines are the only place in this project
-    // an `ExoPlayer` is built, and the one of them that attaches the 429 retry policy is silent
-    // when it is missing. LINE is what notices a deleted builder call; `PlayerConstructionTest`
-    // (JVM) is what notices a second builder appearing somewhere else.
+    // That matters more than eleven lines suggest: those eleven lines are the only place in this
+    // project an `ExoPlayer` is built, and the one of them that attaches the 429 retry policy is
+    // silent when it is missing. LINE is what notices a deleted builder call;
+    // `PlayerConstructionTest` (JVM) is what notices a second builder appearing somewhere else.
+    //
+    // 11/11 and not 10/10 since Plan 3 Task 7b, and the eleventh line is worth naming because it
+    // looks like it should have brought a branch with it and did not. `create` grew a
+    // `renderersFactory` parameter with a production default (see its own note: Media3 offers no
+    // way to reach the audio processor chain after construction, so `GaplessTest` needs the seam
+    // there rather than a player of its own), and Kotlin compiles that into a synthetic
+    // `create$default` holding the default-value expression. JaCoCo's `KotlinDefaultArgumentsFilter`
+    // removes the argument-mask branches from that method, so the class still reports **zero**
+    // BRANCH counters -- read off the merged report, which is why the sentence above is still true.
+    // The line itself is covered because production calls `create()` and the instrumented gapless
+    // suite calls `create(renderersFactory)`; note that this floor would NOT notice the first of
+    // those disappearing (10/11 = 0.9091 still clears 0.90), so it is `MuPlayDataSourceFactoryTest`
+    // and `MuPlaybackServiceTest` calling the no-argument form, not this rule, that keeps the
+    // production shape exercised.
+    //
+    // Re-falsified after the change, not assumed to still hold: with `:core:media`'s own connected
+    // `.ec` moved aside, "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, and green again once restored.
     //
     // `MuPlaybackService*Companion` and `*LibraryCallback` are listed by name rather than as
     // `MuPlaybackService*`, deliberately: that pattern also matches `MuPlaybackService` itself,
@@ -2022,6 +2040,89 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.discovery.DatagramSsdpTransport*",
         "app.muplay.cast.discovery.RendererDirectory*",
         "app.muplay.cast.discovery.SsdpTransport",
+      ),
+    ),
+    // Plan 6 Task 3, `app.muplay.cast.soap`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator anywhere. Every class named here carries BRANCH counters -- checked first,
+    // because a CLASS rule over a class with none is a `0/0` COVEREDRATIO, which is `NaN`, which
+    // JaCoCo reports as no violation at every minimum:
+    //
+    //   `SoapEnvelope`   32/32 -- `render`'s three validations, `parseResponse`'s "no Body", "no
+    //                    response element" and "a response for a different action" arms,
+    //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
+    //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
+    //                    refusal and the unparseable-XML arm.
+    //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
+    //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
+    //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
+    //                    all four fraction lengths; `formatClock`/`formatDuration`'s clamps.
+    //   `UpnpError`       2/2  -- `describe`'s known and unknown code.
+    //   `UpnpErrorException` 2/2 -- the message's fallback to `UpnpError.describe` when the device
+    //                    sent a code but no description.
+    //
+    // `UpnpFault`, `SoapArgument`, `SoapTransportException` and `MalformedSoapRequestException`
+    // ride along at zero branches each, the same way this module's discovery record types do --
+    // included so `warnUngatedClasses` stays quiet, gating nothing. The floor is not vacuous
+    // regardless: 72 of its BRANCH counters come from the five classes above.
+    //
+    // Falsified rather than assumed, and the first two attempts are recorded because they are the
+    // interesting part: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and the other unusable
+    // values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and this floor still
+    // passes (the `NOT_IMPLEMENTED` arm is also driven by `FakeRendererStrictnessTest`'s
+    // seek-target rejection), and withholding `SoapEnvelopeTest`'s `a fault this client cannot
+    // read a code out of is still a fault` alone leaves it at **29/32 = 0.9062**, still passing.
+    // What does fire it: withholding that test together with `a body that is not xml at all, or
+    // has no Body element, is empty rather than an exception` and `a fault carrying a DOCTYPE is
+    // refused rather than parsed` drops `SoapEnvelope` to **27/32 = 0.84** and this floor fails --
+    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.84,
+    // but expected minimum is 0.90"*.
+    //
+    // The measurement is 1.0000 and the floor is 0.90 on purpose -- raising a minimum above a
+    // measured 1.0000 is not a way to watch a gate fire, because JaCoCo validates the minimum is
+    // within 0.0..1.0 before it ever reads a ratio.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.soap.SoapEnvelope",
+        "app.muplay.cast.soap.SoapNames",
+        "app.muplay.cast.soap.SoapArgument",
+        "app.muplay.cast.soap.UpnpError",
+        "app.muplay.cast.soap.UpnpErrorException",
+        "app.muplay.cast.soap.UpnpFault",
+        "app.muplay.cast.soap.SoapTransportException",
+        "app.muplay.cast.soap.MalformedSoapRequestException",
+        "app.muplay.cast.soap.UpnpTime",
+      ),
+    ),
+    // The two soap classes a BRANCH rule would measure nothing on, on LINE instead -- and which
+    // one goes where is a measurement, not a preference:
+    //
+    //   `XmlText`         **no BRANCH counter at all**. `escape` and `unescape` are five chained
+    //                     `replace` calls each, with no conditional anywhere in them, so a BRANCH
+    //                     rule over this class would be the silent `NaN` pass described above --
+    //                     over the one class in this package whose ordering defect this task
+    //                     exists to prevent. LINE 12/12.
+    //   `SoapClient*`     `SoapClient` itself is LINE 3/3 with no branches; the real body is the
+    //                     `invoke$2` continuation, LINE 18/18 and BRANCH **5/6** -- the missing
+    //                     arm being the coroutine `label` check whose other arm is unreachable by
+    //                     construction, exactly as recorded for `RendererDirectory$describe$xml$1`
+    //                     above. Lowering a BRANCH floor to fit that is what this table refuses to
+    //                     do, so LINE gates what can honestly be gated.
+    //
+    // Falsified: withholding `XmlTextTest`'s two `unescape` tests drops `XmlText` to LINE
+    // **6/12 = 0.50** and this floor fails -- *"Rule violated for class app.muplay.cast.soap.XmlText:
+    // lines covered ratio is 0.50, but expected minimum is 0.90"*. Nothing else in this module
+    // calls `unescape`; Task 4's DIDL round trip will be the second caller.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.soap.XmlText",
+        "app.muplay.cast.soap.SoapClient*",
       ),
     ),
   ),
