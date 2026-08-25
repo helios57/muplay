@@ -1,10 +1,12 @@
 package app.muplay.cast.discovery
 
+import app.muplay.cast.net.LocalNetworkOnly
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -67,6 +69,13 @@ class DatagramSsdpTransport : SsdpTransport {
       val deadline = System.nanoTime() + listenWindowMs * NANOS_PER_MILLI
       val buffer = ByteArray(MAX_DATAGRAM_BYTES)
       while (System.nanoTime() < deadline) {
+        // The picker is a screen a user backs out of, and this loop has no suspension point in it
+        // -- so without this the coroutine's cancellation is never noticed and an IO thread stays
+        // pinned, reading datagrams nobody will look at, for the rest of the listen window. The
+        // throw also leaves the `use` block, which is what closes the socket; a cancelled search
+        // that left its socket bound would go on collecting replies to a question already
+        // abandoned. Checked once per poll, so backing out costs at most SOCKET_POLL_MS.
+        ensureActive()
         val packet = DatagramPacket(buffer, buffer.size)
         val received = runCatching { socket.receive(packet); true }.getOrDefault(false)
         if (!received) continue
@@ -84,6 +93,22 @@ class DatagramSsdpTransport : SsdpTransport {
         // a real M-SEARCH reply is a few hundred bytes (see MAX_DATAGRAM_BYTES), so a 4 KiB
         // datagram is already a device misbehaving.
         if (packet.length == buffer.size) continue
+        // The inbound half of Task 1's rule, which `LocalNetworkOnly`'s own KDoc calls the
+        // dangerous half. This socket is unconnected and its port was advertised to the entire
+        // multicast group, so anything that can route a datagram here may write to it, and a
+        // datagram from off the local network is not a speaker answering whatever it claims to be.
+        //
+        // **It is redundant today, provably, and that is stated here rather than left to be
+        // rediscovered.** `SsdpSearch.parseResponse` requires the announced `LOCATION` to be an IP
+        // literal equal to this very address and requires that address to be local, so a datagram
+        // from off the local network is already refused one line further down, and no test can
+        // make this line change an outcome. It is kept because it is the half of the rule that
+        // does not depend on the parser's contract: relax the source match there for some device
+        // that needs it -- which is a change a later task can plausibly want -- and this is what
+        // still stands between an unconnected socket and the open internet. It costs one address
+        // comparison per datagram and it is gated on LINE, not BRANCH, so the arm no test reaches
+        // moves no floor.
+        if (!LocalNetworkOnly.isLocal(packet.address)) continue
         val text = String(packet.data, packet.offset, packet.length, Charsets.US_ASCII)
         SsdpSearch.parseResponse(text, packet.address)?.let(responses::add)
       }

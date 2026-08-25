@@ -976,14 +976,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
-    // Plan 6 Task 2. `RendererStore`, the remembered-speaker store, measured **4/4 BRANCH** and
-    // **14/14 LINE** against a real DataStore file on the emulator. Its four branches are the two
-    // that decide whether a record on disk is usable at all -- `decode`'s `parts.size != 3` and
-    // `forget`'s `decode(it)?.udn` safe call -- plus `load`/`forget`'s `orEmpty()` on an absent
-    // key, and every one of them was closed by a test that writes the raw preference set by hand
+    // Plan 6 Task 2. `RendererStore`, the remembered-speaker store, measured **8/8 BRANCH** and
+    // **15/15 LINE** against a real DataStore file on the emulator. Four of those branches decide
+    // whether a record on disk is usable at all -- `decode`'s `parts.size != 3` and `forget`'s
+    // `decode(it)?.udn` safe call, plus `load`/`forget`'s `orEmpty()` on an absent key -- and
+    // every one was closed by a test that writes the raw preference set by hand
     // (`aRecordThatIsNotAWholeTripleIsSkippedAndItsNeighboursAreKept`,
     // `forgettingWorksAlongsideARecordThatCannotBeDecoded`,
     // `forgettingFromAStoreThatWasNeverWrittenIsHarmless`).
+    //
+    // The other four arrived in Task 2's fix round: `encode` now refuses a record whose UDN or
+    // description URL contains the separator, instead of assuming neither can. Both operands of
+    // that `||` are observed both ways by one test with three records --
+    // `aUdnOrUrlContainingTheSeparatorIsRefusedRatherThanShiftingTheFieldsAfterIt` -- because a
+    // guard that only ever refuses is a store that remembers nothing. Was 4/4 and 14/14.
     //
     // `requiresInstrumentedData` because DataStore is an Android type: there is no JVM tier for
     // this class at all, and every number above came from `connectedDebugAndroidTest`.
@@ -2060,20 +2066,28 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`
     // -- no emulator anywhere, which is the whole point of this module being pure JVM:
     //
-    //   `SsdpSearch`            28/28 -- the M-SEARCH renderer's `MX` branch and every one of
-    //                           `parseResponse`'s six rejections. Its last two branches were the
-    //                           `UnknownHostException` arm of `InetAddress.getByName`, which
-    //                           looked unreachable without a DNS query; a link-local IPv6 literal
-    //                           with a scope id the host does not have fails from the literal
-    //                           alone, in single-digit milliseconds, with no query.
-    //   `DeviceDescription`     56/56 -- `URLBase` present/absent/unparseable, every `orEmpty()`
+    //   `SsdpSearch`            36/36 -- the M-SEARCH renderer's `MX` branch and every one of
+    //                           `parseResponse`'s eight rejections. Two of those eight arrived in
+    //                           this task's fix round (the review's HIGH 2): `LOCATION`'s host
+    //                           must be an IP **literal**, so no resolver is ever on the read
+    //                           loop's path, and must equal the address the datagram came from.
+    //                           Was 28/28; the eight new counters are `isIpLiteral`'s two regex
+    //                           alternatives and the two guards that consult it. The
+    //                           `UnknownHostException` arm of `InetAddress.getByName` is still
+    //                           reachable, and still by the same hermetic example -- a link-local
+    //                           IPv6 literal with a scope id the host does not have, which is a
+    //                           literal, so it passes the new guard and reaches `getByName` and
+    //                           fails there in single-digit milliseconds with no query.
+    //   `DeviceDescription`     58/58 -- `URLBase` present/absent/unparseable, every `orEmpty()`
     //                           arm on a device that names no type, no UDN and no serviceList,
-    //                           both `URI.resolve` failures, and the DOCTYPE refusal in both
-    //                           cases. Was 47/58 when first measured.
-    //   `CastDevice*`           22/22 on the `Companion` (both `isSonos` signals independently,
-    //                           the no-AVTransport refusal, the empty-friendlyName fallback);
+    //                           both `URI.resolve` failures, the DOCTYPE refusal in both cases,
+    //                           and (fix round, MEDIUM 2) the `deviceList` depth bound refusing
+    //                           and permitting. Was 47/58 when first measured, then 56/56.
+    //   `CastDevice*`           26/26 on the `Companion` (both `isSonos` signals independently,
+    //                           the no-AVTransport refusal, the empty-friendlyName fallback, and
+    //                           the fix round's refusal of a device with no `<UDN>` at all);
     //                           `CastDevice`, `CastDeviceKt` and the record types below carry no
-    //                           branches and ride along.
+    //                           branches and ride along. Was 22/22.
     //   `DescriptionFetcher`    10/10 -- 200 against 404, a non-local URL, an `https` URL and a
     //                           URL with no host, each of which must be `null` rather than an
     //                           exception escaping a whole discovery pass.
@@ -2085,8 +2099,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `MalformedDescriptionException` ride along at zero branches each, the same way `:core:model`
     // and `:feature:setup` carry theirs -- included so `warnUngatedClasses` stays quiet, gating
     // nothing (a CLASS rule over a zero-counter class yields NaN, which JaCoCo reports as no
-    // violation). The floor is not vacuous regardless: 146 of its BRANCH counters come from the
+    // violation). The floor is not vacuous regardless: 160 of its BRANCH counters come from the
     // five classes above.
+    //
+    // Falsified by withholding tests, never by raising a minimum above a measured 1.0000 (JaCoCo
+    // validates the minimum is inside 0.0..1.0 before it reads a ratio, so that can only ever
+    // throw). One withheld test is not enough here, and the two intermediate measurements are
+    // recorded because they are the interesting part: withholding `SsdpSearchTest`'s `a reply
+    // whose location names a host rather than an address is discarded without resolving it` alone
+    // leaves `SsdpSearch` at **34/36 = 0.9444** and this floor still passes; adding `a reply that
+    // announces an address it did not come from is discarded` leaves it at **33/36 = 0.9167**,
+    // still passing. What does fire it is those two together with `a reply whose location is not
+    // a local address is discarded` -- **32/36 = 0.88** -- *"Rule violated for class
+    // app.muplay.cast.discovery.SsdpSearch: branches covered ratio is 0.88, but expected minimum
+    // is 0.90"*.
     //
     // `DatagramSsdpTransport` is **not** here, and that is the brief's own ruling rather than a
     // convenience: its branches are socket timeouts and network-interface enumeration, so a floor
@@ -2110,12 +2136,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
     // The transport, and the coroutine artefacts of the two suspend classes, on LINE.
     //
-    // `DatagramSsdpTransport` measures 3/3, its `Companion` 4/4 and its `search$2` body 23/23
+    // `DatagramSsdpTransport` measures 3/3, its `Companion` 4/4 and its `search$2` body 25/25
     // LINE -- every line runs, against a real `DatagramSocket` and a real responder on loopback.
-    // Its BRANCH (5/8 on the companion, 10/12 in the read loop) is the interface filter
+    // Its BRANCH (6/8 on the companion, 11/14 in the read loop) is the interface filter
     // (`isUp && !isLoopback && supportsMulticast`, whose arms depend on the host's own hardware)
     // and the socket-timeout poll, and lowering a floor to fit those is what this table refuses to
     // do -- so LINE gates what can honestly be gated, exactly as it does for `LocalAddress` above.
+    //
+    // The read loop's third missing arm arrived in this task's fix round and is worth naming,
+    // because it is a *deliberately* unreachable one rather than a hardware-dependent one: the
+    // `LocalNetworkOnly.isLocal(packet.address)` guard added there is redundant by construction
+    // (`SsdpSearch.parseResponse` already requires the announced `LOCATION` to be an IP literal
+    // equal to that same address), so nothing can make it change an outcome and no probe exists
+    // for it. Its *line* is covered, which is what this rule gates; see the guard's own comment in
+    // `SsdpTransport.kt` for why a provably redundant check is kept at all.
     //
     // `RendererDirectory*` catches `describe$xml$1` (1/1 LINE; its BRANCH is 3/4, the missing one
     // being the coroutine `label` check whose other arm is unreachable by construction) and four
@@ -2137,11 +2171,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // because a CLASS rule over a class with none is a `0/0` COVEREDRATIO, which is `NaN`, which
     // JaCoCo reports as no violation at every minimum:
     //
-    //   `SoapEnvelope`   32/32 -- `render`'s three validations, `parseResponse`'s "no Body", "no
+    //   `SoapEnvelope`   34/34 -- `render`'s three validations, `parseResponse`'s "no Body", "no
     //                    response element" and "a response for a different action" arms,
     //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
     //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
-    //                    refusal and the unparseable-XML arm.
+    //                    refusal, the unparseable-XML arm, and (Task 2's fix round) `descendant`'s
+    //                    depth bound refusing and permitting -- the same StackOverflowError this
+    //                    module's `DeviceDescription.parseDevice` carried, in the walker
+    //                    `SoapClient.invoke` reaches on **every** response, outside its
+    //                    `try`/`catch`. Was 32/32.
     //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
     //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
     //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
