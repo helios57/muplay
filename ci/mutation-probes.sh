@@ -137,6 +137,7 @@ MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
 PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
+TRACK_ID_KEY = "core/media/src/main/kotlin/app/muplay/media/TrackIdCacheKeyFactory.kt"
 CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
 CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
@@ -1155,6 +1156,34 @@ PROBES = [
      # Minor, from the same review. Task 6 puts Subsonic's u/t/s in these URLs, and an exception
      # message is the one string in this project that reliably reaches a bug report.
      "a password in a url's userinfo never reaches an exception message", 1),
+
+    # ---- Plan 3 Task 3, fix round: the one string this module is allowed to say about a URL ----
+    # `MissingCacheKeyException` is thrown inside `CacheDataSource.open`, which runs inside
+    # `Loader$LoadTask.run` -- and that method logs it, then wraps it into an `ExoPlaybackException`
+    # that `ExoPlayerImplInternal` logs again. A Subsonic stream URL carries `u`, `s` and
+    # `t = md5(password + salt)`, and Navidrome tracks no salt nonce, so the triple replays forever:
+    # a URL in that message is a password equivalent in logcat and in every bug report. The message
+    # used to be `dataSpec.uri.toString()`.
+    #
+    # Both probes are on the JVM tier, and that is the whole reason `trackIdIn` takes and returns a
+    # `String`: the reduction of a credential-bearing URL to a safe diagnostic names no Android and
+    # no Media3 type. Same split as `StreamRetryPolicy` against its Media3 adapter. What is NOT
+    # here and cannot be is the throw site itself -- `dataSpec.key ?: throw ..` needs a `DataSpec`,
+    # so mutating it is a device matter and is recorded in task-3-fix-report.md, the same way
+    # `LiveNavidromeTest`'s test-side probes are.
+    ("media/cache-key-error-leaks-url", TRACK_ID_KEY,
+     "      ?: UNKNOWN_TRACK", "      ?: uri",
+     # The natural wrong fix -- "if the id cannot be found, at least print the URL" -- and there is
+     # no shape of URL for which it is the right answer.
+     # 2: the no-query test asserts the same placeholder over two more URLs.
+     "a url with no id says so rather than falling back to the url", 2),
+    ("media/cache-key-id-substring-match", TRACK_ID_KEY,
+     'it.startsWith("$ID_PARAMETER=")', "it.contains(ID_PARAMETER)",
+     # A parameter is matched on its whole name, not on containing one: `contains` also matches
+     # `xid=`, `mediaid=` and any token that happens to hold those two characters, and every one of
+     # those hands back a value that is not a track id -- which is how a credential gets into the
+     # message by a second route.
+     "a parameter that merely ends in id is not the id", 1),
 ]
 
 
@@ -1210,6 +1239,7 @@ LATER_PROBE_FILES = [
     BROWSE_ID,
     BASE_URL,
     INTEGRATION_SERVICE,
+    TRACK_ID_KEY,
 ]
 
 

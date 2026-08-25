@@ -463,7 +463,7 @@ class MediaCacheTest {
     assertThat(source.uri).describedAs("after close").isNull()
     assertThat(delegate.calls).containsExactly(
       "addTransferListener",
-      "open($requested)",
+      "open($STREAM_PATH)",
       "read(1,2)",
       "responseHeaders",
       "responseCode",
@@ -796,8 +796,14 @@ class MediaCacheTest {
       calls += "addTransferListener"
     }
 
+    /**
+     * The **path** in the recorded call, not the URI: a `containsExactly` renders its whole
+     * expected and actual list into the failure message, and a stream URL carries the credential.
+     * That the exact requested URI reaches this method is asserted separately, by comparing
+     * `source.uri` to it, which renders only the one value.
+     */
     override fun open(dataSpec: DataSpec): Long {
-      calls += "open(${dataSpec.uri})"
+      calls += "open(${dataSpec.uri.path})"
       return OPENED_LENGTH
     }
 

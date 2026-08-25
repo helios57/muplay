@@ -875,15 +875,22 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:core:media`. Four `"CLASS"`-element rules, and the split across the two tiers is the point:
-  // the *decision* about a 429 is a plain object the fast tier can hold to a floor, and everything
-  // Media3 or OkHttp touches is only reachable on a device. Re-measure in Task 10, once the
-  // service, the queue and the progress writer are in.
+  // `:core:media`. Every rule here is `"CLASS"`-element, and the split across the two tiers is the
+  // point: the *decision* about a 429 is a plain object the fast tier can hold to a floor, and
+  // everything Media3 or OkHttp touches is only reachable on a device. Re-measure in Task 10, once
+  // the service, the queue and the progress writer are in. (The count of rules is deliberately not
+  // written down. It said "Four" from Task 2 until Task 3's fix round, through three tasks that
+  // each added rules -- the same staleness `ci/mutation-probes.sh`'s header describes about its
+  // own probe count, and the same remedy: do not carry a number nothing derives.)
   //
   // Every class this module compiles that carries a counter at all is matched by exactly one rule
-  // below; the only classes left over are `MuPlayDataSourceFactory$Companion` and
-  // `NavidromeLoadErrorHandlingPolicy$Companion`, which measure zero branches *and* zero lines, so
-  // [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them anyway.
+  // below; the only classes left over are `MuPlayDataSourceFactory$Companion`,
+  // `NavidromeLoadErrorHandlingPolicy$Companion`, `QueueRepository$Companion`,
+  // `QueueRepository$mediaItems$1`, the `ResumePolicy` interface and the `@Qualifier` annotation
+  // class `app.muplay.media.di.MediaHttpClient`, every one of which measures zero branches *and*
+  // zero lines, so [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them
+  // anyway. (`MediaHttpClient` was named only inside one rule's own comment before this round,
+  // which is the wrong place for it: this paragraph is the list a reader checks.)
   // Dagger's `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder` -- the holder it emits for
   // a *scoped, no-argument* `@Inject` constructor -- was in this report until
   // `generatedCodeExcludes` (`Jacoco.kt`) grew the pattern for that shape; see its own note.
@@ -936,11 +943,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NavidromeLoadErrorHandlingPolicy"),
       requiresInstrumentedData = true,
     ),
-    // 3/3 and 12/12 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries no branches, so
-    // LINE is the only counter that can gate it at all -- same argument as `MediaModule` above,
-    // reached from the other tier. `NavidromeLoadErrorHandlingPolicy` rides here as well as
-    // carrying its own BRANCH rule: its `getRetryDelayMsFor` body is the module's one place where
-    // a line can be added that adds no branch.
+    // 11/11, 14/14, 16/16 and 2/2 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries
+    // no branches, so LINE is the only counter that can gate it at all -- same argument as
+    // `MediaModule` above, reached from the other tier. `NavidromeLoadErrorHandlingPolicy` rides
+    // here as well as carrying its own BRANCH rule: its `getRetryDelayMsFor` body is the module's
+    // one place where a line can be added that adds no branch.
+    //
+    // `RequestedUriDataSource*` joined in Task 3's fix round -- the wrapper that stops a redirect
+    // target reaching `exo_redir`, and its `Factory`. The pattern covers both classes and both are
+    // branchless by construction: `getUri()` returns the requested URI unconditionally rather than
+    // falling back to the delegate's, which is one fewer branch *and* an unconditional guarantee
+    // instead of a stateful one. Ten forwarding methods is ten chances to forget one, and Media3
+    // ships no `ForwardingDataSource` to inherit from, so
+    // `MediaCacheTest.theUpstreamWrapperAnswersTheRequestedUriAndForwardsEverythingElse` drives
+    // every one of them through a hand-written recording delegate -- which is what takes it to
+    // 16/16 rather than the 6-of-10 an end-to-end playback alone reaches.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -948,6 +965,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.MuPlayDataSourceFactory",
         "app.muplay.media.NavidromeLoadErrorHandlingPolicy",
+        "app.muplay.media.RequestedUriDataSource*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1078,13 +1096,27 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
-    // 2/2 = 1.0000 BRANCH, instrumented. BRANCH and not LINE because this class is *all* branch:
-    // its single line is `dataSpec.key ?: throw MissingCacheKeyException(...)`, and the two sides
-    // of that elvis are the whole task. A LINE floor over it would be satisfied by covering
-    // either one, which is the difference between "the cache key comes from the track id" and
-    // "the missing-key fallback Tempo ships is gone". Counter picked by reading the merged report
-    // rather than from the non-UI default -- this class is one of the few in the module that
-    // genuinely carries both.
+    // 11/12 = 0.9167 BRANCH, instrumented. BRANCH and not LINE because the part of this class that
+    // matters is *all* branch: `dataSpec.key ?: throw MissingCacheKeyException(..)`, whose two
+    // sides are the whole task, and `trackIdIn`, which is a chain of safe calls. A LINE floor over
+    // it would be satisfied by covering either side of that elvis, which is the difference between
+    // "the cache key comes from the track id" and "the missing-key fallback Tempo ships is gone".
+    // Counter picked by reading the merged report rather than from the non-UI default -- this
+    // class is one of the few in the module that genuinely carries both.
+    //
+    // 2/2 until Task 3's fix round, when `trackIdIn` arrived: the pure String -> String reduction
+    // of a stream URL to the track id, so that the exception message names a track and not a
+    // replayable credential. Its branches come from `TrackIdCacheKeyFactoryTest` on the **JVM**
+    // tier -- deliberately, that is why it takes a `String` -- while the elvis above it still
+    // needs a `DataSpec` and a device, which is why `requiresInstrumentedData` stays on: with the
+    // instrumented `.ec` deleted this class measures 9/12 = 0.75 and the rule would fire on a
+    // JVM-only invocation that was never owed it.
+    //
+    // The one missed branch is unreachable and stays in the denominator honestly, the same way
+    // `StreamRetryPolicy`'s does: the safe-call chain emits a null check per `?.`, and once
+    // `firstOrNull` has returned null control jumps straight to the `?:`, so the second check's
+    // null arm cannot be selected. 0.90 leaves that single dead branch of room and no more -- one
+    // genuinely-uncovered branch takes this to 10/12 = 0.8333 and fails.
     //
     // Falsified by moving `MediaCacheTest` aside, not by raising the minimum, for exactly the
     // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
@@ -1106,20 +1138,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
       requiresInstrumentedData = true,
     ),
-    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
+    // 8/8, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
     // counter -- read off the merged report, not assumed -- so LINE is the only counter that can
     // gate them at all; a BRANCH rule here would score NaN and pass at every minimum, the vacuous
     // shape this table's own doc describes and `warnVacuousFloors` reports.
     //
-    // Instrumented-only, and all three reduce to "needs a real device": `MediaCache` builds a
-    // `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite);
-    // `MediaCacheModule` calls it; and `MissingCacheKeyException`'s message is only ever
-    // constructed from a `DataSpec`, which holds an `android.net.Uri`. No Robolectric here, so
-    // there is no JVM path to any of them.
+    // `MediaCache` was 6/6 and is 8/8 since Task 3's fix round: `create` grew a `maxBytes`
+    // parameter beside `directory`, which is what turns "there is an evictor and it is bounded"
+    // from a comment into something a test can fill. Neither `SimpleCache` nor
+    // `LeastRecentlyUsedCacheEvictor` exposes the bound (checked in 1.11.0), so before that
+    // parameter existed a `NoOpCacheEvictor` left every test in this module green.
     //
-    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: a `@Qualifier` annotation
-    // class carries no counter of either kind, so `warnUngatedClasses` skips it and no rule could
-    // gate it -- the same standing exception this module already records for its `$Companion`s.
+    // Instrumented-only, and two of the three reduce to "needs a real device": `MediaCache` builds
+    // a `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite),
+    // and `MediaCacheModule` calls it. `MissingCacheKeyException` is the exception: it takes a
+    // `String` and `TrackIdCacheKeyFactoryTest` builds one on the JVM tier, so its two lines are
+    // covered from both tiers now. It stays in this rule rather than moving to a JVM one because
+    // the throw *site* is still device-only, and a rule that gated the message on the fast tier
+    // while the only real caller lived on the slow one would be gating the half that was never in
+    // doubt -- the same argument the BRANCH rule above makes about its own elvis.
     //
     // Watched failing the same way, with `MediaCacheTest` moved aside: BUILD FAILED naming all
     // three -- "app.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
