@@ -2592,6 +2592,113 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // Task 3, the request store. Four rules, and which tier each lands in is a measurement rather
+    // than a preference: the status type is pure Kotlin and reachable from the JVM, and everything
+    // that touches Room is not reachable without a device at all.
+    //
+    // The **fast tier**, enforced by `jacocoJvmCoverageVerification` on every pull request:
+    // `RequestStatusKt` (the two `when` cascades that decide what goes in the `status` and
+    // `status_detail` columns) at **18/18 BRANCH, 14/14 LINE**, and `RequestStatus$Companion`
+    // (`fromStored`, the read side of the same two columns) at **16/16 BRANCH, 8/8 LINE**.
+    // `RequestStatusTest` is a plain JUnit 5 test -- a `when` over a sealed interface and a
+    // `toIntOrNull` name no Android type -- so this is genuinely a Tier 1 floor and not one that
+    // only the 45-minute tier can see.
+    //
+    // `storedName`/`storedDetail` are **extension properties in `RequestStatus.kt`, not members of
+    // the interface**, and that is what makes `RequestStatusKt` exist to be gated. As interface
+    // members with default getters they compiled to a JVM default method plus a
+    // `RequestStatus$DefaultImpls` Java-compat bridge that no Kotlin call site reaches: measured
+    // at **LINE 0/4** here, in a class 0.90 fails outright and a 0.00 minimum could never fail --
+    // the unfireable floor this project has shipped once and does not intend to ship again. See
+    // the KDoc on those two properties.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.RequestStatusKt",
+        "app.muplay.integrations.RequestStatus*Companion",
+      ),
+    ),
+    // The same two classes' LINE, plus the three data-carrying members' 1/1 constructors
+    // (`RequestStatus$Downloading`, `$Arrived`, `$Failed`) and `MediaRequest$Companion`'s `idFor`
+    // (1/1) -- every one of them measured 1.0000 and every one of them reachable from the JVM
+    // tier, since `RequestStatusTest` constructs each member at two values and calls `idFor` at
+    // three. `RequestStatus` itself and its two `data object` members carry no counter of either
+    // kind and ride along, exactly as `IntegrationCredentials` does in the rule above.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.RequestStatusKt",
+        "app.muplay.integrations.RequestStatus",
+        "app.muplay.integrations.RequestStatus*",
+        "app.muplay.integrations.MediaRequest*Companion",
+      ),
+      excludes = listOf("app.muplay.integrations.MediaRequestRepository*"),
+    ),
+    // `MediaRequestRepository`'s own author-written branches: **11/12**, instrumented only. Real
+    // Room and real SQL need a device, and a fake DAO would not prove the two properties this
+    // class exists to have -- that the newest-first order comes out of the query rather than out
+    // of insertion luck, and that `requests(service)` passes its argument through.
+    //
+    // The twelfth branch is Kotlin's unreachable null path of `existing?.status ?: ...`: JaCoCo
+    // counts four branches on that line and the `existing.status == null` arm cannot happen,
+    // because the column is a non-null `String`. Same artifact, same reason, as
+    // `IntegrationCredentialStore`'s eighteenth branch four rules up and `CoverArtCacheKeyKt`'s
+    // fourth in `:feature:library` -- so **0.90 against a measured 0.9167 is the honest ceiling**
+    // and a 1.00 here would fail the build on the Kotlin compiler rather than on this project's
+    // code.
+    //
+    // LINE for the row's storage shapes in the same rule set below rather than here: this class
+    // measures 43/43 LINE, and the entity, the database and the model have no branches at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.MediaRequestRepository"),
+      requiresInstrumentedData = true,
+    ),
+    // The instrumented LINE side: `MediaRequestRepository` 43/43, `MediaRequest` 10/10 (its
+    // constructor and nine property getters, which only a row read back out of SQLite reaches),
+    // `db.MediaRequestEntity` 12/12 and `db.IntegrationRequestsDatabase` 1/1. All four measured
+    // 1.0000, gated at the project target rather than at the measurement for the reason the
+    // `IntegrationBaseUrl` entry above gives: a floor pinned to 1.00 goes red on a refactor that
+    // changed nothing.
+    //
+    // `db.MediaRequestDao` and `IntegrationRequestsDatabase$Companion` carry no counters and ride
+    // along. Room's generated `MediaRequestDao_Impl`/`IntegrationRequestsDatabase_Impl` are not in
+    // the report at all -- generated code is excluded before it gets here -- which is what keeps
+    // this rule's `db.*` wildcard from gating a code generator's output.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.MediaRequestRepository",
+        "app.muplay.integrations.MediaRequest",
+        "app.muplay.integrations.db.*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The Kotlin compiler's own output for `requests()`'s two `Flow.map`s, gated low rather than
+    // not at all -- the identical trade the `IntegrationCredentialStore*` rule above makes, for
+    // the identical reason. Measured: `requests$$inlined$map$1` and `$2` at 2/3 = 0.6667 each, and
+    // `$1$2`/`$2$2` at 1/2 = 0.5000 each; `$1$1`, `$2$1`, `$1$2$1`, `$2$2$1` and `record$1` carry
+    // no LINE counter at all (JaCoCo's isNaN pass, which is not the same thing as excluded). 0.50
+    // is a number this run produced.
+    //
+    // `excludes` keeps `MediaRequestRepository` itself out, so its real 0.90 rules above stay the
+    // ones that gate it.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.50"),
+      includes = listOf("app.muplay.integrations.MediaRequestRepository*"),
+      excludes = listOf("app.muplay.integrations.MediaRequestRepository"),
+      requiresInstrumentedData = true,
+    ),
   ),
 )
 

@@ -186,6 +186,8 @@ BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/Integratio
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
+REQUEST_STATUS = "integrations/core/src/main/kotlin/app/muplay/integrations/RequestStatus.kt"
+MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/MediaRequest.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -1974,6 +1976,43 @@ PROBES = [
      'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=<redacted>)"',
      'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=$apiKey)"',
      "toString does not leak the api key", 1),
+
+    # ---- Plan 7 Task 3: the request store's JVM-reachable half ---------------------------------
+    # ONLY the JVM-reachable half, and that is a limit worth reading before adding to this family.
+    # The defect this task is *named* for -- `requests(service)` forwarding to the DAO and dropping
+    # its argument -- lives behind real Room and real SQL, so its proof is an instrumented test and
+    # this runner cannot see it. That was measured rather than deduced: the plan's Step 9 asked for
+    # three probes naming `MediaRequestRepositoryTest` methods, and running one of them here
+    # reported MISSED with zero failures in the whole JVM suite -- the same shape as the
+    # `PlayerConstructionTest` probe Plan 3 Task 7b removed for the same reason. Those three
+    # mutations were applied by hand against the emulator suite instead and the transcript is in
+    # task-3-report.md. Do not add them back without a runner that can reach a device.
+    #
+    # 3. The composite request id. `"<SERVICE>:<externalId>"` is what keeps a Lidarr and a Bindery
+    #    request for the same identifier from colliding onto one row, and a hardcoded service half
+    #    is invisible to every test that configures one service -- the same shape as
+    #    `integrations/keyAlias-service` above, one type over.
+    ("integrations/request-id-service", MEDIA_REQUEST,
+     'fun idFor(service: IntegrationService, externalId: String): String = "${service.name}:$externalId"',
+     'fun idFor(service: IntegrationService, externalId: String): String = "LIDARR:$externalId"',
+     "the request id is derived from the service and the external id", 1),
+
+    # 4. The `status_detail` column's value. A `storedDetail` that returned one constant leaves the
+    #    status column right and the payload wrong, which renders as a download stuck at one
+    #    percentage forever. Two members carry data at two values each precisely so a constant
+    #    cannot satisfy them.
+    ("integrations/request-status-detail", REQUEST_STATUS,
+     'is RequestStatus.Downloading -> percentComplete?.toString()',
+     'is RequestStatus.Downloading -> "7"',
+     "the detail column carries the member's data and nothing else", 2),
+
+    # 5. The corrupt-row verdict. Reading an unrecognised stored status as `Requested` tells the
+    #    user their request is still in progress forever and tells a bug report nothing at all;
+    #    every arm of `fromStored` still executes under the mutation, so no coverage floor moves.
+    ("integrations/request-status-unknown", REQUEST_STATUS,
+     'else -> Failed("unrecognised stored status \\"$name\\"")',
+     'else -> Requested',
+     "an unrecognised stored status reads as a failure that names itself", 1),
 ]
 
 
@@ -2034,6 +2073,10 @@ LATER_PROBE_FILES = [
     # run ends, which is the stray-mutation incident this script's header describes.
     STORE,
     CREDENTIALS,
+    # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
+    # list's own comment.
+    REQUEST_STATUS,
+    MEDIA_REQUEST,
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,
