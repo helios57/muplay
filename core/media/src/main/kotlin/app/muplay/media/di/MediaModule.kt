@@ -21,6 +21,15 @@ import okhttp3.OkHttpClient
  * The other `@Singleton` this layer contributes, `NavidromeLoadErrorHandlingPolicy`, is bound by
  * its own `@Inject` constructor and scoped on the class rather than provided from here — see that
  * class's own note. Only bindings that genuinely need a builder live in this module.
+ *
+ * **This object names no Android and no Media3 type, and that is load-bearing.** It is why
+ * `ci/mutation-probes.sh` — a JVM-only runner — can reach the timeout decision at all, and why
+ * `MediaModuleTest` can hold these four lines to a 1.0000 LINE floor on the *fast* tier rather
+ * than behind the emulator. The media cache is a Media3 `Cache` built on a real `Context`, which
+ * no JVM test can construct, so it lives in [MediaCacheModule] instead. Putting it here was
+ * measured first: it took this class to 4/5 = 0.80 lines on JVM-only data and would have forced
+ * the timeout gate onto Tier 2 or blunted it to 0.80. Same reasoning as `StreamRetryPolicy` being
+ * a separate type from the Media3 adapter that consumes it.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -28,6 +37,10 @@ object MediaModule {
 
   @Provides
   @Singleton
+  // Qualified, so "this is not `:core:network`'s client" is enforced rather than argued -- see
+  // [MediaHttpClient]. An unqualified `Call.Factory` injection point now fails to compile instead
+  // of quietly receiving the streaming client's four-minute-friendly timeouts.
+  @MediaHttpClient
   fun provideMediaCallFactory(): Call.Factory =
     OkHttpClient.Builder()
       .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)

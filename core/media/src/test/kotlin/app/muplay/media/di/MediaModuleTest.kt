@@ -42,6 +42,20 @@ class MediaModuleTest {
   }
 
   @Test
+  fun `nothing logs on the client that carries the credentials`() {
+    // This client's URLs are `/rest/stream` URLs, and `SubsonicClient.streamUrl` puts `t` (the
+    // auth token) and `s` (the salt) in the query string of every one of them. An
+    // `HttpLoggingInterceptor` added "just for debugging" would write those to logcat, where any
+    // app with READ_LOGS -- and any bug report -- picks them up. Nothing in the build stopped
+    // that; this does.
+    //
+    // Asserted as emptiness rather than as "no logging interceptor" on purpose: naming the type
+    // would gate one library, and the risk is any interceptor that sees the URL at all.
+    assertThat(client.interceptors).isEmpty()
+    assertThat(client.networkInterceptors).isEmpty()
+  }
+
+  @Test
   fun `redirects are followed, including across protocols`() {
     // The first of the two stated reasons for choosing OkHttp over `DefaultHttpDataSource` at all:
     // a Navidrome behind a reverse proxy commonly redirects `http` to `https`, and a client that

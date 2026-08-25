@@ -2,12 +2,14 @@ package app.muplay.media
 
 import android.content.Context
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.cache.Cache
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
@@ -55,6 +57,16 @@ class MuPlayerFactoryTest {
   private lateinit var server: MockWebServer
   private lateinit var harness: PlayerHarness
 
+  /**
+   * This test's own cache directory, not the production one. `SimpleCache` refuses a second live
+   * instance on a folder another instance holds, and `MediaCacheTest` opens the production folder
+   * (`cacheDir/media`) in this same process -- so sharing it would make these two suites fail each
+   * other depending on run order. Same construction, same reason, as
+   * `MuPlayDataSourceFactoryTest`'s.
+   */
+  private lateinit var cacheDir: File
+  private lateinit var cache: Cache
+
   @Before
   fun setUp() {
     val audio = runBlocking { fetchRealTrackBytes() }
@@ -74,6 +86,8 @@ class MuPlayerFactoryTest {
     )
 
     val context = ApplicationProvider.getApplicationContext<Context>()
+    cacheDir = File(context.cacheDir, "playerfactory-test-${System.nanoTime()}")
+    cache = MediaCache.create(context, cacheDir)
     val factory = MuPlayerFactory(
       context = context,
       // The tag. An interceptor rather than a header on a request the test builds, because the
@@ -84,6 +98,7 @@ class MuPlayerFactoryTest {
             chain.proceed(chain.request().newBuilder().header(PROBE_HEADER, PROBE_VALUE).build())
           }
           .build(),
+        cache,
       ),
       loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
     )
@@ -95,6 +110,10 @@ class MuPlayerFactoryTest {
   @After
   fun tearDown() {
     if (::harness.isInitialized) harness.release()
+    // Released before the directory is deleted, and always: an unreleased `SimpleCache` keeps its
+    // folder locked for the life of the process.
+    if (::cache.isInitialized) cache.release()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
     if (::server.isInitialized) server.close()
   }
 
