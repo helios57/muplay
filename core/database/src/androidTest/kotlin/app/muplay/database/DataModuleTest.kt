@@ -9,6 +9,7 @@ import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.RememberedRenderer
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
@@ -72,15 +73,71 @@ class DataModuleTest {
     val expected = java.io.File(context.filesDir, "credentials.preferences_pb")
     expected.delete()
 
-    val dataStore = DataModule.provideCredentialDataStore(context)
     // Exercised, not merely constructed: DataStore creates its file lazily on first access, so
     // constructing one proves nothing about where it would write.
-    CredentialStore(dataStore).save(
+    CredentialStore(credentialDataStore).save(
       app.muplay.model.SubsonicCredentials("https://music.example", "alice", "sesame"),
     )
 
     assertThat(expected).describedAs("the file the shipped app reads credentials from").exists()
     expected.delete()
+  }
+
+  /**
+   * Plan 6 Task 2. The cast store gets a DataStore of its own, and the point of it is the word
+   * *own*: `:core:database` already binds an unqualified `DataStore<Preferences>` holding the
+   * Navidrome password, and `CredentialStore.clear()` is `dataStore.edit { it.clear() }` -- it
+   * empties the whole **file**, not its own keys. A `RendererStore` sharing that file would lose
+   * every remembered speaker on sign-out, and the symptom (an empty "not answering" list) reads
+   * as a discovery bug and would be chased in `RendererDirectory`.
+   *
+   * Asserted by searching the credentials file for the speaker's own UDN rather than by deleting
+   * files first: if the two providers named one path, that file *is* this file and the marker is
+   * in it. A `exists()` check on two names could not tell the difference.
+   */
+  @Test
+  fun theProvidedCastDataStoreWritesToItsOwnFileAndNotIntoTheCredentialsOne() = runTest {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val castFile = File(context.filesDir, "cast.preferences_pb")
+    val credentialsFile = File(context.filesDir, "credentials.preferences_pb")
+
+    RendererStore(castDataStore).remember(
+      listOf(RememberedRenderer(MARKER_UDN, "Kitchen", "http://10.0.0.1:1400/d.xml")),
+    )
+
+    assertThat(castFile).describedAs("the file the shipped app remembers speakers in").exists()
+    assertThat(String(castFile.readBytes(), Charsets.ISO_8859_1)).contains(MARKER_UDN)
+    val credentials =
+      if (credentialsFile.exists()) String(credentialsFile.readBytes(), Charsets.ISO_8859_1) else ""
+    assertThat(credentials)
+      .describedAs("a remembered speaker must not be in the file sign-out empties")
+      .doesNotContain(MARKER_UDN)
+  }
+
+  /**
+   * The same decision from the user's side, through both **production** providers at once: sign
+   * in, remember a speaker, sign out, and the speaker is still there.
+   *
+   * This lives here rather than in `RendererStoreTest` for a mechanical reason worth stating:
+   * DataStore throws `IllegalStateException: There are multiple DataStores active for the same
+   * file` if a second instance is created for a path already in use, so exactly one place in this
+   * module's instrumented suite may build the shipped DataStores. That place is this class, and
+   * the two `by lazy` holders below are why.
+   */
+  @Test
+  fun signingOutDoesNotForgetTheSpeakers() = runTest {
+    val credentialStore = CredentialStore(credentialDataStore)
+    val rendererStore = RendererStore(castDataStore)
+    credentialStore.save(app.muplay.model.SubsonicCredentials("http://nav.example", "u", "p"))
+    rendererStore.remember(
+      listOf(RememberedRenderer("uuid:kitchen", "Kitchen", "http://10.0.0.1:1400/d.xml")),
+    )
+
+    credentialStore.clear()
+
+    // Two stores sharing one file passes every other test in this class and fails only this one.
+    assertThat(rendererStore.load().map { it.udn }).containsExactly("uuid:kitchen")
+    assertThat(credentialStore.load()).isNull()
   }
 
   /**
@@ -205,5 +262,27 @@ class DataModuleTest {
       .contains("getAlbumList2(1, offset=0, size=${SubsonicClient.MAX_ALBUM_LIST_PAGE})")
     credentialStore.clear()
     file.delete()
+  }
+
+  private companion object {
+    /**
+     * The two DataStores the shipped app uses, built **once** for this whole class.
+     *
+     * DataStore refuses a second instance over the same file
+     * (`IllegalStateException: There are multiple DataStores active for the same file`), and more
+     * than one test here now needs each of them. A `by lazy` in the companion is one instance per
+     * class load; a `val` on the test class would be one per test method, which is exactly the
+     * failure.
+     */
+    private val credentialDataStore by lazy {
+      DataModule.provideCredentialDataStore(ApplicationProvider.getApplicationContext())
+    }
+
+    private val castDataStore by lazy {
+      DataModule.provideCastDataStore(ApplicationProvider.getApplicationContext())
+    }
+
+    /** Distinctive enough that finding it in a file is evidence rather than a coincidence. */
+    private const val MARKER_UDN = "uuid:RINCON-cast-store-marker"
   }
 }
