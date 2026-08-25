@@ -133,6 +133,7 @@ LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiSta
 STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
+PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -642,6 +643,77 @@ PROBES = [
     ("media/no-cross-protocol-redirects", MEDIA_MODULE,
      "      .build()", "      .followSslRedirects(false)\n      .build()",
      "redirects are followed, including across protocols", 1),
+
+    # ---- Plan 3 Task 7: the gapless oracle -----------------------------------------------------
+    # `PcmAnalysis` is the analyser `GaplessTest` reads its whole claim through, and that claim is
+    # the *absence* of a problem: the emulator test passes when `longestZeroRunFrames` returns a
+    # small number. An analyser that returned a small number unconditionally would leave that test
+    # green having measured nothing at all -- which is exactly why the analyser is pure JVM code in
+    # `:core:testing` rather than a private helper in `:core:media`'s androidTest, and why every
+    # value in it is probed here rather than trusted on the device tier.
+    ("pcm/frame-count-ignores-channels", PCM_ANALYSIS,
+     "return byteCount / (BYTES_PER_SAMPLE * channelCount)",
+     "return byteCount / BYTES_PER_SAMPLE",
+     # 2: the mono/stereo pair pins it directly, and the interleaved-stereo silence test reads
+     # frames through it, so a stereo frame count that is silently doubled reddens both.
+     "frames are bytes divided by two per channel", 2),
+    ("pcm/bytes-per-sample-halved", PCM_ANALYSIS,
+     "private const val BYTES_PER_SAMPLE = 2",
+     "private const val BYTES_PER_SAMPLE = 1",
+     # 7, and broad on purpose: this is the unit every other measurement in the class is expressed
+     # in, so there is no narrow probe for it. The count is what makes that visible.
+     "frames are bytes divided by two per channel", 7),
+    ("pcm/frame-count-unguarded", PCM_ANALYSIS,
+     'require(channelCount > 0) { "channelCount must be positive, was $channelCount" }\n    return byteCount',
+     "return byteCount",
+     # 2, and the second one is the point: `longestZeroRunFrames` deliberately does NOT carry a
+     # second copy of this guard (a sweep proved no test could tell that copy from its absence), so
+     # the silence scan reaches this one instead -- and without it divides by zero, an
+     # ArithmeticException where an IllegalArgumentException naming the argument was promised.
+     "a zero channel count is rejected rather than dividing by zero", 2),
+    ("pcm/zero-run-blind", PCM_ANALYSIS,
+     "    return longest\n  }", "    return 0\n  }",
+     # The defect this whole module exists to make impossible: an oracle that always reports "no
+     # silence". `GaplessTest` would stay green under it; these five go red.
+     "a known run of silence is found and measured exactly", 5),
+    ("pcm/zero-run-closes-late", PCM_ANALYSIS,
+     "        if (current > longest) longest = current\n      } else {\n        current = 0\n      }",
+     "      } else {\n        if (current > longest) longest = current\n        current = 0\n      }",
+     # Closing a run only when a non-zero sample arrives misses a run that reaches the end of the
+     # buffer -- and encoder *padding*, half of what "gapless" trims, lives exactly there.
+     "a run that ends at the end of the buffer still counts", 2),
+    ("pcm/zero-run-never-resets", PCM_ANALYSIS,
+     "      } else {\n        current = 0\n      }", "      }",
+     # Without the reset this counts total silent frames rather than the longest consecutive run,
+     # which is a larger number and so fails safe on the device tier -- but it is not the
+     # measurement, and it would make a stream of scattered zero-crossings look like a gap.
+     "the longest run is reported and not the first or the last", 2),
+    ("pcm/zero-run-first-channel-only", PCM_ANALYSIS,
+     "for (channel in 0 until channelCount) {", "for (channel in 0 until 1) {",
+     # A frame is silent only when EVERY channel is: one silent channel in a stereo stream is real
+     # signal, not a gap. Exactly 1 -- only the interleaved-stereo test has a second channel to
+     # get wrong.
+     "a frame counts as silent only when every channel is silent", 1),
+    ("pcm/frames-to-ms-hardcoded-rate", PCM_ANALYSIS,
+     "return frames.toLong() * MILLIS_PER_SECOND / sampleRateHz",
+     "return frames.toLong() * MILLIS_PER_SECOND / 44100",
+     # 44100 is the rate every fixture happens to use, so a hardcoded one is the accident that
+     # would never show up on the device tier at all.
+     "frames convert to milliseconds at the sample rate given", 2),
+    ("pcm/frames-to-ms-unit", PCM_ANALYSIS,
+     "private const val MILLIS_PER_SECOND = 1000L",
+     "private const val MILLIS_PER_SECOND = 1L",
+     # The unit the device tier's "< 10" is denominated in. Seconds instead of milliseconds would
+     # make a 25 ms encoder-delay gap measure 0 and pass.
+     "frames convert to milliseconds at the sample rate given", 2),
+    ("pcm/frames-to-ms-negative-unguarded", PCM_ANALYSIS,
+     'require(frames >= 0) { "frames must not be negative, was $frames" }\n', "",
+     # A negative duration satisfies `isLessThan(10L)` as happily as a small positive one, so a
+     # negative frame count must not be expressible as a duration at all.
+     "a negative frame count is rejected rather than reported as a negative duration", 1),
+    ("pcm/frames-to-ms-rate-unguarded", PCM_ANALYSIS,
+     'require(sampleRateHz > 0) { "sampleRateHz must be positive, was $sampleRateHz" }\n', "",
+     "a zero sample rate is rejected rather than dividing by zero", 1),
 ]
 
 
@@ -683,7 +755,8 @@ def apply(path, old, new):
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
+         PCM_ANALYSIS],
         check=True,
     )
 
@@ -714,6 +787,13 @@ JVM_TEST_RESULT_DIRS = {
     # tier is the whole point of the module's shape: `StreamRetryPolicy` and `MediaModule` carry no
     # Android or Media3 type in their signatures precisely so this runner can reach them.
     "core/media": "testDebugUnitTest",
+    # `:core:testing` joined in Plan 3 Task 7. A plain `muplay.jvm.library` module, so
+    # `test-results/test/` -- and reachable here for the same reason `:core:media`'s JVM tier is:
+    # `PcmAnalysis` is pure Kotlin over a `ByteArray`, with no Android or Media3 type in it, so the
+    # oracle the emulator's gapless assertion is read through is itself probed on this tier. That
+    # asymmetry is the whole point of splitting the analyser out: a `longestZeroRunFrames` that
+    # returned 0 would leave `GaplessTest` green and only these probes red.
+    "core/testing": "test",
 }
 
 
@@ -770,7 +850,7 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test"],
+                    ":core:media:test", ":core:testing:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
