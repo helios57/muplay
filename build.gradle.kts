@@ -2198,14 +2198,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // JaCoCo reports as no violation at every minimum:
     //
     //   `SoapEnvelope`   34/34 -- `render`'s three validations, `parseResponse`'s "no Body", "no
-    //                    response element" and "a response for a different action" arms,
+    //                    response element" and "a response for a different action" arms (all
+    //                    three now answering `null` rather than an empty map -- Task 3's fix
+    //                    round, the review's MEDIUM: "the device answered nothing" and "the device
+    //                    answered no out arguments" are different facts, and `SoapClient.invoke`
+    //                    turns only the first into a `SoapTransportException`),
     //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
     //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
     //                    refusal, the unparseable-XML arm, and (Task 2's fix round) `descendant`'s
     //                    depth bound refusing and permitting -- the same StackOverflowError this
     //                    module's `DeviceDescription.parseDevice` carried, in the walker
     //                    `SoapClient.invoke` reaches on **every** response, outside its
-    //                    `try`/`catch`. Was 32/32.
+    //                    `try`/`catch`. Was 32/32. `render`'s escaping of argument values (the
+    //                    same fix round, the review's HIGH 1) adds no branch: it is a call.
     //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
     //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
     //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
@@ -2219,17 +2224,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // included so `warnUngatedClasses` stays quiet, gating nothing. The floor is not vacuous
     // regardless: 72 of its BRANCH counters come from the five classes above.
     //
-    // Falsified rather than assumed, and the first two attempts are recorded because they are the
-    // interesting part: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and the other unusable
-    // values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and this floor still
-    // passes (the `NOT_IMPLEMENTED` arm is also driven by `FakeRendererStrictnessTest`'s
-    // seek-target rejection), and withholding `SoapEnvelopeTest`'s `a fault this client cannot
-    // read a code out of is still a fault` alone leaves it at **29/32 = 0.9062**, still passing.
-    // What does fire it: withholding that test together with `a body that is not xml at all, or
-    // has no Body element, is empty rather than an exception` and `a fault carrying a DOCTYPE is
-    // refused rather than parsed` drops `SoapEnvelope` to **27/32 = 0.84** and this floor fails --
-    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.84,
+    // Falsified rather than assumed, and RE-MEASURED in Task 3's fix round -- which is the part
+    // worth reading, because the previously recorded falsification had gone stale and would have
+    // been believed. It said that withholding `SoapEnvelopeTest`'s `a fault this client cannot
+    // read a code out of is still a fault`, `a body that is not xml at all, or has no Body
+    // element, ...` and `a fault carrying a DOCTYPE is refused rather than parsed` together drops
+    // `SoapEnvelope` to 27/32 = 0.84 and fires this floor. Withholding exactly those three today
+    // leaves it at **32/34 = 0.9412 and this floor GREEN**: the fix round gave three of those arms
+    // second drivers (`SoapClientTest`'s `a 200 with no response element is a transport failure`
+    // reaches the "no Body" arm, and `FakeRendererStrictnessTest`'s `a body carrying a DOCTYPE is
+    // refused rather than parsed` reaches `declaresDoctype`, which the fake now shares rather than
+    // copies). Withholding those three **plus** `a doctype hidden behind a five kilobyte comment
+    // is still seen by the guard`, `a response for a different action is not accepted as this one`
+    // and the fake's own DOCTYPE test drops it to **30/34 = 0.8824** and this floor fails --
+    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.88,
     // but expected minimum is 0.90"*.
+    //
+    // The other recorded near-miss still stands: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and
+    // the other unusable values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and
+    // this floor still passes, the `NOT_IMPLEMENTED` arm being also driven by
+    // `FakeRendererStrictnessTest`'s seek-target rejection.
     //
     // The measurement is 1.0000 and the floor is 0.90 on purpose -- raising a minimum above a
     // measured 1.0000 is not a way to watch a gate fire, because JaCoCo validates the minimum is
@@ -2259,16 +2273,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                     over the one class in this package whose ordering defect this task
     //                     exists to prevent. LINE 12/12.
     //   `SoapClient*`     `SoapClient` itself is LINE 3/3 with no branches; the real body is the
-    //                     `invoke$2` continuation, LINE 18/18 and BRANCH **5/6** -- the missing
+    //                     `invoke$2` continuation, LINE 19/19 and BRANCH **7/8** -- the missing
     //                     arm being the coroutine `label` check whose other arm is unreachable by
     //                     construction, exactly as recorded for `RendererDirectory$describe$xml$1`
     //                     above. Lowering a BRANCH floor to fit that is what this table refuses to
-    //                     do, so LINE gates what can honestly be gated.
+    //                     do, so LINE gates what can honestly be gated. Was LINE 18/18 and BRANCH
+    //                     5/6; Task 3's fix round added the elvis that turns an unreadable 200
+    //                     into a `SoapTransportException`, which is one line and two branches.
     //
-    // Falsified: withholding `XmlTextTest`'s two `unescape` tests drops `XmlText` to LINE
-    // **6/12 = 0.50** and this floor fails -- *"Rule violated for class app.muplay.cast.soap.XmlText:
-    // lines covered ratio is 0.50, but expected minimum is 0.90"*. Nothing else in this module
-    // calls `unescape`; Task 4's DIDL round trip will be the second caller.
+    // Falsified, and RE-MEASURED in that fix round because the note here had gone stale in the way
+    // it predicted itself: it said withholding `XmlTextTest`'s two `unescape` tests drops `XmlText`
+    // to LINE 6/12 = 0.50, and added *"Task 4's DIDL round trip will be the second caller"*. Task 4
+    // landed. Withholding those two alone now leaves `XmlText` at **12/12 = 1.0000 and this floor
+    // GREEN**. What fires it is those two together with `DidlLiteTest`'s two decoding tests --
+    // `didl survives being embedded in a soap envelope and read back out` and `the metadata
+    // argument carries the document escaped exactly once` -- which drops `XmlText` to
+    // **6/12 = 0.50**: *"Rule violated for class app.muplay.cast.soap.XmlText: lines covered ratio
+    // is 0.50, but expected minimum is 0.90"*.
+    //
+    // The `SoapClient*` half of this floor is the honest weak one, and the measurement is recorded
+    // rather than hidden: withholding all four of `SoapClientTest`'s failure-path tests (`a
+    // renderer that has gone away`, `a refused action throws with the device's own error code`, `a
+    // status this client cannot read`, `a 200 with no response element is a transport failure`)
+    // leaves `invoke$2` at LINE **18/19 = 0.9474** -- still green -- while its BRANCH falls to
+    // 5/8 = 0.6250. That is what a LINE floor over a class whose every line has several callers
+    // buys, and it is why the four mutation probes on `SoapClient` in `ci/mutation-probes.sh`, not
+    // this floor, are what actually holds that class.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",

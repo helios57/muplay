@@ -158,10 +158,27 @@ class FakeRendererStrictnessTest {
     }
   }
 
+  /**
+   * The fake hardens its parse the way `SoapEnvelope`'s response parse does -- a test double laxer
+   * about XXE than the parser it stands in for teaches the suite the wrong lesson about what is
+   * acceptable.
+   *
+   * **Stated because it is the contract, not because it discriminates on the guard it names**, and
+   * that was measured rather than assumed: deleting the `SoapEnvelope.declaresDoctype` call from
+   * `soapArgumentsOf` reddens **nothing at all**, because on this JVM the `disallow-doctype-decl`
+   * feature refuses the document anyway and the arguments come back `null` either way. It is the
+   * same blind spot `SoapEnvelopeTest`'s own doctype test records for `parseFault`, and for the
+   * same reason: the platform the in-code scan exists for is Android, where that feature is
+   * expected to be refused at `setFeature`, and no tier of this project can observe it.
+   *
+   * What this test does discriminate is the renderer's *answer*: with the fault removed from the
+   * unparseable-body path it goes green at 200 instead of 401, which is the
+   * `soap/fake-accepts-unparseable-body` probe. And the guard's own decision is gated where it can
+   * be -- `declaresDoctype` is shared with `SoapEnvelope` rather than copied, so
+   * `SoapEnvelopeTest`'s falsifiable predicate assertion covers this call site too.
+   */
   @Test
   fun `a body carrying a DOCTYPE is refused rather than parsed`() {
-    // The fake hardens its parse the way `SoapEnvelope.bodyOf` does. A test double laxer about XXE
-    // than the parser it stands in for teaches the suite the wrong lesson about what is acceptable.
     val body = "<!DOCTYPE s:Envelope [<!ENTITY xxe SYSTEM \"file:///etc/hostname\">]>" +
       envelopeWithVerbatimValues("Stop", listOf(SoapArgument("InstanceID", "0")))
 
