@@ -23,7 +23,30 @@ jobs:
     # An emulator boot plus a full debug + androidTest assembly is the bulk of this; 45 minutes is
     # slack over the measured local run, not a target.
     #
-    # Left at 45 when `:core:media` joined the script below (Plan 3 Task 2), and the measurement
+    # **Raised from 45 to 60 at Plan 3 Task 10, and here is what was measured rather than
+    # guessed.** On the same 24-core/47 GB machine, with every APK already assembled, the four
+    # connected suites in the `script:` block below take **7 min 43 s** wall clock end to end
+    # (`:core:media` 119 tests, `:core:database` 120, `:app` 31, `:feature:player` 24 = 294), and
+    # the two coverage steps at the bottom of this job take a further **2 min 26 s** (the report
+    # step runs every module's JVM `test` task). That is ~10 minutes of *measured* work before an
+    # emulator has been downloaded or booted and before a single line has been compiled on a
+    # 4-core runner. It was ~1 minute of test execution when 45 was chosen.
+    #
+    # This job now plays real audio in real time, repeatedly, and that part is irreducible:
+    # `GaplessTest` alone runs two 15-second experiments, `PlaybackJourneyTest` is 58 s of which
+    # most is spent waiting for a position readout to actually reach a later second, and
+    # `MuPlaybackServiceTest` plays several seconds more, several times over. No hardware removes
+    # it. A gate that starts flaking on its own time limit gets disabled, which is the worst
+    # outcome available here, so the limit moves with the evidence.
+    #
+    # The alternative -- splitting this into two emulator jobs, module suites and app journeys --
+    # was considered and rejected for now: it doubles the ~2 GB system-image pull and the emulator
+    # boot, which are the two largest costs in the job and the two least related to what is being
+    # tested, and it would split the *merged* coverage data this job is the only source of. Revisit
+    # if a real CI run lands past 45 with the emulator time excluded.
+    #
+    # The earlier note, kept because its measurement is still the one for `:core:media` alone:
+    # left at 45 when `:core:media` joined the script below (Plan 3 Task 2), and the measurement
     # behind that: on the same 24-core/47 GB machine Plan 2 Task 10 measured, that suite adds
     # **1 min 16 s** with every task forced to re-run (`--rerun-tasks`, i.e. a fresh assembly,
     # install and run of its debug + androidTest APKs) and **30 s** warm; its nine tests are
@@ -32,7 +55,7 @@ jobs:
     # this remains evidence that the *test* half is nowhere near the budget rather than a
     # measurement of the job. Nothing measurable here justifies moving the limit; the first real
     # CI run is what should be read before anyone does.
-    timeout-minutes: 45
+    timeout-minutes: 60
     # The AVD coordinates, written once. Every step below reads them from here, and
     # `ConventionTest`'s "the emulator coordinates cannot drift" asserts they equal
     # `ci/prepare-emulator.sh`'s own declarations — the same shape as the
@@ -204,9 +227,24 @@ jobs:
           # the only place the 429 retry budget is exercised against a real `Loader`. Its four
           # `MuPlayDataSourceFactoryTest` cases are the slow ones at ~14 s of the suite's 15.8 s;
           # `NavidromeLoadErrorHandlingPolicyTest`'s five are 16 ms together.
+          #
+          # `:feature:player` joined in Plan 3 Task 10, and its omission was a gate that ran
+          # nothing: that module has carried 24 instrumented tests since Task 9 -- the positional
+          # assertions that are the only thing standing between a title/artist swap and a green
+          # build, plus the two security assertions that dump the whole semantics tree and require
+          # it to contain neither an auth token nor a salt -- and no CI job ran a single one of
+          # them. Measured: `:app`'s `PlaybackJourneyTest` happens to cover that module's four
+          # `requiresInstrumentedData` coverage floors on its own (`PlayerScreenKt` 59/61,
+          # `MiniPlayerKt` 48/49, `ArtworkKt` 21/21, `PlayerViewModel$1` 10/10, with
+          # `:feature:player`'s own `.ec` deleted), so the coverage gate below would *not* have
+          # caught the omission either. `ConventionTest`'s `every module with instrumented tests is
+          # run by the emulator job` now holds this list against the repository, so the next module
+          # to grow a `src/androidTest` cannot be forgotten here -- and it earned its place on the first
+          # merge after it was written: `:integrations:core` (17 instrumented tests, Plan 7) was in
+          # exactly the same position, found by that rule, and is now named here too.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that

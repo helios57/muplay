@@ -88,9 +88,23 @@ live in this table — a `queuePosition` column would invert the design.
 ### Structural enforcement
 
 `MuPlayer` is a `ForwardingPlayer` overriding **all six** `setMediaItem(s)`
-overloads to discard the caller's index and position and rehydrate from Room. No
-code path can set a wrong position. (Idea from Voice; implementation written
-fresh — Voice is GPL.)
+overloads to discard the caller's **position** and rehydrate it from Room. No code
+path can set a wrong position. (Idea from Voice; implementation written fresh —
+Voice is GPL.)
+
+> **The index is the caller's; only the position is the policy's.** An earlier
+> wording here said the seam discards "the caller's index and position", and that
+> is wrong in a way a user would notice immediately. The index is *queue
+> membership* — "play track 3 of this album" is a legitimate request, and
+> discarding it unconditionally breaks every tap-a-track-to-play path in the app.
+> `ResumePolicy.resolve(mediaIds, requestedIndex)` is therefore never handed a
+> position, and **must not override the index**: `"play this book"` and `"play
+> chapter 1 from the top"` both arrive as `requestedIndex = 0`, so an override
+> would make tapping chapter 1 jump to chapter 14. An audiobook resumes at chapter
+> 14 by its own launcher *choosing* that index before `setMediaItems` is called.
+> Plan 3 Task 10's `PlaybackJourneyTest` taps **Track 2**, not Track 1, precisely
+> so a start index replaced by a constant is a failing gate rather than a silent
+> one.
 
 Only books get resume treatment. Music restarts from 0 — progress is still
 recorded, just not honoured on prepare.
@@ -224,7 +238,16 @@ otherwise a failed sync is never retried and the mirror stays permanently stale.
   re-issuing the URI, not `AVTransport::Seek`.
 - **Handle HTTP 429** — Navidrome 0.62.0 added `Transcoding.MaxConcurrent`.
   Unhandled, this looks like random playback failure.
-- **Never Opus.** Sonos cannot decode it and Navidrome mislabels it `audio/ogg`.
+- **Never send `estimateContentLength`.** It makes a transcoded response carry a
+  *guessed* `Content-Length`; ExoPlayer trusts that header for seeking and lands in
+  the wrong place with nothing reported anywhere. Preferring `format=raw` gives a
+  real one. (Plan 3 Task 1.)
+- **Never Opus** — Sonos cannot decode it and Navidrome mislabels it `audio/ogg`.
+  "Never" needs a mechanism, so here is the one: `StreamFormat` is a sealed
+  interface with exactly `Raw` and `Mp3`, so `opus` is **unrepresentable** in the
+  type that builds the URL, and `StreamFormat.forSuffix` transcodes both `opus` and
+  `ogg` — the latter because a file suffix cannot distinguish Ogg-Vorbis from
+  Ogg-Opus.
 - ReplayGain is exposed but **not applied server-side**; the client applies it.
 - Gapless has **zero** server support. Use a real Media3 `setMediaItems` queue and
   let ExoPlayer read LAME/iTunSMPB. Never hand-roll.
@@ -287,7 +310,12 @@ a Navidrome URL end-to-end. First audiobook plan closes this.
 ### Other audiobook behaviour
 
 - **Audio focus:** a one-line switch — books use
-  `AudioAttributes.CONTENT_TYPE_SPEECH`, music `CONTENT_TYPE_MUSIC`.
+  `AudioAttributes.CONTENT_TYPE_SPEECH`, music `CONTENT_TYPE_MUSIC`. The switch is
+  one line; **the signal it switches on is the user's own `LibraryRole`
+  assignment**, carried to the player on `MediaMetadata.mediaType`
+  (`MEDIA_TYPE_AUDIO_BOOK_CHAPTER` vs `MEDIA_TYPE_MUSIC`). No server field can
+  answer it: Navidrome hardcodes `child.Type = "music"` for every media file, which
+  is why §4's library scoping is what decides this too.
 - **Smart rewind** on resume, scaled to how long the book was paused.
 - Per-item speed, silence skipping and gain, all stored on the progress row.
 - Sleep timer, with a shake-to-extend affordance.
@@ -349,7 +377,23 @@ surface. A minimal HTTP/1.1 range server is a few hundred lines we own.
 
 ### Permissions
 
-`INTERNET`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
+`INTERNET`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
+
+`FOREGROUND_SERVICE` was missing from this list and is not optional: a foreground
+service needs the plain permission from API 28 as well as the typed one that
+matches its `foregroundServiceType` from API 34, and without either
+`startForeground` throws. Measured, with only the typed one removed and the
+manifest gate temporarily relaxed: nothing fails to build or install, Media3
+swallows the platform refusal and logs `E Util: The service must be declared with a
+foregroundServiceType that includes mediaPlayback`, no media notification is ever
+posted, and `PlaybackJourneyTest.playbackSurvivesTheAppGoingToTheBackground` is the
+gate that goes red. Both permissions and the service's `foregroundServiceType` are
+held present in the **merged** manifest of *every* variant by
+`:app:verifyDebugManifest`/`verifyReleaseManifest`; each entry carries its own
+`android:name="…"` wrapper, because `android.permission.FOREGROUND_SERVICE` is a
+prefix of `android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK` and a bare-name
+list reports the shorter one present in a manifest declaring only the longer.
 
 **Verified by spike S1, on a real API 37 emulator:** `ACCESS_LOCAL_NETWORK`
 gating keys off the app's **`targetSdkVersion`**, not the device API level. At
@@ -415,7 +459,7 @@ pattern and it is the thing that keeps ten modules consistent.
 | Build | AGP, **KSP** (KSP1 is removed; KAPT is dead) | 9.x, 2.3.11 |
 | UI | **Jetpack Compose**, Material 3 | BOM 2026.08.00, M3 1.4.0 |
 | Navigation | **Navigation 3** (stable since 2025-11; NIA has migrated) | 1.1.6 |
-| Player | Media3 + **`media3-ui-compose`** + `-compose-material3` | 1.11.0 |
+| Player | Media3. **`media3-ui-compose` and `-compose-material3` are NOT adopted** — both exist at 1.11.0 and both catalogue aliases exist, but no module declares either; see below | 1.11.0 |
 | Chapters | **`media3-inspector`** (separate artifact) | 1.11.0 |
 | HTTP | OkHttp + **`okhttp-coroutines`** (`Call.executeAsync`) | 5.5.0 |
 | REST | Retrofit + kotlinx.serialization converter | 2.11.x |
@@ -427,11 +471,18 @@ pattern and it is the thing that keeps ten modules consistent.
 | Time | **injected `java.time.Clock`**. `kotlinx-datetime` was listed as an alternative here and is **not** adopted — it is absent from `libs.versions.toml`, and `java.time` is native at `minSdk 26` with no desugaring. §3's schema block has been corrected to match | — |
 | Background | WorkManager — **named here but NOT adopted: absent from `libs.versions.toml`.** No plan currently requires it; add it to the catalogue in the plan that first needs it, and do not assume it is available. | — |
 
-`media3-ui-compose` matters more than its line in the table suggests: it supplies
-`PlayPauseButtonState`, `CurrentMediaItemState`, `PlaylistState` and `ErrorState`
-as real Compose state holders, and `-compose-material3` supplies `Player`,
-`MiniController` and transport controls. Google's guidance is explicit —
-build Compose-first, with no `AndroidView` interop.
+`media3-ui-compose` supplies `PlayPauseButtonState`, `CurrentMediaItemState`,
+`PlaylistState` and `ErrorState` as Compose state holders, and `-compose-material3`
+supplies `Player`, `MiniController` and transport controls.
+
+> **Neither was adopted, and that is a decision with a reason** (Plan 3 Task 9).
+> Those state holders read a `Player` directly. `:feature:player`'s source of truth
+> is `PlaybackConnection`'s `StateFlow` — which is what makes the whole
+> state-to-screen mapping a pure function the fast tier can gate — so they would be
+> a *second*, competing subscription to the same controller. Nothing in either
+> artifact saved code here. The table above asserted a dependency the build does not
+> have; it now says so. Compose-first with no `AndroidView` interop still holds, and
+> is met without them.
 
 ### Kotlin discipline
 
@@ -570,6 +621,23 @@ Real API 37 emulator, hardware-accelerated, against a real Navidrome.
 | Cast | discover and stream to a renderer |
 | Auto / Wear | browse tree and controls from car and watch surfaces |
 
+Plan 3 added `PlaybackJourneyTest` (the position readout on the real screen advances
+at wall-clock rate and the platform's own `AudioManager.isMusicActive()` agrees in
+both directions, the media notification names the track that was tapped, the app's
+own transport controls drive the real session over a queue frozen so the buttons are
+the only thing that can move it, a system media button pauses and resumes, playback
+survives the app going to the background, and a played shuffle never surfaces the
+audiobook) and `MuPlaybackServiceTest` (the real service, a real `MediaController`,
+and the notification the system is holding — in `:app` because `@AndroidEntryPoint`
+needs an `@HiltAndroidApp` application), plus `:core:media`'s own instrumented suite —
+`GaplessTest`, `MuPlayDataSourceFactoryTest`, `MediaCacheTest`, `MediaItemsTest`,
+`QueueRepositoryTest`, `MuPlayerFactoryTest`, `NavidromeLoadErrorHandlingPolicyTest` —
+and `:feature:player`'s `PlayerScreenTest`/`MiniPlayerTest`. Tier 1 gained
+`:core:network`'s live `/rest/stream` assertions (Range → 206/416, accurate
+`Content-Length` on `format=raw`, `Accept-Ranges: none` on a live transcode, and auth
+carried on the URL) and the pure decisions `:core:media` deliberately keeps free of
+Android types.
+
 Tier 2 grows with each plan. **A plan is not done until its journeys are in it.**
 
 #### A correction worth keeping — two Tier 1 rows that could never have fired
@@ -588,6 +656,13 @@ above. The Session row is deleted outright rather than moved: all three of its
 subjects — the browse tree, `onPlaybackResumption` and `isAutomotiveController`
 branching — belong to the Auto/Wear and resume plans, so it was asserting a gate over
 code no plan had yet written.
+
+**Both edits confirmed still applied at the end of Plan 3** (Task 10 was asked to
+check, because a correction that gets reverted by a later merge is worse than one
+never made). Deleting the Session row rather than moving it was the stronger call and
+it stands: two of its three subjects still do not exist, and a Tier 2 row naming them
+would be a second gate that has never fired. The plan that writes them owns adding it
+back.
 
 ### Tooling notes that are not obvious
 

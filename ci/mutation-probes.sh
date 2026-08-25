@@ -560,14 +560,14 @@ PROBES = [
      # `expected failures` above -- a count above 1 is a measurement, and it goes stale when tests
      # are added.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 6),
+     "knows", 8),
     ("album/load-album-id-hardcoded", ALBUM_VM,
      "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
      'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
      # 4 -> 7, same cause as the probe above; this one additionally reddens the album-call-count
      # assertion in `an album still being fetched is Loading...`.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 7),
+     "knows", 9),
 
     # ---- Task 9 / review round 1 (task-9-review.md): the values no test observed ---------------
     # N-2, N-3 and N-5. Every one of these mutations left all 34 of this module's tests green when
@@ -587,7 +587,7 @@ PROBES = [
      "the library selector carries every library, exactly, in the order the mirror gave them", 2),
     ("library/shuffled-order-reversed", LIBRARY_STATE,
      "    shuffled = shuffle?.songs.orEmpty(),", "    shuffled = shuffle?.songs.orEmpty().reversed(),",
-     "shuffle order is the order the shuffle produced, not resorted", 2),
+     "shuffle order is the order the shuffle produced, not resorted", 4),
     ("library/search-results-resorted", LIBRARY_STATE,
      "    albums = if (searching) searchAlbums else albums,",
      "    albums = if (searching) searchAlbums.sortedBy { it.name } else albums,",
@@ -658,7 +658,7 @@ PROBES = [
      # 5: the opus case, the ogg case, the case-insensitive pair, the caller's-bitrate pair and
      # (since the N-1 fix, 4 -> 5) the whole-family case all observe a transcode that no longer
      # happens.
-     "an opus source is transcoded rather than streamed raw", 5),
+     "an opus source is transcoded rather than streamed raw", 6),
     ("format/always-mp3", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Mp3(transcodeBitRateKbps)",
@@ -942,11 +942,11 @@ PROBES = [
     ("queue/startIndex-hardcoded", PLAYBACK_QUEUE,
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, 0)",
-     "a start index outside the queue is rejected", 2),
+     "a start index outside the queue is rejected", 4),
     ("queue/songAt-index", PLAYBACK_QUEUE,
      "  fun songAt(index: Int): Song = songs[index]",
      "  fun songAt(index: Int): Song = songs[0]",
-     "songAt returns the song at that index", 1),
+     "songAt returns the song at that index", 2),
     # Found by this task's own audit, not by its brief: the brief's test observed `size` at
     # exactly one value (3, over a three-song queue), so `get() = 3` passed the whole suite.
     # Measured both ways -- 0 failures before a second, disjoint observation was added, 1 after.
@@ -958,7 +958,7 @@ PROBES = [
     ("queue/songs-reversed", PLAYBACK_QUEUE,
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.reversed(), startIndex)",
-     "a queue holds the songs it was given in the order it was given them", 2),
+     "a queue holds the songs it was given in the order it was given them", 5),
     # ---- Plan 6 Task 1: the cast module's own codec and its local-network rule ----------------
     # Every count below was measured by applying the mutation by hand and reading the result XML;
     # see task-1-report.md for the transcripts. Counts above 1 are the probe reddening more than
@@ -971,7 +971,7 @@ PROBES = [
      # LOCATION, and a null LOCATION is a device that never appears with nothing reported anywhere.
      # 7 until the security review added `two content lengths that disagree are refused` -- which
      # reads a header, so a case-sensitive lookup reddens it too. Re-measured, not adjusted.
-     "a header is found whatever case the peer used", 8),
+     "a header is found whatever case the peer used", 9),
     ("cast/render-bare-lf", CAST_WIRE,
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(CRLF)",
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(\"\\n\")",
@@ -993,12 +993,12 @@ PROBES = [
      # 6 until the security review gave this rule its inbound half: `isLocalPeer` and
      # `acceptLocal` ask the same question, so a rule that permits everything reddens their tests
      # too. Re-measured, not adjusted.
-     "a public address is not local", 8),
+     "a public address is not local", 11),
     ("cast/no-local-guard", CAST_CLIENT,
      "    LocalNetworkOnly.require(host, address)\n", "",
      # The mutation that matters most in this module: without that one line MuPlay becomes an app
      # that will send plaintext anywhere it is pointed, and every other test stays green.
-     "a public address is refused before a socket is opened", 1),
+     "a public address is refused before a socket is opened", 2),
     # The anchor moved in the security review: every header line, this one included, now goes
     # through `HttpWire.headerLine`, which is the single place the CR/LF check can live. Same
     # mutation, same named test.
@@ -1139,7 +1139,7 @@ PROBES = [
     ("baseurl/service-order", INTEGRATION_SERVICE,
      '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
      '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
-     "the service display names are the ones a user reads", 1),
+     "the service display names are the ones a user reads", 2),
 
     # ---- Plan 3 Task 4, review round 1: what the queue's order and field assertions could not see
     # Appended here rather than folded into the Task 4 block above, so the block stays the record of
@@ -1383,14 +1383,14 @@ PROBES = [
      # is nested inside its deviceList beside a MediaServer. A parser that reads
      # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
      # requirement is silently absent.
-     "a cast device is built from the sonos root and knows it is a sonos", 8),
+     "a cast device is built from the sonos root and knows it is a sonos", 10),
     ("discovery/anything-is-castable", DISCOVERY_DEVICE,
      "        }\n        ?: return null\n",
      '        }\n        ?: (root to UpnpService("", "", descriptionUrl, null))\n',
      # The other direction: a NAS, a router's UPnP IGD and Sonos's own MediaServer all answer SSDP
      # and none of them can be cast to. Letting one through fails at SetAVTransportURI with UPnP
      # error 401, long after the user chose it.
-     "a device with no AVTransport anywhere is not a cast device", 13),
+     "a device with no AVTransport anywhere is not a cast device", 12),
     ("discovery/unsorted-picker", DISCOVERY_DIR,
      "val devices = (found + recovered).sortedWith(BY_NAME_THEN_UDN)",
      "val devices = (found + recovered)",

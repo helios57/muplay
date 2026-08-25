@@ -8,9 +8,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import app.muplay.database.SyncWatermarkEntryPoint
-import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -28,8 +25,11 @@ import org.junit.runner.RunWith
  * `.github/workflows/e2e.yml` runs and which a local run must run too. See
  * `FirstRunJourneyTest`'s own documentation for what each one costs when it is missing.
  *
- * [reachLibraryScreen] makes every test here independent of which test ran before it: the app
- * opens on setup or on the library depending on stored state, and this helper handles both.
+ * `JourneyNavigation.kt`'s shared [reachLibraryScreen] makes every test here independent of which
+ * test ran before it: the app opens on setup or on the library depending on stored state, and that
+ * helper handles both. It lives outside this class because `ScopedShuffleJourneyTest` and
+ * `PlaybackJourneyTest` walk the same path, and three copies of it is how a label change reddens
+ * two suites and quietly fixes the third.
  */
 @RunWith(AndroidJUnit4::class)
 class BrowseJourneyTest {
@@ -39,7 +39,7 @@ class BrowseJourneyTest {
 
   @Test
   fun theLibraryScreenListsTheAlbumsOfTheSelectedLibrary() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
 
     // The seeded music library: one album, "Test Album", from ci/seed-fixtures.sh. A contract on
     // real server state, not on a response shape.
@@ -52,7 +52,7 @@ class BrowseJourneyTest {
 
   @Test
   fun switchingLibraryShowsTheOtherLibrarysContentAndOnlyThat() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
 
     composeRule.onAllNodesWithText(AUDIOBOOK_LIBRARY)[LIBRARY_CHIP].performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
@@ -67,7 +67,7 @@ class BrowseJourneyTest {
 
   @Test
   fun openingAnAlbumShowsItsTracks() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
 
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes().isNotEmpty()
@@ -84,7 +84,7 @@ class BrowseJourneyTest {
 
   @Test
   fun searchNarrowsTheListAndClearingItRestoresTheList() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(MUSIC_ALBUM).fetchSemanticsNodes().isNotEmpty()
     }
@@ -112,7 +112,7 @@ class BrowseJourneyTest {
    */
   @Test
   fun searchFindsTheAlbumByAPartialName() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
     // The list has to have been there *before* the search, or "it came back" proves nothing.
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(MUSIC_ALBUM).fetchSemanticsNodes().isNotEmpty()
@@ -156,7 +156,7 @@ class BrowseJourneyTest {
    */
   @Test
   fun theLibraryCanBeRefreshedFromTheScreen() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
 
     // The app's own launch sync has to be finished before this test may make the mirror stale on
     // purpose. On a cold install `LibraryViewModel.init`'s refresh is a full reconcile that stores
@@ -169,8 +169,8 @@ class BrowseJourneyTest {
     // Provably stale, and provably so *before* the click: an assertion that a value changed is
     // worth nothing without having read its starting value. A sentinel rather than `clear()`, so
     // that "the refresh wrote this" and "something left it null" cannot be confused.
-    runBlocking { watermarkDao().store(STALE_WATERMARK) }
-    check(runBlocking { watermarkDao().read() } == STALE_WATERMARK) {
+    runBlocking { journeyWatermarkDao().store(STALE_WATERMARK) }
+    check(runBlocking { journeyWatermarkDao().read() } == STALE_WATERMARK) {
       "the watermark was not made stale, so this test could not tell a refresh from a no-op"
     }
 
@@ -180,17 +180,10 @@ class BrowseJourneyTest {
     // A reconcile ran, all the way through to its own last step: `SyncEngine` stores the watermark
     // only after every library's replacement transaction has committed.
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      runBlocking { watermarkDao().read() }.let { it != null && it != STALE_WATERMARK }
+      runBlocking { journeyWatermarkDao().read() }.let { it != null && it != STALE_WATERMARK }
     }
     composeRule.onNodeWithText(MUSIC_ALBUM).assertIsDisplayed()
   }
-
-  /** The real singleton [app.muplay.database.dao.SyncWatermarkDao] the app itself syncs through. */
-  private fun watermarkDao() =
-    EntryPointAccessors.fromApplication(
-      InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
-      SyncWatermarkEntryPoint::class.java,
-    ).syncWatermarkDao()
 
   /**
    * Spec §7: *"Predictive back is default-on and must be implemented."*
@@ -204,7 +197,7 @@ class BrowseJourneyTest {
    */
   @Test
   fun backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp() {
-    reachLibraryScreen()
+    composeRule.reachLibraryScreen()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
@@ -229,89 +222,24 @@ class BrowseJourneyTest {
   }
 
   /**
-   * Drives the app from whatever state it opened in to a settled library screen.
-   *
-   * The app opens on setup when no credentials are stored **or** any library is still untagged,
-   * and on the library otherwise — so which branch this takes depends on what earlier tests in
-   * the same instrumentation run left behind. Handling both here is what makes every test in this
-   * class independent of run order, without any test needing to clear app data (which, from
-   * inside the app's own process, is not something a test can do cleanly).
-   *
-   * Two things the brief's version of this helper did not do, both required for it to work
-   * against the real app rather than against a description of it:
-   *
-   * 1. **It waits for the start destination to be decided before reading it.**
-   *    `StartDestinationViewModel` opens on `StartDestination.Loading`, which renders nothing at
-   *    all, so a bare `onAllNodesWithText(SERVER_URL_LABEL).isNotEmpty()` taken immediately after
-   *    launch answers "no setup needed" for the Loading frame and every test then dies on a
-   *    30-second timeout waiting for a screen it never navigated to.
-   * 2. **It waits for the launch sync to settle.** `LibraryViewModel.init` calls `refresh()`, and
-   *    on a first run that is what populates the mirror. Returning as soon as the Shuffle button
-   *    exists hands every caller a screen whose album list is still empty.
-   *
-   * The role chips are found by their own `"Tag as …"` labels, not by the bare library names the
-   * brief indexed into: `SetupScreen` deliberately labels them distinctly (see its own doc, and
-   * `FirstRunJourneyTest`'s), so `onAllNodesWithText("Music")` matches exactly one node — the
-   * library's *name* — and indices 1 and 2 into it do not exist.
-   */
-  private fun reachLibraryScreen() {
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SERVER_URL_LABEL).fetchSemanticsNodes().isNotEmpty() ||
-        composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
-    }
-    val needsSetup = composeRule.onAllNodesWithText(SERVER_URL_LABEL).fetchSemanticsNodes().isNotEmpty()
-    if (needsSetup) {
-      composeRule.onNodeWithText(SERVER_URL_LABEL).performTextInput(SERVER_URL)
-      composeRule.onNodeWithText(USERNAME_LABEL).performTextInput(USERNAME)
-      composeRule.onNodeWithText(PASSWORD_LABEL).performTextInput(PASSWORD)
-      composeRule.onNodeWithText(CONNECT_LABEL).performClick()
-
-      composeRule.waitUntil(TIMEOUT_MILLIS) {
-        composeRule.onAllNodesWithText(CONTINUE_LABEL).fetchSemanticsNodes().isNotEmpty()
-      }
-      composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick()
-      composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick()
-      composeRule.onNodeWithText(CONTINUE_LABEL).performClick()
-    }
-
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
-    }
-    // The launch sync has committed at least once, so the mirror really holds the seeded content.
-    // See this helper's own doc, point 2, and `theLibraryCanBeRefreshedFromTheScreen` for why the
-    // watermark rather than the on-screen "Checking the server for changes…" message.
-    composeRule.waitUntil(TIMEOUT_MILLIS) { runBlocking { watermarkDao().read() } != null }
-  }
-
-  /**
    * Blocks until two reads [SETTLE_MILLIS] apart return the same non-null watermark, i.e. until
    * nothing is still writing it.
    */
   private fun awaitQuietWatermark() {
     val deadline = System.currentTimeMillis() + TIMEOUT_MILLIS
     while (System.currentTimeMillis() < deadline) {
-      val first = runBlocking { watermarkDao().read() }
+      val first = runBlocking { journeyWatermarkDao().read() }
       Thread.sleep(SETTLE_MILLIS)
-      if (first != null && first == runBlocking { watermarkDao().read() }) return
+      if (first != null && first == runBlocking { journeyWatermarkDao().read() }) return
     }
     error("the sync watermark never settled: something is still reconciling after $TIMEOUT_MILLIS ms")
   }
 
   private companion object {
-    const val SERVER_URL = "http://localhost:4533"
-    const val USERNAME = "admin"
-    const val PASSWORD = "testpass"
-
     // The literal strings the real screens render. Duplicated from the production code rather
     // than shared with it: these journeys are a black-box walk through what a user sees, and a
-    // shared constant would let a change to that pass unnoticed.
-    const val SERVER_URL_LABEL = "Server URL"
-    const val USERNAME_LABEL = "Username"
-    const val PASSWORD_LABEL = "Password"
-    const val CONNECT_LABEL = "Connect"
-    const val CONTINUE_LABEL = "Continue"
-    const val TAG_AS_MUSIC_LABEL = "Tag as Music"
-    const val TAG_AS_AUDIOBOOKS_LABEL = "Tag as Audiobooks"
+    // shared constant would let a change to that pass unnoticed. The credentials and the setup
+    // screen's own labels moved to `JourneyNavigation.kt` with the walk that types them in.
     const val SEARCH_LABEL = "Search this library"
     const val SHUFFLE_LABEL = "Shuffle this library"
     const val REFRESH_LABEL = "Refresh library"
@@ -332,8 +260,6 @@ class BrowseJourneyTest {
     const val AUDIOBOOK_LIBRARY = "Audiobooks"
 
     /** See FirstRunJourneyTest for why these are indices; verify them by running, not by reasoning. */
-    const val MUSIC_ROW_CHIP = 0
-    const val AUDIOBOOKS_ROW_CHIP = 1
     const val LIBRARY_CHIP = 0
     const val FIRST_ALBUM = 0
 

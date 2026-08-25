@@ -436,6 +436,63 @@ class ConventionTest {
    * step in this file (`Upload reports`) legitimately has an `if: failure()` of its own, and a
    * whole-file `doesNotContain` would flag that unrelated, correct line.
    */
+  /**
+   * **Every module that has instrumented tests is named in the one job that runs them.**
+   *
+   * A module can grow a `src/androidTest` source set, fill it with tests, wire coverage floors to
+   * the data they produce, and have not one of them ever run in CI -- because the emulator job's
+   * `script:` block is a hand-written list of Gradle task paths and nothing checks it against the
+   * repository. That is not hypothetical: `:feature:player` gained 24 instrumented tests in Plan 3
+   * Task 9 (the positional assertions that are the only thing between a title/artist swap and a
+   * green build, plus two that dump the whole semantics tree and require it to carry neither an
+   * auth token nor a salt) and Task 10 found that no CI job had ever run any of them.
+   *
+   * The *coverage* gate does not close this, and that was measured rather than assumed: with
+   * `:feature:player`'s own execution data deleted, `:app`'s journey covers all four of that
+   * module's `requiresInstrumentedData` floors on its own, so the gate stayed green over 24 tests
+   * that never ran. A test suite and the coverage it happens to produce are different things.
+   *
+   * Whole-word matching on `:<path>:connectedDebugAndroidTest`, and the discovered module list is
+   * asserted non-empty first, so a scan that found nothing cannot report success -- the failure
+   * mode this project has now recorded five times.
+   */
+  @Test
+  fun `every module with instrumented tests is run by the emulator job`() {
+    val workflowFile = File(repoRoot(), ".github/workflows/e2e.yml")
+    val workflow = workflowFile.readText()
+
+    val modulesWithDeviceTests = moduleBuildFiles()
+      .map { it.parentFile }
+      .filter { File(it, "src/androidTest").isDirectory }
+      .map { ":" + it.relativeTo(repoRoot()).path.replace(File.separatorChar, ':') }
+      .sorted()
+
+    assertThat(modulesWithDeviceTests)
+      .describedAs("the scan for modules with a src/androidTest source set")
+      .isNotEmpty()
+    // Named, not merely counted: a scan that silently stopped finding `:app` would otherwise pass
+    // this test while the whole journey tier went unrun.
+    assertThat(modulesWithDeviceTests).contains(":app", ":core:media")
+
+    val script = workflow.lines().singleOrNull { it.contains("connectedDebugAndroidTest") }
+    assertThat(script)
+      .describedAs(
+        "${workflowFile.path} must have exactly one line invoking connectedDebugAndroidTest; " +
+          "this test cannot check a list it cannot find",
+      )
+      .isNotNull()
+
+    val missing = modulesWithDeviceTests.filterNot {
+      checkNotNull(script).contains("$it:connectedDebugAndroidTest")
+    }
+    assertThat(missing)
+      .describedAs(
+        "${workflowFile.path}'s emulator script does not run these modules' instrumented tests, " +
+          "so they exist and never execute in CI",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `pr yml still runs the destructive-migration gate, unqualified`() {
     val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
