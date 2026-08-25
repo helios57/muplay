@@ -1,12 +1,24 @@
 package app.muplay
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
+import app.muplay.setup.LibraryRepositoryEntryPoint
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -54,6 +66,44 @@ class FirstRunJourneyTest {
   @get:Rule
   val composeRule = createAndroidComposeRule<MainActivity>()
 
+  /**
+   * Resets every library back to [LibraryRole.UNASSIGNED] before each test.
+   *
+   * The Room database this app writes to is a real file on the emulator, shared by every test
+   * method in this class across the *same* instrumentation process -- unlike the Activity, which
+   * `composeRule` relaunches fresh per test, nothing recreates the database between methods.
+   * JUnit4 does not guarantee method execution order (no `@FixMethodOrder` is declared here, nor
+   * should there be one for a black-box journey), so a test that tags every library --
+   * [completingEveryTagReachesReadyAndShowsSetupComplete], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
+   * -- can and did run before a later test that needs a fresh, untagged start: observed directly,
+   * the first version of this suite without this reset flaked exactly that way, with
+   * `Continue` already enabled before either role chip had been tapped.
+   *
+   * Reached through [LibraryRepositoryEntryPoint] (declared in `:feature:setup`, not here) — see
+   * that interface's own doc for why an `@EntryPoint` declared in this `androidTest` source set
+   * cannot be used the same way: it would not be part of the real `MuPlayApplication`'s generated
+   * Hilt component at all.
+   */
+  @Before
+  fun resetLibraryTagging() = runBlocking {
+    val repository = libraryRepository()
+    repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
+  }
+
+  /**
+   * The real, singleton `LibraryRepository` the app's own `SetupViewModel` writes through --
+   * shared by [resetLibraryTagging] and by [readPersistedLibraries], which
+   * [completingEveryTagReachesReadyAndShowsSetupComplete] uses to prove a role actually got
+   * written, not merely displayed.
+   */
+  private fun libraryRepository() =
+    EntryPointAccessors.fromApplication(
+      InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+      LibraryRepositoryEntryPoint::class.java,
+    ).libraryRepository()
+
+  private fun readPersistedLibraries(): List<MusicLibrary> = runBlocking { libraryRepository().libraries.first() }
+
   @Test
   fun firstRunConnectsToNavidromeAndListsBothSeededLibraries() {
     connectAs(PASSWORD)
@@ -65,8 +115,93 @@ class FirstRunJourneyTest {
 
     // The contract on server state: both seeded libraries, by name. `ci/configure-libraries.sh`
     // renames Navidrome's pinned library 1 to "Music" and creates "Audiobooks" as library 2.
+    //
+    // A bare `onNodeWithText` is safe here specifically because the role chips are labelled
+    // "Tag as Music"/"Tag as Audiobooks" (see SetupScreen's Tagging branch), not the bare
+    // "Music"/"Audiobooks" an earlier draft used -- that draft made this exact assertion pass on
+    // any server with two libraries called anything at all, because `onAllNodesWithText("Music")`
+    // picking an index by *position* cannot tell a chip from a name if both carry the same text.
+    // A selector that can only match the name is what makes this genuinely a contract on server
+    // state again.
     composeRule.onNodeWithText("Music").assertIsDisplayed()
     composeRule.onNodeWithText("Audiobooks").assertIsDisplayed()
+  }
+
+  /**
+   * Walks all the way to [app.muplay.setup.SetupUiState.Ready] and checks what actually renders
+   * there, not just that the state transition happened -- and, more importantly, reads the real
+   * persisted role back through [LibraryRepositoryEntryPoint] rather than trusting the screen.
+   *
+   * Tags each library **twice**, at two different roles, before moving on -- first to match its
+   * own name, then the opposite -- and reads the persisted role back after each round. A single
+   * observation per library (the original version of this test: opposite-of-name, once) cannot
+   * tell a real per-tap write from a sink that ignores `role` entirely and returns a constant
+   * keyed on the library id (`if (musicFolderId == 1) AUDIOBOOKS else MUSIC`) -- that mutant
+   * "coincidentally" matches whichever single value each library was ever tagged, and previously
+   * left `:feature:setup:test` and `:app:connectedDebugAndroidTest` fully green. Two disjoint
+   * observations of the *same* id at two different roles is what rules that out.
+   *
+   * The final, opposite-of-name round is also what defeats a hardcoded, inverted, or swapped
+   * role: a mutant that hardcodes (or swaps, or inverts) the role "coincidentally" produces the
+   * name-matching answer the first round asserts, but not the opposite answer the second round
+   * asserts. Confirmed directly: with only matching-name tagging, both the `@Inject` ctor's
+   * `libraryRepository.setRole(musicFolderId, LibraryRole.MUSIC)` (role hardcoded) and the two
+   * `FilterChip` role literals in `SetupScreen` swapped left every test in both tiers green.
+   *
+   * Each tap also asserts [assertIsSelected] on the chip just clicked: the two `FilterChip`
+   * `selected =` predicates are the user's only feedback on which role is recorded, and were
+   * previously unobserved by any test -- a mutant that swapped them would light up the *other*
+   * chip than the one tapped, inviting a user to "correct" it by hand and genuinely mis-tag the
+   * library, while every persisted-role assertion here kept passing.
+   *
+   * The read-back after the final round also closes the coverage gap the state-transition
+   * assertion alone found: without walking to `Ready` at all, JaCoCo reported `SetupScreenKt`'s
+   * `is SetupUiState.Ready ->` source line as "covered", because Kotlin compiles an exhaustive
+   * sealed `when` as a chain of `instanceof` checks -- the `Ready` check itself runs on *every*
+   * composition regardless of which state is current, so the line lit up green while the branch
+   * it guards, and the text it renders, had never once executed.
+   */
+  @Test
+  fun completingEveryTagReachesReadyAndShowsSetupComplete() {
+    connectAs(PASSWORD)
+
+    // First round: each library tagged to match its own name -- the first of two disjoint
+    // observations of each id's role.
+    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick().assertIsSelected()
+    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
+    val afterNameMatchingTaps = readPersistedLibraries()
+    assertEquals(LibraryRole.MUSIC, afterNameMatchingTaps.single { it.id == MUSIC_LIBRARY_ID }.role)
+    assertEquals(LibraryRole.AUDIOBOOKS, afterNameMatchingTaps.single { it.id == AUDIOBOOKS_LIBRARY_ID }.role)
+
+    // Second, final round: each library re-tagged the opposite way -- the second, disjoint
+    // observation of the same two ids, and the state this test's other assertions build on.
+    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[MUSIC_ROW_CHIP].performClick().assertIsSelected()
+    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
+
+    composeRule.onNodeWithText("Setup complete").assertIsDisplayed()
+
+    // The read-back that actually proves it: reached through the real LibraryRepository, the
+    // same singleton the app's own SetupViewModel and its @Inject-constructed SetupLibrarySink
+    // write through -- not through what the screen merely displays.
+    val libraries = readPersistedLibraries()
+    assertEquals(LibraryRole.AUDIOBOOKS, libraries.single { it.id == MUSIC_LIBRARY_ID }.role)
+    assertEquals(LibraryRole.MUSIC, libraries.single { it.id == AUDIOBOOKS_LIBRARY_ID }.role)
+  }
+
+  @Test
+  fun theFlowCannotBeFinishedUntilEveryLibraryIsTagged() {
+    connectAs(PASSWORD)
+
+    // Both libraries untagged: Continue is inert. This is the assertion that keeps the tagging
+    // step from becoming skippable, and an untagged library is invisible to browse and shuffle.
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsNotEnabled()
+
+    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsNotEnabled()
+
+    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick()
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled()
   }
 
   /**
@@ -136,6 +271,42 @@ class FirstRunJourneyTest {
     const val PASSWORD_LABEL = "Password"
     const val CONNECT_LABEL = "Connect"
     const val CONNECTING_LABEL = "Connecting…"
+    const val CONTINUE_LABEL = "Continue"
+
+    /**
+     * The two role chips' own labels -- distinct from the bare library-name text on purpose (see
+     * SetupScreen's own doc on this): a first draft of this suite labelled the chips "Music"/
+     * "Audiobooks" too, which made every `onNodeWithText("Music")` ambiguous the moment a chip and
+     * a library name could carry the identical string, and (worse, found on review) made the
+     * server-state assertion in [firstRunConnectsToNavidromeAndListsBothSeededLibraries] pass on
+     * any server with two libraries called anything at all.
+     */
+    const val TAG_AS_MUSIC_LABEL = "Tag as Music"
+    const val TAG_AS_AUDIOBOOKS_LABEL = "Tag as Audiobooks"
+
+    /**
+     * Every library row renders **both** role chips, so each label above still matches two nodes
+     * (one per row) -- `onAllNodesWithText(TAG_AS_MUSIC_LABEL)` matches the Music row's own chip
+     * and the Audiobooks row's chip, in that document order, and likewise for
+     * `TAG_AS_AUDIOBOOKS_LABEL`. `MUSIC_ROW_CHIP`/`AUDIOBOOKS_ROW_CHIP` name that row position, not
+     * a role, so the same pair of constants indexes into either label's node list depending on
+     * which library a given test means to tag.
+     *
+     * Indices rather than test tags, deliberately: this journey is a black-box walk through what
+     * a user sees, and adding tags to the production UI purely so a test can find things makes
+     * the test pass on a screen the user could not use.
+     */
+    const val MUSIC_ROW_CHIP = 0
+    const val AUDIOBOOKS_ROW_CHIP = 1
+
+    /**
+     * The seeded libraries' real Subsonic ids, per `ci/configure-libraries.sh`: Navidrome's
+     * pinned library 1 is renamed "Music"; "Audiobooks" is created after it and gets id 2. Used
+     * only to read back a specific library's role through [LibraryRepositoryEntryPoint] -- by id,
+     * not by name, so that read-back cannot itself be satisfied by a name-based coincidence.
+     */
+    const val MUSIC_LIBRARY_ID = 1
+    const val AUDIOBOOKS_LIBRARY_ID = 2
 
     /**
      * Generous on purpose. A first `ping` against an already-running container on a

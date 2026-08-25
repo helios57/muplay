@@ -26,7 +26,12 @@ fun MuPlayApp(modifier: Modifier = Modifier) {
     modifier = modifier,
     entryProvider = entryProvider {
       entry<SetupRoute> {
-        SetupScreen()
+        // No destination exists past setup yet -- library browse lands in a later task -- so
+        // there is nothing to navigate to on completion. `onSetupComplete = {}` is a real,
+        // deliberate no-op rather than an omission: `SetupScreen`'s signature makes the callback
+        // mandatory precisely so a future destination cannot be wired in without this call site
+        // being touched.
+        SetupScreen(onSetupComplete = {})
       }
     },
   )

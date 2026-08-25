@@ -1,296 +1,337 @@
 package app.muplay.setup
 
-import androidx.lifecycle.viewModelScope
 import app.cash.turbine.test
+import app.muplay.model.Album
+import app.muplay.model.AlbumListType
+import app.muplay.model.AlbumWithSongs
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.ScanStatus
+import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
+import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicErrorException
 import app.muplay.network.SubsonicHttpException
+import app.muplay.network.SubsonicSource
 import java.io.IOException
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import mockwebserver3.MockResponse
-import mockwebserver3.MockWebServer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
-/**
- * TDD against a hand-written fake for the Subsonic client — no mock framework, no real network.
- * [SetupViewModel]'s `ping` and `fetchLibraries` constructor parameters are the seams: plain
- * suspend functions, faked per test with lambdas that return canned data or throw the exact
- * exception type [SetupViewModel.connect] is supposed to distinguish — including a lambda that
- * fails the test outright if it is called at all, which is how the ordering between the two is
- * asserted. Turbine asserts the exact [SetupUiState]
- * sequence a `connect()` call produces, in particular that [SetupUiState.Connecting] is a real,
- * separately observable state and not skipped straight to the terminal one.
- *
- * `Dispatchers.Main` is replaced with [UnconfinedTestDispatcher] so `viewModelScope.launch` runs
- * eagerly: a fake `ping` that suspends on a [CompletableDeferred] genuinely pauses the coroutine
- * at that point (letting a test observe [SetupUiState.Connecting] in between), while a fake that
- * returns or throws immediately runs to completion synchronously, so tests that only care about
- * the final state can read `uiState.value` directly without any manual dispatcher advancing.
- */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SetupViewModelTest {
 
-  @BeforeEach
-  fun setUp() {
-    Dispatchers.setMain(UnconfinedTestDispatcher())
+  /** A minimal hand-written source: nothing but the two commands setup makes. */
+  private class StubSource(
+    private val pingResult: () -> ServerInfo,
+    private val folders: List<MusicLibrary> = emptyList(),
+  ) : SubsonicSource {
+    override suspend fun ping(): ServerInfo = pingResult()
+    override suspend fun getMusicFolders(): List<MusicLibrary> = folders
+    override suspend fun getScanStatus(): ScanStatus = error("not used by setup")
+    override suspend fun getAlbumList2(musicFolderId: Int, type: AlbumListType, size: Int, offset: Int): List<Album> =
+      error("not used by setup")
+    override suspend fun getAlbum(albumId: String, musicFolderId: Int): AlbumWithSongs =
+      error("not used by setup")
+    override suspend fun search3(query: String, musicFolderId: Int, artistCount: Int, albumCount: Int, songCount: Int): SearchResults =
+      error("not used by setup")
+    override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> =
+      error("not used by setup")
+    override fun coverArtUrl(coverArtId: String, sizePx: Int?): String = error("not used by setup")
   }
+
+  /**
+   * Records what setup stored, in place of the real Keystore-backed store. Appends to the shared
+   * [callOrder] on every save -- `connect`'s doc claims credentials are stored *before* libraries
+   * are fetched, and a bare `saved != null` check cannot tell that claim from its reverse.
+   */
+  private class RecordingCredentials(private val callOrder: MutableList<String>) : SetupCredentialSink {
+    var saved: SubsonicCredentials? = null
+    override suspend fun save(credentials: SubsonicCredentials) {
+      saved = credentials
+      callOrder += "save"
+    }
+  }
+
+  /** The library half of the flow, in memory. Also appends to the shared [callOrder]; see above. */
+  private class FakeLibraries(private val callOrder: MutableList<String>) : SetupLibrarySink {
+    var refreshed = 0
+    val roles = mutableMapOf<Int, LibraryRole>()
+    var reported: List<MusicLibrary> = emptyList()
+
+    override suspend fun refreshFromServer() {
+      refreshed++
+      callOrder += "refreshFromServer"
+    }
+    override suspend fun setRole(musicFolderId: Int, role: LibraryRole) { roles[musicFolderId] = role }
+    override suspend fun current(): List<MusicLibrary> =
+      reported.map { it.copy(role = roles[it.id] ?: LibraryRole.UNASSIGNED) }
+  }
+
+  private val dispatcher = StandardTestDispatcher()
+  private val callOrder = mutableListOf<String>()
+  private val credentials = RecordingCredentials(callOrder)
+  private val libraries = FakeLibraries(callOrder)
+
+  @BeforeEach
+  fun setUp() = Dispatchers.setMain(dispatcher)
 
   @AfterEach
-  fun tearDown() {
-    Dispatchers.resetMain()
+  fun tearDown() = Dispatchers.resetMain()
+
+  private fun viewModel(source: SubsonicSource) =
+    SetupViewModel({ source }, credentials, libraries)
+
+  private fun serverInfo() = ServerInfo("navidrome", "0.63.2", "1.16.1", isOpenSubsonic = true)
+
+  @Test
+  fun `a blank url is rejected before any network call`() = runTest(dispatcher) {
+    val vm = viewModel(StubSource({ error("must not be called") }))
+
+    vm.connect("   ", "admin", "testpass")
+
+    assertThat(vm.uiState.value)
+      .isEqualTo(SetupUiState.Failure(SetupFailureReason.InvalidUrl))
+    assertThat(credentials.saved).isNull()
   }
 
   @Test
-  fun `initial state is Idle`() {
-    val viewModel = SetupViewModel(ping = failIfCalled())
+  fun `the server url is trimmed before it is stored`() = runTest(dispatcher) {
+    // `trimmedUrl`, not the raw parameter, is what becomes `SubsonicCredentials.baseUrl` --
+    // previously unobserved: the blank-url test passes with or without `.trim()`, because
+    // "   ".toHttpUrlOrNull() is null either way, so it alone cannot prove trimming happens.
+    libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+    val vm = viewModel(StubSource({ serverInfo() }))
 
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Idle)
+    vm.connect("  http://localhost:4533  ", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(credentials.saved?.baseUrl).isEqualTo("http://localhost:4533")
   }
 
   @Test
-  fun `a successful ping moves from Connecting to Success, not straight to the terminal state`() = runTest {
-    val readyToRespond = CompletableDeferred<Unit>()
-    val viewModel = SetupViewModel(
-      ping = {
-        readyToRespond.await()
-        SERVER_INFO
-      },
-      fetchLibraries = { LIBRARIES },
-    )
+  fun `a successful connect saves the credentials and lists the libraries for tagging`() =
+    runTest(dispatcher) {
+      libraries.reported = listOf(
+        MusicLibrary(1, "Music", LibraryRole.UNASSIGNED),
+        MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
+      )
+      val vm = viewModel(StubSource({ serverInfo() }))
 
-    viewModel.uiState.test {
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
-
-      viewModel.connect(VALID_URL, "alice", "sesame")
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
-
-      readyToRespond.complete(Unit)
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Success(SERVER_INFO, LIBRARIES))
-    }
-  }
-
-  @Test
-  fun `wrong credentials produce a Rejected failure carrying the Subsonic error code`() = runTest {
-    val viewModel = SetupViewModel(
-      ping = { throw SubsonicErrorException(40, "Wrong username or password") },
-    )
-
-    viewModel.connect(VALID_URL, "alice", "wrong")
-
-    assertThat(viewModel.uiState.value).isEqualTo(
-      SetupUiState.Failure(SetupFailureReason.Rejected(code = 40, detail = "Wrong username or password")),
-    )
-  }
-
-  @Test
-  fun `an unreachable server produces Unreachable, distinct from a Rejected failure`() = runTest {
-    val viewModel = SetupViewModel(ping = { throw IOException("Failed to connect") })
-
-    viewModel.connect(VALID_URL, "alice", "sesame")
-
-    val state = viewModel.uiState.value
-    assertThat(state).isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
-    assertThat((state as SetupUiState.Failure).reason)
-      .isNotInstanceOf(SetupFailureReason.Rejected::class.java)
-  }
-
-  @Test
-  fun `an HTTP-level failure is also reported as Rejected, not Unreachable`() = runTest {
-    val viewModel = SetupViewModel(ping = { throw SubsonicHttpException(404) })
-
-    viewModel.connect(VALID_URL, "alice", "sesame")
-
-    assertThat(viewModel.uiState.value).isEqualTo(
-      SetupUiState.Failure(SetupFailureReason.Rejected(code = 404, detail = "Subsonic HTTP error 404")),
-    )
-  }
-
-  @Test
-  fun `a blank URL is rejected before any network call`() = runTest {
-    val viewModel = SetupViewModel(ping = failIfCalled())
-
-    viewModel.connect("   ", "alice", "sesame")
-
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Failure(SetupFailureReason.InvalidUrl))
-  }
-
-  @Test
-  fun `a malformed URL is rejected before any network call`() = runTest {
-    val viewModel = SetupViewModel(ping = failIfCalled())
-
-    viewModel.connect("not a url", "alice", "sesame")
-
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Failure(SetupFailureReason.InvalidUrl))
-  }
-
-  // Proves the catch clause ordering in connect(): a cancelled coroutine must not be
-  // misreported as SetupFailureReason.Unreachable. Cancels the ViewModel's own scope directly
-  // (not the test's), so this exercises exactly the coroutine connect() launches, not Turbine's.
-  @Test
-  fun `cancellation is not reported as a failure state`() = runTest {
-    val neverResponds = CompletableDeferred<ServerInfo>()
-    val viewModel = SetupViewModel(ping = { neverResponds.await() })
-
-    viewModel.connect(VALID_URL, "alice", "sesame")
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Connecting)
-
-    viewModel.viewModelScope.cancel()
-
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Connecting)
-  }
-
-  // Every other test above injects a fake `ping`, so SetupViewModel's *default* constructor
-  // parameter -- a real `SubsonicClient(credentials).ping()` call -- never actually runs; that
-  // gap is exactly what surfaced as `SetupViewModel$1` (the compiled default-lambda class) sitting
-  // at 0% in Task 7's per-module coverage measurement. This exercises the real default wiring
-  // end-to-end, pointed at a real but immediately-refused TCP port (127.0.0.1:1, a reserved port
-  // nothing ever listens on) rather than a real Navidrome container: a refused connection fails
-  // fast and deterministically -- no live server, no timeout, no flakiness -- while still routing
-  // through the genuine `SubsonicClient` + Retrofit + OkHttp stack this seam exists to bypass in
-  // every other test.
-  @Test
-  fun `the default ping wiring performs a real network call that surfaces as Unreachable`() = runTest {
-    val viewModel = SetupViewModel()
-
-    viewModel.uiState.test {
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
-
-      viewModel.connect("http://127.0.0.1:1", "alice", "sesame")
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
-      assertThat(awaitItem()).isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
-    }
-  }
-
-  // Companion to the test above: this exercises *both* default lambdas' success path -- the other
-  // half of each compiled state machine that a refused-connection test alone cannot reach (a
-  // suspend lambda's dispatch differs between "resumed with a value" and "resumed with an
-  // exception"). Real socket, real Retrofit/OkHttp stack, same MockWebServer stance
-  // core/network's SubsonicClientTest documents -- not a fake standing in for the network. Two
-  // responses are enqueued because a successful connect makes two calls, `ping` then
-  // `getMusicFolders`, in that order.
-  @Test
-  fun `the default ping and library wiring performs real network calls that succeed`() = runTest {
-    val server = MockWebServer()
-    server.start()
-    server.enqueue(
-      MockResponse.Builder()
-        .code(200)
-        .addHeader("Content-Type", "application/json")
-        .body(
-          """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
-            """"serverVersion":"0.63.2","openSubsonic":true}}""",
-        )
-        .build(),
-    )
-    server.enqueue(
-      MockResponse.Builder()
-        .code(200)
-        .addHeader("Content-Type", "application/json")
-        .body(
-          """{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome",""" +
-            """"serverVersion":"0.63.2","openSubsonic":true,"musicFolders":{"musicFolder":""" +
-            """[{"id":1,"name":"Music"},{"id":2,"name":"Audiobooks"}]}}}""",
-        )
-        .build(),
-    )
-
-    try {
-      val viewModel = SetupViewModel()
-
-      viewModel.uiState.test {
+      vm.uiState.test {
         assertThat(awaitItem()).isEqualTo(SetupUiState.Idle)
-
-        viewModel.connect(server.url("/").toString(), "alice", "sesame")
+        vm.connect("http://localhost:4533", "admin", "testpass")
         assertThat(awaitItem()).isEqualTo(SetupUiState.Connecting)
 
-        val success = awaitItem()
-        assertThat(success).isInstanceOf(SetupUiState.Success::class.java)
-        assertThat((success as SetupUiState.Success).serverInfo.type).isEqualTo("navidrome")
-        assertThat(success.libraries).isEqualTo(LIBRARIES)
+        val tagging = awaitItem() as SetupUiState.Tagging
+        assertThat(tagging.serverInfo.type).isEqualTo("navidrome")
+        // Full equality, not just `.type`: SetupScreen renders serverVersion too
+        // ("Connected to ${type} ${serverVersion}"), and a mutant that kept `.type` correct while
+        // corrupting any other ServerInfo field previously passed every test.
+        assertThat(tagging.serverInfo).isEqualTo(serverInfo())
+        assertThat(tagging.libraries.map { it.name }).containsExactly("Music", "Audiobooks")
+        // Every library arrives untagged, and the flow cannot be finished until they are not.
+        assertThat(tagging.libraries).allMatch { it.role == LibraryRole.UNASSIGNED }
+        assertThat(tagging.canContinue).isFalse
+        cancelAndIgnoreRemainingEvents()
       }
-    } finally {
-      server.close()
+
+      assertThat(credentials.saved)
+        .isEqualTo(SubsonicCredentials("http://localhost:4533", "admin", "testpass"))
+      assertThat(libraries.refreshed).isEqualTo(1)
     }
-  }
 
-  // The assertion Task 8's emulator journey makes on-device ("both seeded libraries are listed by
-  // name"), made here at the state-machine level: Success is not reached from `ping` alone, it
-  // carries what `getMusicFolders` returned, in order.
   @Test
-  fun `a successful connect reports the server's libraries alongside its identity`() = runTest {
-    val viewModel = SetupViewModel(ping = { SERVER_INFO }, fetchLibraries = { LIBRARIES })
+  fun `credentials are stored before the libraries are fetched`() = runTest(dispatcher) {
+    // Not an ordering nicety: `LibraryRepository.refreshFromServer` reads the credential store,
+    // so fetching first would throw NotConfiguredException on every first run. `callOrder` is
+    // what actually proves this -- a bare "both happened" assertion cannot tell this order from
+    // its reverse, and previously did not.
+    libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+    val vm = viewModel(StubSource({ serverInfo() }))
 
-    viewModel.connect(VALID_URL, "alice", "sesame")
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
 
-    assertThat(viewModel.uiState.value).isEqualTo(SetupUiState.Success(SERVER_INFO, LIBRARIES))
+    assertThat(credentials.saved).isNotNull
+    assertThat(libraries.refreshed).isEqualTo(1)
+    assertThat(callOrder).containsExactly("save", "refreshFromServer")
   }
 
-  // The libraries call is part of connecting, not an optional extra afterwards: a server that
-  // answers `ping` but rejects `getMusicFolders` has not produced a usable setup, so it must
-  // report the rejection rather than a Success carrying no libraries -- which would be
-  // indistinguishable from a server that genuinely has none.
   @Test
-  fun `a server that answers ping but rejects getMusicFolders reports the rejection`() = runTest {
-    val viewModel = SetupViewModel(
-      ping = { SERVER_INFO },
-      fetchLibraries = { throw SubsonicErrorException(50, "User is not authorized") },
+  fun `tagging every library is what unlocks continuing`() = runTest(dispatcher) {
+    libraries.reported = listOf(
+      MusicLibrary(1, "Music", LibraryRole.UNASSIGNED),
+      MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
     )
+    val vm = viewModel(StubSource({ serverInfo() }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
 
-    viewModel.connect(VALID_URL, "alice", "sesame")
+    vm.setRole(1, LibraryRole.MUSIC)
+    dispatcher.scheduler.advanceUntilIdle()
+    assertThat((vm.uiState.value as SetupUiState.Tagging).canContinue).isFalse
 
-    assertThat(viewModel.uiState.value).isEqualTo(
-      SetupUiState.Failure(SetupFailureReason.Rejected(code = 50, detail = "User is not authorized")),
-    )
+    vm.setRole(2, LibraryRole.AUDIOBOOKS)
+    dispatcher.scheduler.advanceUntilIdle()
+    val tagged = vm.uiState.value as SetupUiState.Tagging
+    assertThat(tagged.canContinue).isTrue
+    assertThat(tagged.libraries.single { it.id == 2 }.role).isEqualTo(LibraryRole.AUDIOBOOKS)
   }
 
-  // Ordering, not just presence: `fetchLibraries` must not run when `ping` already failed. A
-  // fake that fails the test if called is the whole assertion here.
   @Test
-  fun `libraries are not fetched when ping itself fails`() = runTest {
-    val viewModel = SetupViewModel(
-      ping = { throw SubsonicErrorException(40, "Wrong username or password") },
-      fetchLibraries = { credentials -> error("getMusicFolders must not be called for $credentials") },
-    )
+  fun `setting a role before any connection has succeeded stores it but touches no screen state`() =
+    runTest(dispatcher) {
+      // setRole's `serverInfo?.let { ... }` guard is what stops this from crashing: there is no
+      // server identity yet to rebuild a Tagging state around. The role is still forwarded --
+      // libraries.setRole itself does not depend on serverInfo -- so only the *screen state*
+      // update is guarded, not the write.
+      val vm = viewModel(StubSource({ error("must not be called") }))
 
-    viewModel.connect(VALID_URL, "alice", "wrong")
+      vm.setRole(1, LibraryRole.MUSIC)
+      dispatcher.scheduler.advanceUntilIdle()
 
-    assertThat(viewModel.uiState.value).isEqualTo(
-      SetupUiState.Failure(SetupFailureReason.Rejected(code = 40, detail = "Wrong username or password")),
-    )
+      assertThat(vm.uiState.value).isEqualTo(SetupUiState.Idle)
+      assertThat(libraries.roles).containsEntry(1, LibraryRole.MUSIC)
+    }
+
+  @Test
+  fun `continuing before everything is tagged does nothing`() = runTest(dispatcher) {
+    // An untagged library is invisible to every browse and shuffle path, so letting the user past
+    // this screen would hand them an app that silently shows nothing.
+    libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+    val vm = viewModel(StubSource({ serverInfo() }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.continueToLibrary()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isInstanceOf(SetupUiState.Tagging::class.java)
   }
 
-  private fun failIfCalled(): suspend (SubsonicCredentials) -> ServerInfo =
-    { credentials -> error("ping must not be called for $credentials") }
+  @Test
+  fun `continuing once everything is tagged reaches Ready`() = runTest(dispatcher) {
+    libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+    val vm = viewModel(StubSource({ serverInfo() }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+    vm.setRole(1, LibraryRole.MUSIC)
+    dispatcher.scheduler.advanceUntilIdle()
 
-  private companion object {
-    const val VALID_URL = "https://navidrome.example.com"
-    val SERVER_INFO = ServerInfo(
-      type = "navidrome",
-      serverVersion = "0.63.2 (be10f89c)",
-      apiVersion = "1.16.1",
-      isOpenSubsonic = true,
-    )
+    vm.continueToLibrary()
+    dispatcher.scheduler.advanceUntilIdle()
 
-    // The two libraries ci/configure-libraries.sh seeds into the real container, with the role
-    // SubsonicClient.getMusicFolders actually returns: the Subsonic response carries nothing that
-    // says what a folder is *for*, so everything is UNASSIGNED here. Inferring MUSIC/AUDIOBOOKS
-    // from a name is a later plan's problem, deliberately not this one's.
-    val LIBRARIES = listOf(
-      MusicLibrary(id = 1, name = "Music", role = LibraryRole.UNASSIGNED),
-      MusicLibrary(id = 2, name = "Audiobooks", role = LibraryRole.UNASSIGNED),
+    assertThat(vm.uiState.value).isEqualTo(SetupUiState.Ready)
+  }
+
+  @Test
+  fun `the view model never guesses a role from a library name`() = runTest(dispatcher) {
+    libraries.reported = listOf(
+      MusicLibrary(1, "Audiobooks", LibraryRole.UNASSIGNED),
+      MusicLibrary(2, "Hörbücher", LibraryRole.UNASSIGNED),
+      MusicLibrary(3, "Music", LibraryRole.UNASSIGNED),
     )
+    val vm = viewModel(StubSource({ serverInfo() }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val tagging = vm.uiState.value as SetupUiState.Tagging
+    assertThat(tagging.libraries).allMatch { it.role == LibraryRole.UNASSIGNED }
+    assertThat(tagging.canContinue).isFalse
+    assertThat(libraries.roles).isEmpty()
+  }
+
+  @Test
+  fun `a server with no libraries at all has nothing to continue past`() = runTest(dispatcher) {
+    // `current.none { UNASSIGNED }` is vacuously true over an empty list, so canContinue's
+    // emptiness guard is the only thing standing between "no libraries" and a false "all tagged".
+    libraries.reported = emptyList()
+    val vm = viewModel(StubSource({ serverInfo() }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val tagging = vm.uiState.value as SetupUiState.Tagging
+    assertThat(tagging.libraries).isEmpty()
+    assertThat(tagging.canContinue).isFalse
+  }
+
+  @Test
+  fun `continuing with no libraries at all does nothing`() = runTest(dispatcher) {
+    // continueToLibrary's own `isNotEmpty() &&` guard, independent of tagging's: `current.none {
+    // UNASSIGNED }` is vacuously true over an empty list, so without this guard a server with
+    // zero libraries would reach Ready the moment this is called -- proved directly (before the
+    // fix) by reaching Ready here.
+    libraries.reported = emptyList()
+    val vm = viewModel(StubSource({ serverInfo() }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.continueToLibrary()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isInstanceOf(SetupUiState.Tagging::class.java)
+  }
+
+  @Test
+  fun `a rejected sign-in reports the server's own code and stores nothing`() = runTest(dispatcher) {
+    val vm = viewModel(StubSource({ throw SubsonicErrorException(40, "Wrong username or password") }))
+
+    vm.connect("http://localhost:4533", "admin", "wrong")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value)
+      .isEqualTo(SetupUiState.Failure(SetupFailureReason.Rejected(40, "Wrong username or password")))
+    assertThat(credentials.saved).isNull()
+  }
+
+  @Test
+  fun `a bad http status is a rejection, not an unreachable server`() = runTest(dispatcher) {
+    val vm = viewModel(StubSource({ throw SubsonicHttpException(502) }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val failure = vm.uiState.value as SetupUiState.Failure
+    assertThat(failure.reason).isInstanceOf(SetupFailureReason.Rejected::class.java)
+    assertThat((failure.reason as SetupFailureReason.Rejected).code).isEqualTo(502)
+  }
+
+  @Test
+  fun `a transport failure is unreachable`() = runTest(dispatcher) {
+    val vm = viewModel(StubSource({ throw IOException("connection refused") }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value)
+      .isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
+  }
+
+  @Test
+  fun `a cancelled connection is never reported as a failure`() = runTest(dispatcher) {
+    // CancellationException is a java.lang.Exception, so a `catch (e: Exception)` clause with no
+    // earlier, more specific catch would swallow it and report Unreachable -- exactly the bug
+    // connect's explicit `catch (e: CancellationException) { throw e }` exists to prevent.
+    // Rethrowing inside a launched coroutine is ordinary cooperative cancellation, not an
+    // uncaught failure, so this does not fail the test: nothing after the throw ever runs, and
+    // uiState is left wherever connect's synchronous half already put it.
+    val vm = viewModel(StubSource({ throw CancellationException("cancelled") }))
+
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isEqualTo(SetupUiState.Connecting)
   }
 }

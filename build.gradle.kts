@@ -215,37 +215,68 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   non-compliant-response and no-trailing-slash-baseUrl tests, and
  *   `OpenApiFixtureValidatorTest`'s `readSpec`/blank-path tests.
  *
- * - **`:feature:setup`** — four `"CLASS"`-element rules: three BRANCH, one per non-`@Composable`
- *   class here that has branches of its own, and one LINE over `SetupScreenKt`, this module's one
- *   Composable file (described at the end of this entry). The three BRANCH rules are not one
- *   aggregate rule across all three: their measured ratios are different enough (100%, 60%,
- *   87.5%) that a single blended floor would either sit so low it protects
- *   none of them individually, or so high the weakest one could never have passed it honestly.
- *   `SetupViewModel` (2/2, floor 0.90): `connect`'s own branches (the `InvalidUrl` check, the
- *   catch-clause dispatch), fully covered. `SetupViewModel$1` and `SetupViewModel$2` (3/5 each,
- *   floor 0.55): the compiled *default* `ping` and `fetchLibraries` constructor parameters'
- *   lambda classes — `SetupViewModelTest`'s real-refused-connection and real-`MockWebServer`
- *   cases close 3 of each one's 5 branches; the 2 still missing in each are, on the evidence, the
- *   Kotlin-compiler-generated "invalid continuation state" safety branches every suspend lambda's
- *   `invokeSuspend` carries — structurally unreachable from any legitimate call site, the same
- *   *kind* of compiler-owned gap BRANCH coverage has for Compose, just from the coroutines
- *   compiler plugin instead. `SetupFailureReasonKt` (7/8, floor 0.85): `toMessage`'s
+ * - **`:feature:setup`** — three `"CLASS"`-element rules: two BRANCH, one LINE over
+ *   `SetupScreenKt`, this module's one Composable file (described at the end of this entry). Task
+ *   8 replaced `SetupViewModel`'s defaulted-lambda constructor seam (`@JvmOverloads`, no DI graph
+ *   to inject from) with ordinary Hilt constructor injection — a secondary `@Inject` constructor
+ *   builds two anonymous `SetupCredentialSink`/`SetupLibrarySink` objects from the now-injected
+ *   `CredentialStore`/`LibraryRepository` — and gained real logic along with it: the tagging
+ *   predicate, the continue guard, the widened catch cascade. The two prior *floors* this replaced
+ *   — `SetupViewModel*1`/`SetupViewModel*2` at 0.55, originally matching the compiled *default*-
+ *   lambda classes — were deleted. **Correction, found on re-review:** the deletion is still
+ *   right, but an earlier version of this comment justified it as "those patterns now match no
+ *   compiled class, a `0/0` → `NaN` → 'no violation' rule" — checked and found false. Both
+ *   patterns still match real classes: `SetupViewModel*1` matches the new `.connect.1`/
+ *   `.setRole.1`/`.continueToLibrary.1`/`.tagging.1` coroutine-body classes, and `*2` still
+ *   matches `.2` (the `SetupCredentialSink` anonymous object). The actual reason the deletion is
+ *   correct: every class either old pattern matches is *also* matched by the new
+ *   `SetupViewModel*` wildcard folded into the 0.90 rule directly below — a strict superset (it
+ *   additionally matches `.3`, the `SetupLibrarySink` anonymous object, which neither old pattern
+ *   did) — at a *stricter* minimum (0.90 vs 0.55). Keeping the old 0.55 floor alongside the new
+ *   0.90 one would have added no protection at all, only a lower, confusing ceiling.
+ *
+ *   `SetupViewModel` measures **12/12** BRANCH today: `connect`'s `InvalidUrl` check and its
+ *   catch cascade (`SubsonicErrorException` / `SubsonicHttpException` /
+ *   `CancellationException`-rethrow / generic `Exception`), `tagging`'s `isNotEmpty() &&
+ *   none { UNASSIGNED }` conjunction, `setRole`'s `serverInfo?.let` null guard, and
+ *   `continueToLibrary`'s own `isNotEmpty() && none { UNASSIGNED }` guard (added in review round
+ *   1 -- N-2 found `continueToLibrary` relying on `none` alone, vacuously true over an empty
+ *   list, closed by `continuing with no libraries at all does nothing`). Two of those branches
+ *   measured **0%** the moment their own
+ *   tests did not exist — found by reading the XML report directly, not by inspection —
+ *   and were closed by name: `a cancelled connection is never reported as a failure` (the
+ *   `CancellationException` rethrow; without it, a broad `catch (e: Exception)` below would
+ *   swallow cancellation as `Unreachable`) and `setting a role before any connection has
+ *   succeeded stores it but touches no screen state` (`serverInfo`'s null path; a `serverInfo!!`
+ *   mutant crashes this test). `SetupViewModel*` rides along in the same rule, matching six
+ *   compiled nested classes the new seam and each `viewModelScope.launch` body produce — the two
+ *   `@Inject`-constructor anonymous sink objects (`SetupViewModel$2`/`$3`, 2/2 and 4/4 LINE, no
+ *   branches of their own) and four per-method coroutine bodies (`$connect$1` 17/17 LINE;
+ *   `$setRole$1` 2/2 BRANCH; `$continueToLibrary$1` 8/8 BRANCH; `$tagging$1`, no counters at all)
+ *   — the same zero-branch-rider pattern `SetupUiState*` already uses below: harmless (`NaN` → no
+ *   violation for the branch-less ones) and it is what keeps `warnUngatedClasses` quiet about
+ *   them. `SetupFailureReasonKt` (7/8, floor 0.85, untouched by Task 8): `toMessage`'s
  *   `when`-cascade, `SetupFailureReasonTest` covers all three members plus both sides of
  *   `Rejected`'s `detail` null/non-null branch; the one branch still missing is an artifact of how
  *   a `when` with no `else` over a sealed interface compiles, not an uncovered case.
  *
- *   And, from Task 8, a fourth rule of a different counter: `SetupScreenKt` LINE (55/57 =
- *   **0.9649**, floor 0.90). Task 7 could not gate this class at all — from the JVM alone it
- *   measured a real 0/54, and `0.00` is exactly the unfireable floor this project must not ship
- *   again. `FirstRunJourneyTest` composes the screen for real on an emulator, down both terminal
- *   states (a successful connect, and a rejection from the real server), which is what makes a
- *   real floor possible. The 2 lines still missing both belong to the `private` `SetupScreen`
- *   overload (2 missed / 49 covered on its own method counter): its declaration line and the
- *   closing brace of its `when (uiState)` block. What sits on those two lines was not decompiled,
- *   so nothing is claimed about it beyond one thing the report does rule out — this class carries
- *   no `SetupScreen$default` method at all, so it is not an uninvoked defaulted-parameter bridge.
- *   The BRANCH counter for the same class stands at 60/94 and is deliberately not gated, per the
- *   ruling above.
+ *   And a rule of a different counter, added by Task 7 and re-measured here: `SetupScreenKt` LINE
+ *   (**81/83 = 0.9759**, floor 0.90). From the JVM alone this class measures 0/54 — `0.00` is
+ *   exactly the unfireable floor this project must not ship again — and only
+ *   `FirstRunJourneyTest`, composing the real screen on an emulator down every terminal state
+ *   (a successful connect, a rejection, every library tagged and `Continue` reaching `Ready`),
+ *   makes a real floor possible. The `Ready` branch is why that last state matters: JaCoCo had
+ *   reported its `Text("Setup complete")` line as "covered" from the first three journeys alone,
+ *   because Kotlin compiles an exhaustive sealed `when` as an `instanceof` chain — the `Ready`
+ *   check's own dispatch instructions run on *every* composition regardless of the actual state,
+ *   so the line lit up green while the branch behind it, and the text it renders, had never once
+ *   executed. `completingEveryTagReachesReadyAndShowsSetupComplete` closes that specifically. The
+ *   2 lines still missing both belong to the `private` `SetupScreen` overload: its declaration
+ *   line and the closing brace of its `when (uiState)` block — the same two Task 7 could not
+ *   attribute further than "not an uninvoked `SetupScreen$default` bridge; this class carries none
+ *   at all". `SetupScreenKt*` rides along, matching the `LaunchedEffect(uiState) { ... }` body
+ *   Task 8 added (`SetupScreenKt$SetupScreen$1$1`, 3/3 LINE). Both classes' BRANCH counters (81/49
+ *   and 3/1 respectively) are deliberately left ungated, per the ruling above.
  *
  * - **`:core:designsystem`** — one `"CLASS"`-element LINE rule at the full `0.90`, covering all
  *   three of this module's classes, each measuring **1.0000** (`ThemeKt` 23/23, `ColorKt` 12/12,
@@ -356,42 +387,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":core:testing" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
   // See coverageFloors's own doc above for why three CLASS-element rules, not one BUNDLE rule.
   ":feature:setup" to listOf(
-    // 2/2 -- SetupViewModel.connect's own branches (InvalidUrl check, catch-clause dispatch) are
-    // fully covered by SetupViewModelTest. SetupUiState/SetupUiState$* ride along in the same
-    // rule (0 branches of their own, so they can never move this ratio) purely so
-    // warnUngatedClasses never has to flag their own fully-covered lines as an ungated class --
-    // a real class with real state to protect, just not a branch-shaped one.
+    // 12/12 -- SetupViewModel's own branches: connect's InvalidUrl check and its widened catch
+    // cascade (SubsonicErrorException / SubsonicHttpException / CancellationException-rethrow /
+    // generic Exception), tagging's isNotEmpty()-&&-none{UNASSIGNED} conjunction, setRole's
+    // serverInfo?.let null guard, and continueToLibrary's own isNotEmpty()-&&-none guard --
+    // all fully covered by
+    // SetupViewModelTest, including two that measured 0% before their own tests existed (see
+    // coverageFloors's own doc above for which tests and why).
+    //
+    // SetupViewModel* rides along, matching six compiled nested classes the Task 8 Hilt
+    // constructor-injection seam and each viewModelScope.launch body produce: the two @Inject
+    // secondary constructor's anonymous SetupCredentialSink/SetupLibrarySink objects
+    // (SetupViewModel$2 2/2 LINE, SetupViewModel$3 4/4 LINE, no branches of their own) and four
+    // per-method coroutine bodies (SetupViewModel$connect$1 17/17 LINE, no branches at this level;
+    // $setRole$1 2/2 BRANCH; $continueToLibrary$1 8/8 BRANCH; $tagging$1, no counters at all).
+    // None of these existed under the defaulted-lambda seam this task removed -- see this file's
+    // own note (coverageFloors's own doc above) on why the SetupViewModel*1/*2 floor (0.55) this
+    // replaces was deleted: not because its patterns stopped matching anything (they did not --
+    // that was this comment's own original, incorrect claim, corrected on re-review), but because
+    // every class either pattern still matches is also matched by this wider rule at a stricter
+    // minimum, making the old floor pure redundancy.
+    //
+    // SetupUiState/SetupUiState* ride along in the same rule (0 branches of their own, so they can
+    // never move this ratio) purely so warnUngatedClasses never has to flag their own
+    // fully-covered lines as an ungated class -- real classes with real state to protect, just not
+    // branch-shaped ones.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.setup.SetupViewModel",
+        "app.muplay.setup.SetupViewModel*",
         "app.muplay.setup.SetupUiState",
         "app.muplay.setup.SetupUiState*",
-      ),
-    ),
-    // 3/5 each -- the compiled default `ping` (SetupViewModel$1) and `fetchLibraries`
-    // (SetupViewModel$2) constructor parameters' lambda classes. SetupViewModelTest's
-    // real-refused-connection and real-MockWebServer cases close 3 of each one's 5 branches; the
-    // 2 still missing in each are, on the evidence, the Kotlin-compiler-generated "invalid
-    // continuation state" safety branches every suspend lambda's `invokeSuspend` carries --
-    // structurally unreachable from any legitimate call site, the same *kind* of compiler-owned
-    // gap BRANCH coverage has for Compose, just from the coroutines compiler plugin instead of
-    // the Compose one. A CLASS-element rule holds each matched class to the minimum separately,
-    // so listing both here gates both individually rather than blending them.
-    //
-    // `SetupViewModel*1` also matches `SetupViewModel$connect$1` (the compiled `connect` coroutine
-    // body, `SetupViewModel.connect.1` once qualified), which carries no branches of its own --
-    // harmless, since a CLASS-element rule over a zero-counter class yields NaN and JaCoCo reports
-    // no violation, and it keeps that class from showing up as ungated.
-    CoverageFloor(
-      counter = "BRANCH",
-      element = "CLASS",
-      minimum = BigDecimal("0.55"),
-      includes = listOf(
-        "app.muplay.setup.SetupViewModel*1",
-        "app.muplay.setup.SetupViewModel*2",
       ),
     ),
     // 7/8 -- SetupFailureReason.toMessage's when-cascade; SetupFailureReasonTest covers all three
@@ -400,7 +429,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // a reachable path SetupFailureReasonTest is missing a case for. SetupFailureReason/
     // SetupFailureReason$* (the sealed interface and its members) ride along for the same reason
     // SetupUiState does above -- 0 branches of their own, included only so their own fully-covered
-    // lines never show up as an ungated class.
+    // lines never show up as an ungated class. Untouched by Task 8.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -411,18 +440,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.setup.SetupFailureReason*",
       ),
     ),
-    // 55/57 = 0.9649 LINE -- the one Compose-bearing file in this module, gated on LINE rather
-    // than BRANCH per the ruling in this table's own doc. Reachable only because Task 8's
-    // FirstRunJourneyTest composes SetupScreen for real on an emulator, down both of its terminal
-    // states; from the JVM alone this same class measures 0/54. The 2 lines still missing are the
-    // private SetupScreen overload's declaration line and its `when` block's closing brace -- see
-    // coverageFloors's own doc above for what is and is not known about them. Its 60/94 BRANCH is
-    // deliberately left ungated: Compose codegen, not author logic.
+    // 81/83 = 0.9759 LINE -- the one Compose-bearing file in this module, gated on LINE rather
+    // than BRANCH per the ruling in this table's own doc. Reachable only because FirstRunJourneyTest
+    // composes SetupScreen for real on an emulator, down every terminal state -- a successful
+    // connect, a rejection, and (added this task) every library tagged through to Continue
+    // reaching Ready. That last journey is why the ratio moved: without it, the `is
+    // SetupUiState.Ready -> Text("Setup complete")` line still read as JaCoCo-"covered", because
+    // Kotlin compiles an exhaustive sealed `when` as an `instanceof` chain and the Ready check's
+    // own dispatch instructions run on every composition regardless of which state is current --
+    // the line was lighting up green with the branch behind it, and the text it renders, never
+    // once executed. completingEveryTagReachesReadyAndShowsSetupComplete closes that specifically.
+    // The 2 lines still missing are the private SetupScreen overload's declaration line and its
+    // `when` block's closing brace -- see coverageFloors's own doc above for what is and is not
+    // known about them.
+    //
+    // SetupScreenKt* rides along, matching the LaunchedEffect(uiState) { ... } body Task 8 added
+    // (SetupScreenKt$SetupScreen$1$1, 3/3 LINE). Both classes' BRANCH counters -- 81/130 and 3/4
+    // respectively, covered/total like every other ratio in this file (an earlier version of this
+    // comment wrote them covered/missed, 81/49 and 3/1, which reads as a ratio above 1 and was
+    // corrected on re-review) -- are deliberately left ungated: Compose codegen, not author logic.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.setup.SetupScreenKt"),
+      includes = listOf("app.muplay.setup.SetupScreenKt", "app.muplay.setup.SetupScreenKt*"),
       // Composed only by FirstRunJourneyTest, on a device. 0/54 from the JVM alone.
       requiresInstrumentedData = true,
     ),

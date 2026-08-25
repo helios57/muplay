@@ -52,14 +52,16 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test` -- three plain JVM invocations -- and `failures()` globs
-# both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
-# `core/*/build/test-results/testDebugUnitTest/` (`:core:database`, an Android module's JVM-tier
-# results directory). `:core:database` genuinely does carry JVM test source
-# (`KeystoreCipherTest`, six tests -- its cryptographic contract needs no device) and `run_suite()`
-# now runs it; an earlier version of this comment said `:core:database` "has no JVM test source at
-# all", which was false and was corrected on a re-review that ran `KeystoreCipherTest` itself and
-# found it green today.
+# :core:model:test :core:database:test :feature:setup:test` -- four plain JVM invocations (a third
+# module, `:feature:setup`, joined in Task 8's review round 1: `SetupViewModel` is a plain
+# ViewModel with hand-written fakes for its two Android-backed collaborators, so its own logic
+# needs no device either) -- and `failures()` globs both `core/*/build/test-results/test/`
+# (`:core:network`, `:core:model`) and `*/build/test-results/testDebugUnitTest/`
+# (`:core:database`, `:feature:setup` -- both Android modules' JVM-tier results directory).
+# `:core:database` genuinely does carry JVM test source (`KeystoreCipherTest`, six tests -- its
+# cryptographic contract needs no device) and `run_suite()` now runs it; an earlier version of
+# this comment said `:core:database` "has no JVM test source at all", which was false and was
+# corrected on a re-review that ran `KeystoreCipherTest` itself and found it green today.
 #
 # What genuinely cannot run here is the *instrumented* tier: `LibraryRepository`, `LibraryDao` and
 # everything else that needs Room's real SQLite need a device, and their results land under
@@ -83,6 +85,15 @@
 # The tree must be clean: every probe reverts with `git checkout --`, which cannot tell a probe
 # from uncommitted work. Committing before mutating is a standing rule on this project because
 # that exact revert destroyed real work twice during Plan 2 Task 3.
+#
+# EXERCISED FOR REAL, not just written defensively: during this project's round-2 re-review of
+# this exact file (task-8-round-1-rereview.md and its follow-up), the re-reviewer's own tooling
+# was killed mid-mutation by an external timeout, leaving a stray uncommitted mutation in the
+# tree. The re-reviewer disclosed that a flawed `&&`-based "is the tree clean" check of its own
+# would have silently proceeded past that stray mutation; the `if [ -n "$(git status
+# --porcelain)" ]` check below did not, and caught it before it could contaminate a probe result.
+# A guard nobody has seen fire is one people eventually delete -- this one has fired, for a real
+# incident, not a hypothetical one.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -97,7 +108,7 @@ fi
 # -u: without it Python buffers stdout through a pipe and a four-minute run prints nothing
 # until it is over, which makes an interrupted run impossible to interpret.
 exec python3 -u - "${1:-}" <<'PY'
-import glob, html, re, subprocess, sys
+import glob, html, re, shutil, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 
@@ -106,6 +117,7 @@ AUTH = "core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt"
 TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
 MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
 MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
+SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -329,6 +341,51 @@ PROBES = [
     ("mapper/artistEntities-sortName", MIRROR,
      "          sortName = sortKey(name),", '          sortName = "test artist",',
      "a derived artist takes its library id from its albums", 1),
+    # ---- Task 8 / review round 1 (task-8-report.md, task-8-review.md): SetupViewModel ----------
+    # Every one of these hardcodes or drops a value one constant could satisfy, on the class whose
+    # own doc calls its role field "the only value in the entire system that distinguishes a book
+    # from a song". N-1's own two production mutants (a hardcoded role in the @Inject constructor's
+    # anonymous SetupLibrarySink, and the two FilterChip role literals swapped) are deliberately
+    # NOT here: this runner is JVM-only (see this file's own header), and both of those mutants
+    # pass every JVM test unchanged -- they are caught only on the emulator, by
+    # completingEveryTagReachesReadyAndShowsSetupComplete's read-back, and are recorded in
+    # task-8-report.md instead, the same way this header already documents for every other
+    # instrumented-tier defect this project has found.
+    ("setup/cancellation-rethrow", SETUP_VM,
+     "      } catch (e: CancellationException) {\n        throw e\n      } catch (e: Exception) {",
+     "      } catch (e: Exception) {",
+     "a cancelled connection is never reported as a failure", 1),
+    ("setup/setRole-nullguard", SETUP_VM,
+     "      serverInfo?.let { _uiState.value = tagging(it) }",
+     "      _uiState.value = tagging(serverInfo!!)",
+     "setting a role before any connection has succeeded stores it but touches no screen state", 1),
+    ("setup/tagging-emptylist", SETUP_VM,
+     "      canContinue = current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED },",
+     "      canContinue = current.none { it.role == LibraryRole.UNASSIGNED },",
+     "a server with no libraries at all has nothing to continue past", 1),
+    ("setup/continueToLibrary-emptylist", SETUP_VM,
+     "      if (current.isNotEmpty() && current.none { it.role == LibraryRole.UNASSIGNED }) {\n        _uiState.value = SetupUiState.Ready",
+     "      if (current.none { it.role == LibraryRole.UNASSIGNED }) {\n        _uiState.value = SetupUiState.Ready",
+     "continuing with no libraries at all does nothing", 1),
+    ("setup/setRole-id-passthrough", SETUP_VM,
+     "      libraries.setRole(musicFolderId, role)\n      serverInfo?.let",
+     "      libraries.setRole(1, role)\n      serverInfo?.let",
+     "tagging every library is what unlocks continuing", 1),
+    ("setup/setRole-role-passthrough", SETUP_VM,
+     "      libraries.setRole(musicFolderId, role)\n      serverInfo?.let",
+     "      libraries.setRole(musicFolderId, LibraryRole.MUSIC)\n      serverInfo?.let",
+     "tagging every library is what unlocks continuing", 1),
+    ("setup/connect-order", SETUP_VM,
+     "        credentials.save(entered)\n        libraries.refreshFromServer()",
+     "        libraries.refreshFromServer()\n        credentials.save(entered)",
+     "credentials are stored before the libraries are fetched", 1),
+    ("setup/connect-trim", SETUP_VM,
+     "    val trimmedUrl = serverUrl.trim()", "    val trimmedUrl = serverUrl",
+     "the server url is trimmed before it is stored", 1),
+    ("setup/tagging-serverinfo-field", SETUP_VM,
+     "      serverInfo = info,\n      libraries = current,",
+     '      serverInfo = info.copy(serverVersion = "9.9.9"),\n      libraries = current,',
+     "a successful connect saves the credentials and lists the libraries for tagging", 1),
 ]
 
 
@@ -364,7 +421,7 @@ def apply(path, old, new):
 
 
 def revert():
-    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR], check=True)
+    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
@@ -387,6 +444,7 @@ JVM_TEST_RESULT_DIRS = {
     "core/network": "test",
     "core/model": "test",
     "core/database": "testDebugUnitTest",
+    "feature/setup": "testDebugUnitTest",
 }
 
 
@@ -402,8 +460,58 @@ def failures():
 
 
 def run_suite():
-    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test", ":core:database:test"],
+    # N2-2 (round 2 re-review): without both of the next two blocks, a mutation that reddens an
+    # EARLIER module in the invocation below (`:core:network:test`, 28 of this file's 37 probes)
+    # aborted the whole Gradle invocation before a LATER module's task -- `:feature:setup:test`,
+    # added this round -- ever started, and `failures()` then globbed whatever XML that later
+    # module's *previous* run had left on disk and counted it as this run's own result. Reproduced
+    # deterministically: leave `a successful connect saves the credentials and lists the libraries
+    # for tagging` failing on disk (any setup probe does this), then run `auth/empty-authParams`
+    # with Gradle serialised to one worker (`-Dorg.gradle.workers.max=1`, which reliably starves
+    # `:feature:setup:test` of a scheduling slot before the abort) -- MISSED, 16 instead of 15,
+    # the extra failure being that stale result. At normal worker counts this is a race, which is
+    # why it looked load-correlated rather than caused, and a prior investigation into it (see
+    # task-8-report.md) concluded "build cache" without a check that could have told the two
+    # hypotheses apart -- this fix, and the "confirm the false result no longer appears" step
+    # below, is that check.
+    #
+    # Delete every result directory first, so a module whose task genuinely never runs this
+    # invocation has nothing old lying around for `failures()` to find.
+    #
+    # N3-1 (round 2 re-review, second pass): catches only FileNotFoundError -- "there was nothing
+    # to delete yet" -- not every error. `ignore_errors=True` was tried first and swallowed *any*
+    # deletion failure, which is the same defect this whole function exists to close, one layer
+    # down: the reviewer forced a directory read-only (`chmod 555`) with a stale failing result
+    # already inside it, and the silently-ignored rmtree failure left that stale file in place for
+    # `failures()` to glob -- a genuinely-passing probe came back MISSED with a fabricated extra
+    # failure, the exact bug this function was written to close. A permission error (or anything
+    # else unexpected) has to stop the run here, loudly, rather than be swallowed the same way.
+    for module, result_dir in JVM_TEST_RESULT_DIRS.items():
+        try:
+            shutil.rmtree(f"{module}/build/test-results/{result_dir}")
+        except FileNotFoundError:
+            pass
+    # --continue: keep scheduling every other requested task after one fails, rather than
+    # aborting the whole invocation on the first failure. The four modules here share no
+    # compile-time dependency that would make one module's task genuinely unable to run after
+    # another's test failure (a *test* task failing does not un-compile anything downstream), so
+    # with --continue every one of the four should get a real chance to execute every time.
+    subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
+                    ":core:database:test", ":feature:setup:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # A missing result must be loud, not silently globbed as zero failures: if some other cause
+    # (a genuine compile failure a dependent task cannot route around, even with --continue)
+    # still leaves a module's directory empty, that is exactly the "counts stale/absent results"
+    # failure mode this function exists to rule out, so it must stop the run rather than let
+    # `failures()` quietly report an artificially clean (or artificially stale) count.
+    missing = [module for module, result_dir in JVM_TEST_RESULT_DIRS.items()
+               if not glob.glob(f"{module}/build/test-results/{result_dir}/TEST-*.xml")]
+    if missing:
+        raise SystemExit(
+            f"run_suite(): no test results were written for {missing} -- the build likely "
+            "aborted or skipped these modules' test tasks. Refusing to let failures() count "
+            "zero (or stale) results for them as if this run had produced them."
+        )
     return failures()
 
 
