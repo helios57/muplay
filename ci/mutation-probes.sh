@@ -445,17 +445,20 @@ PROBES = [
      '"Your library will update shortly."',
      "a scan in progress names the Refresh control by the screen's own label, not a promise "
      "nothing keeps", 1),
-    ("album/songs-albumId-swapped", ALBUM_VM,
-     "combine(album, source.songs(albumId)) { current, songs ->",
+    # AlbumViewModel was rewritten mid-task (see task-9-report.md): a real-device run found
+    # savedStateHandle["albumId"] null under Navigation 3, so `load(albumId)` replaced the
+    # SavedStateHandle/checkNotNull design these two probes originally targeted. Re-measured
+    # against the replacement.
+    ("album/songs-id-swapped", ALBUM_VM,
+     "combine(album, source.songs(id)) { current, songs ->",
      'combine(album, source.songs("wrong-id")) { current, songs ->',
-     "the album shown is the one named by the saved state handle, not a different one the "
-     "source also knows", 3),
-    ("album/missing-id-not-checked", ALBUM_VM,
-     '  private val albumId: String = checkNotNull(savedStateHandle[ALBUM_ID_KEY]) {\n'
-     '    "AlbumViewModel needs an `$ALBUM_ID_KEY` argument"\n'
-     '  }',
-     '  private val albumId: String = savedStateHandle[ALBUM_ID_KEY] ?: ""',
-     "a missing albumId argument fails loudly rather than silently showing an empty album", 1),
+     "the album shown is the one load was called with, not a different one the source also "
+     "knows", 4),
+    ("album/load-album-id-hardcoded", ALBUM_VM,
+     "viewModelScope.launch { album.value = source.album(albumId) }",
+     'viewModelScope.launch { album.value = source.album("wrong-id") }',
+     "the album shown is the one load was called with, not a different one the source also "
+     "knows", 4),
 ]
 
 
