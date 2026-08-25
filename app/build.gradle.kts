@@ -21,6 +21,13 @@ dependencies {
   implementation(project(":feature:setup"))
   implementation(project(":feature:library"))
 
+  // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing
+  // else in the tree may name an :integrations:* project, and `ConventionTest`'s
+  // `nothing outside integrations depends on an integration` enforces that. The edge exists for
+  // the two variant-specific `CleartextPolicyModule`s under src/debug and src/release, which are
+  // what decides whether an http:// integration URL is accepted at all.
+  implementation(project(":integrations:core"))
+
   implementation(libs.activity.compose)
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)
