@@ -89,10 +89,12 @@ dependencies {
   // ActivityScenario and ApplicationProvider for the journeys.
   androidTestImplementation(libs.androidx.test.core)
 
-  // `MuPlaybackServiceTest`. The service is `@AndroidEntryPoint`, so it can only be started from an
-  // application that is `@HiltAndroidApp` -- which is this module and no other. See that test's own
-  // documentation for why it cannot live in `:core:media`, and `Jacoco.kt`'s `mergedExecutionData`
-  // for why its coverage still lands there.
+  // `MuPlaybackServiceTest` and `PlaybackJourneyTest`. The service is `@AndroidEntryPoint`, so it
+  // can only be started from an application that is `@HiltAndroidApp` -- which is this module and
+  // no other. See that test's own documentation for why it cannot live in `:core:media`, and
+  // `Jacoco.kt`'s `mergedExecutionData` for why its coverage still lands there. The journey uses
+  // the same edge for `PlaybackConnection` (a controller on the app's own live session, for the
+  // position while the app is backgrounded) and `PlaybackNotification`'s channel identity.
   androidTestImplementation(project(":core:media"))
   // The test lists the seeded tracks off the real container to know what titles to expect.
   androidTestImplementation(project(":core:network"))

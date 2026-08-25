@@ -210,6 +210,10 @@ SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
 DIDL_SERVED = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 DIDL_LITE = "core/cast/src/main/kotlin/app/muplay/cast/didl/DidlLite.kt"
 DIDL_MIME = "core/cast/src/main/kotlin/app/muplay/cast/didl/MimeAgreement.kt"
+PROXY_RANGE = "core/cast/src/main/kotlin/app/muplay/cast/proxy/RangeHeader.kt"
+PROXY_REGISTRY = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyRegistry.kt"
+PROXY_UPSTREAM = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyUpstream.kt"
+PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -557,14 +561,14 @@ PROBES = [
      # `expected failures` above -- a count above 1 is a measurement, and it goes stale when tests
      # are added.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 6),
+     "knows", 8),
     ("album/load-album-id-hardcoded", ALBUM_VM,
      "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
      'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
      # 4 -> 7, same cause as the probe above; this one additionally reddens the album-call-count
      # assertion in `an album still being fetched is Loading...`.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 7),
+     "knows", 9),
 
     # ---- Task 9 / review round 1 (task-9-review.md): the values no test observed ---------------
     # N-2, N-3 and N-5. Every one of these mutations left all 34 of this module's tests green when
@@ -584,7 +588,7 @@ PROBES = [
      "the library selector carries every library, exactly, in the order the mirror gave them", 2),
     ("library/shuffled-order-reversed", LIBRARY_STATE,
      "    shuffled = shuffle?.songs.orEmpty(),", "    shuffled = shuffle?.songs.orEmpty().reversed(),",
-     "shuffle order is the order the shuffle produced, not resorted", 2),
+     "shuffle order is the order the shuffle produced, not resorted", 4),
     ("library/search-results-resorted", LIBRARY_STATE,
      "    albums = if (searching) searchAlbums else albums,",
      "    albums = if (searching) searchAlbums.sortedBy { it.name } else albums,",
@@ -655,7 +659,7 @@ PROBES = [
      # 5: the opus case, the ogg case, the case-insensitive pair, the caller's-bitrate pair and
      # (since the N-1 fix, 4 -> 5) the whole-family case all observe a transcode that no longer
      # happens.
-     "an opus source is transcoded rather than streamed raw", 5),
+     "an opus source is transcoded rather than streamed raw", 6),
     ("format/always-mp3", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Mp3(transcodeBitRateKbps)",
@@ -939,11 +943,11 @@ PROBES = [
     ("queue/startIndex-hardcoded", PLAYBACK_QUEUE,
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, 0)",
-     "a start index outside the queue is rejected", 2),
+     "a start index outside the queue is rejected", 4),
     ("queue/songAt-index", PLAYBACK_QUEUE,
      "  fun songAt(index: Int): Song = songs[index]",
      "  fun songAt(index: Int): Song = songs[0]",
-     "songAt returns the song at that index", 1),
+     "songAt returns the song at that index", 2),
     # Found by this task's own audit, not by its brief: the brief's test observed `size` at
     # exactly one value (3, over a three-song queue), so `get() = 3` passed the whole suite.
     # Measured both ways -- 0 failures before a second, disjoint observation was added, 1 after.
@@ -955,7 +959,7 @@ PROBES = [
     ("queue/songs-reversed", PLAYBACK_QUEUE,
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.reversed(), startIndex)",
-     "a queue holds the songs it was given in the order it was given them", 2),
+     "a queue holds the songs it was given in the order it was given them", 5),
     # ---- Plan 6 Task 1: the cast module's own codec and its local-network rule ----------------
     # Every count below was measured by applying the mutation by hand and reading the result XML;
     # see task-1-report.md for the transcripts. Counts above 1 are the probe reddening more than
@@ -968,7 +972,7 @@ PROBES = [
      # LOCATION, and a null LOCATION is a device that never appears with nothing reported anywhere.
      # 7 until the security review added `two content lengths that disagree are refused` -- which
      # reads a header, so a case-sensitive lookup reddens it too. Re-measured, not adjusted.
-     "a header is found whatever case the peer used", 8),
+     "a header is found whatever case the peer used", 9),
     ("cast/render-bare-lf", CAST_WIRE,
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(CRLF)",
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(\"\\n\")",
@@ -990,12 +994,12 @@ PROBES = [
      # 6 until the security review gave this rule its inbound half: `isLocalPeer` and
      # `acceptLocal` ask the same question, so a rule that permits everything reddens their tests
      # too. Re-measured, not adjusted.
-     "a public address is not local", 8),
+     "a public address is not local", 11),
     ("cast/no-local-guard", CAST_CLIENT,
      "    LocalNetworkOnly.require(host, address)\n", "",
      # The mutation that matters most in this module: without that one line MuPlay becomes an app
      # that will send plaintext anywhere it is pointed, and every other test stays green.
-     "a public address is refused before a socket is opened", 1),
+     "a public address is refused before a socket is opened", 2),
     # The anchor moved in the security review: every header line, this one included, now goes
     # through `HttpWire.headerLine`, which is the single place the CR/LF check can live. Same
     # mutation, same named test.
@@ -1136,7 +1140,7 @@ PROBES = [
     ("baseurl/service-order", INTEGRATION_SERVICE,
      '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
      '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
-     "the service display names are the ones a user reads", 1),
+     "the service display names are the ones a user reads", 2),
 
     # ---- Plan 3 Task 4, review round 1: what the queue's order and field assertions could not see
     # Appended here rather than folded into the Task 4 block above, so the block stays the record of
@@ -1380,14 +1384,14 @@ PROBES = [
      # is nested inside its deviceList beside a MediaServer. A parser that reads
      # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
      # requirement is silently absent.
-     "a cast device is built from the sonos root and knows it is a sonos", 8),
+     "a cast device is built from the sonos root and knows it is a sonos", 10),
     ("discovery/anything-is-castable", DISCOVERY_DEVICE,
      "        }\n        ?: return null\n",
      '        }\n        ?: (root to UpnpService("", "", descriptionUrl, null))\n',
      # The other direction: a NAS, a router's UPnP IGD and Sonos's own MediaServer all answer SSDP
      # and none of them can be cast to. Letting one through fails at SetAVTransportURI with UPnP
      # error 401, long after the user chose it.
-     "a device with no AVTransport anywhere is not a cast device", 13),
+     "a device with no AVTransport anywhere is not a cast device", 12),
     ("discovery/unsorted-picker", DISCOVERY_DIR,
      "val devices = (found + recovered).sortedWith(BY_NAME_THEN_UDN)",
      "val devices = (found + recovered)",
@@ -2059,6 +2063,95 @@ PROBES = [
      "    val urlMime = ServedMedia.forExtension(extension)?.mimeType",
      "    val urlMime = ServedMedia.forExtension(extension)?.mimeType ?: ServedMedia.FALLBACK_MIME",
      "an extension this client never serves is reported rather than assumed to be mp3", 1),
+
+    # ---- Plan 6 Task 6: the proxy ------------------------------------------------------------
+    #
+    # The defect this task is written against is the one a status-code assertion cannot see: a
+    # proxy that answers 206 with a correct `Content-Range` and streams from byte 0. Six of the ten
+    # probes below are offsets, because `bytes=0-` -- the request a naive renderer sends first, and
+    # therefore the one most likely to be the only one tested -- is served identically by a correct
+    # implementation and by one that ignores the header entirely.
+    #
+    # MEASURED with `:core:cast:test`, test by test, in task-6-report.md.
+
+    # `>=` against `>`. The whole difference is at EXACTLY `firstByte == totalLength`, which is why
+    # the live test that asked for `length + 1000` was green against this mutation and had to be
+    # rewritten to ask at the boundary. A renderer that seeks to the end of a track gets a 206
+    # naming no bytes instead of the 416 that tells it how long the resource really is.
+    ("proxy/range-boundary-off-by-one", PROXY_RANGE,
+     "      request.firstByte >= totalLength -> RangeResolution.Unsatisfiable",
+     "      request.firstByte > totalLength -> RangeResolution.Unsatisfiable",
+     "a first byte at or past the end is unsatisfiable", 2),
+
+    # `bytes=-0` names no bytes at all. Read as "no suffix, so everything", it hands a renderer the
+    # START of the file when it asked for nothing -- and RFC 7233 calls it unsatisfiable.
+    ("proxy/range-suffix-zero-is-whole", PROXY_RANGE,
+     "      request.lastBytes <= 0 -> RangeResolution.Unsatisfiable",
+     "      request.lastBytes <= 0 -> RangeResolution.Whole",
+     "a suffix of zero bytes is unsatisfiable, not the whole entity", 2),
+
+    # A 206 with no `Content-Range` is a partial response the renderer cannot place. Silent: the
+    # status is right, the length is right, and the seek bar simply does not work.
+    ("proxy/no-content-range", PROXY_SERVER,
+     '              contentRange = "$BYTES_UNIT ${range.firstByte}-${range.lastByte}/$totalLength",',
+     "              contentRange = null,",
+     "a ranged HEAD reports the range's length without sending it", 2),
+
+    # THE PROBE THIS TASK EXISTS FOR. The head is correct in every particular -- 206, the right
+    # `Content-Range`, the right `Content-Length` -- and the bytes are the start of the file. Every
+    # seek lands at the beginning of the track, and nothing anywhere reports a problem. No status
+    # assertion can see it; only an assertion on the BYTES can, and both the fake-upstream table and
+    # the live byte-exact tests do.
+    ("proxy/stream-from-byte-zero", PROXY_SERVER,
+     "      upstream.open(media.upstreamUrl, range).use { input ->",
+     "      upstream.open(media.upstreamUrl, ByteRange(0, range.length - 1)).use { input ->",
+     "a 206 body is the bytes that were asked for and not the bytes at the start of the file", 3),
+
+    # The traversal check. Pulling the token out of a path with `substringAfterLast('/')` resolves
+    # `/media/../<token>.mp3` -- and anything else ending the same way -- to a real published item.
+    ("proxy/token-out-of-any-path", PROXY_REGISTRY,
+     "    published.values.firstOrNull { it.path == path }",
+     "    published.values.firstOrNull { it.path.substringAfterLast('/') == path.substringAfterLast('/') }",
+     "a path outside the media prefix resolves to nothing, traversal included", 1),
+
+    # A token is a CAPABILITY, not an identity. Derived from the upstream URL it is stable across
+    # sessions, guessable by anything that knows the library, and a revoked session's URL works
+    # again the moment the same track is cast twice.
+    ("proxy/token-is-the-url", PROXY_REGISTRY,
+     '    val token = ByteArray(TOKEN_BYTES).also(random::nextBytes)\n      .joinToString("") { "%02x".format(it) }',
+     "    val token = upstreamUrl.hashCode().toString(16)",
+     "two publications of the same url get different tokens", 6),
+
+    # Spec section 6: Sonos infers MIME from the URL, not from `Content-Type`. A path with no
+    # extension is `714 Illegal MIME-type` on real hardware -- and a perfectly good 200 here.
+    ("proxy/path-without-an-extension", PROXY_REGISTRY,
+     "      path = PATH_PREFIX + served.fileName(token),",
+     "      path = PATH_PREFIX + token,",
+     "a published path ends in the served extension, because sonos sniffs the url", 4),
+
+    # Spec section 4's 429. Ignoring `Retry-After` means backing off 0.5 s when the server asked for
+    # 3 -- which is how a transcode limit turns into "random playback failure" rather than a wait.
+    ("proxy/retry-after-ignored", PROXY_UPSTREAM,
+     "    retryAfterHeader?.toLongOrNull()?.let { return (it * MILLIS_PER_SECOND).coerceIn(0L, MAX_BACKOFF_MS) }\n",
+     "",
+     "the origin's own retry-after wins over the backoff", 4),
+
+    # 503 says "try again" and 502 says "this is broken". A renderer that believes the second one
+    # stops, and the user sees a track that will not play with no way to retry it.
+    ("proxy/throttle-is-502", PROXY_SERVER,
+     '          503,\n          "Service Unavailable",',
+     '          502,\n          "Bad Gateway",',
+     "a throttled upstream becomes 503 with a retry-after, not 502", 2),
+
+    # THE SECURITY PROBE, and the companion to `cast/no-inbound-guard` above. That one proves
+    # `LocalNetworkOnly.acceptLocal` refuses a peer off the local network; this one proves the proxy
+    # -- the only ServerSocket in the app, serving Navidrome-authenticated audio to a LAN -- is
+    # actually the thing that calls it. The refusal itself cannot be observed from a loopback-only
+    # test, because loopback is local by construction, so the call site is what gets asserted.
+    ("proxy/no-inbound-guard-at-the-call-site", PROXY_SERVER,
+     "  internal val acceptConnection: (ServerSocket) -> Socket? = LocalNetworkOnly::acceptLocal,",
+     "  internal val acceptConnection: (ServerSocket) -> Socket? = { it.accept() },",
+     "connections are taken through the inbound local-network guard", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
