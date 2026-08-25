@@ -12,6 +12,19 @@ import androidx.room.PrimaryKey
  * would make insertion order load-bearing inside the reconcile transaction for no benefit. Room
  * would also then require the delete order to be exactly right, turning a data-quality question
  * into a constraint-violation crash.
+ *
+ * **Primary key is `id` alone, deliberately not composite with `libraryId` the way
+ * [ArtistEntity]'s is.** That composite key exists because Navidrome artist ids are *global*
+ * (confirmed live, see `ArtistEntity`'s own doc). Albums are the opposite by Navidrome's own
+ * design: its `Album` and `MediaFile` Go structs each carry their own `LibraryID` field (unlike
+ * `Artist`, which carries none), and Navidrome's own `scanner_multilibrary_test.go` asserts this
+ * directly — the same artist (e.g. "Jeff Beck") sharing one global artist id across two libraries
+ * still gets **two distinct album records**, one per library, even for identical artist content.
+ * A bare `id` primary key is therefore correct here, and `observeSongs(albumId)` needing no
+ * `libraryId` of its own is correct for the matching reason: an `albumId` cannot itself span two
+ * libraries, so it is already as scoped as `albumId` can be. (Investigated for fix round 2 of
+ * Task 5's review, source-only — not re-verified against the pinned container, whose two fixture
+ * libraries share no artist/album/song content to observe this against directly.)
  */
 @Entity(
   tableName = "albums",

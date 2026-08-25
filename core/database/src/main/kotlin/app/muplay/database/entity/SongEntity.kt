@@ -15,6 +15,13 @@ import androidx.room.PrimaryKey
  * This table is a **cache of the server** and a reconcile deletes and re-inserts it wholesale.
  * Nothing durable may live here — playback position lives in `media_progress`, keyed by the same
  * server id, in a table no reconcile touches.
+ *
+ * **Primary key is `id` alone**, and `BrowseDao.observeSongs(albumId)` takes no `libraryId` of
+ * its own, for the same reason [AlbumEntity] gives: Navidrome's `MediaFile` Go struct carries its
+ * own `LibraryID` field (unlike `Artist`, which carries none and *is* globally shared — see
+ * `ArtistEntity`'s doc for the bug that produced), and every song is additionally tied to one
+ * physical file path, which cannot itself exist under two different library roots. See
+ * `AlbumEntity`'s doc for the fuller investigation and its source citations.
  */
 @Entity(
   tableName = "songs",
