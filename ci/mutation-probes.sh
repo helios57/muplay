@@ -181,6 +181,7 @@ PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/app/muplay/media/PlaybackLaunche
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
 BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
+BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
@@ -1689,6 +1690,75 @@ PROBES = [
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
 
+    # ---- Plan 5 Task 3: which browse tree a connected controller gets ------------------------
+    #
+    # `BrowseSurfaces.of` is a four-argument decision table, and a decision table's characteristic
+    # defect is not a wrong answer -- it is two arms that happen to agree on the fixture somebody
+    # chose. The four probes below are the four arms that must not agree, each one measured (the
+    # failure counts here were read off a run, not predicted).
+    #
+    # What is NOT here, and cannot be: `DefaultSurfaceResolver`'s `connectionHints.getString(
+    # BrowseSurfaces.HINT_KEY)`. Replacing that constant with the literal `"surface"` -- a key that
+    # is wrong but plausible, and that no JVM test can see, because every JVM test passes
+    # `hintSurface` in directly -- is caught only by `DefaultSurfaceResolverTest`, which needs a
+    # real `Bundle` and therefore a device. That is this file's own INSTRUMENTED TIER limit, and
+    # the falsification is recorded by hand in task-3-report.md, the same way `LiveNavidromeTest`'s
+    # are. It is not hypothetical: that exact mutation was found live in an uncommitted tree, left
+    # by a probe run whose process died before its `finally` could revert.
+
+    # Precedence 1 over 2. Media3 owns the real answer to "is this a car"; our package list is a
+    # backstop for hosts it does not know, never an override of one it does. Demoting the predicate
+    # below the package arms is silent for every car (both arms say CAR) and wrong for exactly one
+    # caller: a *watch* package that Media3 has told us is driving a car surface.
+    ("browse/surface-predicate-demoted", BROWSE_SURFACE,
+     "    isCarController -> BrowseSurface.CAR\n"
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR\n"
+     "    packageName in WATCH_PACKAGES -> BrowseSurface.WATCH\n",
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR\n"
+     "    packageName in WATCH_PACKAGES -> BrowseSurface.WATCH\n"
+     "    isCarController -> BrowseSurface.CAR\n",
+     "the media3 predicate wins over every package and every hint", 1),
+
+    # THE SECURITY PROBE OF THIS TASK. The connection hint is a *self-declaration*, honoured only
+    # from our own package -- `:wear`'s browser connects under this app's own application id, which
+    # is the only reason a hint can identify it at all. Drop the `packageName == ownPackageName`
+    # guard and the hint becomes a *request* any installed app can make, which is both a different
+    # security posture and a test that proves nothing. Four reds, and the fourth matters most:
+    # `each of the four arguments changes the answer on its own` exists so that `ownPackageName` is
+    # a live argument rather than one the function could ignore.
+    #
+    # Replaces the whole tail of the `when`, not just the guard line: dropping the guard alone
+    # leaves the original `else -> BrowseSurface.PHONE` behind it, which is two `else` arms in one
+    # `when` and so a COMPILE error rather than a mutation. That version of this probe aborted the
+    # whole filtered list -- and reported it as `run_suite(): no test results were written for
+    # [every module]`, which reads exactly like the untouched-module false alarm master documents.
+    # It is not that: when the mutated module is in the list, suspect the mutation does not compile.
+    ("browse/surface-hint-from-anyone", BROWSE_SURFACE,
+     "    packageName == ownPackageName -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n"
+     "    else -> BrowseSurface.PHONE\n",
+     "    else -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n",
+     "a hint is honoured from our own package and refused from any other", 4),
+
+    # Exact match, not prefix. `com.google.android.projection.gearhead.evil` is installable, and a
+    # `startsWith` hands it the car tree on the strength of a name it chose for itself.
+    ("browse/surface-package-prefix-match", BROWSE_SURFACE,
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR",
+     "    CAR_PACKAGES.any { packageName.startsWith(it) } -> BrowseSurface.CAR",
+     "package matching is exact, not a prefix and not case-insensitive", 1),
+
+    # The lists themselves. These are Google's package names; a silent edit to one is a silent
+    # change to which tree a car gets, and nothing else in the suite would move.
+    ("browse/surface-car-package-dropped", BROWSE_SURFACE,
+     '    "com.android.car.carlauncher",\n', "",
+     "every known car and watch package maps to its surface", 1),
     # ---- Plan 6 Task 2, fix round: the review's HIGH and MEDIUM findings ----------------------
     # Same `revert()` note as the Task 2 block above: `core/cast` is checked out wholesale, so none
     # of these needs a LATER_PROBE_FILES line. Every count was measured by applying the mutation
@@ -1939,6 +2009,7 @@ LATER_PROBE_FILES = [
     TRACK_ID_KEY,
     BROWSE_TREE,
     BROWSE_TEXT,
+    BROWSE_SURFACE,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
