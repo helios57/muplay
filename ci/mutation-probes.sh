@@ -1666,6 +1666,8 @@ PROBES = [
      "  data class Strictness(\n"
      "    /** SOAP 1.1 quotes the `SOAPACTION` value. Sonos enforces it. Violation: 401. */\n"
      "    val requireQuotedSoapAction: Boolean = true,\n"
+     "    /** A control body is XML and a device parses it. See [RecordedSoap.arguments]. Violation: 401. */\n"
+     "    val requireWellFormedBody: Boolean = true,\n"
      "    /** UPnP argument lists are ordered by the service description. Violation: 402. */\n"
      "    val requireArgumentOrder: Boolean = true,\n"
      '    /** Spec section 6: *"DIDL-Lite mandatory"*. Violation: 714. */\n'
@@ -1681,6 +1683,7 @@ PROBES = [
      "  )",
      "  data class Strictness(\n"
      "    val requireQuotedSoapAction: Boolean = false,\n"
+     "    val requireWellFormedBody: Boolean = false,\n"
      "    val requireArgumentOrder: Boolean = false,\n"
      "    val requireNonEmptyMetadata: Boolean = false,\n"
      "    val requireUrlExtension: Boolean = false,\n"
@@ -1689,6 +1692,51 @@ PROBES = [
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
+
+    # ---- Plan 6 Task 3, fix round: the two HIGH findings of its security review --------------
+    #
+    # THE FIRST ONE, AND THE REASON THE SECOND ONE MATTERS. `render` validated the service type,
+    # the action and every argument NAME and then interpolated argument VALUES with no escaping at
+    # all, while its KDoc called itself "total: well-formed XML or throws". A Navidrome stream URL
+    # -- `/rest/stream?u=x&t=y&s=z`, the URL this app builds for every single track -- produced a
+    # document that fails at *"The reference to entity `t` must end with ';'"*, so `parseResponse`
+    # could not read back what `render` had just written and no device could read it either.
+    ("soap/argument-value-unescaped", SOAP_ENVELOPE,
+     "        append(XmlText.escape(value))",
+     "        append(value)",
+     "a navidrome stream url reaches the device intact, ampersands and all", 4),
+
+    # THE MIRROR IMAGE, re-pointed here from `didl/metadata-escaped-twice` when
+    # `DidlLite.renderEscaped` was deleted. Escaping is framing and framing now happens in exactly
+    # one place, so this is where doing it twice has to be caught: `&amp;lt;DIDL-Lite` inside
+    # `CurrentURIMetaData` is a device that shows the track as unknown with no error anywhere, and
+    # `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it.
+    ("soap/argument-escaped-twice", SOAP_ENVELOPE,
+     "        append(XmlText.escape(value))",
+     "        append(XmlText.escape(XmlText.escape(value)))",
+     "the metadata argument carries the document escaped exactly once", 5),
+
+    # THE SECOND HIGH FINDING, AND THE ONE THAT MADE THE FIRST INVISIBLE. `RecordedSoap.arguments`
+    # parsed request bodies with `<(\w+)>(.*?)</\1>`, and a regex cannot tell well-formed XML from
+    # malformed XML -- so a fake advertised as "strict by default", with its own strictness test
+    # class and its own probe, accepted a document no real renderer could have read, and 311 green
+    # tests said nothing. It is a real parser now; this probe is the memory of what happens when
+    # what it could not read is treated as a request anyway.
+    ("soap/fake-accepts-unparseable-body", SOAP_FAKE,
+     "    val arguments = recorded.arguments\n"
+     "      ?: if (strictness.requireWellFormedBody) return fault(UpnpError.INVALID_ACTION) else emptyList()",
+     "    val arguments = recorded.arguments ?: emptyList()",
+     "a body that is not well-formed xml is rejected with 401", 2),
+
+    # THE MEDIUM FROM THE SAME REVIEW. `parseResponse` answered `emptyMap()` both for "this action
+    # has no out arguments" and for "there is no answer to this action in this body". Task 5 reads
+    # `RelTime` out of a `GetPositionInfo`; given the second dressed up as the first it reads
+    # nothing and reports a position of zero for a device that never answered.
+    ("soap/unreadable-response-is-empty", SOAP_CLIENT,
+     "    SoapEnvelope.parseResponse(action, response.bodyText())\n"
+     "      ?: throw SoapTransportException(action, response.code)",
+     "    SoapEnvelope.parseResponse(action, response.bodyText()).orEmpty()",
+     "a 200 with no response element is a transport failure, while an empty response is a success", 1),
 
     # ---- Plan 5 Task 3: which browse tree a connected controller gets ------------------------
     #
@@ -1921,14 +1969,12 @@ PROBES = [
      "    append(item.resourceUrl)",
      "every text field is escaped, including in the res url", 2),
 
-    # The mirror image, and the one that gets applied twice as often as it gets forgotten:
-    # `&amp;lt;DIDL-Lite` inside `CurrentURIMetaData` is a device that shows the track as unknown
-    # with no error reported anywhere. `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it,
-    # so Task 5's suite reddens on this too.
-    ("didl/metadata-escaped-twice", DIDL_LITE,
-     "  fun renderEscaped(item: CastItem): String = XmlText.escape(render(item))",
-     "  fun renderEscaped(item: CastItem): String = XmlText.escape(XmlText.escape(render(item)))",
-     "renderEscaped is render escaped exactly once", 2),
+    # `didl/metadata-escaped-twice` used to live here, mutating `DidlLite.renderEscaped`. That
+    # function is gone -- escaping moved to `SoapEnvelope.render`, the one layer that owns the
+    # envelope, so that no caller has to remember which of two `DidlLite` functions this argument
+    # wanted. The probe was RE-POINTED rather than deleted: it is `soap/argument-escaped-twice`
+    # above, on the single site that can now make the mistake. Left stale it would have aborted
+    # this whole list at the all-probes preflight.
 
     # THE INVARIANT PROBE. `> 2` instead of `> 1` is the off-by-one that makes the check report a
     # disagreement only when all three legs differ -- i.e. it goes quiet on exactly the case the

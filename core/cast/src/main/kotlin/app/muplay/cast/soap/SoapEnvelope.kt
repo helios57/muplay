@@ -38,10 +38,29 @@ data class SoapArgument(val name: String, val value: String)
  * the refusal is deliberately not the `IllegalArgumentException`
  * [app.muplay.cast.http.CastHttpClient] would raise for the same bytes one layer down.
  *
- * Argument **values** are the exception, and it is a documented one rather than an oversight: they
- * are inserted verbatim because `CurrentURIMetaData` arrives already XML-escaped from `DidlLite`,
- * and escaping it a second time here is precisely the `&amp;lt;DIDL-Lite` defect. Values are
- * MuPlay's own text; names are not.
+ * Argument **values** are not exempt. They are escaped here, with [XmlText], and this layer is the
+ * only place in the module that escapes anything -- because **escaping is framing, and framing
+ * belongs to whichever layer owns the envelope.**
+ *
+ * That is a correction, and the argument it replaces is worth recording so it is not made again.
+ * `render` used to insert values verbatim, on the reasoning that `CurrentURIMetaData` arrives
+ * already escaped from `DidlLite.renderEscaped` and escaping it twice is the `&amp;lt;DIDL-Lite`
+ * defect. The reasoning was sound and the conclusion was wrong, in two measurable ways:
+ *
+ *  * **It was not true that values are safe.** An ordinary Navidrome stream URL
+ *    (`/rest/stream?u=x&t=y&s=z`) is MuPlay's own text, and inserted verbatim it made the envelope
+ *    fail to parse at *"The reference to entity `t` must end with ';'"* -- so [parseResponse] could
+ *    not read back what `render` had just written, and no device could either. A value of
+ *    `"x</CurrentURI><Speed>99</Speed><CurrentURI>y"` silently added a third argument.
+ *  * **It made correctness a convention.** Two `DidlLite` functions existed, one safe to pass here
+ *    and one not, and every future caller had to remember which. This module's discipline is to
+ *    make the forbidden value unrepresentable rather than to document it, so `renderEscaped` is
+ *    gone and there is nothing left to pass by mistake.
+ *
+ * The consequence on the wire is the one UPnP asks for: `CurrentURIMetaData` carries
+ * `&lt;DIDL-Lite...`. That is not double escaping. The argument is a **string-typed** value whose
+ * content happens to be a document, and a string-typed value inside an XML element is escaped
+ * exactly once, by the element's own writer -- here.
  */
 object SoapEnvelope {
 
@@ -49,9 +68,15 @@ object SoapEnvelope {
   const val CONTENT_TYPE: String = "text/xml; charset=\"utf-8\""
 
   /**
+   * The envelope for one action, **total**: every call either returns well-formed XML or throws.
+   *
+   * Argument values are taken as the text they are and escaped once with [XmlText.escape]. Pass
+   * the DIDL-Lite document itself for `CurrentURIMetaData`, not an escaped rendering of it --
+   * `DidlLite.render` is the whole of what a caller owes this function.
+   *
    * @throws MalformedSoapRequestException for a service type, action or argument name outside
-   *   [SoapNames]'s alphabets -- the peer-controlled inputs. Argument *values* are not checked;
-   *   see this object's own KDoc for why that asymmetry is the correct one.
+   *   [SoapNames]'s alphabets -- the peer-controlled inputs. Argument *values* need no alphabet,
+   *   because escaping makes every one of them representable; see this object's own KDoc.
    */
   fun render(serviceType: String, action: String, arguments: List<SoapArgument>): String {
     SoapNames.requireServiceType(serviceType)
@@ -63,9 +88,12 @@ object SoapEnvelope {
       append("s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">")
       append("<s:Body>")
       append("<u:").append(action).append(" xmlns:u=\"").append(serviceType).append("\">")
-      // In order. Not sorted, not a set, not a map.
+      // In order. Not sorted, not a set, not a map. And escaped -- once, here, by the layer that
+      // writes the element around it.
       arguments.forEach { (name, value) ->
-        append('<').append(name).append('>').append(value).append("</").append(name).append('>')
+        append('<').append(name).append('>')
+        append(XmlText.escape(value))
+        append("</").append(name).append('>')
       }
       append("</u:").append(action).append('>')
       append("</s:Body>")
@@ -88,17 +116,29 @@ object SoapEnvelope {
     "\"${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}\""
 
   /**
-   * The `out` arguments of `<action>Response`, in document order, entity-decoded.
+   * The `out` arguments of `<action>Response`, in document order, entity-decoded -- or **`null`
+   * when this body carries no response for [action] at all**.
    *
-   * Returns an empty map when the body does not carry a response for [action] -- including when it
-   * carries a response for a *different* action. Reading whatever element happened to be there
-   * would turn a device bug into a position value taken from a volume query.
+   * `null` and an empty map are two different facts and this function used to answer the same
+   * value for both. An empty map is *"the device answered this action, and it has no out
+   * arguments"* -- which is what `Play`, `Stop` and `SetAVTransportURI` really do answer. `null` is
+   * *"there is no answer to this action in here"*: the body was not XML, or had no `<Body>`, or
+   * carried a response for a **different** action. Reading whichever element happened to be there
+   * would turn a device bug into a position taken from a volume query, and reporting it as an
+   * empty success turns it into a position of zero.
+   *
+   * The same reasoning [parseFault] applies from the other side, where it answers
+   * `UpnpFault(ACTION_FAILED, null)` rather than `null` for a fault it cannot read: **preserve the
+   * fact, degrade only the detail.** Here the fact being preserved is that there was no readable
+   * result, and [SoapClient.invoke] turns it into the [SoapTransportException] its own KDoc has
+   * always promised for a renderer that *"answered something unreadable"* -- a promise this
+   * function's empty map used to quietly break.
    */
-  fun parseResponse(action: String, xml: String): Map<String, String> {
-    val body = bodyOf(xml) ?: return emptyMap()
+  fun parseResponse(action: String, xml: String): Map<String, String>? {
+    val body = bodyOf(xml) ?: return null
     val response = childElements(body).firstOrNull {
       it.nodeName.substringAfterLast(':') == "${action}Response"
-    } ?: return emptyMap()
+    } ?: return null
 
     // `child.textContent`, not `child.textContent.orEmpty()`: `textContent` is a platform type, so
     // the `.orEmpty()` inserts a null branch for a value the DOM never produces -- an arm no test
