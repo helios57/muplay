@@ -727,13 +727,30 @@ def apply(path, old, new):
     open(path, "w").write(src.replace(old, new))
 
 
+# Every file the probes above mutate that is not named on the `git checkout` line inside
+# `revert()` below. One name per line, and a separate list rather than more names on that line, for
+# a merge reason that is not hypothetical: several branches add a probe file at once, a union merge
+# of two edits to the *same* line produces either a duplicated `],` (a SyntaxError, loud) or a
+# silently wrong argument list, and this project has already had a union merge collapse two
+# `CoverageFloor(...)` calls in the root build script into one broken call. Appending a line to
+# this list conflicts with nothing.
+#
+# Getting an entry wrong here fails in the worst direction rather than the safe one -- a mutated
+# file that no `git checkout` names is left in the tree when the run ends, which is exactly the
+# stray-mutation incident this script's header describes -- so add the file here in the same edit
+# that adds the probe, never after.
+LATER_PROBE_FILES = [
+    RESUME_POLICY,
+]
+
+
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
-         RESUME_POLICY],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
         check=True,
     )
+    subprocess.run(["git", "checkout", "--", *LATER_PROBE_FILES], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
