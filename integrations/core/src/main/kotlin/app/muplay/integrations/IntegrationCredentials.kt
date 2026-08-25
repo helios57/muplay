@@ -50,6 +50,15 @@ sealed interface IntegrationCredentials {
      * client; there is no scoped or read-only form of it to fall back on. `IntegrationCredentialsTest`
      * is what keeps this override honest, and a coverage floor over this class is what keeps that
      * test from being deleted quietly.
+     *
+     * **[baseUrl] is deliberately *not* redacted, and that is a knowing trade.** A redaction that
+     * hid everything would make every log line about an integration useless — the point is to hide
+     * one field, not the object. But [IntegrationBaseUrl.parse] strips only the query, the fragment
+     * and userinfo: it keeps the **path verbatim**, because Servarr applications support a
+     * `urlBase` and are commonly proxied at `https://home.example.com/lidarr`. A user who has put a
+     * secret in that path (`https://home.example.com/api/TOKEN123/v1`) will see it in anything that
+     * logs this object. So: the API key cannot appear here, and the path can. Treat a base URL as
+     * possibly secret-bearing wherever it is written down.
      */
     override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=<redacted>)"
   }
