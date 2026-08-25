@@ -183,6 +183,8 @@ BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
 BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
+STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
+CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
@@ -1953,6 +1955,30 @@ PROBES = [
      "    val urlMime = ServedMedia.forExtension(extension)?.mimeType ?: ServedMedia.FALLBACK_MIME",
      "an extension this client never serves is reported rather than assumed to be mp3", 1),
 
+    # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
+    # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
+    # they belong here rather than behind a coverage floor.
+    #
+    # 1. The per-service Keystore alias -- the independence property the whole plan rests on. A
+    #    `keyAlias` returning one constant for both services makes `clear(LIDARR)` destroy
+    #    Bindery's key too, and no test that configures a single service can see it. The mutated
+    #    `when` still has two arms and both still execute, so the 2/2 BRANCH floor over this
+    #    companion stays green under the mutation.
+    ("integrations/keyAlias-service", STORE,
+     'IntegrationService.BINDERY -> "app.muplay.integrations.bindery"',
+     'IntegrationService.BINDERY -> "app.muplay.integrations.lidarr"',
+     "the two services use two different keystore aliases", 1),
+
+    # 2. The API-key redaction. A Lidarr key is instance-wide and carries admin authority over the
+    #    user's download client, and the `toString()` a `data class` generates would print it into
+    #    the first `Log.d(state)` anyone writes. This is `:core:model`'s `SubsonicCredentials`
+    #    defect one module over; the class's 5/5 LINE floor stays green under the mutation, so the
+    #    only thing standing between the key and a crash report is the named assertion.
+    ("integrations/credentials-redaction", CREDENTIALS,
+     'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=<redacted>)"',
+     'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=$apiKey)"',
+     "toString does not leak the api key", 1),
+
     # ---- Plan 3 Task 5, review round: who may connect to the exported media session ----------
     # The service is exported -- it has to be, or Android Auto, Wear, Assistant and the system
     # media controls cannot find it -- with no `android:permission`, and Media3's default callback
@@ -2035,6 +2061,11 @@ LATER_PROBE_FILES = [
     BROWSE_ID,
     BASE_URL,
     INTEGRATION_SERVICE,
+    # Plan 7 Task 2, added in the same edit as the two `integrations/` probes -- never after, per
+    # this list's own comment: a mutated file no `git checkout` names is left in the tree when the
+    # run ends, which is the stray-mutation incident this script's header describes.
+    STORE,
+    CREDENTIALS,
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,

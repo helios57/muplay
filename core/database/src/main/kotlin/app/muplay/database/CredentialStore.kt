@@ -1,16 +1,11 @@
 package app.muplay.database
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.muplay.model.SubsonicCredentials
-import java.security.KeyStore
 import java.util.Base64
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +26,15 @@ import kotlinx.coroutines.flow.map
  * The key is not user-authentication-bound (`setUserAuthenticationRequired` is never called):
  * background playback must work from a locked screen, which is the whole point of the feature it
  * serves.
+ *
+ * The Keystore plumbing itself lives in [KeystoreKeys], which this class used to hold inline. It
+ * moved out when a second store (`IntegrationCredentialStore`, in `:integrations:core`) needed the
+ * same create-or-fetch/exists/delete handling, so that the mechanism is shared rather than copied.
+ * The dependency runs one way only -- that module depends on this one, never the reverse, which is
+ * what keeps Plan 7 severable.
+ * Nothing about *this* class's behaviour changed with it: the alias, the DataStore keys, the
+ * public API and the "a missing key or an unopenable blob means nothing is stored" rule are all
+ * exactly what they were, and `CredentialStoreTest` was not edited when the extraction happened.
  */
 @Singleton
 class CredentialStore @Inject constructor(
@@ -41,7 +45,7 @@ class CredentialStore @Inject constructor(
   val credentials: Flow<SubsonicCredentials?> = dataStore.data.map(::read)
 
   suspend fun save(credentials: SubsonicCredentials) {
-    val sealed = KeystoreCipher.seal(secretKey(), credentials.password)
+    val sealed = KeystoreCipher.seal(KeystoreKeys.getOrCreate(KEY_ALIAS), credentials.password)
     dataStore.edit { preferences ->
       preferences[BASE_URL] = credentials.baseUrl
       preferences[USERNAME] = credentials.username
@@ -58,17 +62,14 @@ class CredentialStore @Inject constructor(
    */
   suspend fun clear() {
     dataStore.edit { it.clear() }
-    val keyStore = androidKeyStore()
-    if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
+    KeystoreKeys.delete(KEY_ALIAS)
   }
 
   private fun read(preferences: Preferences): SubsonicCredentials? {
     val baseUrl = preferences[BASE_URL] ?: return null
     val username = preferences[USERNAME] ?: return null
     val sealed = preferences[SEALED_PASSWORD] ?: return null
-    val keyStore = androidKeyStore()
-    if (!keyStore.containsAlias(KEY_ALIAS)) return null
-    val key = (keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
+    val key = KeystoreKeys.find(KEY_ALIAS) ?: return null
     // A blob that will not open is indistinguishable, to a caller, from nothing being stored:
     // both mean "you have to log in again". Surfacing a GeneralSecurityException from a Flow
     // collected by the UI would crash the screen instead.
@@ -77,38 +78,19 @@ class CredentialStore @Inject constructor(
       .getOrNull()
   }
 
-  private fun secretKey(): SecretKey {
-    val keyStore = androidKeyStore()
-    if (keyStore.containsAlias(KEY_ALIAS)) {
-      return (keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
-    }
-    val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
-    generator.init(
-      KeyGenParameterSpec.Builder(
-        KEY_ALIAS,
-        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-      )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(KEY_SIZE_BITS)
-        .build(),
-    )
-    return generator.generateKey()
-  }
-
   companion object {
-    private const val ANDROID_KEY_STORE = "AndroidKeyStore"
+    /**
+     * This app's oldest Keystore alias, and one that already exists on real devices. Renaming it
+     * is a silent sign-out for every installed user, which is why `CredentialStoreTest` writes it
+     * out as a literal rather than reading it from here.
+     */
     private const val KEY_ALIAS = "app.muplay.credentials"
-    private const val KEY_SIZE_BITS = 256
 
     private val BASE_URL = stringPreferencesKey("server_base_url")
     private val USERNAME = stringPreferencesKey("server_username")
     private val SEALED_PASSWORD = stringPreferencesKey("server_sealed_password")
 
-    private fun androidKeyStore(): KeyStore =
-      KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-
     /** Whether the Keystore alias exists. Used by `CredentialStoreTest` to prove `clear()` means it. */
-    fun keyExists(): Boolean = androidKeyStore().containsAlias(KEY_ALIAS)
+    fun keyExists(): Boolean = KeystoreKeys.exists(KEY_ALIAS)
   }
 }
