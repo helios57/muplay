@@ -681,7 +681,11 @@ PROBES = [
      "      } else {\n        if (current > longest) longest = current\n        current = 0\n      }",
      # Closing a run only when a non-zero sample arrives misses a run that reaches the end of the
      # buffer -- and encoder *padding*, half of what "gapless" trims, lives exactly there.
-     "a run that ends at the end of the buffer still counts", 2),
+     # Exactly 1, measured after predicting 2 and being wrong: the sine test's spliced-in encoder
+     # delay is *followed* by signal, so a late-closing scan still records that run correctly. The
+     # end-of-buffer test is the only one that can see this defect at all, which is the argument
+     # for its existence stated as a number.
+     "a run that ends at the end of the buffer still counts", 1),
     ("pcm/zero-run-never-resets", PCM_ANALYSIS,
      "      } else {\n        current = 0\n      }", "      }",
      # Without the reset this counts total silent frames rather than the longest consecutive run,
@@ -698,8 +702,10 @@ PROBES = [
      "return frames.toLong() * MILLIS_PER_SECOND / sampleRateHz",
      "return frames.toLong() * MILLIS_PER_SECOND / 44100",
      # 44100 is the rate every fixture happens to use, so a hardcoded one is the accident that
-     # would never show up on the device tier at all.
-     "frames convert to milliseconds at the sample rate given", 2),
+     # would never show up on the device tier at all. Exactly 1, measured after predicting 2: every
+     # other test in the class is at 44100 too, so the two-rate test is the sole observation that
+     # can tell a hardcoded rate from a read one -- which is why it asserts at 48000 as well.
+     "frames convert to milliseconds at the sample rate given", 1),
     ("pcm/frames-to-ms-unit", PCM_ANALYSIS,
      "private const val MILLIS_PER_SECOND = 1000L",
      "private const val MILLIS_PER_SECOND = 1L",
