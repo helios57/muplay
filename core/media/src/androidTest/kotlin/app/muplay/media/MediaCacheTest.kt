@@ -214,39 +214,46 @@ class MediaCacheTest {
   }
 
   /**
-   * A cache entry that cannot be read degrades to the network instead of killing the track.
+   * The `cacheDir` trade, measured rather than asserted in a comment.
    *
-   * This test exists because a mutation sweep found the value it covers unobserved: deleting
-   * `.setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)` from `MuPlayDataSourceFactory` left
-   * all nineteen instrumented tests green. Without the flag, a damaged entry permanently breaks
-   * one specific song with no way for a user to tell why -- every retry reopens the same
-   * unreadable span -- and nothing in the build noticed.
+   * [MediaCache] chooses `context.cacheDir` over `filesDir` on the claim that the OS reclaiming it
+   * "costs a re-download and never a wrong answer". Nothing checked that claim. Here the cache
+   * files are removed from under a live `SimpleCache` — which is what reclamation looks like from
+   * the process's point of view, since its in-memory index still says the resource is held — and
+   * the next playback has to succeed by going back to the server.
    *
-   * The damage is done the way real damage happens: the span files are removed from disk behind
-   * `SimpleCache`'s back, so its index still claims the resource is held while the bytes are
-   * gone. The recovery being asserted is a *second network fetch*, not merely "no exception":
-   * `server.requestCount` going from 1 to 2 is the only evidence that the player went upstream
-   * rather than, say, silently playing zero samples.
+   * `server.requestCount` going 1 -> 2 is the evidence, not "no exception": a player that
+   * produced zero samples would also throw nothing. And `isNotEmpty()` on the span list is the
+   * guard one level down — if `SimpleCache` ever stops naming its files this way, damaging nothing
+   * would leave the cache healthy and this test would pass while measuring nothing at all.
+   *
+   * **What this test does not cover, stated because a mutation sweep proved it:**
+   * `FLAG_IGNORE_CACHE_ON_ERROR` in `MuPlayDataSourceFactory.create()`. Deleting that flag leaves
+   * this test, and all twenty others, green. Two sabotages were measured. Removing the span files
+   * is repaired by `SimpleCache.getSpan` itself (`span.isCached && !span.file.exists()` -> drop the
+   * stale spans, return a hole), so the flag never enters the picture — that is the path this test
+   * exercises. Revoking read permission does reach `FileDataSource`, but the playback then dies
+   * **with the flag set as well as without it**: `DefaultLoadErrorHandlingPolicy` does not retry a
+   * `FileNotFoundException`, and the flag only takes effect on a *subsequent* `open()`. So the
+   * flag is a live, unobserved value — see task-3-report.md, which records it as such rather than
+   * pretending a test covers it.
    */
   @Test
-  fun aCacheEntryThatCannotBeReadFallsBackToTheNetworkInsteadOfBreakingTheTrack() {
+  fun aCacheDirectoryReclaimedByTheOsCostsARedownloadAndNotAWrongAnswer() {
     server.enqueue(audioResponse(audio))
     playToEnd(server.url("/stream?id=track-1&s=111").toString(), cacheKey = "track-1")
     assertThat(server.requestCount).isEqualTo(1)
 
     val spans = cacheDir.walkTopDown().filter { it.isFile && it.name.endsWith(".exo") }.toList()
-    // Not vacuous: if `SimpleCache` ever stops using this file naming, deleting nothing would
-    // leave the cache perfectly healthy and this test would pass while measuring nothing at all.
     assertThat(spans).isNotEmpty()
     assertThat(spans).allSatisfy { assertThat(it.delete()).isTrue() }
 
     server.enqueue(audioResponse(audio))
     playToEnd(server.url("/stream?id=track-1&s=999").toString(), cacheKey = "track-1")
 
-    // Upstream was reached. Without the flag the player retries the same missing span until the
-    // load-error budget runs out and reports a playback error, which `playToEnd` surfaces as a
-    // failed wait.
+    // The whole track came back off the wire, and the cache refilled from it.
     assertThat(server.requestCount).isEqualTo(2)
+    assertThat(cache.getCachedBytes("track-1", 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
   }
 
   @Test
