@@ -31,15 +31,16 @@ dependencies {
   // 3's shape from the JVM tier, and a JVM test sees `implementation` dependencies, so the
   // narrower `testImplementation` it arrived with is subsumed here rather than duplicated.
 
-  // `kotlinx-coroutines-core` is deliberately NOT on the production classpath, and
-  // `QueueRepository.mediaItems` being `suspend` is not a reason to put it back: `suspend` is a
-  // Kotlin *language* feature carried by `kotlin-stdlib` (`kotlin.coroutines.Continuation`), and
-  // nothing in `src/main` imports `kotlinx.coroutines` at all -- checked, not assumed. It was on
-  // `implementation` from Task 2 and used only by `runBlocking` in `src/androidTest`, reaching it
-  // transitively; this is that dependency declared where it is actually used. `coroutines-test`
-  // is likewise androidTest-only -- it was also on `testImplementation`, and no JVM test in this
-  // module has ever imported it.
-  androidTestImplementation(libs.coroutines.core)
+  // `kotlinx-coroutines-core` used to be declared here, androidTest-only, under a comment saying
+  // it was deliberately off the production classpath -- `QueueRepository.mediaItems` being
+  // `suspend` was not a reason to add it, because `suspend` is a Kotlin *language* feature carried
+  // by `kotlin-stdlib`, and nothing in `src/main` imported `kotlinx.coroutines` at all. Task 5's
+  // `PlaybackConnection` is the first production class that does, so it moved to `api` at the end
+  // of this block; the instrumented declaration is gone rather than duplicated, since `api` puts it
+  // on every one of this module's own compile classpaths.
+  //
+  // `coroutines-test` stays androidTest-only -- it was on `testImplementation` once, and no JVM
+  // test in this module has ever imported it.
   androidTestImplementation(libs.coroutines.test)
 
   androidTestImplementation(libs.androidx.test.core)

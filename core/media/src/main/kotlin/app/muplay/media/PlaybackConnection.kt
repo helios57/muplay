@@ -59,6 +59,18 @@ import kotlinx.coroutines.withContext
  * *changes*; a position that is merely advancing is not an event, so without the ticker a seek bar
  * would move only when the track did.
  *
+ * ### One thing a snapshot of a `MediaController` cannot promise
+ *
+ * `currentMediaItem` and `mediaMetadata` do not update in the same instant. Measured on `muplay37`:
+ * immediately after a `seekToNextMediaItem`, a sample taken by the ticker can carry the new item's
+ * `mediaId` beside the previous item's `title`. The window is shorter than one tick.
+ *
+ * It is left rather than papered over, and the alternative is worse than it sounds: reading the
+ * title from `currentMediaItem.mediaMetadata` instead would be internally consistent but would drop
+ * the *combined* metadata -- the merge of the item's own tags with the stream's -- which is exactly
+ * what Media3's notification renders from. The app's own UI and its notification disagreeing
+ * permanently is a worse defect than either of them lagging for a frame.
+ *
  * ### What never reaches [PlaybackState]
  *
  * The stream URI. It carries an auth token and a fresh salt, the UI has no use for it, and the
