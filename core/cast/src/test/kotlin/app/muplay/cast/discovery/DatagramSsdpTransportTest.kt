@@ -82,6 +82,45 @@ class DatagramSsdpTransportTest {
     assertThat(withoutMx.searches.single()).doesNotContain("MX")
   }
 
+  /**
+   * The silent-truncation trap, and the reason this transport refuses a full-buffer datagram.
+   *
+   * `recvfrom` truncates without a flag, an exception or a short-read signal, and the header
+   * parser is deliberately tolerant of a block that ends without its blank line -- so a `LOCATION`
+   * clipped at the buffer boundary would parse as a real, shorter URL and this app would fetch a
+   * device description from somewhere else, with nothing logged anywhere.
+   *
+   * Both sides of the boundary are observed here, because "drop everything oversized" and "drop
+   * everything" are the same test otherwise: the padded reply is dropped, and a reply padded to
+   * just under the buffer from the same responder list comes back intact.
+   */
+  @Test
+  fun `a reply too big for the receive buffer is dropped rather than parsed as a short one`() = runTest {
+    val ssdp = start(
+      // ~5 KiB of SERVER header: over the 4 KiB receive buffer, so the kernel truncates it.
+      FakeSsdpResponder.Responder(
+        "http://127.0.0.1:1400/huge.xml", "uuid:huge",
+        listOf(SsdpSearch.TARGET_MEDIA_RENDERER), server = "X".repeat(5_000),
+      ),
+      // ~3 KiB: unpleasant, under the buffer, and still a perfectly good answer.
+      FakeSsdpResponder.Responder(
+        "http://127.0.0.1:1401/big.xml", "uuid:big",
+        listOf(SsdpSearch.TARGET_MEDIA_RENDERER), server = "Y".repeat(3_000),
+      ),
+      FakeSsdpResponder.Responder(
+        "http://127.0.0.1:1402/small.xml", "uuid:small", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
+      ),
+    )
+
+    val responses = transport.search(ssdp.endpoint, RendererDirectory.SEARCH_TARGETS, null, WINDOW_MS)
+
+    assertThat(responses.map { it.udn }).containsExactlyInAnyOrder("uuid:big", "uuid:small")
+    // Not merely absent from the udn list: a truncated reply must not reach the parser at all,
+    // because what it would produce is a *plausible* location rather than a rejected one.
+    assertThat(responses.map { it.location.toString() })
+      .containsExactlyInAnyOrder("http://127.0.0.1:1401/big.xml", "http://127.0.0.1:1402/small.xml")
+  }
+
   @Test
   fun `a network with nothing on it yields an empty list rather than hanging`() = runTest {
     val ssdp = start()

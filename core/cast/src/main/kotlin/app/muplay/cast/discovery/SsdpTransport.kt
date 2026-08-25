@@ -70,6 +70,20 @@ class DatagramSsdpTransport : SsdpTransport {
         val packet = DatagramPacket(buffer, buffer.size)
         val received = runCatching { socket.receive(packet); true }.getOrDefault(false)
         if (!received) continue
+        // A datagram that exactly fills the buffer is dropped, and this is the one place in the
+        // module where "probably fine" is not good enough. `recvfrom` truncates **silently**:
+        // there is no flag, no exception and no short-read signal, and a datagram that arrived
+        // truncated is byte-identical to one that happened to be exactly this long. The header
+        // parser cannot help either -- it is deliberately tolerant of a block that ends without
+        // its blank line, because a datagram *is* the whole message, so a `LOCATION` clipped at
+        // the buffer boundary parses as a real, shorter URL and this app then fetches a device
+        // description from somewhere else entirely, with nothing logged anywhere.
+        //
+        // The socket readers reject a truncated head; a datagram has no equivalent and cannot
+        // have one. Dropping the suspect packet is what replaces it. Nothing is lost in practice:
+        // a real M-SEARCH reply is a few hundred bytes (see MAX_DATAGRAM_BYTES), so a 4 KiB
+        // datagram is already a device misbehaving.
+        if (packet.length == buffer.size) continue
         val text = String(packet.data, packet.offset, packet.length, Charsets.US_ASCII)
         SsdpSearch.parseResponse(text, packet.address)?.let(responses::add)
       }
@@ -78,7 +92,16 @@ class DatagramSsdpTransport : SsdpTransport {
   }
 
   companion object {
-    /** SSDP replies are a few hundred bytes; 4 KiB is generous and bounds the read. */
+    /**
+     * The receive buffer, and therefore the largest datagram this transport will accept.
+     *
+     * SSDP replies are a few hundred bytes; 4 KiB is generous and bounds the read. **Do not make
+     * this smaller.** It is not only a memory bound: the datagram parser treats the packet as the
+     * whole message, so anything the kernel had to truncate to fit here would be parsed as a
+     * complete -- and wrong -- reply. The read loop refuses a datagram that exactly fills this
+     * buffer for that reason, so shrinking it turns working speakers into invisible ones rather
+     * than into a visible error.
+     */
     private const val MAX_DATAGRAM_BYTES = 4096
 
     /** Short enough that the listen window is honoured to within a fifth of a second. */

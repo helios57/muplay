@@ -99,6 +99,13 @@ object SsdpSearch {
    * the remainder is then handed to [HttpWire.parseHeaderBlock], whose end-of-input tolerance is
    * exactly what a datagram needs: real replies arrive both with and without the trailing blank
    * line, and on a socket the same shape would be a truncated read.
+   *
+   * **Precondition, and it is the caller's to keep: [datagram] must be the whole datagram.** That
+   * tolerance is what makes a short read undetectable here -- a `LOCATION` clipped by a receive
+   * buffer too small for the packet parses as a real, shorter URL, and this function has no way
+   * to tell it from a device that announced that URL. `recvfrom` truncates silently, so the only
+   * place the difference can be seen is at the socket: see [DatagramSsdpTransport]'s read loop,
+   * which refuses a datagram that exactly fills its buffer.
    */
   fun parseResponse(datagram: String, from: InetAddress): SsdpResponse? {
     val startLine = datagram.substringBefore("\r\n").substringBefore("\n")
