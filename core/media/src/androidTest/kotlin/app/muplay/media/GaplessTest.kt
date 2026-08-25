@@ -8,7 +8,6 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.Song
-import app.muplay.model.StreamFormat
 import app.muplay.testing.PcmAnalysis
 import java.io.File
 import java.nio.ByteBuffer

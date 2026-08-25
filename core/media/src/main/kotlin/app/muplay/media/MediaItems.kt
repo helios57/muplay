@@ -18,10 +18,18 @@ import app.muplay.model.Song
  * - **`customCacheKey = song.id`.** Spec section 4: the cache key must derive from the track id
  *   alone. This client's stream URLs carry a fresh auth salt per call, so Media3's default
  *   URL-derived key produces a cache that is written and never read — the defect Tempo ships.
- * - **`mediaType = MEDIA_TYPE_MUSIC`, always.** Not this app agreeing that an audiobook is music:
- *   Navidrome hardcodes `child.Type = "music"` for every media file, so the protocol offers no
- *   other answer, and the library id is what actually distinguishes a book. Do not "fix" this by
- *   inferring a book from a file suffix.
+ * - **`mediaType`, from [isAudiobook] and from nothing else.** Navidrome hardcodes
+ *   `child.Type = "music"` for every media file -- the seeded `Test Book.m4b` comes back as
+ *   `"type": "music"` -- and the OpenSubsonic `mediaType` enum describes the object *kind*
+ *   (`song|album|artist`), not the content, so the protocol cannot answer this question at all.
+ *   The user's own `LibraryRole` assignment joined to `Song.libraryId` is the only mechanism there
+ *   is (spec section 4), and [QueueRepository] is where that join happens. Do not "fix" this by
+ *   inferring a book from a file suffix: `.m4b` is a container, an audiobook library holds plain
+ *   `.mp3` chapters, and a music library holds `.m4b` DJ sets.
+ *
+ *   It is `MediaMetadata.mediaType` rather than a custom `extras` key for two reasons: it is the
+ *   field that means this, and Plan 5's car and watch surfaces render from it. One field, no
+ *   parallel truth. `PlaybackAudioAttributes` reads it back to decide speech vs music.
  * - **`durationMs = song.durationSeconds * 1000`.** The one value here that is *recoverable from
  *   nowhere else*, and the reason it has to be set is a chain this repository has already
  *   measured end to end. `StreamFormat.forSuffix` sends `opus`/`ogg`/`oga` as `format=mp3`, which
@@ -57,7 +65,12 @@ import app.muplay.model.Song
 @OptIn(UnstableApi::class)
 object MediaItems {
 
-  fun of(song: Song, streamUri: String, artworkUri: String?): MediaItem =
+  /**
+   * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
+   *   inferable from anything the server sends -- see this object's own note above for why the
+   *   library id plus the user's own `LibraryRole` is the only mechanism there is.
+   */
+  fun of(song: Song, streamUri: String, artworkUri: String?, isAudiobook: Boolean): MediaItem =
     MediaItem.Builder()
       .setMediaId(song.id)
       .setUri(streamUri)
@@ -83,7 +96,10 @@ object MediaItems {
           // Android Auto (Plan 5) renders its browse tree from these flags; an item marked
           // browsable becomes a folder that opens onto nothing.
           .setIsBrowsable(false)
-          .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+          .setMediaType(
+            if (isAudiobook) MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER
+            else MediaMetadata.MEDIA_TYPE_MUSIC,
+          )
           .build(),
       )
       .build()

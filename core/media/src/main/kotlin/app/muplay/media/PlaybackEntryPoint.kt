@@ -25,4 +25,22 @@ import dagger.hilt.components.SingletonComponent
 @InstallIn(SingletonComponent::class)
 interface PlaybackEntryPoint {
   fun queueRepository(): QueueRepository
+
+  /**
+   * The **application's own** singleton [PlaybackConnection] — not one the test built.
+   *
+   * Needed for exactly one thing, and it is a fact about this process rather than about any test:
+   * `:feature:player`'s `PlayerViewModel` calls `connection.controller()` behind the mini player,
+   * so from the first screen that composes it the singleton holds a `MediaController` **bound to
+   * `MuPlaybackService` for the life of the process**, and it is never released. A bound service
+   * cannot be destroyed, so `stopService` is a no-op and `onDestroy` never runs.
+   *
+   * `MuPlaybackServiceTest.theServiceCanBeStoppedAndComesBackWithAWorkingSession` therefore has to
+   * release this connection as well as its own, or its premise ("nothing is connected any more")
+   * is simply false whenever a UI journey ran before it in the same process — which is what a full
+   * `:app:connectedDebugAndroidTest` does. Measured: with `BrowseJourneyTest` ahead of it,
+   * `MuPlaybackService` LINE fell from 29/31 to 22/31 and its coverage floor failed, while the test
+   * itself stayed green because it re-connects afterwards and never asserted the service had gone.
+   */
+  fun playbackConnection(): PlaybackConnection
 }

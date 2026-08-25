@@ -16,6 +16,7 @@ import androidx.test.rule.GrantPermissionRule
 import app.muplay.database.CredentialStoreEntryPoint
 import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackEntryPoint
+import app.muplay.media.PlaybackLauncher
 import app.muplay.media.PlaybackNotification
 import app.muplay.media.MuPlaybackService
 import app.muplay.media.PlaybackQueue
@@ -284,6 +285,99 @@ class MuPlaybackServiceTest {
   }
 
   /**
+   * **A queue starts at the track its `startIndex` names, and the whole queue is still there.**
+   *
+   * The one defect in this plan that no JVM test can see, and it was live until this test existed:
+   * `QueueRepository.mediaItems` returns the whole queue by contract, `startIndex` is an argument
+   * to `setMediaItems(items, startIndex, positionMs)`, and until `PlaybackConnection.play` existed
+   * nothing joined the two. Every queue silently started at track 1 — "play track 7 of this album"
+   * played track 1, for every album, with a green repository suite. That is this project's recorded
+   * "verified at a different layer than applied" class, and the layer that applies it is a real
+   * player behind a real session, which is why this lives here and not in `:core:media`.
+   *
+   * ### The index is asserted before anything is waited for, and that is the whole test
+   *
+   * Written as *await until `state.mediaId == songs[1].id`*, this test was **green with
+   * `setMediaItems(items, 0, 0L)`** — measured, not feared. The fixture tracks are five seconds
+   * long and the wait allows thirty, so a queue that started at track 1 simply *played into* track
+   * 2 and satisfied the assertion; the second half, at `startIndex = 2`, was satisfied ten seconds
+   * in for the same reason. A wait is exactly the wrong instrument for an assertion about where
+   * playback *began*.
+   *
+   * `setMediaItems` applies the index synchronously through `MediaController`'s own masking, so the
+   * index is read back with no wait at all — drift cannot manufacture it — and only then is a
+   * second of real audio awaited, after which the index must **still** be the one that was named.
+   * That pair is what separates "started there" from "arrived there".
+   *
+   * **Two indices, so a hardcoded one satisfies neither.** Both mutations were measured, in
+   * `PlaybackLauncher.play`: `setMediaItems(items, 0, 0L)` fails on the first index read
+   * (`expected:<1> but was:<0>`), and
+   * `mediaItems()` returning `queue.songs.drop(queue.startIndex)` — the exact misreading
+   * `QueueRepositoryTest` warns about — lands on index 1 of a two-item queue and fails on the id
+   * there (`expected:<"lVRD…"> but was:<"nMjR…">`), with `mediaItemCount` a second, independent
+   * observation behind it.
+   */
+  @Test
+  fun aQueueStartsPlayingAtTheTrackItsStartIndexNames() {
+    check(songs.size >= 3) { "this test needs three seeded tracks, found ${songs.size}" }
+    // Three distinct server ids, or an index assertion could coincide with the wrong item.
+    assertThat(setOf(songs[0].id, songs[1].id, songs[2].id)).hasSize(3)
+
+    setQueueAndPlay(songs.take(3), startIndex = 1)
+
+    // No wait: this is where playback *began*.
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(1)
+    assertThat(onMain { controller.currentMediaItem?.mediaId }).isEqualTo(songs[1].id)
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+
+    // ...and a second of real audio later it is still that item, now genuinely rendering.
+    awaitPositionAtLeast(1_000L)
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(1)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isTrue
+
+    // The second observation, at the far end of the same queue. `hasNext` flips, which is what
+    // proves the player is genuinely positioned there rather than reporting a remembered index.
+    setQueueAndPlay(songs.take(3), startIndex = 2)
+
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(2)
+    assertThat(onMain { controller.currentMediaItem?.mediaId }).isEqualTo(songs[2].id)
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+
+    awaitPositionAtLeast(1_000L)
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(2)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[2].id)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isFalse
+  }
+
+  /**
+   * Asking to play **nothing** leaves what is already playing alone.
+   *
+   * `launchQueue`'s empty arm, driven where it is applied. `PlaybackLauncherTest` (JVM) pins the
+   * decision — an empty list yields `null` rather than `PlaybackQueue`'s own
+   * `IllegalArgumentException`, because "play this album" against songs the mirror has not
+   * delivered yet is an ordinary race and not a programming error — but the decision and its
+   * consequence are two different claims, and this is the one a user feels: the tap does nothing
+   * instead of stopping the music that was playing. Nothing else in the project reaches that arm
+   * with a real session behind it, which is why `PlaybackLauncher` measured 1/2 BRANCH until this.
+   */
+  @Test
+  fun askingToPlayNoSongsAtAllLeavesTheCurrentQueueAlone() {
+    setQueueAndPlay(songs.take(1))
+    awaitPositionAtLeast(500L)
+
+    runBlocking { PlaybackLauncher(queueRepository(), connection).play(emptyList(), 0) }
+
+    // Both halves matter: a launcher that called `setMediaItems(emptyList(), ..)` would report 0
+    // here, and one that threw would never reach either assertion.
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(1)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[0].id)
+    assertThat(onMain { controller.isPlaying }).isTrue
+  }
+
+  /**
    * One controller per connection, however many times it is asked for.
    *
    * Not a triviality: `controller()` is what every screen in `:feature:player` will call, and a
@@ -333,6 +427,14 @@ class MuPlaybackServiceTest {
       controller.stop()
       controller.clearMediaItems()
       connection.release()
+      // The application's **own** singleton connection, not this test's. `:feature:player`'s
+      // `PlayerViewModel` binds it behind the mini player and never releases it, so from the first
+      // journey that composes a screen it holds a `MediaController` bound to this service for the
+      // rest of the process -- and a bound service cannot be destroyed, which makes `stopService`
+      // below a no-op and this test's premise false. Measured: with `BrowseJourneyTest` ahead of it
+      // in the same run, `onDestroy` was never reached and `MuPlaybackService` LINE fell from 29/31
+      // to 22/31, failing its floor, while this test stayed green.
+      appPlaybackConnection().release()
     }
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
@@ -348,14 +450,31 @@ class MuPlaybackServiceTest {
     assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
   }
 
-  private fun setQueueAndPlay(items: List<Song>): List<MediaItem> {
-    val mediaItems = runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items)) }
-    onMain {
-      controller.setMediaItems(mediaItems, 0, 0L)
-      controller.prepare()
-      controller.play()
-    }
-    return mediaItems
+  /**
+   * Starts [items] through **`PlaybackLauncher`, the production entry point**, and hands back the
+   * `MediaItem`s built for them.
+   *
+   * Not a hand-rolled `setMediaItems(items, 0, 0L); prepare(); play()` -- which is what stood here
+   * until Plan 3 Task 6, and is precisely how `startIndex` came to be applied nowhere: a helper
+   * that passes a literal `0` is a second copy of the production sequence that agrees with it on
+   * the only case it ever exercises, so no assertion in this file could see the real one being
+   * wrong. `PlaybackLauncher` is documented as *"the one way anything in this app starts playing
+   * something"*, and this is the only suite in the project that can run it: every line of it needs
+   * a `MediaController` bound to a real `MuPlaybackService`, which only an `@HiltAndroidApp`
+   * application can start.
+   *
+   * Constructed over **this test's own** [connection] rather than reached through Hilt, for the
+   * reason the connection itself is built by hand here: the singleton is shared with the running
+   * app and cannot be released between tests.
+   *
+   * The items are re-derived rather than captured from inside `play`, which costs one more
+   * `mediaItems` call and keeps the launcher's signature free of a test-shaped return value. Both
+   * derivations produce the same ids and the same endpoints; only the auth salt differs, and
+   * nothing here asserts on one.
+   */
+  private fun setQueueAndPlay(items: List<Song>, startIndex: Int = 0): List<MediaItem> {
+    runBlocking { PlaybackLauncher(queueRepository(), connection).play(items, startIndex) }
+    return runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items, startIndex)) }
   }
 
   /** The scheme, host and path of a cover-art URL, with the authenticated query string removed. */
@@ -447,6 +566,9 @@ class MuPlaybackServiceTest {
    */
   private fun queueRepository() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).queueRepository()
+
+  private fun appPlaybackConnection() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).playbackConnection()
 
   private fun credentialStore() =
     EntryPointAccessors.fromApplication(context, CredentialStoreEntryPoint::class.java)
