@@ -190,16 +190,23 @@ class MediaItemsTest {
    * `Content-Type`, the proxy path ends in the matching extension, and `res/@protocolInfo` in the
    * DIDL document declares it. See `ServedMedia` and `MimeAgreement` in `:core:cast`.
    *
-   * Two observations of the raw branch, so it cannot be a constant, and one of the transcode
-   * branch, where the suffix must NOT win: without that last line an Opus track is announced to
-   * Sonos as `audio/ogg` while MP3 bytes are served -- spec section 12's "Sonos rejects a served
-   * format" risk in its most confusing form.
+   * Two observations of the raw branch, so it cannot be a constant, and two of the transcode
+   * branch, where the suffix must NOT win: an Opus track announced to Sonos as `audio/ogg` while
+   * MP3 bytes are served is spec section 12's "Sonos rejects a served format" risk in its most
+   * confusing form.
+   *
+   * **The `flac` line is the one that discriminates, and it is here because the `opus` line does
+   * not.** Measured: with `ServedMedia.of`'s transcode arm mutated to fall through to the source
+   * suffix -- the exact defect this test is named for -- the `opus` assertion stays **green**,
+   * because `opus` is absent from `RAW_TYPES` and the fallback answers `audio/mpeg` either way.
+   * The `opus` line states the rule; only a suffix the raw table knows can catch it being broken.
    */
   @Test
   fun theMimeTypeIsTheServedFormatAndNotTheSourceSuffix() {
     assertThat(mimeOf(first.copy(suffix = "mp3"), StreamFormat.Raw)).isEqualTo("audio/mpeg")
     assertThat(mimeOf(first.copy(suffix = "flac"), StreamFormat.Raw)).isEqualTo("audio/flac")
     assertThat(mimeOf(first.copy(suffix = "opus"), StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+    assertThat(mimeOf(first.copy(suffix = "flac"), StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
   }
 
   /**
