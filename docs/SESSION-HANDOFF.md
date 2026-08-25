@@ -56,6 +56,29 @@ or they fight.
 
 ## Open decisions, deliberately not made
 
+- **The shared Navidrome transcode cache is degraded, and the repair is ready
+  but not run.** Plan 6 Task 6 exhausted one seeded MP3 track's low-bitrate
+  transcodes while designing its live suite, so `:core:network`'s
+  `LiveNavidromeTest.coldTranscode` — which picks a **random** Music track and
+  searches for an unused bitrate below source — now has roughly a one-in-three
+  chance of failing, **with its own diagnostic**, for any lane that runs the live
+  suite. It will look like that lane's defect.
+
+  Measured: `/data/cache/transcoding` holds **201 entries / 3.4 MB** against a
+  100 MB `ND_TRANSCODINGCACHESIZE`, so it will never evict on its own.
+
+  The repair is a cache flush, not a reseed, and does **not** violate the
+  never-stop-never-restart-never-reseed rule:
+
+      docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'
+
+  **Precondition: no device or live suite in flight.** Check
+  `cat /tmp/muplay-device.lock` and `pgrep -f liveNavidrome` first. Not run here
+  because `:core:media:connectedDebugAndroidTest` was mid-run, and a stream that
+  flips from cache-served file to live chunked transcode mid-suite changes
+  `Content-Length` and `Accept-Ranges` under an assertion that is reading them.
+
+
 - **M4, casting picker trust.** `RendererDirectory` uses `distinctBy { it.udn }`,
   which keeps the **first** announcement — and arrival order is attacker
   controlled: an impostor replying instantly beats a real Sonos waiting its
