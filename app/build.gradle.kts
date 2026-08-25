@@ -40,6 +40,11 @@ dependencies {
   implementation(libs.coil)
   implementation(libs.coil.network.okhttp)
 
+  // `MuPlayApp` now hosts a ViewModel and collects a StateFlow, neither of which this module
+  // depended on before: it was a pure navigation shell.
+  implementation(libs.hilt.navigation.compose)
+  implementation(libs.lifecycle.runtime.compose)
+
   // Tier 2 (.github/workflows/e2e.yml): FirstRunJourneyTest drives the real app on a real
   // emulator against a real Navidrome container. `compose-ui-test-junit4` supplies
   // `createAndroidComposeRule` and the finder/assertion API; `androidx-test-ext` supplies the
@@ -63,4 +68,6 @@ dependencies {
   // the exact failure. Nothing in this module calls Espresso directly; Compose's own
   // `waitForIdle` does, via `Espresso.onIdle`.
   androidTestImplementation(libs.androidx.test.espresso)
+  // ActivityScenario and ApplicationProvider for the journeys.
+  androidTestImplementation(libs.androidx.test.core)
 }
