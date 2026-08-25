@@ -464,7 +464,14 @@ it will assert what the code *does* rather than what it *should*.
 
 1. **An external oracle.** The **OpenSubsonic OpenAPI spec** (87 paths, 195
    schemas) validates every committed fixture — vendored, with a nightly
-   non-blocking drift check.
+   non-blocking drift check, implemented as `.github/workflows/openapi-drift.yml`.
+
+   **It must fail loudly on the drift path, not only on the quiet one.** The
+   first version did the opposite: `diff` exits 1 when it finds a difference,
+   so under `set -euo pipefail` the job died silently *whenever there was drift*
+   and passed cleanly whenever there was none — a check that worked in exactly
+   the case it was not needed. Any rewrite must be watched failing against a
+   deliberately altered spec before it is believed.
 
    **The oracle is not always right, and where it disagrees with the server the
    server wins.** Two divergences measured against a live
@@ -555,9 +562,9 @@ Real API 37 emulator, hardware-accelerated, against a real Navidrome.
 
 | Journey | Proves |
 |---|---|
-| First run | URL + credentials → `ping` → `getMusicFolders` → tag each library |
-| Browse | artists, albums, tracks, cover art, search |
-| **Library-scoped shuffle** | shuffle Music repeatedly, assert **no audiobook ever appears** |
+| First run — `FirstRunJourneyTest` | URL + credentials → `ping` → `getMusicFolders` → tag each library, and **read the persisted role back** |
+| Browse — `BrowseJourneyTest`, `AlbumRouteJourneyTest` | artists, albums, tracks, cover art, search, refresh |
+| **Library-scoped shuffle** — `ScopedShuffleJourneyTest` | shuffle Music repeatedly, assert **no audiobook ever appears** |
 | Playback | audio renders — PCM captured by a `TeeAudioProcessor` upstream of the `AudioTrack`, so it works on the `-no-audio` CI emulator — gapless measured in frames, notification and lock screen respond, survives backgrounding |
 | **The resume journey** | play a book, leave mid-chapter, play music, return — the book resumes **exactly**. The original complaint, as a test. |
 | Cast | discover and stream to a renderer |
