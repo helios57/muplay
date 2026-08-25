@@ -236,9 +236,16 @@ PROBES = [
      "getScanStatus maps a scan in progress, watermark and all", 1),
 
     # ---- N-2, round 2: the cover-art origin --------------------------------------------------
+    # The anchor carries the `.addPathSegments` line beneath it, and must: Plan 3 Task 1 gave
+    # `streamUrl` an identically-worded first line, and a one-line anchor became ambiguous the
+    # moment it landed -- the probe then aborted with "PROBE TEXT NOT FOUND (or ambiguous)"
+    # rather than reporting MISSED, which is the loud failure this runner is supposed to give.
+    # `stream/host-and-scheme` below is the same mutation on the stream URL.
     ("origin/coverArt-host", CLIENT,
-     "val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()",
-     'val builder = "http://elsewhere.example:9999/".toHttpUrl().newBuilder()',
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/getCoverArt")',
+     'val builder = "http://elsewhere.example:9999/".toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/getCoverArt")',
      "the cover art url carries full authentication and the art id", 3),
 
     # ---- The protocol constant nothing in the build referenced --------------------------------
@@ -530,6 +537,17 @@ PROBES = [
     # Plan 1's own finding -- `authParams()` returning nothing left 81 tests green -- re-armed for
     # a URL that no Retrofit call site covers. 4: `f`, `c`/`v`, the token and the salt-freshness
     # test all read parameters this line is the sole source of.
+    # A URL is a compound value: `origin/coverArt-host` (N-2) was a cover-art URL that could have
+    # pointed at another host entirely with 97 tests green. The stream URL is the one string
+    # Media3 fetches with no interceptor of ours in the path, so it gets the same probe.
+    ("stream/host-and-scheme", CLIENT,
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/stream")',
+     'val builder = "http://elsewhere.example:9999/".toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/stream")',
+     # 2: the sub-path test observes the same origin from the other side -- a proxy prefix that
+     # this mutation drops.
+     "the host and scheme come from the credentials", 2),
     ("stream/no-auth-params", CLIENT,
      '    }\n    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }\n'
      '    return builder.build().toString()\n  }\n',
