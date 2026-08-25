@@ -33,8 +33,11 @@ dependencies {
   // Backs SetupRoute's @Serializable NavKey — rememberNavBackStack saves the back stack via
   // rememberSaveable, which needs a KSerializer for each key.
   implementation(libs.serialization.json)
-  // Coil's OkHttp network fetcher -- the app is where the image loader is built
-  // (MuPlayApplication), so this is the one module that needs it as a direct dependency.
+  // The app is where the image loader is built (MuPlayApplication), so this is the one module
+  // that needs Coil's base ImageLoader/SingletonImageLoader API and its OkHttp network fetcher
+  // as direct dependencies -- neither is exposed transitively by :feature:library's own
+  // implementation-scoped coil-compose dependency.
+  implementation(libs.coil)
   implementation(libs.coil.network.okhttp)
 
   // Tier 2 (.github/workflows/e2e.yml): FirstRunJourneyTest drives the real app on a real
