@@ -117,6 +117,52 @@ class PlayerUiStateTest {
     assertThat(content.isScrubbing).isTrue
   }
 
+  /**
+   * The pair, not each number on its own. An MP3's duration is an estimate read from the
+   * container and the player's position runs past it at the end of a track — measured on
+   * `muplay37` against the seeded five-second fixture, where the screen rendered `0:05 / 0:04`
+   * while both fields were individually correct.
+   */
+  @Test
+  fun `the displayed position never runs past the end of the track`() {
+    val overrun = playing.copy(positionMs = 5_010L, durationMs = 4_995L)
+
+    assertThat((playerUiState(overrun, null) as PlayerUiState.Content).displayPositionMs)
+      .isEqualTo(4_995L)
+    // A second observation at a different duration, so the clamp cannot be a constant.
+    assertThat(
+      (playerUiState(playing.copy(positionMs = 9_000L, durationMs = 6_000L), null)
+        as PlayerUiState.Content).displayPositionMs,
+    ).isEqualTo(6_000L)
+  }
+
+  /**
+   * A duration of 0 means **not known yet**, not a zero-length track: `PlaybackConnection` maps
+   * `C.TIME_UNSET` to 0. Clamping to it would freeze the elapsed label at `0:00` for the whole of
+   * a track whose container has not been read — a worse bug than the one the clamp fixes, and one
+   * that a clamp written without this case would ship.
+   */
+  @Test
+  fun `an unknown duration does not clamp the position to zero`() {
+    val unknown = playing.copy(positionMs = 7_000L, durationMs = 0L)
+
+    assertThat((playerUiState(unknown, null) as PlayerUiState.Content).displayPositionMs)
+      .isEqualTo(7_000L)
+  }
+
+  /** A negative position from a stale controller is still floored, with or without a duration. */
+  @Test
+  fun `a negative position is floored at zero`() {
+    assertThat(
+      (playerUiState(playing.copy(positionMs = -20L, durationMs = 0L), null)
+        as PlayerUiState.Content).displayPositionMs,
+    ).isZero
+    assertThat(
+      (playerUiState(playing.copy(positionMs = -20L, durationMs = 5_000L), null)
+        as PlayerUiState.Content).displayPositionMs,
+    ).isZero
+  }
+
   @Test
   fun `not scrubbing is reported as not scrubbing`() {
     assertThat((playerUiState(playing, null) as PlayerUiState.Content).isScrubbing).isFalse

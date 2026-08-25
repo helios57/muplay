@@ -1040,6 +1040,13 @@ PROBES = [
     ("player/content-discriminator", PLAYER_STATE,
      "if (playback.mediaId == null) {", "if (playback.title == null) {",
      "the media id alone decides, not the metadata around it", 1),
+    # Found by looking at the screen on `muplay37`: an MP3's duration is a container estimate and
+    # the player's position runs past it, so the last moment of every seeded track rendered
+    # "0:05 / 0:04". Each number was individually right; nothing was watching the pair.
+    ("player/position-clamp", PLAYER_STATE,
+     "if (durationMs > 0) positionMs.coerceIn(0L, durationMs) else positionMs.coerceAtLeast(0L)",
+     "positionMs.coerceAtLeast(0L)",
+     "the displayed position never runs past the end of the track", 1),
     # `Player.getDuration()` is a large negative until the extractor has read the container.
     # Without the clamp that renders as "-9223372036854:775" on a lock screen.
     ("player/duration-clamp", PLAYER_STATE,

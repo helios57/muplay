@@ -34,10 +34,26 @@ internal fun playerUiState(playback: PlaybackState, scrubPositionMs: Long?): Pla
   } else {
     PlayerUiState.Content(
       playback = playback,
-      displayPositionMs = scrubPositionMs ?: playback.positionMs,
+      displayPositionMs = displayPosition(scrubPositionMs ?: playback.positionMs, playback.durationMs),
       isScrubbing = scrubPositionMs != null,
     )
   }
+
+/**
+ * Where the thumb and the elapsed label go, never past the end of the track.
+ *
+ * **Found by looking at the screen, which is the only way this one shows up.** An MP3's duration is
+ * an estimate read from the container, and the player's own position runs past it at the end of a
+ * track: on `muplay37`, against the seeded five-second fixture, the player screen rendered
+ * `0:05 / 0:04` for the last moment of every track. Both numbers were "right"; the pair was
+ * nonsense, and no assertion in this module was watching the pair.
+ *
+ * [durationMs] of 0 means *not known yet* rather than *a zero-length track* — `PlaybackConnection`
+ * maps `C.TIME_UNSET` to 0 — so clamping to it then would freeze the elapsed label at `0:00` for
+ * the whole of a track whose container has not been read. That case takes the lower bound only.
+ */
+private fun displayPosition(positionMs: Long, durationMs: Long): Long =
+  if (durationMs > 0) positionMs.coerceIn(0L, durationMs) else positionMs.coerceAtLeast(0L)
 
 /**
  * `m:ss`, or `h:mm:ss` past an hour. A negative or nonsensical input renders as `0:00` rather than
