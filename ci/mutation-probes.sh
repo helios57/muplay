@@ -99,7 +99,7 @@ fi
 # -u: without it Python buffers stdout through a pipe and a four-minute run prints nothing
 # until it is over, which makes an interrupted run impossible to interpret.
 exec python3 -u - "${1:-}" <<'PY'
-import glob, html, re, subprocess, sys
+import glob, html, re, shutil, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 
@@ -382,9 +382,46 @@ def failures():
 
 
 def run_suite():
-    subprocess.run(["./gradlew", "--quiet", ":core:network:test", ":core:model:test", ":core:database:test",
-                    ":feature:setup:test"],
+    # N2-2 (round 2 re-review): without both of the next two blocks, a mutation that reddens an
+    # EARLIER module in the invocation below (`:core:network:test`, 28 of this file's 37 probes)
+    # aborted the whole Gradle invocation before a LATER module's task -- `:feature:setup:test`,
+    # added this round -- ever started, and `failures()` then globbed whatever XML that later
+    # module's *previous* run had left on disk and counted it as this run's own result. Reproduced
+    # deterministically: leave `a successful connect saves the credentials and lists the libraries
+    # for tagging` failing on disk (any setup probe does this), then run `auth/empty-authParams`
+    # with Gradle serialised to one worker (`-Dorg.gradle.workers.max=1`, which reliably starves
+    # `:feature:setup:test` of a scheduling slot before the abort) -- MISSED, 16 instead of 15,
+    # the extra failure being that stale result. At normal worker counts this is a race, which is
+    # why it looked load-correlated rather than caused, and a prior investigation into it (see
+    # task-8-report.md) concluded "build cache" without a check that could have told the two
+    # hypotheses apart -- this fix, and the "confirm the false result no longer appears" step
+    # below, is that check.
+    #
+    # Delete every result directory first, so a module whose task genuinely never runs this
+    # invocation has nothing old lying around for `failures()` to find.
+    for module, result_dir in JVM_TEST_RESULT_DIRS.items():
+        shutil.rmtree(f"{module}/build/test-results/{result_dir}", ignore_errors=True)
+    # --continue: keep scheduling every other requested task after one fails, rather than
+    # aborting the whole invocation on the first failure. The four modules here share no
+    # compile-time dependency that would make one module's task genuinely unable to run after
+    # another's test failure (a *test* task failing does not un-compile anything downstream), so
+    # with --continue every one of the four should get a real chance to execute every time.
+    subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
+                    ":core:database:test", ":feature:setup:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # A missing result must be loud, not silently globbed as zero failures: if some other cause
+    # (a genuine compile failure a dependent task cannot route around, even with --continue)
+    # still leaves a module's directory empty, that is exactly the "counts stale/absent results"
+    # failure mode this function exists to rule out, so it must stop the run rather than let
+    # `failures()` quietly report an artificially clean (or artificially stale) count.
+    missing = [module for module, result_dir in JVM_TEST_RESULT_DIRS.items()
+               if not glob.glob(f"{module}/build/test-results/{result_dir}/TEST-*.xml")]
+    if missing:
+        raise SystemExit(
+            f"run_suite(): no test results were written for {missing} -- the build likely "
+            "aborted or skipped these modules' test tasks. Refusing to let failures() count "
+            "zero (or stale) results for them as if this run had produced them."
+        )
     return failures()
 
 
