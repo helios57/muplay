@@ -91,9 +91,11 @@ class PcmAnalysisTest {
 
   @Test
   fun `a zero channel count is rejected by the silence scan too`() {
-    // Its own guard, not `frameCount`'s: the scan indexes `frame * channelCount + channel`
-    // directly, so a zero here is a silent all-zero-frames answer rather than an arithmetic fault
-    // — the shape of wrong answer this whole class exists to make impossible.
+    // `frameCount`'s guard, reached through a second door. The scan calls `frameCount` before it
+    // examines anything, so this is the same `require` the test above reaches directly — and that
+    // is the point: deleting that one guard has to redden both tests, because without it this
+    // call divides by zero (`ArithmeticException`, not `IllegalArgumentException`) instead of
+    // reporting which argument was wrong. Measured: `pcm/frame-count-unguarded` fails 2.
     assertThatIllegalArgumentException()
       .isThrownBy { PcmAnalysis.longestZeroRunFrames(ByteArray(400), channelCount = 0) }
       .withMessageContaining("channelCount")

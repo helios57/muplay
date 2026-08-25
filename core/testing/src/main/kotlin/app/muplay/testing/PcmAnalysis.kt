@@ -17,9 +17,9 @@ import java.nio.ByteOrder
  * fails at the capture rather than being silently mis-measured here.
  *
  * Nothing here holds state and nothing here is Android-aware; every function is total over its
- * arguments or throws `IllegalArgumentException`. The three `require`s below exist because each of
- * them guards a value that would otherwise produce a *plausible* wrong answer rather than a
- * crash — see each one's own note.
+ * arguments or throws `IllegalArgumentException`. There are three `require`s and no more: one per
+ * genuinely distinct guard, each of which a test reddens when it is deleted. A fourth was written
+ * and then removed for being indistinguishable from its own absence — see [longestZeroRunFrames].
  */
 object PcmAnalysis {
 
@@ -45,16 +45,23 @@ object PcmAnalysis {
    * seeded fixtures are continuous sine waves, so a genuine signal never produces a run longer
    * than a sample or two.
    *
-   * [channelCount] is required rather than defaulted: this function has its own `require` instead
-   * of leaning on [frameCount]'s, because a zero here would not divide by zero at all — the scan
-   * below would simply examine no channels per frame, call every frame silent, and return the
-   * whole buffer's length as a gap. A wrong answer that looks exactly like the defect being hunted
-   * for is worse than an exception.
+   * A non-positive [channelCount] is rejected — by [frameCount]'s own `require`, reached below
+   * before a single frame is examined, and not by a second copy of that guard here. This function
+   * did carry its own, and a mutation sweep proved no test could tell the two apart: deleting it
+   * left the identical `IllegalArgumentException`, naming the identical argument, on the identical
+   * input. A guard whose removal changes nothing observable is not defence in depth; it is the
+   * "assertion that executes but cannot fail" defect one layer down. What is worth having — and is
+   * kept — is the *test*, which reaches [frameCount]'s guard through this door rather than through
+   * [frameCount] directly, so deleting that guard now reddens two tests instead of one.
+   *
+   * The byte order below is the input's real contract, not a lever this function pulls: a 16-bit
+   * sample is zero exactly when both of its bytes are zero, so silence is invariant under byte
+   * order and `BIG_ENDIAN` here is a provably equivalent mutant. Do not go looking for the test
+   * that pins it; there cannot be one while the only question asked of a sample is "is it zero".
    */
   fun longestZeroRunFrames(pcm: ByteArray, channelCount: Int): Int {
-    require(channelCount > 0) { "channelCount must be positive, was $channelCount" }
-    val buffer = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
     val frames = frameCount(pcm.size, channelCount)
+    val buffer = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
 
     var longest = 0
     var current = 0
@@ -70,7 +77,10 @@ object PcmAnalysis {
         current++
         // Updated inside the run rather than when it ends: encoder padding sits at the very end of
         // a stream, so a scan that only closed a run on the next non-zero sample would miss the
-        // exact case this function was written for.
+        // exact case this function was written for. (`>=` in its place would be a provably
+        // equivalent mutant -- it assigns `longest` a value it already holds -- so no probe pins
+        // this operator; `pcm/zero-run-closes-late` pins its *position* inside the branch, which
+        // is the part that can actually be got wrong.)
         if (current > longest) longest = current
       } else {
         current = 0
