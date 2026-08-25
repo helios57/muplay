@@ -20,6 +20,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  * no such argument for a `NavKey`'s properties. [MuPlayApp][app.muplay.ui.MuPlayApp] passes the
  * `AlbumRoute` key's own `albumId` here, and the `LaunchedEffect` below is what forwards it into
  * the view model exactly once per distinct id.
+ *
+ * Both of those hops are gated by `AlbumRouteJourneyTest` (Tier 2) as of Task 9's review round 1
+ * (N-6): it opens one album in each library and asserts each screen shows that album's own tracks
+ * and none of the other's, so hardcoding the id at either hop -- here, or in `MuPlayApp`'s
+ * `entry<AlbumRoute>` -- fails it. Measured, all three reverted:
+ * `AlbumScreen(albumId = "al-constant")`, `viewModel.load("al-constant")` and
+ * `AlbumRoute("al-constant")` each turn that journey red.
+ *
+ * **`LaunchedEffect(albumId)` -> `LaunchedEffect(Unit)` is an equivalent mutant here, and stays
+ * `albumId` anyway.** Measured: that change passes the journey, and it must -- `AlbumRoute` is a
+ * `data class` `NavKey`, so a different album is a different key, a different `NavEntry` and a
+ * fresh composition, and this effect's key can never change *within* one composition under
+ * `NavDisplay`. Nothing is missing from the tier; the mutation cannot change behaviour. The key is
+ * still written as `albumId` because it is the value the effect depends on, and a future host that
+ * did recompose this screen with a new id would silently keep showing the old album otherwise.
  */
 @Composable
 fun AlbumScreen(
