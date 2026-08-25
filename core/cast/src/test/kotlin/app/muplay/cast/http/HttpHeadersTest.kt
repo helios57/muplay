@@ -1,6 +1,7 @@
 package app.muplay.cast.http
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatExceptionOfType
 import org.junit.jupiter.api.Test
 
 /**
@@ -93,5 +94,48 @@ class HttpHeadersTest {
     assertThat(HttpHeaders.EMPTY.names).isEmpty()
     assertThat(HttpHeaders.EMPTY.size).isZero
     assertThat(HttpHeaders.EMPTY["anything"]).isNull()
+  }
+
+  @Test
+  fun `two content lengths that disagree are refused, not silently resolved to the first`() {
+    // RFC 9110 section 8.6, and the reason it says so. `Content-Length: 3` alongside
+    // `Content-Length: 10` used to yield a three-byte body with nothing reported anywhere -- while
+    // whatever sits in front of this reader (a proxy, or Task 6's own proxy once it reads request
+    // heads) may well believe the other one. A message two readers frame differently IS the
+    // request-smuggling primitive; picking a side is how a codec becomes the vulnerability.
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { HttpHeaders.of("Content-Length" to "3", "content-length" to "10").contentLength() }
+      .withMessageContaining("3")
+      .withMessageContaining("10")
+
+    // The same disagreement in one line, which is the shape a proxy that merged them produces.
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { HttpHeaders.of("Content-Length" to "3, 10").contentLength() }
+      .withMessageContaining("10")
+  }
+
+  @Test
+  fun `two content lengths that agree are one content length, because a duplicate is not an attack`() {
+    // The permitting half, which RFC 9110 explicitly allows and which stops the refusal above from
+    // becoming "any repeat is fatal" -- a real proxy duplicates a header without meaning anything
+    // by it, and refusing that would turn a working renderer into an unreachable one.
+    assertThat(HttpHeaders.of("Content-Length" to "7", "Content-Length" to "7").contentLength())
+      .isEqualTo(7L)
+    assertThat(HttpHeaders.of("Content-Length" to "7, 7").contentLength()).isEqualTo(7L)
+  }
+
+  @Test
+  fun `a block cannot change under a reader that has already checked it`() {
+    // The list was stored by reference, so a caller holding the mutable one it passed in could
+    // change what `Content-Length` says between the check and the read. Nothing in this module
+    // does that today; the copy costs one call and removes the question.
+    val mutable = mutableListOf("Content-Length" to "3")
+    val headers = HttpHeaders(mutable)
+
+    mutable += "Content-Length" to "10"
+
+    assertThat(headers.contentLength()).isEqualTo(3L)
+    assertThat(headers.size).isEqualTo(1)
+    assertThat(headers.asList()).containsExactly("Content-Length" to "3")
   }
 }

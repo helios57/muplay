@@ -1,6 +1,9 @@
 package app.muplay.cast.net
 
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatExceptionOfType
 import org.junit.jupiter.api.Test
@@ -118,5 +121,83 @@ class LocalNetworkOnlyTest {
     // above and breaks every cast.
     LocalNetworkOnly.require("192.168.1.50", InetAddress.getByName("192.168.1.50"))
     LocalNetworkOnly.require("localhost", InetAddress.getByName("127.0.0.1"))
+  }
+
+  @Test
+  fun `a connection from the local network is accepted, and comes back open`() {
+    // The inbound direction, which had no guard at all: `isLocal` and `require` existed and
+    // nothing called either of them on an `accept()`. Task 6 binds a `ServerSocket` that serves
+    // Navidrome-authenticated audio, reachable by every device on the LAN -- coffee-shop Wi-Fi
+    // included -- and by every other app on the phone.
+    //
+    // This half is a real socket pair on loopback rather than a fake, because "comes back open"
+    // is a property of the socket the caller then reads a request head from.
+    ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { server ->
+      Socket().use { client ->
+        client.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), server.localPort))
+
+        val accepted = LocalNetworkOnly.acceptLocal(server)
+
+        assertThat(accepted).isNotNull
+        assertThat(accepted!!.isClosed).isFalse
+        assertThat(accepted.inetAddress.isLoopbackAddress).isTrue
+        accepted.close()
+      }
+    }
+  }
+
+  @Test
+  fun `a connection from off the local network is refused and closed rather than served`() {
+    // The discriminating half, and the one no real socket can produce here: a peer on 8.8.8.8
+    // cannot be conjured on this host, so the `ServerSocket` and the connection it hands back are
+    // hand-written (this project bans mock frameworks; `ServerSocket.accept` and
+    // `Socket.getInetAddress` are both overridable, which is all a fake needs).
+    val peer = FakeSocket(InetAddress.getByName("8.8.8.8"))
+
+    val accepted = acceptFrom(peer)
+
+    assertThat(accepted).isNull()
+    assertThat(peer.closed)
+      .describedAs("a refused connection left open is a descriptor a peer can hold as many of as it likes")
+      .isTrue
+  }
+
+  @Test
+  fun `a connection with no peer address at all is not local`() {
+    // Fail-closed, and the direction a `?: true` gets backwards while every other test stays
+    // green: a socket already closed by the time it is asked answers null here.
+    val orphan = FakeSocket(null)
+
+    assertThat(LocalNetworkOnly.isLocalPeer(orphan)).isFalse
+    assertThat(acceptFrom(orphan)).isNull()
+  }
+
+  @Test
+  fun `isLocalPeer reads the peer's address, in both directions`() {
+    // Two observations, so neither a constant `true` nor a constant `false` survives -- the same
+    // symmetry every assertion in this class is built on.
+    assertThat(LocalNetworkOnly.isLocalPeer(FakeSocket(InetAddress.getByName("192.168.1.9")))).isTrue
+    assertThat(LocalNetworkOnly.isLocalPeer(FakeSocket(InetAddress.getByName("93.184.216.34")))).isFalse
+  }
+
+  private fun acceptFrom(peer: Socket): Socket? =
+    FakeServerSocket(peer).use { LocalNetworkOnly.acceptLocal(it) }
+
+  /** A connection that reports the peer it was told to and remembers being closed. */
+  private class FakeSocket(private val peer: InetAddress?) : Socket() {
+    var closed = false
+      private set
+
+    override fun getInetAddress(): InetAddress? = peer
+
+    override fun close() {
+      closed = true
+      super.close()
+    }
+  }
+
+  /** An unbound `ServerSocket` whose `accept()` hands back one connection this test made. */
+  private class FakeServerSocket(private val next: Socket) : ServerSocket() {
+    override fun accept(): Socket = next
   }
 }

@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatExceptionOfType
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
@@ -297,6 +298,192 @@ class CastHttpClientTest {
     }
   }
 
+  @Test
+  fun `a header value carrying CRLF cannot write a header of its own, and nothing reaches the wire`() {
+    // THE request-splitting proof, and it is deliberately made against a real socket rather than
+    // against a rendered string: this exact payload, on this exact call, put a genuine
+    // `X-Injected:` header into the request a `ServerSocket` received. Task 3 builds `SOAPACTION`
+    // out of the service type and action name parsed from the device-description XML **the
+    // renderer itself serves**, so the value in this test is peer-controlled in production.
+    val running = start(okResponse)
+
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy {
+        CastHttpClient().exchange(
+          URI("http://127.0.0.1:${running.port}/control"),
+          method = "POST",
+          headers = HttpHeaders.of("SOAPACTION" to "\"urn:x#Y\"\r\nX-Injected: from-a-header-value"),
+          body = ByteArray(0),
+        )
+      }
+      .withMessageContaining("SOAPACTION")
+      .withMessageContaining("CR")
+
+    // The assertion that matters is this one, and it is about bytes rather than about a message:
+    // the refusal happens before the socket is opened, so the server never saw a request at all --
+    // no partially-written head, nothing for a renderer to act on.
+    assertThat(running.headTextOrNull())
+      .describedAs("no bytes at all may reach a renderer once a header has been refused")
+      .isNull()
+  }
+
+  @Test
+  fun `every character that could end a header line early is refused, in a name and in a value`() {
+    // Six payloads, each of which produced a syntactically valid extra header (or a truncated
+    // one) on the wire before this check existed. No server is started deliberately: the refusal
+    // is required to happen before anything is resolved or connected, so a regression that let one
+    // through would fail here on a connection error rather than passing.
+    val url = URI("http://127.0.0.1:1/control")
+    val refused = listOf(
+      "a CR in a value" to HttpHeaders.of("X-A" to "one\rX-Injected: 1"),
+      "an LF in a value" to HttpHeaders.of("X-A" to "one\nX-Injected: 1"),
+      "a NUL in a value" to HttpHeaders.of("X-A" to "one\u0000two"),
+      "a non-ASCII byte in a value" to HttpHeaders.of("X-A" to "café"),
+      "a CRLF in a name" to HttpHeaders.of("X-A\r\nX-Injected" to "1"),
+      "a space in a name" to HttpHeaders.of("X-A X-Injected" to "1"),
+      "a colon in a name" to HttpHeaders.of("X-A: 1\r\nX-Injected" to "1"),
+      "an empty name" to HttpHeaders.of("" to "1"),
+    )
+
+    refused.forEach { (what, headers) ->
+      assertThatExceptionOfType(IllegalArgumentException::class.java)
+        .describedAs(what)
+        .isThrownBy { CastHttpClient().exchange(url, "POST", headers, ByteArray(0)) }
+    }
+  }
+
+  @Test
+  fun `a method that is not a token is refused, so the request line cannot be split either`() {
+    // The request line splits the same way a header does, and `method` was appended with no check
+    // at all. The first payload below is a whole second request; the second is the degenerate
+    // case that would render `" / HTTP/1.1"`.
+    val url = URI("http://127.0.0.1:1/control")
+
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { CastHttpClient().exchange(url, "GET /evil HTTP/1.1\r\nX-Injected: 1") }
+      .withMessageContaining("method")
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { CastHttpClient().exchange(url, "") }
+      .withMessageContaining("method")
+  }
+
+  @Test
+  fun `a caller may not supply a header that decides where the message ends`() {
+    // `Content-Length` used to be accepted from a caller AND appended by `exchange`, so a request
+    // with a body went out carrying two of them -- a message that frames two ways, which is the
+    // smuggling primitive. All four framing headers are refused, in the caller's own casing and in
+    // another, because the check is case-insensitive and a `==` would pass half of these.
+    val url = URI("http://127.0.0.1:1/control")
+    // Driven from the declared list rather than a copy of it, so a header added to
+    // `FRAMING_HEADERS` is covered here the day it is added -- and each one is tried in two
+    // spellings, because the check is case-insensitive and an `==` would pass half of these.
+    assertThat(CastHttpClient.FRAMING_HEADERS)
+      .containsExactly("Content-Length", "Transfer-Encoding", "Host", "Connection")
+    CastHttpClient.FRAMING_HEADERS.flatMap { listOf(it, it.uppercase()) }.forEach { name ->
+      assertThatExceptionOfType(IllegalArgumentException::class.java)
+        .describedAs(name)
+        .isThrownBy {
+          CastHttpClient().exchange(url, "POST", HttpHeaders.of(name to "0"), ByteArray(0))
+        }
+        .withMessageContaining(name)
+    }
+  }
+
+  @Test
+  fun `a chunked response is decoded, not returned with its chunk sizes inside the body`() {
+    // Measured before the fix, on a real socket: this response came back as
+    // "b\r\n<s:Envelope>\r\n8\r\n</s:Env>\r\n0\r\n\r\n" -- the chunk framing inside the body,
+    // which Task 3 would then report as an XML parse failure blaming the renderer.
+    val running = start(
+      (
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" +
+          "c\r\n<s:Envelope>\r\n" +
+          "d\r\n</s:Envelope>\r\n" +
+          "0\r\n\r\n"
+        ).toByteArray(Charsets.US_ASCII),
+    )
+
+    val response = CastHttpClient().exchange(URI("http://127.0.0.1:${running.port}/control"), "GET")
+
+    assertThat(response.bodyText()).isEqualTo("<s:Envelope></s:Envelope>")
+  }
+
+  @Test
+  fun `a transfer-coding this codec does not implement is refused rather than mis-framed`() {
+    // The other half of the branch above, and the more important half: a wrong body is worse than
+    // a clean refusal, and `MalformedHttpException` is an IOException so a caller already guarding
+    // its socket catches it.
+    val running = start(
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".toByteArray(Charsets.US_ASCII),
+    )
+
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { CastHttpClient().exchange(URI("http://127.0.0.1:${running.port}/x"), "GET") }
+      .withMessageContaining("gzip")
+  }
+
+  @Test
+  fun `a response with no content length cannot exhaust the heap, however long the peer streams`() {
+    // `soTimeout` is per read, so a renderer that keeps sending resets it forever: the old
+    // `input.readBytes()` here had no stopping condition that a *steady* peer would ever meet.
+    // The flood server below sends far more than the cap and the exchange must end on the cap,
+    // not on a timeout and not on an OutOfMemoryError.
+    val flooding = FloodServer(headText = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+      .also { started += it; it.start() }
+
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy {
+        CastHttpClient(maxBodyBytes = 64 * 1024)
+          .exchange(URI("http://127.0.0.1:${flooding.port}/x"), "GET")
+      }
+      .withMessageContaining("65536")
+  }
+
+  @Test
+  fun `a content length that does not fit an Int is refused, not narrowed into a wrong body`() {
+    // Both measured values from the review, and they failed in two different wrong ways.
+    // 2147483648 raised `IllegalArgumentException: len < 0` -- not an IOException, so a caller
+    // catching IOException around a network call missed it entirely. 4294967296 narrowed to
+    // exactly 0 and produced a SILENTLY EMPTY body, which is the worse of the two: Task 3 would
+    // report "this renderer has no services".
+    listOf(2147483648L, 4294967296L).forEach { declared ->
+      val running = start("HTTP/1.1 200 OK\r\nContent-Length: $declared\r\n\r\nabc".toByteArray(Charsets.US_ASCII))
+
+      assertThatExceptionOfType(MalformedHttpException::class.java)
+        .describedAs("Content-Length: $declared")
+        .isThrownBy { CastHttpClient().exchange(URI("http://127.0.0.1:${running.port}/x"), "GET") }
+        .withMessageContaining("$declared")
+    }
+  }
+
+  @Test
+  fun `a body inside the cap still comes back whole, so the cap is a limit and not a ceiling`() {
+    // The permitting half of the two assertions above. Without it, a `readBody` that refused
+    // everything would pass both refusal tests.
+    val payload = "x".repeat(4096)
+    val running = start(
+      "HTTP/1.1 200 OK\r\nContent-Length: ${payload.length}\r\n\r\n$payload".toByteArray(Charsets.US_ASCII),
+    )
+
+    val response = CastHttpClient(maxBodyBytes = 4096).exchange(URI("http://127.0.0.1:${running.port}/x"), "GET")
+
+    assertThat(response.bodyText()).isEqualTo(payload)
+  }
+
+  @Test
+  fun `a password in a url's userinfo never reaches an exception message`() {
+    // Task 6 puts Subsonic's `u`, `t` and `s` into URLs handed to this client, and an exception
+    // message is the one string in this project that reliably ends up in a bug report. The host is
+    // still named, because a message that says only "refused" sends the next debugger to the wrong
+    // layer -- that is the whole argument `NonLocalAddressException` makes about itself.
+    val thrown = catchThrowable {
+      CastHttpClient().exchange(URI("https://alice:hunter2@192.168.1.50/x"), "GET")
+    }
+
+    assertThat(thrown).isInstanceOf(IllegalArgumentException::class.java)
+    assertThat(thrown.message).doesNotContain("hunter2").contains("192.168.1.50")
+  }
+
   /** A real HTTP server on loopback that records exactly what it was sent. */
   private class RecordingServer(private val response: ByteArray) : Closeable {
     private val socket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
@@ -331,6 +518,20 @@ class CastHttpClientTest {
       return String(received.first(), Charsets.US_ASCII)
     }
 
+    /**
+     * The head this server received, or `null` when nothing arrived at all.
+     *
+     * The distinction is the assertion in the request-splitting tests: a refused header must cost
+     * the renderer no bytes, and `headText()` cannot say "nothing arrived" -- it throws on an empty
+     * list, which reads as a broken test rather than as the observation it is. The wait is short
+     * because the expected answer is "nothing", and a client that did write would have written
+     * before it finished connecting.
+     */
+    fun headTextOrNull(): String? {
+      done.await(1, TimeUnit.SECONDS)
+      return received.firstOrNull()?.let { String(it, Charsets.US_ASCII) }
+    }
+
     override fun close() = socket.close()
 
     /** Reads up to and including the CRLFCRLF, returning the raw bytes so tests assert on them. */
@@ -345,6 +546,44 @@ class CastHttpClientTest {
         matched = if (b == terminator[matched].toInt()) matched + 1 else if (b == '\r'.code) 1 else 0
       }
       return out.toByteArray()
+    }
+  }
+
+  /**
+   * Sends a head and then a body that never legitimately ends -- the peer the body cap exists for.
+   *
+   * A renderer streaming steadily is exactly the shape `soTimeout` cannot catch: every read
+   * succeeds, so the per-read timeout is reset forever and only a cap ever stops it.
+   */
+  private class FloodServer(private val headText: String) : Closeable {
+    private val socket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+
+    val port: Int get() = socket.localPort
+
+    fun start() {
+      thread(isDaemon = true, name = "flood-server") {
+        runCatching {
+          socket.accept().use { connection ->
+            val out = connection.getOutputStream()
+            out.write(headText.toByteArray(Charsets.US_ASCII))
+            val block = ByteArray(BLOCK_BYTES) { 'A'.code.toByte() }
+            // Bounded, so a subject that never stops reading cannot leave this thread writing for
+            // the rest of the suite. The bound is far above any cap a test here sets, and the
+            // client's own refusal closes the socket long before it is reached.
+            repeat(BLOCKS) {
+              out.write(block)
+              out.flush()
+            }
+          }
+        }
+      }
+    }
+
+    override fun close() = socket.close()
+
+    private companion object {
+      const val BLOCK_BYTES = 8192
+      const val BLOCKS = 512
     }
   }
 
