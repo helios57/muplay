@@ -921,7 +921,7 @@ PROBES = [
     # would have shipped green -- the module was at 100% of its *own* tests before the branch
     # report was read.
     ("discovery/man-unquoted", DISCOVERY_SSDP,
-     'append("MAN: \"ssdp:discover\"")', 'append("MAN: ssdp:discover")',
+     'append("MAN: \\"ssdp:discover\\"")', 'append("MAN: ssdp:discover")',
      # The quotes are in the protocol. A device that receives MAN unquoted is entitled to ignore
      # the search entirely -- and many answer anyway, so this passes on the tester's network and
      # fails on the user's. That is why it is asserted as an exact datagram and not with contains().
