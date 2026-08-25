@@ -181,6 +181,7 @@ PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/app/muplay/media/PlaybackLaunche
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
 BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
+BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -188,6 +189,7 @@ INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
+AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
 DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
 DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
 DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
@@ -198,6 +200,9 @@ SOAP_XML = "core/cast/src/main/kotlin/app/muplay/cast/soap/XmlText.kt"
 SOAP_ENVELOPE = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapEnvelope.kt"
 SOAP_NAMES = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapNames.kt"
 SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
+DIDL_SERVED = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
+DIDL_LITE = "core/cast/src/main/kotlin/app/muplay/cast/didl/DidlLite.kt"
+DIDL_MIME = "core/cast/src/main/kotlin/app/muplay/cast/didl/MimeAgreement.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -1687,6 +1692,75 @@ PROBES = [
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
 
+    # ---- Plan 5 Task 3: which browse tree a connected controller gets ------------------------
+    #
+    # `BrowseSurfaces.of` is a four-argument decision table, and a decision table's characteristic
+    # defect is not a wrong answer -- it is two arms that happen to agree on the fixture somebody
+    # chose. The four probes below are the four arms that must not agree, each one measured (the
+    # failure counts here were read off a run, not predicted).
+    #
+    # What is NOT here, and cannot be: `DefaultSurfaceResolver`'s `connectionHints.getString(
+    # BrowseSurfaces.HINT_KEY)`. Replacing that constant with the literal `"surface"` -- a key that
+    # is wrong but plausible, and that no JVM test can see, because every JVM test passes
+    # `hintSurface` in directly -- is caught only by `DefaultSurfaceResolverTest`, which needs a
+    # real `Bundle` and therefore a device. That is this file's own INSTRUMENTED TIER limit, and
+    # the falsification is recorded by hand in task-3-report.md, the same way `LiveNavidromeTest`'s
+    # are. It is not hypothetical: that exact mutation was found live in an uncommitted tree, left
+    # by a probe run whose process died before its `finally` could revert.
+
+    # Precedence 1 over 2. Media3 owns the real answer to "is this a car"; our package list is a
+    # backstop for hosts it does not know, never an override of one it does. Demoting the predicate
+    # below the package arms is silent for every car (both arms say CAR) and wrong for exactly one
+    # caller: a *watch* package that Media3 has told us is driving a car surface.
+    ("browse/surface-predicate-demoted", BROWSE_SURFACE,
+     "    isCarController -> BrowseSurface.CAR\n"
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR\n"
+     "    packageName in WATCH_PACKAGES -> BrowseSurface.WATCH\n",
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR\n"
+     "    packageName in WATCH_PACKAGES -> BrowseSurface.WATCH\n"
+     "    isCarController -> BrowseSurface.CAR\n",
+     "the media3 predicate wins over every package and every hint", 1),
+
+    # THE SECURITY PROBE OF THIS TASK. The connection hint is a *self-declaration*, honoured only
+    # from our own package -- `:wear`'s browser connects under this app's own application id, which
+    # is the only reason a hint can identify it at all. Drop the `packageName == ownPackageName`
+    # guard and the hint becomes a *request* any installed app can make, which is both a different
+    # security posture and a test that proves nothing. Four reds, and the fourth matters most:
+    # `each of the four arguments changes the answer on its own` exists so that `ownPackageName` is
+    # a live argument rather than one the function could ignore.
+    #
+    # Replaces the whole tail of the `when`, not just the guard line: dropping the guard alone
+    # leaves the original `else -> BrowseSurface.PHONE` behind it, which is two `else` arms in one
+    # `when` and so a COMPILE error rather than a mutation. That version of this probe aborted the
+    # whole filtered list -- and reported it as `run_suite(): no test results were written for
+    # [every module]`, which reads exactly like the untouched-module false alarm master documents.
+    # It is not that: when the mutated module is in the list, suspect the mutation does not compile.
+    ("browse/surface-hint-from-anyone", BROWSE_SURFACE,
+     "    packageName == ownPackageName -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n"
+     "    else -> BrowseSurface.PHONE\n",
+     "    else -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n",
+     "a hint is honoured from our own package and refused from any other", 4),
+
+    # Exact match, not prefix. `com.google.android.projection.gearhead.evil` is installable, and a
+    # `startsWith` hands it the car tree on the strength of a name it chose for itself.
+    ("browse/surface-package-prefix-match", BROWSE_SURFACE,
+     "    packageName in CAR_PACKAGES -> BrowseSurface.CAR",
+     "    CAR_PACKAGES.any { packageName.startsWith(it) } -> BrowseSurface.CAR",
+     "package matching is exact, not a prefix and not case-insensitive", 1),
+
+    # The lists themselves. These are Google's package names; a silent edit to one is a silent
+    # change to which tree a car gets, and nothing else in the suite would move.
+    ("browse/surface-car-package-dropped", BROWSE_SURFACE,
+     '    "com.android.car.carlauncher",\n', "",
+     "every known car and watch package maps to its surface", 1),
     # ---- Plan 6 Task 2, fix round: the review's HIGH and MEDIUM findings ----------------------
     # Same `revert()` note as the Task 2 block above: `core/cast` is checked out wholesale, so none
     # of these needs a LATER_PROBE_FILES line. Every count was measured by applying the mutation
@@ -1771,6 +1845,111 @@ PROBES = [
      # `disallow-doctype-decl` feature refuses the document itself, so the end-to-end assertion is
      # green with the scan looking at four kilobytes, at everything, or at nothing whatsoever.
      "a doctype hidden behind a five kilobyte comment is still seen by the guard", 1),
+
+    # ---- Plan 3 Task 6: spec section 5's one-line switch ------------------------------------
+    # `audio/`, not `media/`, and that is a usability decision rather than a taxonomy one: there
+    # are sixteen `media/` probes now, so `./ci/mutation-probes.sh media/` is a twelve-minute run
+    # and the harness that drives this script caps a single call at ten minutes. A prefix per topic
+    # is what the rest of this table already does (`retry/`, `queue/`, `resume/`, `pcm/`, `cast/`).
+    #
+    # NOTE ON SCOPE: everything else this task added is observed on the **instrumented** tier --
+    # audio focus, becoming-noisy, wake mode, the per-song audiobook join in `QueueRepository`, and
+    # `startIndex` -- and this runner is JVM-only. Worse than merely out of reach: `run_suite()`
+    # clears the JVM result directories and Gradle then restores `:core:media:testDebugUnitTest`
+    # FROM-CACHE, because androidTest sources are not inputs to it, so an androidTest probe reports
+    # MISSED with *zero* failures and reads like a broken test rather than an unrunnable probe.
+    # Those mutations were run by hand and their transcripts are in task-6-report.md, the same way
+    # Task 3's and Task 7b's are.
+    #
+    # The switch itself is here because it was deliberately built to be: `contentTypeFor` takes an
+    # `Int` and returns an `Int` precisely so the decision is gated by the fast tier.
+    ("audio/content-type-always-speech", AUDIO_ATTRIBUTES,
+     "    else -> C.AUDIO_CONTENT_TYPE_MUSIC",
+     "    else -> C.AUDIO_CONTENT_TYPE_SPEECH",
+     # A music player that declares everything to be speech ducks under a navigation prompt and is
+     # mixed differently by a car head unit -- and nothing about playback looks wrong.
+     "music is music", 3),
+    ("audio/content-type-always-music", AUDIO_ATTRIBUTES,
+     "    -> C.AUDIO_CONTENT_TYPE_SPEECH",
+     "    -> C.AUDIO_CONTENT_TYPE_MUSIC",
+     # The other direction, and the one the app shipped until this task: an audiobook that a
+     # navigation prompt talks over instead of pausing.
+     "an audiobook chapter is speech", 3),
+    ("audio/usage-not-media", AUDIO_ATTRIBUTES,
+     "      .setUsage(C.USAGE_MEDIA)",
+     "      .setUsage(C.USAGE_ASSISTANT)",
+     # `USAGE_MEDIA` is what puts this app on the media volume stream. On the assistant stream the
+     # volume rocker stops changing the music's volume, which a user reports as "the volume buttons
+     # do nothing" and no playback test can see.
+     "the usage is always media", 1),
+
+    # ---- Plan 6 Task 4: DIDL-Lite, protocolInfo, and the three-way MIME invariant -------------
+    # Three parties decide what format a renderer is about to receive and each reads a different
+    # artifact: Sonos reads the URL's file extension, a generic DLNA renderer reads
+    # `res/@protocolInfo`, everything else reads the proxy's `Content-Type`. Every count below is
+    # MEASURED with `:core:cast:test`, listed test by test in task-4-report.md.
+
+    # THE MOST IMPORTANT PROBE IN THIS TASK. `StreamFormat.forSuffix` sends `opus`/`ogg`/`oga` as
+    # `format=mp3`, so the bytes on the wire are MP3 whatever the source file was. A `ServedMedia`
+    # that fell back to the source suffix would promise Sonos `audio/ogg` on a `.opus` URL and
+    # serve MP3 -- spec section 12's "Sonos rejects a served format" risk, arriving in the form
+    # where the device refuses a format it was never actually sent.
+    #
+    # Note WHICH tests catch it, because it is not the ones an author would guess: `opus never
+    # reaches a renderer, by construction` does NOT redden, since `opus` is absent from `RAW_TYPES`
+    # and so falls through to the same fallback either way. The suffix that discriminates is a real
+    # one -- `flac` -- which is why the transcode test sweeps four sources rather than one.
+    ("didl/transcode-falls-through-to-suffix", DIDL_SERVED,
+     "      is StreamFormat.Mp3 -> ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     "      is StreamFormat.Mp3 -> RAW_TYPES[suffix?.lowercase()] ?: ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     "a transcode is served as mp3, whatever the source file was", 2),
+
+    # `DLNA.ORG_OP=01` is a PROMISE: the low bit says byte-range seeking is supported, so a renderer
+    # that reads it may issue `Range` and expect 206. Task 6's proxy owes that promise. Turning it
+    # off is silent -- the document still parses, the MIME is still right, and the seek bar simply
+    # stops working on hardware nobody has on the bench.
+    ("didl/no-byte-range-promise", DIDL_SERVED,
+     'val protocolInfo: String get() = "http-get:*:$mimeType:DLNA.ORG_OP=01;DLNA.ORG_FLAGS=$DLNA_FLAGS"',
+     'val protocolInfo: String get() = "http-get:*:$mimeType:DLNA.ORG_OP=00;DLNA.ORG_FLAGS=$DLNA_FLAGS"',
+     "protocolInfo declares no dlna profile name, on purpose", 3),
+
+    # A Navidrome stream URL carries `&` between query parameters, and ONE unescaped ampersand makes
+    # the whole metadata document unparseable at the device. The count is 2 rather than 1 only
+    # because `the rendered document is well-formed xml` was given a URL containing an ampersand:
+    # measured at 1 before that, since the item it started from had none, which made a
+    # well-formedness assertion that could not be broken by the defect it exists to catch.
+    ("didl/res-url-unescaped", DIDL_LITE,
+     "    append(XmlText.escape(item.resourceUrl))",
+     "    append(item.resourceUrl)",
+     "every text field is escaped, including in the res url", 2),
+
+    # The mirror image, and the one that gets applied twice as often as it gets forgotten:
+    # `&amp;lt;DIDL-Lite` inside `CurrentURIMetaData` is a device that shows the track as unknown
+    # with no error reported anywhere. `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it,
+    # so Task 5's suite reddens on this too.
+    ("didl/metadata-escaped-twice", DIDL_LITE,
+     "  fun renderEscaped(item: CastItem): String = XmlText.escape(render(item))",
+     "  fun renderEscaped(item: CastItem): String = XmlText.escape(XmlText.escape(render(item)))",
+     "renderEscaped is render escaped exactly once", 2),
+
+    # THE INVARIANT PROBE. `> 2` instead of `> 1` is the off-by-one that makes the check report a
+    # disagreement only when all three legs differ -- i.e. it goes quiet on exactly the case the
+    # whole check exists for, where TWO legs agree and the third silently differs. Every assertion
+    # that compares `served.mimeType` with `served.protocolInfo` is already blind to that, because
+    # both come from one object; these four are not.
+    ("didl/two-legs-agreeing-is-enough", DIDL_MIME,
+     "    if (listOfNotNull(declaredMime, urlMime, servedMime).distinct().size > 1) {",
+     "    if (listOfNotNull(declaredMime, urlMime, servedMime).distinct().size > 2) {",
+     "a protocolInfo that disagrees with the url extension is reported", 4),
+
+    # `ServedMedia.of` guesses `audio/mpeg` for an unknown suffix because it MUST return something.
+    # Asking what a *peer* will conclude from a URL is a different question, and guessing there is
+    # how `.opus` -- the one suffix spec section 4 forbids outright -- comes to agree with every MP3
+    # stream this client serves. One red, and it is the whole point of the distinction.
+    ("didl/url-extension-guesses", DIDL_MIME,
+     "    val urlMime = ServedMedia.forExtension(extension)?.mimeType",
+     "    val urlMime = ServedMedia.forExtension(extension)?.mimeType ?: ServedMedia.FALLBACK_MIME",
+     "an extension this client never serves is reported rather than assumed to be mp3", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
@@ -1861,6 +2040,7 @@ LATER_PROBE_FILES = [
     TRACK_ID_KEY,
     BROWSE_TREE,
     BROWSE_TEXT,
+    BROWSE_SURFACE,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
@@ -1868,6 +2048,8 @@ LATER_PROBE_FILES = [
     PLAYER_STATE,
     PLAYER_VM,
     PLAYBACK_LAUNCHER,
+    # Plan 3 Task 6.
+    AUDIO_ATTRIBUTES,
 ]
 
 
