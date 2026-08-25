@@ -2158,18 +2158,23 @@ PROBES = [
     # `gain/sign-inverted` is the one that matters most and the reason this family exists: a sign
     # error does not break ReplayGain, it makes it exactly backwards -- a track tagged quiet plays
     # LOUD -- and nothing about that reads as a bug in a listening test.
+    #
+    # Every count below was MEASURED on the first run of this family, not predicted: all thirteen
+    # reddened their named test on the first attempt and all but two disagreed with the count this
+    # author guessed. Read the note on `expected failures` above before changing one -- a count that
+    # drifts is a signal, and the named test failing is the claim.
     ("gain/sign-inverted", GAIN_POLICY,
      "    val linear = 10.0f.pow(clamped / DB_PER_AMPLITUDE_DECADE)",
      "    val linear = 10.0f.pow(-clamped / DB_PER_AMPLITUDE_DECADE)",
-     "minus six dB is half the amplitude and plus six is double", 3),
+     "minus six dB is half the amplitude and plus six is double", 5),
     ("gain/always-unchanged", GAIN_POLICY,
      "    if (gainDb == null) return UNCHANGED",
      "    if (gainDb == null || true) return UNCHANGED",
-     "minus six dB is half the amplitude and plus six is double", 4),
+     "minus six dB is half the amplitude and plus six is double", 5),
     ("gain/album-preferred-over-track", GAIN_POLICY,
      "    replayGain?.trackGainDb ?: replayGain?.albumGainDb",
      "    replayGain?.albumGainDb ?: replayGain?.trackGainDb",
-     "the track gain is preferred over the album gain", 1),
+     "the track gain is preferred over the album gain", 2),
     # The clamp is a CEILING. Dropping it lets a `+6 dB` tag on a file that already peaks at 0.9
     # of full scale clip -- audible as distortion, and silent in every test of the decibel
     # arithmetic on its own.
@@ -2188,25 +2193,25 @@ PROBES = [
     ("gain/clamp-bound-narrowed", GAIN_POLICY,
      "  const val MAX_GAIN_DB: Float = 12.0f",
      "  const val MAX_GAIN_DB: Float = 0.0f",
-     "the clamp bounds are wide enough to carry a real library and narrow enough to be safe", 3),
+     "the clamp bounds are wide enough to carry a real library and narrow enough to be safe", 4),
 
     # The wire. A constant `ReplayGain` is this project's signature defect shape, and it passes any
     # single-value check.
     ("gain/client-constant", CLIENT,
      "    return ReplayGain(trackGainDb = trackGainDb, albumGainDb = albumGainDb, peakAmplitude = peak)",
      "    return ReplayGain(trackGainDb = -6.0f, albumGainDb = null, peakAmplitude = null)",
-     "each field comes from its own key and not from a neighbour", 4),
+     "each field comes from its own key and not from a neighbour", 6),
     ("gain/client-peak-fallback-swapped", CLIENT,
      "    val peak = this?.trackPeak ?: this?.albumPeak",
      "    val peak = this?.albumPeak ?: this?.trackPeak",
-     "a second body, every value disjoint from the first, maps field by field", 2),
+     "a second body, every value disjoint from the first, maps field by field", 3),
     # "The file said nothing" collapsed into "the file said zero", which would apply a decision
     # nobody made to every untagged library there is -- and Navidrome sends `"replayGain": {}` for
     # every untagged file, so this is the common path rather than an edge.
     ("gain/client-empty-object-is-a-decision", CLIENT,
      "    if (trackGainDb == null && albumGainDb == null) return null",
      "    if (false) return null",
-     "an untagged file carries no replay gain at all, rather than zeroes", 3),
+     "an untagged file carries no replay gain at all, rather than zeroes", 4),
 
     # The mirror, both ways. This is the layer the wire tests cannot see at all: drop the columns
     # here and every `:core:network` test stays green while the player gets nothing.
