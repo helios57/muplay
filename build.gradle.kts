@@ -406,6 +406,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                         the nested `Companion` and `Mp3` classes rather than in the
     //                         interface itself.
     //
+    //   `BrowseId`            Plan 5 Task 1, and the same shape as `StreamFormat` for the same
+    //                         reason: the interface itself compiles to **no counters at all**
+    //                         (measured -- neither BRANCH nor LINE appears for
+    //                         `app/muplay/model/browse/BrowseId` in the report), and every branch
+    //                         lives in nested classes the `*` pattern is what reaches. Measured
+    //                         today: `BrowseId$Companion` **60/60** (all of `decode` -- the empty
+    //                         check, the prefix check, `hasPayload`, the eleven-arm `when` over
+    //                         the kind, and `canonicalInt`'s two), `BrowseId$Track` **8/8** (its
+    //                         two `require`s -- empty, and the `muplay/` collision the bare-leaf
+    //                         encoding buys) and `BrowseId$Book`/`$Album`/`$Artist` **4/4** each
+    //                         (one `require` apiece). Those last three are the reason
+    //                         `BrowseIdTest` asserts an empty id is refused for *every*
+    //                         payload-carrying member rather than for `Track` alone: without
+    //                         those three assertions each of those classes measures 2/4 = 0.50
+    //                         and this floor fails, which is a CLASS-element rule doing exactly
+    //                         what a BUNDLE aggregate over this module would have hidden.
+    //
     // Everything else in the list rides along, the same way `SetupUiState` rides along in
     // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
     // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
@@ -439,6 +456,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.ShuffleResult",
         "app.muplay.model.StreamFormat",
         "app.muplay.model.StreamFormat*",
+        "app.muplay.model.browse.BrowseId",
+        "app.muplay.model.browse.BrowseId*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -452,6 +471,31 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.model.SubsonicCredentials"),
+    ),
+    // A LINE rule over the same classes the BRANCH rule above already lists, and it is not
+    // redundant with it: eight of `BrowseId`'s twelve members -- the six `data object`s plus
+    // `Library` and `Shuffle` -- carry **no BRANCH counters at all** (measured: BRANCH absent from
+    // the report for every one of them), so the BRANCH rule above rides over them at NaN and
+    // gates nothing about them at any minimum. What it cannot see is their `encode()` bodies,
+    // which are the wire format itself -- the string Android Auto persists across a reinstall.
+    // LINE can see exactly that, and this is the `SubsonicCredentials` argument one floor up
+    // repeated for a different reason: a hand-written member with no branch in it still needs a
+    // gate, and LINE is the only counter that has one.
+    //
+    // Measured today, all at 1.0000: `BrowseId$Companion` 20/20, `BrowseId$Track` 7/7,
+    // `BrowseId$Book`/`$Album`/`$Artist` 3/3, `BrowseId$Library`/`$Shuffle` 2/2, and each of
+    // `Root`/`Continue`/`Books`/`Albums`/`Artists`/`Libraries` 1/1. Verified fireable rather than
+    // assumed so: with the three tests that call `encode()` on a `data object` moved aside, this
+    // floor fails at `BrowseId.Root` 0/1 = 0.00 while the BRANCH rule above stays green -- the
+    // whole reason it is here.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.browse.BrowseId",
+        "app.muplay.model.browse.BrowseId*",
+      ),
     ),
   ),
   ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
@@ -1017,6 +1061,73 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
+    // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
+    // 2/2 = 1.0000 BRANCH, instrumented. BRANCH and not LINE because this class is *all* branch:
+    // its single line is `dataSpec.key ?: throw MissingCacheKeyException(...)`, and the two sides
+    // of that elvis are the whole task. A LINE floor over it would be satisfied by covering
+    // either one, which is the difference between "the cache key comes from the track id" and
+    // "the missing-key fallback Tempo ships is gone". Counter picked by reading the merged report
+    // rather than from the non-UI default -- this class is one of the few in the module that
+    // genuinely carries both.
+    //
+    // Falsified by moving `MediaCacheTest` aside, not by raising the minimum, for exactly the
+    // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
+    // ratio is a configuration error JaCoCo rejects before it compares anything. Watched failing
+    // at its real minimum, with the connected run re-taken under
+    // `-Pandroid.testInstrumentationRunnerArguments.notClass=app.muplay.media.MediaCacheTest`:
+    // "Rule violated for class app.muplay.media.TrackIdCacheKeyFactory: branches covered ratio is
+    // 0.50, but expected minimum is 0.90", BUILD FAILED.
+    //
+    // 0.50 and not 0.00, which is the more interesting number: `MuPlayDataSourceFactoryTest`'s own
+    // playbacks drive the key-present side of the elvis all by themselves. The side that only
+    // `MediaCacheTest` reaches is the *throw* -- the removed fallback, i.e. the entire point of
+    // the class -- so this floor's real job is holding that second branch, and a rule that
+    // settled for one of the two would be gating the half that was never in doubt.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
+      requiresInstrumentedData = true,
+    ),
+    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
+    // counter -- read off the merged report, not assumed -- so LINE is the only counter that can
+    // gate them at all; a BRANCH rule here would score NaN and pass at every minimum, the vacuous
+    // shape this table's own doc describes and `warnVacuousFloors` reports.
+    //
+    // Instrumented-only, and all three reduce to "needs a real device": `MediaCache` builds a
+    // `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite);
+    // `MediaCacheModule` calls it; and `MissingCacheKeyException`'s message is only ever
+    // constructed from a `DataSpec`, which holds an `android.net.Uri`. No Robolectric here, so
+    // there is no JVM path to any of them.
+    //
+    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: a `@Qualifier` annotation
+    // class carries no counter of either kind, so `warnUngatedClasses` skips it and no rule could
+    // gate it -- the same standing exception this module already records for its `$Companion`s.
+    //
+    // Watched failing the same way, with `MediaCacheTest` moved aside: BUILD FAILED naming all
+    // three -- "app.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
+    // "app.muplay.media.MissingCacheKeyException: lines covered ratio is 0.00" and
+    // "app.muplay.media.MediaCache: lines covered ratio is 0.83", each against a minimum of 0.90.
+    // `MediaCache`'s 0.83 is 5/6: `MuPlayDataSourceFactoryTest` builds its own cache through the
+    // two-argument overload, so the one line left uncovered is the production default argument --
+    // which is precisely the line `MediaCacheModule` exists to exercise and the one a
+    // `filesDir`-shaped regression would live on.
+    //
+    // And the flag itself is a measurement, not a judgement: with the instrumented `.ec` deleted,
+    // `jacocoJvmCoverageVerification` is green with `requiresInstrumentedData = true` on both new
+    // rules (5 of 11 floors evaluated) and BUILD FAILED with it unset, all four classes at 0.00.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.MediaCache",
+        "app.muplay.media.MissingCacheKeyException",
+        "app.muplay.media.di.MediaCacheModule",
+      ),
+      requiresInstrumentedData = true,
+    ),
     // ---- Plan 3 Task 5: the service, the player factory and the connection --------------------
     // 6/6 = 1.0000 BRANCH from **JVM data alone** (`TaskRemovalPolicyTest`, four tests, no
     // emulator), and the reason `TaskRemovalPolicy` is a separate object at all.
@@ -1399,6 +1510,119 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // from the JVM alone this module measures 1/21 = 0.04.
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
+  ),
+  // `:core:cast` (Plan 6 Task 1). A pure-JVM module with no Compose and no Android, so every floor
+  // here is BRANCH except one and every one of them is enforceable in Tier 1 --
+  // `requiresInstrumentedData` appears nowhere in this entry, deliberately. The include list grows
+  // one task at a time and is completed in Task 11.
+  //
+  // MEASURED, per class, from `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` at this
+  // commit -- per class and not as a module blend, because a BRANCH floor over a class with no
+  // BRANCH counters enforces nothing at any minimum (JaCoCo's NaN path; see `warnVacuousFloors`
+  // below) and a blended number hides which of these is which:
+  //
+  //   HttpHeaders       BRANCH  8/8  = 1.0000     HttpWire        BRANCH 40/40 = 1.0000
+  //   CastHttpClient    BRANCH 26/26 = 1.0000     CastHttpResponse BRANCH 8/8  = 1.0000
+  //   LocalNetworkOnly  BRANCH 27/28 = 0.9643     LocalAddress    LINE    6/6  = 1.0000
+  //
+  // LocalNetworkOnly's one missing branch is unreachable rather than untested: `isLocal`'s `when`
+  // has an `else -> false` arm that no `InetAddress` can select, because `Inet4Address` and
+  // `Inet6Address` are the only two subclasses the platform has.
+  //
+  // RIDE-ALONGS, carrying zero BRANCH counters and therefore unable to move any ratio (a
+  // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation for
+  // NaN): `HttpHeaders$Companion` and `CastHttpClient$Companion` via the `*` patterns, and the
+  // four declaration-only types `HttpRequestHead`, `HttpResponseHead`, `MalformedHttpException`
+  // and `NonLocalAddressException`. They are listed only so `warnUngatedClasses` has nothing to
+  // say about them on every run. The floor is not thereby vacuous: 109 of its 110 BRANCH counters
+  // come from the six classes above.
+  ":core:cast" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.http.HttpHeaders",
+        "app.muplay.cast.http.HttpHeaders*",
+        "app.muplay.cast.http.HttpWire",
+        "app.muplay.cast.http.CastHttpClient",
+        "app.muplay.cast.http.CastHttpClient*",
+        "app.muplay.cast.http.CastHttpResponse",
+        "app.muplay.cast.http.HttpRequestHead",
+        "app.muplay.cast.http.HttpResponseHead",
+        "app.muplay.cast.http.MalformedHttpException",
+        "app.muplay.cast.net.LocalNetworkOnly",
+        "app.muplay.cast.net.NonLocalAddressException",
+      ),
+    ),
+    // `LocalAddress` is gated on LINE and not on BRANCH, which is a measurement rather than a
+    // preference. Its four branches are `takeUnless { it.isAnyLocalAddress }` and `runCatching`'s
+    // own failure arm: the kernel answering the route probe with the wildcard, and the kernel
+    // refusing the probe outright. Neither can be forced from a hermetic JVM test -- both depend
+    // on the host's routing table -- so a BRANCH floor here would have to be set at 0.50 to pass,
+    // and lowering a floor to fit a number is the thing this table refuses to do. LINE 6/6 gates
+    // what can honestly be gated: that the probe runs and returns a real address. `LocalAddressTest`
+    // asserts the answer for loopback unconditionally and, on any host with a real interface, that
+    // routing to that interface's own address selects that same address -- the observation a
+    // `towards` returning a constant would fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.cast.net.LocalAddress"),
+    ),
+  ),
+  // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
+  // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
+  // floor and why it lives in this module rather than inside either client. Measured in Plan 7
+  // Task 1 Step 8; re-measured in Task 10 once the credential store and the request store are in.
+  //
+  // Two rules because the module carries two kinds of class, and one measured fact decides which
+  // rule each gets: **only three classes here carry a BRANCH counter at all**. JaCoCo's Kotlin
+  // filters remove the generated `equals`/`hashCode`/`toString`/`copy` of a `data class` and the
+  // whole of a `data object` from the report, and they remove an enum's `values`/`valueOf` -- so
+  // `BaseUrlResult`'s five members and `CleartextPolicy`'s two contribute no branches for any rule
+  // to gate, and `IntegrationService` contributes none either. Measured:
+  //
+  //   IntegrationBaseUrl$Companion   BRANCH 16/16   LINE 19/19
+  //   IntegrationBaseUrlKt           BRANCH  8/8    LINE 11/11
+  //   IntegrationBaseUrl             BRANCH  6/6    LINE  5/5
+  //   IntegrationService             BRANCH  n/a    LINE  3/3
+  //   BaseUrlResult$Valid            BRANCH  n/a    LINE  1/1
+  //   BaseUrlResult$CleartextForbidden BRANCH n/a   LINE  1/1
+  //   BaseUrlResult, BaseUrlResult$Blank/$MissingScheme/$Malformed, CleartextPolicy and both of
+  //   its members: no BRANCH and no LINE counter at all, so no rule can gate them and
+  //   `warnUngatedClasses` skips them.
+  //
+  // 30/30 BRANCH against the 0.90 target, not written as 1.00: this table's floors are set at the
+  // project target and rounded down from the measurement, and a floor at the measured 1.00 would
+  // go red on a refactor that changed nothing. Falsified rather than assumed, twice, both recorded
+  // in task-1-report.md: withholding `a url equals only itself and another url with the same
+  // value` alone drops `IntegrationBaseUrl` to 4/6 = 0.6667 and this floor fails at its real
+  // minimum; withholding the three tests that name an `IntegrationService` drops
+  // `IntegrationBaseUrlKt` to 0/8 and `IntegrationService` to LINE 0/3, failing one rule each.
+  //
+  // The LINE rule names `IntegrationService` and `BaseUrlResult*` explicitly rather than widening
+  // the BRANCH rule's pattern to `app.muplay.integrations.*`: those two are the classes this task
+  // measured and decided about, and a wildcard would also swallow every class Tasks 2-11 add to
+  // this module into a rule that cannot fail on them, which is the silent hole
+  // `warnUngatedClasses` exists to report. A genuinely new class here should show up as ungated.
+  ":integrations:core" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.IntegrationBaseUrl*"),
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.IntegrationService",
+        "app.muplay.integrations.BaseUrlResult*",
+      ),
+    ),
   ),
 )
 

@@ -34,7 +34,16 @@ import javax.inject.Inject
  * `NavidromeLoadErrorHandlingPolicyTest` and `StreamRetryPolicyTest` stay green, and the 429
  * handling this module exists for is simply absent from the running app.
  *
- * So the test that proves it wired counts requests rather than inspecting objects:
+ * The other argument this constructor forwards, `dataSourceFactory`, is observed by
+ * `MuPlayDataSourceFactoryTest.theRequestIsIssuedByTheInjectedCallFactoryAndNotOneBuiltInside`: the
+ * client it is built on stamps a header nothing else sends, so a factory that ignored the argument
+ * and built an identical one internally loses it. A `User-Agent` assertion cannot see that defect,
+ * because the replacement would send the same `User-Agent`. `context` is not observable and honestly
+ * so -- it is `ExoPlayer.Builder`'s sole positional argument, so there is no way to drop it that
+ * compiles, and the only substitution available in a process (`context.applicationContext`) is
+ * behaviourally identical.
+ *
+ * And the test that proves the *policy* wired counts requests rather than inspecting objects:
  * `MuPlayDataSourceFactoryTest.aRefusalBudgetThatRunsOutSurfacesAsAPlayerError` asserts
  * `StreamRetryPolicy.MAX_RETRIES + 1` = 6 requests reached the server, where Media3's own default
  * would produce 4. Its neighbour `twoRefusalsWithHttp429DoNotKillThePlayback` is **not** that

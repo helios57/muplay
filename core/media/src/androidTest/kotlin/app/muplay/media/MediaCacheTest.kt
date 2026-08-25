@@ -1,0 +1,412 @@
+package app.muplay.media
+
+import android.content.Context
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.media.di.MediaCacheModule
+import app.muplay.model.Song
+import java.io.File
+import kotlinx.coroutines.runBlocking
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import okhttp3.OkHttpClient
+import okio.Buffer
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatExceptionOfType
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * The cache, measured rather than asserted-by-flag.
+ *
+ * Every "did the cache work" claim here is a **request count on a real HTTP server**. A test that
+ * asked the `Cache` object whether it holds a key would pass against a cache that is never read
+ * from, which is exactly the defect this task exists to prevent.
+ */
+@RunWith(AndroidJUnit4::class)
+class MediaCacheTest {
+
+  private lateinit var context: Context
+  private lateinit var cacheDir: File
+  private lateinit var cache: Cache
+  private lateinit var server: MockWebServer
+  private lateinit var audio: ByteArray
+  private lateinit var otherAudio: ByteArray
+
+  @Before
+  fun setUp() {
+    context = ApplicationProvider.getApplicationContext()
+    // A per-test directory: SimpleCache refuses a second live instance on one folder, and a
+    // shared folder would make these tests depend on the order they ran in.
+    cacheDir = File(context.cacheDir, "media-test-${System.nanoTime()}")
+    cache = MediaCache.create(context, cacheDir)
+    server = MockWebServer()
+    server.start()
+
+    val bytes = runBlocking { RealTrackBytes.twoDifferentTracks() }
+    audio = bytes.first
+    otherAudio = bytes.second
+    assertThat(audio.size).isGreaterThan(1000)
+    assertThat(otherAudio.size).isGreaterThan(1000)
+    // The two tracks must be genuinely different, or "served the wrong track from cache" is
+    // undetectable below.
+    assertThat(audio).isNotEqualTo(otherAudio)
+  }
+
+  @After
+  fun tearDown() {
+    if (::cache.isInitialized) cache.release()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
+    if (::server.isInitialized) server.close()
+  }
+
+  @Test
+  fun theCacheKeyIsTheCustomKeyAndNotTheUri() {
+    val first = DataSpec.Builder()
+      .setUri("http://host/rest/stream?id=track-1&t=aaa&s=111")
+      .setKey("track-1").build()
+    val second = DataSpec.Builder()
+      // Same track, different salt, different token, different bitrate -- i.e. everything Tempo's
+      // URL-derived key would treat as a different resource.
+      .setUri("http://host/rest/stream?id=track-1&t=zzz&s=999&maxBitRate=96")
+      .setKey("track-1").build()
+
+    assertThat(TrackIdCacheKeyFactory.buildCacheKey(first)).isEqualTo("track-1")
+    assertThat(TrackIdCacheKeyFactory.buildCacheKey(second)).isEqualTo("track-1")
+  }
+
+  @Test
+  fun twoTracksDoNotShareACacheKey() {
+    // The other direction. A `buildCacheKey` that returned a constant would pass the test above
+    // and fail this one; one that returned the URI would pass this one and fail the test above.
+    val a = DataSpec.Builder().setUri("http://host/a").setKey("track-1").build()
+    val b = DataSpec.Builder().setUri("http://host/b").setKey("chapter-14").build()
+
+    assertThat(TrackIdCacheKeyFactory.buildCacheKey(a)).isEqualTo("track-1")
+    assertThat(TrackIdCacheKeyFactory.buildCacheKey(b)).isEqualTo("chapter-14")
+  }
+
+  /**
+   * Media3's `CacheKeyFactory.DEFAULT` falls back to the URI when no custom key is set. That
+   * fallback is the entire Tempo defect: this client's URLs carry a fresh salt every time, so the
+   * fallback silently produces a cache with a 0% hit rate that still consumes disk. Failing loudly
+   * is the point.
+   */
+  @Test
+  fun aDataSpecWithNoCustomCacheKeyIsRejectedRatherThanFallingBackToTheUri() {
+    val noKey = DataSpec.Builder().setUri("http://host/rest/stream?id=track-1&s=111").build()
+
+    assertThatExceptionOfType(MissingCacheKeyException::class.java)
+      .isThrownBy { TrackIdCacheKeyFactory.buildCacheKey(noKey) }
+      .withMessageContaining("setCustomCacheKey")
+  }
+
+  /**
+   * The same defence, **through a real player**, which is the layer where Tempo's bug lives.
+   *
+   * This exists because the brief's own falsification plan was wrong about this and the mutation
+   * run proved it: swapping `TrackIdCacheKeyFactory` for `CacheKeyFactory.DEFAULT` changes
+   * *nothing* as long as every `MediaItem` sets a custom cache key -- `DEFAULT` returns
+   * `dataSpec.key` first and only falls back to the URI when it is null. So the defect cannot be
+   * reproduced by mutating the factory; it is reproduced by **omitting the key on the item**,
+   * which is exactly the omission Tempo makes.
+   *
+   * With Media3's default factory that omission is silent: the URI becomes the key, this client's
+   * URLs carry a fresh salt every call, and the cache fills with entries nothing will ever read
+   * again. Here it is a playback error naming its own cause, on the first run.
+   *
+   * `cache.keys` is asserted empty as well as the error, and that is the assertion that actually
+   * discriminates: a fallback that cached under the URL and *also* somehow errored would still
+   * leave a key behind.
+   */
+  @Test
+  fun aMediaItemWithNoCustomCacheKeyFailsLoudlyInsteadOfCachingUnderItsUrl() {
+    server.enqueue(audioResponse(audio))
+
+    val error = playExpectingFailure(server.url("/stream?id=track-1&t=aaa&s=111").toString())
+
+    val chain = generateSequence(error as Throwable) { if (it.cause === it) null else it.cause }
+      .toList()
+    assertThat(chain.filterIsInstance<MissingCacheKeyException>())
+      // The whole chain in the message: this assertion's job is to stop "the cache key was
+      // missing" and "the network was unreachable" looking alike, and a failure that did not name
+      // what it found would put them back together.
+      .describedAs("MissingCacheKeyException in %s", chain.map { "${'$'}{it.javaClass.name}: ${'$'}{it.message}" })
+      .isNotEmpty()
+    assertThat(cache.keys).isEmpty()
+  }
+
+  /**
+   * The key [MediaItems] sets is the key the cache **files under**.
+   *
+   * Task 4 could only observe `setCustomCacheKey` at one layer -- `MediaItemsTest` asserts the
+   * value sitting on the built `MediaItem` -- because `TrackIdCacheKeyFactory` and this file did
+   * not exist on its branch. That is the classic split this project tracks by name: "the key is
+   * set here" and "the key that is set is the key the cache reads" are different facts, and the
+   * first one alone is satisfied by a cache that never consults it.
+   *
+   * `containsExactly` rather than `contains`, deliberately: a cache that filed the item under
+   * *both* the song id and the URL -- which is what a second, URL-derived write would look like --
+   * passes `contains` and fails this.
+   */
+  @Test
+  fun theCustomCacheKeyMediaItemsSetsIsTheKeyTheCacheFilesUnder() {
+    server.enqueue(audioResponse(audio))
+    val song = Song(
+      id = "song-1",
+      libraryId = 1,
+      title = "Track 1",
+      albumId = null,
+      albumName = null,
+      artistId = null,
+      artistName = null,
+      trackNumber = null,
+      discNumber = null,
+      durationSeconds = 5,
+      suffix = "mp3",
+      coverArtId = null,
+    )
+    // A URL shaped like the real thing: `SubsonicClient.streamUrl` stamps a fresh `s` salt on
+    // every call, so the URI is exactly the thing that must not become the key.
+    val streamUri = server.url("/rest/stream?id=song-1&t=aaa&s=111").toString()
+
+    playItemToEnd(MediaItems.of(song, streamUri, artworkUri = null))
+
+    assertThat(cache.keys).containsExactly(song.id)
+    assertThat(cache.getCachedBytes(song.id, 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
+  }
+
+  /**
+   * The factory the app actually builds is the one wired to [TrackIdCacheKeyFactory].
+   *
+   * Without this, every assertion above is about an object the production data source might never
+   * consult -- the difference between "the decision is right" and "the decision is applied", which
+   * is a defect class this project tracks by name. The playback tests below observe the same fact
+   * end-to-end; this one names it directly so a regression says *which* wire came loose.
+   */
+  @Test
+  fun theDataSourceTheAppBuildsIsWiredToTheTrackIdKeyFactory() {
+    val source = MuPlayDataSourceFactory(OkHttpClient(), cache).create().createDataSource()
+
+    assertThat(source).isInstanceOf(CacheDataSource::class.java)
+    val cacheDataSource = source as CacheDataSource
+    assertThat(cacheDataSource.cacheKeyFactory).isSameAs(TrackIdCacheKeyFactory)
+    // The same `Cache` instance the caller passed, not a second one built on the side: a factory
+    // that quietly made its own would still cache, and would still fail to share a byte with the
+    // rest of the process.
+    assertThat(cacheDataSource.cache).isSameAs(cache)
+  }
+
+  /**
+   * **The measurement that matters.** Play a track, then play it again through a URL that differs
+   * in exactly the ways this client's URLs really differ — a new salt, a new token, a bitrate cap
+   * — and require that **not one further byte** is fetched.
+   *
+   * Holding the track id constant while varying everything else in the URL is what makes this
+   * discriminating: a cache keyed on the URL passes the first playback and fails here.
+   */
+  @Test
+  fun replayingATrackThroughADifferentUrlFetchesNothingFurther() {
+    server.enqueue(audioResponse(audio))
+
+    playToEnd(uri = server.url("/stream?id=track-1&t=aaa&s=111").toString(), cacheKey = "track-1")
+    assertThat(server.requestCount).isEqualTo(1)
+
+    playToEnd(
+      uri = server.url("/stream?id=track-1&t=zzz&s=999&maxBitRate=96").toString(),
+      cacheKey = "track-1",
+    )
+
+    // No second response was ever enqueued: had the player gone to the network, MockWebServer
+    // would have blocked and the playback would have timed out rather than merely fetching twice.
+    // Both facts are asserted, because either one alone leaves a way for this to pass wrongly.
+    assertThat(server.requestCount).isEqualTo(1)
+  }
+
+  @Test
+  fun aDifferentTrackIsNotServedFromAnotherTracksCache() {
+    // The control. Without it, a cache that returned the first track's bytes for every key would
+    // pass the test above perfectly.
+    server.enqueue(audioResponse(audio))
+    server.enqueue(audioResponse(otherAudio))
+
+    playToEnd(server.url("/stream?id=track-1").toString(), cacheKey = "track-1")
+    playToEnd(server.url("/stream?id=track-2").toString(), cacheKey = "track-2")
+
+    assertThat(server.requestCount).isEqualTo(2)
+    assertThat(cache.keys).contains("track-1", "track-2")
+    // Each key holds *its own* track's bytes, by length. Both fixtures are five-second 64 kbps
+    // mp3s, so their sizes are close but not equal (checked in setUp via isNotEqualTo, and the
+    // two expectations below are different numbers); a cache that filed both playbacks under one
+    // key, or served the first track's bytes for the second, misses one of these two.
+    assertThat(cache.getCachedBytes("track-1", 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
+    assertThat(cache.getCachedBytes("track-2", 0L, Long.MAX_VALUE))
+      .isEqualTo(otherAudio.size.toLong())
+  }
+
+  /**
+   * The `cacheDir` trade, measured rather than asserted in a comment.
+   *
+   * [MediaCache] chooses `context.cacheDir` over `filesDir` on the claim that the OS reclaiming it
+   * "costs a re-download and never a wrong answer". Nothing checked that claim. Here the cache
+   * files are removed from under a live `SimpleCache` — which is what reclamation looks like from
+   * the process's point of view, since its in-memory index still says the resource is held — and
+   * the next playback has to succeed by going back to the server.
+   *
+   * `server.requestCount` going 1 -> 2 is the evidence, not "no exception": a player that
+   * produced zero samples would also throw nothing. And `isNotEmpty()` on the span list is the
+   * guard one level down — if `SimpleCache` ever stops naming its files this way, damaging nothing
+   * would leave the cache healthy and this test would pass while measuring nothing at all.
+   *
+   * **What this test does not cover, stated because a mutation sweep proved it:**
+   * `FLAG_IGNORE_CACHE_ON_ERROR` in `MuPlayDataSourceFactory.create()`. Deleting that flag leaves
+   * this test, and all twenty others, green. Two sabotages were measured. Removing the span files
+   * is repaired by `SimpleCache.getSpan` itself (`span.isCached && !span.file.exists()` -> drop the
+   * stale spans, return a hole), so the flag never enters the picture — that is the path this test
+   * exercises. Revoking read permission does reach `FileDataSource`, but the playback then dies
+   * **with the flag set as well as without it**: `DefaultLoadErrorHandlingPolicy` does not retry a
+   * `FileNotFoundException`, and the flag only takes effect on a *subsequent* `open()`. So the
+   * flag is a live, unobserved value — see task-3-report.md, which records it as such rather than
+   * pretending a test covers it.
+   */
+  @Test
+  fun aCacheDirectoryReclaimedByTheOsCostsARedownloadAndNotAWrongAnswer() {
+    server.enqueue(audioResponse(audio))
+    playToEnd(server.url("/stream?id=track-1&s=111").toString(), cacheKey = "track-1")
+    assertThat(server.requestCount).isEqualTo(1)
+
+    val spans = cacheDir.walkTopDown().filter { it.isFile && it.name.endsWith(".exo") }.toList()
+    assertThat(spans).isNotEmpty()
+    assertThat(spans).allSatisfy { assertThat(it.delete()).isTrue() }
+
+    server.enqueue(audioResponse(audio))
+    playToEnd(server.url("/stream?id=track-1&s=999").toString(), cacheKey = "track-1")
+
+    // The whole track came back off the wire, and the cache refilled from it.
+    assertThat(server.requestCount).isEqualTo(2)
+    assertThat(cache.getCachedBytes("track-1", 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
+  }
+
+  @Test
+  fun theCachedBytesOnDiskAreTheWholeTrack() {
+    server.enqueue(audioResponse(audio))
+
+    playToEnd(server.url("/stream?id=track-1").toString(), cacheKey = "track-1")
+
+    // Direct evidence, alongside the request count: the cache holds the complete resource, not a
+    // prefix that happened to satisfy a short playback.
+    assertThat(cache.getCachedBytes("track-1", 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
+    assertThat(cache.cacheSpace).isGreaterThanOrEqualTo(audio.size.toLong())
+  }
+
+  /**
+   * The directory the production cache writes to, named and located — reached through the
+   * **binding the graph actually uses**, not through [MediaCache] directly.
+   *
+   * Going via `MediaCacheModule.provideMediaCache` is the point rather than a detour. Every other test
+   * in this file passes its own directory, so nothing else in the project observes which
+   * directory production ends up with; a provider that called the two-argument overload with
+   * `filesDir`, or with a name of its own, would satisfy every assertion in this file if this test
+   * called [MediaCache] itself. Where a decision is *applied* and where it is *declared* are
+   * different layers, and this project tracks tests that verify only the second.
+   */
+  @Test
+  fun theProductionCacheLivesInAKnownDirectoryUnderCacheDir() {
+    val production = MediaCacheModule.provideMediaCache(context)
+    try {
+      val expected = File(context.cacheDir, MediaCache.DIRECTORY_NAME)
+      // Discriminating in both directions: a `create` that used `filesDir`, or that derived a
+      // different sub-directory name than `DIRECTORY_NAME`, leaves this path non-existent.
+      assertThat(expected).isDirectory()
+      // Not `filesDir`: the OS may reclaim `cacheDir` under storage pressure, which is the right
+      // trade for a read-through cache of data the server still has, and the wrong one for a
+      // download. Asserted as an absence as well as a presence, because a `create` that wrote to
+      // both would satisfy the line above on its own.
+      assertThat(File(context.filesDir, MediaCache.DIRECTORY_NAME)).doesNotExist()
+      // A change-detector, and named as one rather than dressed up: 512 MiB cannot be observed
+      // behaviourally without filling a cache that size. It catches an edited constant, which is
+      // the only failure mode it claims to catch.
+      assertThat(MediaCache.MAX_BYTES).isEqualTo(512L * 1024L * 1024L)
+    } finally {
+      production.release()
+      File(context.cacheDir, MediaCache.DIRECTORY_NAME).deleteRecursively()
+    }
+  }
+
+  private fun audioResponse(bytes: ByteArray): MockResponse =
+    MockResponse.Builder()
+      .code(200)
+      .addHeader("Content-Type", "audio/mpeg")
+      .addHeader("Accept-Ranges", "bytes")
+      .body(Buffer().write(bytes))
+      .build()
+
+  /**
+   * Plays an item carrying **no** custom cache key and returns the error the player reports.
+   *
+   * Deliberately not a flag on [playToEnd]: that method treats a playback error as a broken
+   * premise and abandons its wait, which is right everywhere else in this file and exactly wrong
+   * here, where the error *is* the assertion. Same split, and the same reason, as
+   * `PlayerHarness.awaitPlaybackError` versus `PlayerHarness.await`.
+   */
+  private fun playExpectingFailure(uri: String): PlaybackException {
+    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    lateinit var harness: PlayerHarness
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      harness = PlayerHarness(
+        ExoPlayer.Builder(context)
+          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
+          .build(),
+      )
+    }
+    try {
+      harness.onMain {
+        // `MediaItem.fromUri`, i.e. no `setCustomCacheKey` -- the omission under test.
+        harness.player.setMediaItem(MediaItem.fromUri(uri))
+        harness.player.prepare()
+        harness.player.play()
+      }
+      return harness.awaitPlaybackError()
+    } finally {
+      harness.release()
+    }
+  }
+
+  /** Builds a fresh player over the shared cache, plays one item to the end, and releases it. */
+  private fun playToEnd(uri: String, cacheKey: String) =
+    playItemToEnd(MediaItem.Builder().setUri(uri).setCustomCacheKey(cacheKey).build())
+
+  private fun playItemToEnd(item: MediaItem) {
+    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    lateinit var harness: PlayerHarness
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      harness = PlayerHarness(
+        ExoPlayer.Builder(context)
+          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
+          .build(),
+      )
+    }
+    try {
+      harness.onMain {
+        harness.player.setMediaItem(item)
+        harness.player.prepare()
+        harness.player.play()
+      }
+      // Position, then ENDED: "reached the end" alone is satisfied by a zero-length source.
+      harness.awaitPositionAtLeast(1_000L)
+      harness.awaitEnded()
+    } finally {
+      harness.release()
+    }
+  }
+}

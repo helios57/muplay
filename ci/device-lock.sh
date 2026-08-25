@@ -53,4 +53,11 @@ fi
 printf 'pid=%s since=%s cmd=%s\n' "$$" "$(date -Is)" "$*" > "$LOCK_FILE"
 
 echo "${0##*/}: device lock acquired (pid $$)" >&2
-"$@"
+
+# `9>&-` closes the lock descriptor in the child. Without it every descendant
+# inherits the open fd, and a long-lived one -- a Gradle daemon started under
+# the lock is the realistic case -- keeps holding the lock after this script
+# exits. The symptom would be brutal to diagnose: the device permanently busy,
+# every lane blocking for the full timeout, and the lock file naming a process
+# that died long ago.
+"$@" 9>&-

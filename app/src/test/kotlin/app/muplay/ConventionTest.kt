@@ -144,6 +144,26 @@ class ConventionTest {
     text.lineSequence().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("//") }.toList()
 
   /**
+   * [text] with every `/* ... */` and `<!-- ... -->` comment removed.
+   *
+   * Not cosmetic, and not hypothetical. `app/src/debug/AndroidManifest.xml`'s own comment explains
+   * the attribute by quoting it in full, and each `CleartextPolicyModule`'s KDoc discusses the
+   * member the *other* variant provides -- so a `contains`/`doesNotContain` over raw file text is
+   * answered by prose rather than by code. Measured, not assumed: with
+   * `android:usesCleartextTraffic="true"` deleted from the debug manifest and only the comment
+   * about it left behind, `the cleartext policy and the cleartext manifest cannot disagree` stayed
+   * green. That is this project's recorded "assertion that runs but cannot fail" defect class,
+   * found inside the rule written to stop the policy and the manifest disagreeing.
+   */
+  private fun withoutBlockComments(text: String): String = text
+    .replace(Regex("""(?s)/\*.*?\*/"""), "")
+    .replace(Regex("""(?s)<!--.*?-->"""), "")
+
+  /** [text] reduced to the lines a Kotlin compiler would act on: no block comments, no `//`, no blanks. */
+  private fun kotlinCode(text: String): String =
+    significantLines(withoutBlockComments(text)).joinToString("\n")
+
+  /**
    * The character ranges of every `name { ... }` block in [text], braces included, outermost only
    * (the brace counter walks past any nested block of the same name, so a `defaultConfig` inside a
    * `defaultConfig` is part of its parent's range rather than a second entry).
@@ -491,6 +511,99 @@ class ConventionTest {
     assertThat(includedProjects)
       .describedAs("every module needs a measured floor in `coverageFloors` (build.gradle.kts)")
       .allMatch { it in floored }
+  }
+
+  /**
+   * The severability contract, as a check rather than a promise.
+   *
+   * The roadmap says Plans 5-7 "are independent of each other and can be reordered or dropped".
+   * For Plan 7 that is only true while nothing else in the tree can compile against it, and the
+   * cheapest honest way to know is that a dependency has to be **declared** to be used. A build
+   * file naming `project(":integrations:...")` is greppable; a stray import is not.
+   *
+   * `:app` and `:feature:requests` are the two permitted consumers, and that is the whole
+   * severability surface: deleting this plan is `git rm -r integrations feature/requests`, plus
+   * these two edges, plus the `settings.gradle.kts` includes and the `coverageFloors` entries.
+   */
+  @Test
+  fun `nothing outside integrations depends on an integration`() {
+    val root = repoRoot()
+    val permitted = setOf("app", "feature/requests")
+    val scanned = moduleBuildFiles()
+      .filter { file ->
+        val path = file.parentFile.relativeTo(root).invariantSeparatorsPath
+        !path.startsWith("integrations/") && path !in permitted
+      }
+    val offenders = scanned
+      .filter { it.readText().contains("project(\":integrations:") }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+
+    // Vacuity, from both ends. A permit-list that happened to exclude every build file would leave
+    // `offenders` empty forever...
+    assertThat(scanned).describedAs("build files outside integrations/ and the permit-list").isNotEmpty()
+    // ...and so would a rule grepping for a literal no build file in this repo actually writes.
+    // The one permitted edge that exists today is the proof that this literal is the right one.
+    assertThat(File(root, "app/build.gradle.kts").readText())
+      .describedAs("the :app -> :integrations:core edge this rule greps for")
+      .contains("project(\":integrations:core\")")
+
+    assertThat(offenders)
+      .describedAs(
+        "Plan 7's integrations must stay severable: only :app and :feature:requests may depend " +
+          "on an :integrations:* project. Anything else makes 'this plan can be dropped' false.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * The cleartext policy and the cleartext manifest are written in two different files and must
+   * say the same thing. Nothing in the type system connects them.
+   *
+   * `verifyReleaseManifest` already proves `usesCleartextTraffic` never reaches the merged release
+   * manifest. This proves the *policy* side: the release source set provides `Forbidden`, the
+   * debug source set provides `Allowed`, and both files exist. A missing file would not fail the
+   * build loudly -- Hilt would fail to find a binding, which reads as an unrelated DI error -- and
+   * a release module that provided `Allowed` would compile, pass every test, and ship an app that
+   * accepts a cleartext URL it can then never connect to.
+   */
+  @Test
+  fun `the cleartext policy and the cleartext manifest cannot disagree`() {
+    val root = repoRoot()
+    val debugModule = File(root, "app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt")
+    val releaseModule = File(root, "app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt")
+    val debugManifest = File(root, "app/src/debug/AndroidManifest.xml")
+
+    assertThat(debugModule).exists()
+    assertThat(releaseModule).exists()
+
+    // Every assertion below reads code with the comments stripped -- see `withoutBlockComments`
+    // for the measured reason, which is that three of them were satisfied by prose without it.
+    assertThat(kotlinCode(releaseModule.readText()))
+      .describedAs("the release variant must provide CleartextPolicy.Forbidden and nothing else")
+      .contains("CleartextPolicy.Forbidden")
+      .doesNotContain("CleartextPolicy.Allowed")
+
+    assertThat(kotlinCode(debugModule.readText()))
+      .describedAs("the debug variant provides Allowed, and only because the debug manifest does")
+      .contains("CleartextPolicy.Allowed")
+      .doesNotContain("CleartextPolicy.Forbidden")
+
+    assertThat(withoutBlockComments(debugManifest.readText()))
+      .describedAs(
+        "CleartextPolicy.Allowed is only correct while the debug manifest also permits cleartext; " +
+          "if this attribute is removed, the debug policy must become Forbidden in the same commit",
+      )
+      .contains("android:usesCleartextTraffic=\"true\"")
+
+    // The release side of the same agreement, checked here rather than left entirely to
+    // `verifyReleaseManifest`: that task reads AGP's *merged* release manifest and only runs on a
+    // release build, so `usesCleartextTraffic` added to the **main** manifest -- which every
+    // variant inherits, release included -- would sit in the tree unnoticed by any JVM-tier run
+    // until someone assembled a release. The two checks are complementary, not redundant: this one
+    // is fast and unconditional, that one is exact and sees the merge.
+    assertThat(withoutBlockComments(File(root, "app/src/main/AndroidManifest.xml").readText()))
+      .describedAs("cleartext must be declared in no manifest but the debug overlay")
+      .doesNotContain("usesCleartextTraffic")
   }
 
 }
