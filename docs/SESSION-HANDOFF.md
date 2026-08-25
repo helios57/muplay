@@ -122,3 +122,40 @@ this until they are fixed.**
 Worth keeping from that review: it praised **recording the two *failed*
 falsification attempts** as the single best thing in the task report — evidence
 that "I withheld a test and the floor still passed" is a result, not an error.
+
+## Plan 7 Task 1 review — HIGH 2 · MEDIUM 3 · LOW 4 · MINOR 2
+
+Spec PASS, quality strong. The security check the task exists for **verifies**:
+`CleartextForbidden.host` is genuinely host-only — run against real OkHttp 5.5.0,
+`http://user:pw@10.0.0.1:8080/base` yields `host = 10.0.0.1`, no userinfo, no port,
+and it is pinned at a value.
+
+- **HIGH-1 — fixed here.** Nothing in `check` or CI compiled `app/src/release/kotlin`,
+  so the release-side cleartext refusal was verified exactly once, by hand. Added a
+  `Compile the gates check does not` step to `pr.yml` covering release Kotlin **and**
+  androidTest (the gap that let master carry a broken device tier earlier today).
+- **HIGH-2 — open, routed to Plan 7 Task 2's lane.** `CleartextPolicy`'s KDoc claims
+  no release-compiled code names `Allowed`. False: `IntegrationBaseUrl.kt:84` is
+  `CleartextPolicy.Allowed -> true`, in the same module, compiled into release
+  (`:app` uses `implementation`, not `debugImplementation`). And the cited
+  `ConventionTest` rule opens three hardcoded paths — it never scans `app/src/main`
+  or `integrations/`, so a ViewModel passing `Allowed` literally would leave every
+  gate green. Property holds today **by luck, not construction**. Either widen the
+  rule or narrow the sentence.
+- **MEDIUM — userinfo is discarded silently.** Right to discard, wrong to be silent:
+  a self-hoster fronting Lidarr with nginx basic-auth pastes
+  `https://user:pw@host/`, sees "Valid", and every request 401s with nothing in the
+  UI. Wants discard-and-tell.
+- **MEDIUM — "a base URL that cannot carry a secret" is true for three components,
+  not the URL.** The **path** is preserved verbatim (`/api/TOKEN123/v1`), and must be
+  (Servarr `urlBase`). Narrow the claim before Task 2 stores this next to a Bindery
+  admin key.
+- **MEDIUM — the Android-library choice is unpaid-for.** `muplay.android.hilt` drags
+  dagger/androidx into `:integrations:core` and **nothing in the module uses it** —
+  no `@Inject`, `@Module` or dagger import. Task 2 is still working in
+  `:core:database`. If its store lands there, that module cut off four JVM modules
+  for nothing.
+- LOW: `kotlinCode` strips full-line `//` but not trailing `//`, so the rule is still
+  prose-satisfiable via an import alias; the severability grep misses
+  `project(path = ":integrations:core")`; and the "three assertions were prose-
+  satisfiable" comment overstates its own measurement 3:1 — exactly one was.
