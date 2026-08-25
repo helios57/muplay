@@ -11,10 +11,10 @@ import java.io.Closeable
 import java.net.InetAddress
 import java.net.URI
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.fail
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -36,17 +36,36 @@ import org.junit.jupiter.api.Test
  * with a correct `Content-Range` and streamed from byte 0 passes every status assertion ever
  * written and fails the byte-exact ones here.
  *
- * ### The transcoding cache, which makes a fixed-bitrate assertion flaky
+ * ### The transcoding cache, and why nothing here depends on a cold entry
  *
  * `/rest/stream&format=mp3` behaves two ways for one URL. The **first** request for a given (track,
  * requested bitrate) is transcoded live: `Accept-Ranges: none`, chunked, no `Content-Length`. Every
  * request after it is served from Navidrome's transcoding cache as an ordinary file, with a length
  * and a working `Range`. The cache lives in the container's writable layer, so it is cold in CI and
  * warm on the long-lived shared container here -- a test pinned to one bitrate passes on its first
- * run and fails on its second. [coldTranscodeUrl] searches for an unused one instead, exactly as
- * `:core:network`'s `LiveNavidromeTest.coldTranscode` does, and it searches with `HEAD`, which was
- * measured **not** to populate the cache: the search costs nothing, and only the assertion itself
- * consumes an entry.
+ * run and fails on its second.
+ *
+ * The obvious fix is to search for an unused bitrate first, and it **does not work**, for a reason
+ * measured in this task rather than assumed: a `HEAD` on an uncached transcode answers
+ * `Accept-Ranges: none` with no length -- it reports "cold" correctly -- and **starts a background
+ * transcode that has populated the cache about a second later**. Two `HEAD`s issued back to back
+ * both say cold; the same URL a few hundred milliseconds afterwards is warm. So any probe that
+ * reports a cold entry has warmed the entry it reported, and the assertion that follows races the
+ * transcoder. That is not hypothetical: the version of this class that probed with `HEAD` passed
+ * once and then failed three runs running with `expected: 502 but was: 200`.
+ *
+ * Searching *through the proxy* instead -- so that the search's own response is the observation --
+ * is correct and is worse: a run that finds nothing has requested every bitrate below the source,
+ * which caches every one of them. Those entries are a **shared, exhaustible resource** on this
+ * single-instance container, and `:core:network`'s `LiveNavidromeTest.coldTranscode` needs them
+ * too. One such sweep here left one of that suite's three candidate tracks with no cold bitrate at
+ * all.
+ *
+ * So no test in this class depends on a cold transcode. The proxy's `null`-length branch is
+ * exercised against a **different** real Navidrome response that carries no `Content-Range` -- an
+ * unauthenticated stream URL -- which is stable, costs nothing, and is a sharper assertion besides.
+ * That a live transcode declares no length stays pinned where it already was, in `:core:network`'s
+ * `coldTranscode`, in this same CI job.
  *
  * Stream URLs carry `u`, `t` and `s` and are never asserted on, printed, or put in a message.
  */
@@ -133,13 +152,25 @@ class LiveNavidromeProxyTest {
   }
 
   @Test
-  fun `a range past the end of a real track is 416 with the real length`() {
+  fun `a range at or past the end of a real track is 416 with the real length`() {
     val direct = fetchDirect(streamUrl)
 
-    val past = get(published.path, "bytes=${direct.size + 1000}-")
+    val atTheEnd = get(published.path, "bytes=${direct.size}-")
+    val wellPast = get(published.path, "bytes=${direct.size + 1000}-")
+    val lastByte = get(published.path, "bytes=${direct.size - 1}-")
 
-    assertThat(past.code).isEqualTo(416)
-    assertThat(past.head.headers["Content-Range"]).isEqualTo("bytes */${direct.size}")
+    // The boundary from both sides, and the first offset is the one that matters: `>=` against `>`
+    // is the classic off-by-one, and it changes the answer at **exactly** `firstByte == length` and
+    // nowhere else. A test that only asked for `length + 1000` is green against the defect -- this
+    // one was, and the mutation run that proved it is in task-6-report.md.
+    assertThat(atTheEnd.code).describedAs("Range: bytes=%d-", direct.size).isEqualTo(416)
+    assertThat(atTheEnd.head.headers["Content-Range"]).isEqualTo("bytes */${direct.size}")
+    assertThat(wellPast.code).isEqualTo(416)
+    assertThat(wellPast.head.headers["Content-Range"]).isEqualTo("bytes */${direct.size}")
+    // ...and one byte earlier is a 206 carrying the file's real last byte, so the 416s above are a
+    // boundary and not this proxy's answer to every open-ended range.
+    assertThat(lastByte.code).isEqualTo(206)
+    assertThat(lastByte.body).isEqualTo(direct.copyOfRange(direct.size - 1, direct.size))
   }
 
   @Test
@@ -175,24 +206,44 @@ class LiveNavidromeProxyTest {
   }
 
   /**
-   * The other half of the same measurement, and the reason the proxy has a 502 branch at all.
+   * The `null`-length branch, against a real Navidrome response that really has no length.
    *
-   * A **live** transcode answers 200 with `Accept-Ranges: none` and no length anywhere -- measured
-   * here for `HEAD` as well as for the ranged `GET` the proxy's probe issues. Serving that as a 200
-   * with no `Content-Length` would give a renderer no way to know when the track ends.
+   * A credential that no longer works is not a hypothetical: a Subsonic token is salted per client,
+   * and a password change invalidates every URL a cast session has published at once. Navidrome
+   * answers such a request with a **JSON error document** -- 200, `Content-Type: application/json`,
+   * a real `Content-Length`, and no `Content-Range` at all.
+   *
+   * Which is what makes this sharp rather than merely convenient. `totalLength` reads the
+   * `Content-Range` of a one-byte probe, so it answers `null` here and the renderer gets a 502. A
+   * probe that read `Content-Length` instead -- the obvious implementation -- would answer 190, and
+   * this proxy would hand a speaker a JSON error document as `audio/mpeg`, with a length that
+   * agreed with itself and nothing reported anywhere. Measured: that mutation reddens this test.
    */
   @Test
-  fun `a live transcode has no length, so the proxy refuses it rather than truncating it`() {
-    val cold = coldTranscodeUrl()
-    val transcoded = registry.publish(cold, ServedMedia.of(song.suffix, StreamFormat.Mp3(1)))
+  fun `a stream url that no longer authenticates is a 502, not a json error document served as audio`() {
+    val unauthenticated = streamUrl.toHttpUrl().newBuilder()
+      .removeAllQueryParameters("u").removeAllQueryParameters("t").removeAllQueryParameters("s")
+      .build().toString()
 
-    // The measurement the 502 rests on, taken before the proxy consumes this cache entry.
-    OkHttpClient().newCall(Request.Builder().url(cold).head().build()).execute().use {
-      assertThat(it.header("Accept-Ranges")).isEqualTo("none")
-      assertThat(it.header("Content-Length")).isNull()
-    }
+    // What the server really answers, pinned here so the 502 below rests on a measurement rather
+    // than on an assumption about how Navidrome refuses.
+    OkHttpClient().newCall(Request.Builder().url(unauthenticated).header("Range", "bytes=0-0").build())
+      .execute().use { refusal ->
+        assertThat(refusal.code).isEqualTo(200)
+        assertThat(refusal.header("Content-Type")).contains("json")
+        assertThat(refusal.header("Content-Length")?.toLong()).isGreaterThan(0L)
+        assertThat(refusal.header("Content-Range")).isNull()
+      }
 
-    assertThat(get(transcoded.path, null).code).isEqualTo(502)
+    val item = registry.publish(unauthenticated, ServedMedia.of(song.suffix, StreamFormat.Raw))
+    val response = get(item.path, null)
+
+    // 502 specifically, and an empty body: not a 200 carrying the error document, and not a 503,
+    // which would tell the renderer to come back and try the same broken URL again.
+    assertThat(response.code).isEqualTo(502)
+    assertThat(response.body).isEmpty()
+    // ...and the control, on this same proxy and this same run: the authenticated URL is a 200.
+    assertThat(get(published.path, null).code).isEqualTo(200)
   }
 
   // ---- helpers ---------------------------------------------------------------------------------
@@ -214,40 +265,11 @@ class LiveNavidromeProxyTest {
     OkHttpClient().newCall(Request.Builder().url(url).build()).execute()
       .use { it.body.bytes() }
 
-  /**
-   * A `format=mp3` URL for a bitrate this container has not transcoded yet.
-   *
-   * Searched with `HEAD`, which was measured not to populate the transcoding cache: a warm entry
-   * answers `Accept-Ranges: bytes` with a length, a cold one answers `Accept-Ranges: none` with
-   * neither, and the `HEAD` leaves it cold either way. Only bitrates **below** the fixture's own
-   * are searched: at or above it Navidrome selects "no cap", and every such request shares one
-   * cache entry, so the "one entry per requested bitrate" rule this search depends on does not
-   * hold there.
-   */
-  private fun coldTranscodeUrl(): String {
-    (1 until FIXTURE_BITRATE_KBPS).shuffled().forEach { kbps ->
-      val url = client.streamUrl(song.id, StreamFormat.Mp3(kbps))
-      val cold = OkHttpClient().newCall(Request.Builder().url(url).head().build()).execute()
-        .use { it.header("Accept-Ranges") == "none" }
-      if (cold) return url
-    }
-    return fail(
-      "no bitrate below $FIXTURE_BITRATE_KBPS kbps is still an uncached transcode of this track. " +
-        "Either this container has cached every one of them (recreate it: the transcoding cache " +
-        "lives in the container's writable layer), or Navidrome no longer streams a first-time " +
-        "transcode unseekably -- in which case this proxy's 502 branch has lost the behaviour it " +
-        "exists for, and the format policy should be revisited rather than this test relaxed.",
-    )
-  }
-
   private companion object {
     const val BASE_URL = "http://localhost:4533"
 
     /** `ci/configure-libraries.sh` makes library 1 "Music". */
     const val MUSIC_LIBRARY_ID = 1
-
-    /** `ci/seed-fixtures.sh` encodes the music fixtures at 64 kbps. */
-    const val FIXTURE_BITRATE_KBPS = 64
 
     /** A seeded fixture is ~40 KB; this is headroom, not a measurement. */
     const val MAX_TRACK_BYTES = 8 * 1024 * 1024
