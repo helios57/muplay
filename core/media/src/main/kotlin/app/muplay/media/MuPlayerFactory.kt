@@ -94,10 +94,28 @@ class MuPlayerFactory @Inject constructor(
   @ApplicationContext private val context: Context,
   private val dataSourceFactory: MuPlayDataSourceFactory,
   private val loadErrorPolicy: NavidromeLoadErrorHandlingPolicy,
+  private val resumePolicy: ResumePolicy,
 ) {
 
   /**
-   * The shipping player. [renderersFactory] defaults to exactly what this player has always used.
+   * **What the session is given, and the only thing outside this module that should ever be.**
+   *
+   * A [MuPlayer] rather than the `ExoPlayer` below: everything past this line sees a `Player` that
+   * cannot be told where to start, because all six of its `setMediaItem(s)` overloads discard the
+   * caller's position and ask [resumePolicy] instead. That is spec section 3's guarantee, and it is
+   * structural rather than conventional -- a `MediaController` in a car reaches the session's
+   * player, and the session's player is this one.
+   *
+   * The caller's **index** survives: [NeverResume] returns it unchanged, so `PlaybackLauncher`'s
+   * `setMediaItems(items, queue.startIndex, 0L)` still starts on the track the user tapped. Only the
+   * position is the policy's to choose.
+   */
+  fun create(): MuPlayer = MuPlayer(createExoPlayer(), resumePolicy)
+
+  /**
+   * The **raw** player, for the three device suites whose subject is an `ExoPlayer` behaviour
+   * (audio focus, the cache key, gapless) and for [create] to wrap. [renderersFactory] defaults to
+   * exactly what this player has always used.
    *
    * ### Why the parameter exists, since it is a seam a test asked for
    *
@@ -129,7 +147,9 @@ class MuPlayerFactory @Inject constructor(
    * `create` that ignored its argument would leave that suite with an empty capture and every
    * frame-count assertion in it red. Measured, not asserted from the armchair: see task-7b-report.md.
    */
-  fun create(renderersFactory: RenderersFactory = DefaultRenderersFactory(context)): ExoPlayer =
+  fun createExoPlayer(
+    renderersFactory: RenderersFactory = DefaultRenderersFactory(context),
+  ): ExoPlayer =
     ExoPlayer.Builder(context, renderersFactory)
       .setMediaSourceFactory(
         DefaultMediaSourceFactory(dataSourceFactory.create())

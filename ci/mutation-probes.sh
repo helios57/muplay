@@ -769,6 +769,40 @@ PROBES = [
      # is the order-sensitivity probe for this file: `mediaIds` is an ordered list and
      # `requestedIndex` indexes into the order the caller passed, not into any other view of it.
      "neither the queue's contents nor its order changes the answer", 4),
+
+    # ---- Plan 3 Task 8b: the two bindings the seam and the writer are actually built from -------
+    # `MuPlayer` and `ProgressWriter` themselves have NO probe here and cannot have one, and the
+    # reason is the measured limit this file's header describes: both are production classes whose
+    # only tests are instrumented (`MuPlayerTest`, `ProgressWriterTest`). A mutation to either
+    # recompiles `:core:media:testDebugUnitTest` -- they are `src/main` files, so the cache key does
+    # move -- and then no JVM test covers them, so this runner reports MISSED with **zero**
+    # failures. That reads like a broken test rather than an unrunnable probe, which is exactly the
+    # trap Task 7b fell into and removed a probe over. Every one of those mutations was instead
+    # applied BY HAND against a device run, and the transcripts are in task-8b-report.md: all six
+    # `setMediaItem(s)` overrides deleted one at a time, the caller's position passed through
+    # instead of the policy's, the read-modify-write replaced by a fresh entity, `clock.millis()`
+    # replaced by a literal, the silence-skip guard removed, and the ticker removed.
+    #
+    # What CAN be probed from here is the pair of module bindings this task adds, because
+    # `MediaModule` deliberately names no Android and no Media3 type -- the same property that put
+    # its timeout decisions in reach above. Both are one-line bindings that are silent when wrong: a
+    # frozen clock stamps every row with one instant and `recentlyPlayed`'s ORDER BY becomes
+    # arbitrary, and a resume policy that answers a position undoes spec section 3's guarantee at
+    # the only point in the graph where it is chosen.
+    ("progress/clock-frozen", MEDIA_MODULE,
+     "  fun provideClock(): Clock = Clock.systemUTC()",
+     "  fun provideClock(): Clock =\n    Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC)",
+     # A `Clock.fixed` left behind by a test edit compiles, injects, and writes a row every five
+     # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
+     "the injected clock is a real clock and not a frozen one", 1),
+    ("progress/policy-resumes", MEDIA_MODULE,
+     "  fun provideResumePolicy(): ResumePolicy = NeverResume",
+     "  fun provideResumePolicy(): ResumePolicy =\n"
+     "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
+     # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
+     # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
+     # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
+     "the bound resume policy is the one that resumes nothing", 1),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone

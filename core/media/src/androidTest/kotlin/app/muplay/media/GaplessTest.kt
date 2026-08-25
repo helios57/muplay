@@ -402,8 +402,12 @@ class GaplessTest {
         context = context,
         dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), cache),
         loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+        // This suite's subject is an `ExoPlayer` behaviour, so it takes the raw player from
+        // `createExoPlayer()`. The policy is still required to construct the factory; the seam it
+        // feeds is `MuPlayerTest`'s subject, not this file's.
+        resumePolicy = NeverResume,
       )
-      harness = PlayerHarness(playerFactory.create(TappedRenderersFactory(context, capture)))
+      harness = PlayerHarness(playerFactory.createExoPlayer(TappedRenderersFactory(context, capture)))
       if (transitions != null) {
         harness.player.addListener(object : Player.Listener {
           override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {

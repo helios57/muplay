@@ -665,10 +665,14 @@ class MediaCacheTest {
       context = context,
       dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), cache),
       loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+        // This suite's subject is an `ExoPlayer` behaviour, so it takes the raw player from
+        // `createExoPlayer()`. The policy is still required to construct the factory; the seam it
+        // feeds is `MuPlayerTest`'s subject, not this file's.
+        resumePolicy = NeverResume,
     )
     lateinit var harness: PlayerHarness
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(playerFactory.create())
+      harness = PlayerHarness(playerFactory.createExoPlayer())
     }
     try {
       harness.onMain {
@@ -708,10 +712,14 @@ class MediaCacheTest {
       context = context,
       dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), into),
       loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+        // This suite's subject is an `ExoPlayer` behaviour, so it takes the raw player from
+        // `createExoPlayer()`. The policy is still required to construct the factory; the seam it
+        // feeds is `MuPlayerTest`'s subject, not this file's.
+        resumePolicy = NeverResume,
     )
     lateinit var harness: PlayerHarness
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(playerFactory.create())
+      harness = PlayerHarness(playerFactory.createExoPlayer())
     }
     try {
       harness.onMain {

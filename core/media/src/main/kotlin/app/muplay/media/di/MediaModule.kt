@@ -1,9 +1,12 @@
 package app.muplay.media.di
 
+import app.muplay.media.NeverResume
+import app.muplay.media.ResumePolicy
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import java.time.Clock
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import okhttp3.Call
@@ -51,6 +54,32 @@ object MediaModule {
       // comment because "we did not set it" and "we thought about it and must not set it" are
       // different facts, and only one of them survives a refactor.
       .build()
+
+  /**
+   * The project's first injected clock. Global constraint: *"Inject a `Clock`; no direct wall-clock
+   * reads outside the injection point."* This is that injection point, and [ProgressWriter] --
+   * through `MuPlaybackService` -- is its only consumer today.
+   *
+   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
+   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
+   * library plus a Room type converter would be bought for nothing. It also names no Android type,
+   * which is what keeps this whole module JVM-testable -- see this object's own doc.
+   */
+  @Provides
+  @Singleton
+  fun provideClock(): Clock = Clock.systemUTC()
+
+  /**
+   * Plan 3 resumes nothing -- spec section 3's stated behaviour for music: *"Only books get resume
+   * treatment. Music restarts from 0."* [NeverResume] is that behaviour and not a placeholder.
+   *
+   * Plan 4 replaces **this binding** with a policy that answers from an in-memory snapshot of
+   * `media_progress`, and changes nothing else: `MuPlayer` already consults whatever is bound here
+   * on every one of its six `setMediaItem(s)` overloads.
+   */
+  @Provides
+  @Singleton
+  fun provideResumePolicy(): ResumePolicy = NeverResume
 
   private const val CONNECT_TIMEOUT_SECONDS = 15L
   private const val READ_TIMEOUT_SECONDS = 30L

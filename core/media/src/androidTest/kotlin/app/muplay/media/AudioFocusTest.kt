@@ -97,7 +97,11 @@ class AudioFocusTest {
           context = context,
           dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), cache),
           loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
-        ).create(),
+        // This suite's subject is an `ExoPlayer` behaviour, so it takes the raw player from
+        // `createExoPlayer()`. The policy is still required to construct the factory; the seam it
+        // feeds is `MuPlayerTest`'s subject, not this file's.
+        resumePolicy = NeverResume,
+        ).createExoPlayer(),
       )
       harness.player.setMediaItem(
         MediaItem.Builder()
