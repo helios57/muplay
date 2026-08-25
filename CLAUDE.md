@@ -242,11 +242,24 @@ but was: 200`.
 
 Searching *through the thing under test*, so the search's own response is the
 observation, is correct and is worse: a run that finds nothing has requested
-**every** bitrate below the source and cached all of them. Those entries are a
-shared, exhaustible resource — one such sweep left one of `coldTranscode`'s three
-candidate tracks with no cold bitrate at all, which is a flake handed to whoever
-runs `:core:network:liveNavidromeTest` next. Recreating the container is the only
-repair, and it is not something one agent may do to a shared container.
+**every** bitrate below the source and cached all of them.
+
+**And flushing the cache does not repair `coldTranscode`.** That was measured
+here after Plan 6 Task 6 reported having exhausted a track's entries and named
+recreating the container as the only fix. `docker exec ci-navidrome-1 sh -c 'rm
+-rf /data/cache/transcoding/*'` empties it (201 entries → 0, container stays
+healthy, no restart, no reseed) and the test still fails **about one run in
+three, from a completely cold cache** — three flush-then-run cycles gave green,
+green, red. Nor is it the track: all three seeded Music fixtures are the *same*
+encoding, 64 kbps / 5.04 s mp3, so "it picked a random track" cannot explain a
+one-in-three split.
+
+What is left is the race in the paragraph above, inside a single run: the search
+probes a bitrate, correctly sees cold, and the assertion that follows re-requests
+the same URL after the background transcode has landed. Cache state is a red
+herring; **the fix is to make the searching request itself the asserted one**, so
+there is no second request to lose the race. Until that lands, a `coldTranscode`
+failure is a flake and is not evidence about the branch under test.
 
 So: prefer a live assertion that needs no cold entry. `:core:cast`'s
 `LiveNavidromeProxyTest` gets a real `Content-Range`-less response out of
