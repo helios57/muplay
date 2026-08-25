@@ -1416,6 +1416,110 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.player.PlayerUiState*",
       ),
     ),
+    // `PlayerViewModel`'s own decisions, both measuring 1.0000 BRANCH from **JVM data alone**
+    // (`PlayerViewModelTest`, thirteen tests, no emulator) -- which is the whole reason the class
+    // is constructed over a `PlaybackControls` seam rather than over `PlaybackConnection` directly.
+    //
+    //   `PlayerViewModel`                 2/2 -- `commitScrub`'s `?: return` (the tap that moved
+    //                                     nothing must not seek) and `scrubTo`'s coerce-at-zero.
+    //   `PlayerViewModel$playPause$1`     2/2 -- pause-if-playing / play-if-paused, the one
+    //                                     decision in the class a user meets on every tap.
+    //
+    // **Exact names beside a narrow wildcard, not `"PlayerViewModel*"`** -- the same ruling
+    // `:feature:library` records for its own two view models. That wildcard cannot hold a BRANCH
+    // floor here: it matches `PlayerViewModel$1`, the Hilt-only `PlaybackControls` adapter, which
+    // no JVM test can reach. `*playPause*` is narrow enough to name the one nested class that
+    // carries branches, and it also matches `PlayerViewModel$1$play$1`/`$pause$1` (zero counters of
+    // either kind, JaCoCo's NaN pass) which is harmless.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum -- at a
+    // measured 1.0000 JaCoCo rejects a minimum above 1.0 before it compares anything, which is the
+    // same configuration error zero-coverage code produces and proves nothing. With
+    // `PlayerViewModelTest` moved aside: "Rule violated for class app.muplay.player.PlayerViewModel:
+    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerViewModel",
+        "app.muplay.player.PlayerViewModel*playPause*",
+      ),
+    ),
+    // The view model's coroutine and `Flow` codegen -- `$2` (the `init` block's connect launch),
+    // `$next$1`, `$previous$1`, `$playPause$1`, `$commitScrub$1`. All 1.0000 LINE from JVM data
+    // alone (1/1, 1/1, 1/1, 2/2, 3/3), floored at 0.90.
+    //
+    // LINE, for the reason `:core:database`'s and `:feature:library`'s equivalent rules are LINE:
+    // what is worth knowing about compiler-generated continuation machinery is whether it ran, not
+    // which state-machine arms the compiler emitted.
+    //
+    // Two exclusions, and both are load-bearing:
+    //
+    //  * `PlayerViewModel` itself, because a `"...*"` include matches the bare name too (JaCoCo's
+    //    `*` matches the empty string) and it would arrive here at 23/26 = 0.8846, dragging a floor
+    //    that every class it is meant to gate clears at 1.0000. Its three missing lines are the
+    //    `@Inject` secondary constructor's own body, reachable only through Hilt -- exactly the
+    //    shape, and the ratio, `:feature:library` records for `LibraryViewModel` at 36/39.
+    //  * `PlayerViewModel$1` -- written `PlayerViewModel.1`, because a literal `$` in a pattern
+    //    never matches (see this table's own doc, gotcha 3: JaCoCo presents the class as
+    //    `PlayerViewModel.1`). It is the anonymous `PlaybackControls` adapter the `@Inject`
+    //    constructor builds, 0/10 LINE, reachable **only** through Hilt's DI graph: this module's
+    //    own instrumented suite composes the screens over a hand-built view model, which is what
+    //    covers everything else here and is deliberately not a Hilt graph. Task 10's end-to-end
+    //    journey is what reaches it, and until then it is named, at 0.0000, in
+    //    `warnUngatedClasses`'s output on every run -- the same shape `:feature:library` used for
+    //    `CoverArtKt` between its own Task 9 and Task 10.
+    //
+    // Falsified with `PlayerViewModelTest` withheld: BUILD FAILED naming each of the five at 0.00.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.player.PlayerViewModel*"),
+      excludes = listOf(
+        "app.muplay.player.PlayerViewModel",
+        "app.muplay.player.PlayerViewModel.1",
+      ),
+    ),
+    // The three `@Composable` file-classes, LINE, instrumented. LINE and not BRANCH per this
+    // table's standing ruling, and the numbers say why plainly: these same three measure 0.6364,
+    // 0.5865 and 0.4706 BRANCH, and essentially every missing branch is Compose codegen --
+    // `$changed`/`$dirty` skip bitmasks the compiler weaves into the author's own method bodies,
+    // which no class-granular exclusion can separate and no user-reachable behaviour corresponds
+    // to. Gating those would be gating the Compose compiler.
+    //
+    // MEASURED from a merged JVM + instrumented report, `:feature:player:connectedDebugAndroidTest`
+    // 24/24 green:
+    //
+    //   PlayerScreenKt  58/61 = 0.9508     MiniPlayerKt  47/49 = 0.9592
+    //   ArtworkKt       20/21 = 0.9524
+    //
+    // This module carries its own instrumented suite rather than waiting for Task 10's journey,
+    // and that is what makes 0.90 an honest number here instead of the 0.7377/0.7551 these two
+    // measured before it existed. Both stateless overloads are `internal` for exactly that reason,
+    // and both Hilt-bound entry points are composed over a hand-built `PlayerViewModel`, which is
+    // what covers the `collectAsStateWithLifecycle` hop the JVM tier cannot see.
+    //
+    // The lines still missing are the `hiltViewModel()` default-argument expressions and their
+    // `$default` bridges -- the one thing in these files that genuinely needs a Hilt graph, i.e.
+    // Task 10. A fourth missed line takes `MiniPlayerKt` to 46/49 = 0.9388 and a fifth to 0.9184,
+    // so the headroom here is real but thin: somebody should look before lowering it.
+    //
+    // Watched failing at its real minimum with the instrumented `.ec` deleted, which is what
+    // `requiresInstrumentedData = true` claims: all three drop to 0.00 and
+    // `jacocoTestCoverageVerification` names each one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerScreenKt",
+        "app.muplay.player.MiniPlayerKt",
+        "app.muplay.player.ArtworkKt",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
   // one BUNDLE-element rule in this table -- see
