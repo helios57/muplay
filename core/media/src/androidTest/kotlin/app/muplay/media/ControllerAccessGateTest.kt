@@ -11,6 +11,8 @@ import androidx.media3.session.MediaSession
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.media.browse.BrowseGraph
+import app.muplay.media.browse.MuPlayLibraryCallback
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
 import org.junit.Before
@@ -20,9 +22,9 @@ import org.junit.runner.RunWith
 /**
  * The attack `MuPlaybackService` exports, mounted against the real callback.
  *
- * `ControllerAccessPolicyTest` proves what the *rule* is; it cannot prove that
- * `MuPlaybackService.LibraryCallback` consults it, and until this file existed the callback
- * overrode nothing at all -- so Media3's default `onConnectAsync`
+ * `ControllerAccessPolicyTest` proves what the *rule* is; it cannot prove that the callback the
+ * session is actually built with consults it, and until this file existed the callback overrode
+ * nothing at all -- so Media3's default `onConnectAsync`
  * (`Futures.immediateFuture(new AcceptedResultBuilder(session, controllerInfo).build())`, verified
  * in the 1.11.0 bytecode) accepted every connection unconditionally. That is this project's recorded
  * "decision verified at a different layer than applied" defect, in the one place where the layer
@@ -45,12 +47,23 @@ import org.junit.runner.RunWith
  * The complementary half -- that a *real* controller over real IPC still connects and plays -- is
  * `app.muplay.MuPlaybackServiceTest`, every test of which would go red if this gate refused too
  * much.
+ *
+ * ### Why the subject is `MuPlayLibraryCallback` and not a sibling of it
+ *
+ * Plan 5 Task 4 replaced Plan 3's `MuPlaybackService.LibraryCallback` -- whose entire body was
+ * `onConnect` -- with the callback that also serves the browse tree, because Media3 takes exactly
+ * one `MediaLibrarySession.Callback`. This file follows it rather than keeping a base class alive
+ * for its own convenience: a gate asserted on a superclass of the object production installs is
+ * this project's own "verified at a different layer than applied" defect, aimed at itself. The
+ * repository below is real for the same reason it is real in `BrowseTreeBrowserTest`; nothing in
+ * `onConnect` touches it, and that is exactly what makes it a safe collaborator to bring along.
  */
 @OptIn(UnstableApi::class)
 @RunWith(AndroidJUnit4::class)
 class ControllerAccessGateTest {
 
-  private val callback = MuPlaybackService.LibraryCallback()
+  private lateinit var callback: MuPlayLibraryCallback
+  private lateinit var graph: BrowseGraph
 
   private lateinit var context: Context
 
@@ -68,6 +81,8 @@ class ControllerAccessGateTest {
   @Before
   fun setUp() {
     context = ApplicationProvider.getApplicationContext()
+    graph = BrowseGraph.create(context)
+    callback = graph.callback(context)
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
       session = MediaSession.Builder(context, InertPlayer(Looper.getMainLooper()))
         .setId("controller-access-gate-test")
@@ -81,6 +96,8 @@ class ControllerAccessGateTest {
       session.player.release()
       session.release()
     }
+    callback.release()
+    graph.close()
   }
 
   @Test

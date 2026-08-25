@@ -5,8 +5,10 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
+import app.muplay.database.Bookshelf
 import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
+import app.muplay.database.MirrorBookshelf
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.SubsonicSourceProvider
 import app.muplay.database.SyncEngine
@@ -17,6 +19,7 @@ import app.muplay.database.dao.SyncWatermarkDao
 import app.muplay.network.DefaultSubsonicSourceFactory
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -123,4 +126,26 @@ object DataModule {
       File(context.filesDir, "cast.preferences_pb")
     }
 
+  /**
+   * The interface bindings this layer contributes.
+   *
+   * A nested `interface` rather than a `@Provides fun bind(impl: X): X = impl` on the object above,
+   * for a coverage reason measured on this project: an `@Binds` method is `abstract` and compiles
+   * to no executable line at all, whereas the `@Provides` form adds one line to [DataModule] that
+   * only Hilt's own graph can execute -- which would quietly drag that class's floor below its
+   * minimum on JVM-only data. `MediaModule` carries the same nested-interface shape for the same
+   * reason.
+   */
+  @Module
+  @InstallIn(SingletonComponent::class)
+  interface Bindings {
+
+    /**
+     * Plan 5 Task 4's temporary bookshelf. **This is the one line Plan 4 Task 4 repoints** when its
+     * `AudiobookRepository` lands -- see [Bookshelf]'s own provenance note.
+     */
+    @Binds
+    @Singleton
+    fun bindBookshelf(impl: MirrorBookshelf): Bookshelf
+  }
 }

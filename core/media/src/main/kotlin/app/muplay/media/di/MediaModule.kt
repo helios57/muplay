@@ -2,6 +2,9 @@ package app.muplay.media.di
 
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
+import app.muplay.media.browse.DefaultSurfaceResolver
+import app.muplay.media.browse.SurfaceResolver
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -83,4 +86,28 @@ object MediaModule {
 
   private const val CONNECT_TIMEOUT_SECONDS = 15L
   private const val READ_TIMEOUT_SECONDS = 30L
+
+  /**
+   * The interface bindings this layer contributes.
+   *
+   * A nested `interface` rather than a `@Provides fun bind(impl: X): X = impl` on the object above,
+   * and the reason is measured rather than stylistic: an `@Binds` method is `abstract` and compiles
+   * to no executable line at all, whereas the `@Provides` form would add a **fifth** line to
+   * [MediaModule] that only Hilt's graph -- and therefore only an emulator -- can execute. That
+   * would take this object to 4/5 = 0.80 on JVM-only data and fail Tier 1's coverage gate on a
+   * class nothing is wrong with, or force its floor onto Tier 2 and take the timeout decision with
+   * it. See this object's own header for why keeping it JVM-reachable matters.
+   */
+  @Module
+  @InstallIn(SingletonComponent::class)
+  interface Bindings {
+
+    /**
+     * Plan 5 Task 3's resolver, bound by Plan 5 Task 4 -- its first consumer, and the reason this
+     * binding did not exist until now.
+     */
+    @Binds
+    @Singleton
+    fun bindSurfaceResolver(impl: DefaultSurfaceResolver): SurfaceResolver
+  }
 }

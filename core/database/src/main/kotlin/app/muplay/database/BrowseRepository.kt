@@ -43,6 +43,17 @@ class BrowseRepository @Inject constructor(
     browseDao.findAlbum(albumId)?.let(MirrorMapper::album)
 
   /**
+   * One song by its server id, or `null` when the mirror has never seen it.
+   *
+   * Unscoped by library, and that is not an oversight: a Subsonic song id is globally unique (see
+   * `AlbumEntity`'s own note on which ids are and are not), and the caller that needs this --
+   * `BrowseTreeRepository.node` answering `onGetItem` for a bare track id out of a car's persisted
+   * recents -- has no library to scope by.
+   */
+  suspend fun song(songId: String): Song? =
+    browseDao.findSong(songId)?.let(MirrorMapper::song)
+
+  /**
    * Searches the mirror within one library.
    *
    * The LIKE pattern itself is built by [MirrorMapper.searchPattern] — pure string work with no

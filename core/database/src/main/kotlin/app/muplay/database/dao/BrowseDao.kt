@@ -50,6 +50,34 @@ abstract class BrowseDao {
   @Query("SELECT * FROM albums WHERE id = :albumId")
   abstract suspend fun findAlbum(albumId: String): AlbumEntity?
 
+  /**
+   * One song by its server id. Backs `BrowseTreeRepository.node` for a `BrowseId.Track`, which is
+   * what a controller sends to `onGetItem` for a row it already has.
+   *
+   * A single-row lookup rather than "fetch the album's songs and find it": a track id arrives from
+   * a car's persisted recents with no album attached, so there is nothing to scope it by, and the
+   * alternative would be a full album read per row a head unit refreshes.
+   */
+  @Query("SELECT * FROM songs WHERE id = :songId")
+  abstract suspend fun findSong(songId: String): SongEntity?
+
+  /**
+   * Every song in [libraryIds], grouped by album and ordered inside it exactly as
+   * [observeSongs] orders one album's.
+   *
+   * Takes a **list of library ids** and not nothing, so this is not the "give me everything" query
+   * this class's own doc rules out -- the caller has already decided which libraries it means, and
+   * for the one production caller that is the set the user tagged `AUDIOBOOKS`.
+   *
+   * One query rather than one per book: the bookshelf needs every book's file list to know where a
+   * listener is, and a car asks for the shelf on every connect.
+   */
+  @Query(
+    "SELECT * FROM songs WHERE libraryId IN (:libraryIds) " +
+      "ORDER BY albumId, COALESCE(discNumber, 0), COALESCE(trackNumber, 0), sortTitle",
+  )
+  abstract suspend fun songsInLibraries(libraryIds: List<Int>): List<SongEntity>
+
   // `pattern` is a full LIKE pattern including its wildcards, built by the caller -- so a query
   // containing a literal % or _ is the caller's problem to escape, once, rather than every query
   // here silently doing something different. SQLite's LIKE is case-insensitive for ASCII by

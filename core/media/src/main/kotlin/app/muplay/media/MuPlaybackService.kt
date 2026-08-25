@@ -13,6 +13,7 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import app.muplay.database.dao.MediaProgressDao
+import app.muplay.media.browse.MuPlayLibraryCallback
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.Clock
 import java.util.concurrent.Executor
@@ -30,17 +31,16 @@ import kotlinx.coroutines.cancel
  * identical, and Plan 5's Android Auto browse tree does not require changing a base class
  * underneath a live session, a live notification and a live `MediaController`.
  *
- * **The browse tree is deliberately not implemented here.** `MediaLibrarySession.Callback`'s
- * defaults answer "not supported" for `onGetLibraryRoot` and `onGetChildren`, and that is the
- * truthful answer today. Overriding them to return an empty root would be a *claim* -- a car head
- * unit renders that as a library containing nothing, which is a wrong answer rather than an absent
- * one.
+ * **The browse tree is [MuPlayLibraryCallback]'s**, injected below. Plan 3 Task 5 left
+ * `MediaLibrarySession.Callback`'s browse methods at their *"not supported"* defaults and said why:
+ * "not supported" was true then, and an empty root would have been a *claim*. Plan 5 Task 4 pays
+ * that deferral off, and installing its callback is the only change this class needed.
  *
- * **Who may connect is [ControllerAccessPolicy]'s decision, applied in [LibraryCallback.onConnect].**
- * The service is exported, and Media3's default callback accepts every connection unconditionally;
- * see that object for what a connected controller can read, why the gate is the platform's own
- * trust predicate rather than a package allow-list, and why it costs Plan 5's Auto and Wear
- * controllers nothing.
+ * **Who may connect is [ControllerAccessPolicy]'s decision, applied in
+ * [MuPlayLibraryCallback.onConnect].** The service is exported, and Media3's default callback
+ * accepts every connection unconditionally; see that object for what a connected controller can
+ * read, why the gate is the platform's own trust predicate rather than a package allow-list, and
+ * why it costs Plan 5's Auto and Wear controllers nothing.
  *
  * **Nothing in this class logs, and that is narrower than it sounds.** A media service is the
  * easiest place in an app to leak a stream URL: every `MediaItem` it holds carries one, complete
@@ -67,6 +67,15 @@ class MuPlaybackService : MediaLibraryService() {
   @Inject lateinit var playerFactory: MuPlayerFactory
 
   @Inject lateinit var mediaProgressDao: MediaProgressDao
+
+  /**
+   * The browse tree and the connection gate, in one object because Media3 takes one callback.
+   *
+   * Injected rather than constructed here: it reaches `BrowseTreeRepository`, which reaches Room
+   * and the credential store, and a `MediaLibrarySession.Builder` argument is not a place to
+   * assemble a graph.
+   */
+  @Inject lateinit var libraryCallback: MuPlayLibraryCallback
 
   /**
    * The project's first injected clock, and the only wall-clock read behind every
@@ -118,7 +127,7 @@ class MuPlaybackService : MediaLibraryService() {
         .build(),
     )
 
-    session = MediaLibrarySession.Builder(this, player, LibraryCallback())
+    session = MediaLibrarySession.Builder(this, player, libraryCallback)
       // Tapping the notification opens the app. Resolved through the package manager rather than
       // by referencing MainActivity: :core:media must not depend on :app, and a launch intent is
       // exactly what "open the app" means.
@@ -161,6 +170,7 @@ class MuPlaybackService : MediaLibraryService() {
    * silent no-op rather than a failure.
    */
   override fun onDestroy() {
+    libraryCallback.release()
     progressWriter?.flushBlocking()
     progressWriter?.stop()
     progressWriter = null
@@ -171,46 +181,6 @@ class MuPlaybackService : MediaLibraryService() {
     }
     session = null
     super.onDestroy()
-  }
-
-  /**
-   * The connection gate, and no browse overrides -- see this class's own documentation. The type
-   * also exists so Plan 5 has one place to add the browse answers, and so the "not supported" answer
-   * is a decision with a name rather than an omission.
-   *
-   * `internal` rather than `private`, so `ControllerAccessGateTest` can drive [onConnect] with a
-   * real `ControllerInfo` for a package that is not this one. Nothing else in this project
-   * constructs it: the session is built with `LibraryCallback()` eleven lines above.
-   */
-  internal class LibraryCallback : MediaLibrarySession.Callback {
-
-    /**
-     * Refuses a controller [ControllerAccessPolicy] does not accept, and otherwise leaves the
-     * decision exactly where Media3 had it.
-     *
-     * **`onConnect` and not `onConnectAsync`, and that is a measurement.**
-     * `MediaSessionImpl.onConnectOnHandler` calls `Callback.onConnect` *first* and only falls
-     * through to `onConnectAsync` when the returned result is accepted **and** carries Media3's
-     * `androidx.media3.session.CALLBACK_NOT_IMPLEMENTED` sentinel in its `sessionExtras` -- which is
-     * precisely what the interface's own default `onConnect` returns. Overriding the async half
-     * alone would leave the sync half answering first; overriding this one gates both, including a
-     * future Plan 5 `onConnectAsync` for the browse tree.
-     *
-     * The accepted arm is `super.onConnect(...)`, i.e. that sentinel, rather than a hand-built
-     * `AcceptedResultBuilder(session, controller).build()`. The two are the same thing today, and
-     * delegating means a legitimate controller keeps whatever Media3's default is -- including the
-     * narrowing it already applies to an untrusted-but-accepted caller -- instead of this file
-     * freezing a copy of it.
-     */
-    override fun onConnect(
-      session: MediaSession,
-      controller: MediaSession.ControllerInfo,
-    ): MediaSession.ConnectionResult =
-      if (ControllerAccessPolicy.accepts(controller.packageName, controller.isTrusted)) {
-        super.onConnect(session, controller)
-      } else {
-        MediaSession.ConnectionResult.reject()
-      }
   }
 
   companion object {

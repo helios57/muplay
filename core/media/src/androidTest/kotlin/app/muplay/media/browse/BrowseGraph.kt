@@ -1,0 +1,326 @@
+package app.muplay.media.browse
+
+import android.content.Context
+import androidx.room.Room
+import app.muplay.database.BrowseRepository
+import app.muplay.database.BrowseTreeRepository
+import app.muplay.database.LibraryRepository
+import app.muplay.database.MirrorBookshelf
+import app.muplay.database.MuPlayDatabase
+import app.muplay.database.entity.AlbumEntity
+import app.muplay.database.entity.ArtistEntity
+import app.muplay.database.entity.LibraryEntity
+import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.database.entity.SongEntity
+import app.muplay.media.fixedSubsonicSourceProvider
+import app.muplay.model.Album
+import app.muplay.model.AlbumListType
+import app.muplay.model.AlbumWithSongs
+import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
+import app.muplay.model.ScanStatus
+import app.muplay.model.SearchResults
+import app.muplay.model.ServerInfo
+import app.muplay.model.Song
+import app.muplay.model.StreamFormat
+import app.muplay.network.SubsonicSource
+import java.io.File
+import kotlinx.coroutines.runBlocking
+
+/**
+ * The whole browse stack, over a **real** in-memory Room database, assembled the way Hilt
+ * assembles it.
+ *
+ * Real repositories and a real DAO, not fakes, because every scoping decision this task makes is a
+ * SQL `WHERE libraryId = :id` -- `BrowseRepository` offers no unscoped query at all, so "music
+ * content is scoped to Music libraries" is a claim about *which libraries get asked*, and a
+ * hand-written DAO would answer whatever this file told it to. That is the same construction, for
+ * the same stated reason, that `QueueRepositoryTest` already uses in this source set.
+ *
+ * **What is substituted is exactly one thing: `SubsonicSourceFactory`**, already a `fun interface`
+ * in production code. The mirror is seeded directly rather than synced from the container, because
+ * the browse tree reads the mirror and never the server -- `SyncEngine` is Plan 2's and filling it
+ * is not what this suite is about. The one server-shaped call the tree makes is `coverArtUrl`, and
+ * [RecordingArtSource] answers it deterministically so an artwork assertion can name a value.
+ *
+ * **No credential and no stream URL is asserted, printed or fixtured anywhere below.** The art URLs
+ * this fake produces carry no auth parameters at all, which is the point: a browse assertion must
+ * never be the reason a real one gets written down.
+ */
+class BrowseGraph private constructor(
+  val database: MuPlayDatabase,
+  private val storeFile: File,
+  val libraryRepository: LibraryRepository,
+  val browseRepository: BrowseRepository,
+  val treeRepository: BrowseTreeRepository,
+  /** Records every cover-art resolution the tree asked for -- see `artworkIsResolvedPerPage`. */
+  val artSource: RecordingArtSource,
+) {
+
+  /** Closes the database and deletes the credential store's backing file. */
+  fun close() {
+    database.close()
+    storeFile.delete()
+  }
+
+  fun callback(resolver: SurfaceResolver): MuPlayLibraryCallback =
+    MuPlayLibraryCallback(treeRepository, resolver)
+
+  /** The production resolver, reading a real `ControllerInfo`. */
+  fun callback(context: Context): MuPlayLibraryCallback = callback(DefaultSurfaceResolver(context))
+
+  companion object {
+
+    const val MUSIC_LIBRARY_ID: Int = 1
+    const val AUDIOBOOK_LIBRARY_ID: Int = 2
+
+    /**
+     * Builds the stack and seeds the mirror.
+     *
+     * @param withProgress whether to write [PROGRESS_ROWS]. Withheld by the tests that need every
+     * book unheard, so that "a book carries no percentage" and "a book carries this percentage" are
+     * two observations of one branch rather than one observation repeated.
+     */
+    fun create(context: Context, withProgress: Boolean = true): BrowseGraph {
+      val database = Room.inMemoryDatabaseBuilder(context, MuPlayDatabase::class.java).build()
+      val artSource = RecordingArtSource()
+      val (provider, storeFile) = fixedSubsonicSourceProvider(context, artSource)
+
+      runBlocking {
+        database.libraryDao().mergeFromServer(
+          listOf(
+            LibraryEntity(MUSIC_LIBRARY_ID, "Music", LibraryRole.UNASSIGNED),
+            LibraryEntity(AUDIOBOOK_LIBRARY_ID, "Audiobooks", LibraryRole.UNASSIGNED),
+          ),
+        )
+        // Through `setRole`: `mergeFromServer` deliberately never writes the role column, so
+        // seeding it in the entity above would leave both libraries UNASSIGNED and this whole
+        // fixture would be testing an empty tree.
+        database.libraryDao().setRole(MUSIC_LIBRARY_ID, LibraryRole.MUSIC)
+        database.libraryDao().setRole(AUDIOBOOK_LIBRARY_ID, LibraryRole.AUDIOBOOKS)
+
+        database.browseDao().replaceLibraryContents(
+          MUSIC_LIBRARY_ID,
+          MUSIC_ARTISTS,
+          MUSIC_ALBUMS,
+          MUSIC_SONGS,
+        )
+        database.browseDao().replaceLibraryContents(
+          AUDIOBOOK_LIBRARY_ID,
+          BOOK_ARTISTS,
+          BOOK_ALBUMS,
+          BOOK_SONGS,
+        )
+        if (withProgress) PROGRESS_ROWS.forEach { database.mediaProgressDao().upsert(it) }
+      }
+
+      return BrowseGraph(
+        database = database,
+        storeFile = storeFile,
+        libraryRepository = LibraryRepository(database.libraryDao(), provider),
+        browseRepository = BrowseRepository(database.browseDao(), provider),
+        treeRepository = BrowseTreeRepository(
+          LibraryRepository(database.libraryDao(), provider),
+          BrowseRepository(database.browseDao(), provider),
+          MirrorBookshelf(database.libraryDao(), database.browseDao(), database.mediaProgressDao()),
+        ),
+        artSource = artSource,
+      )
+    }
+
+    // ---- the music library ------------------------------------------------------------------
+    //
+    // `sortName` is set explicitly rather than through `MirrorMapper`, so the order these tests
+    // assert is a property of the seed and not of a mapper this task does not own.
+
+    private val MUSIC_ARTISTS = listOf(
+      ArtistEntity("ar-bowie", MUSIC_LIBRARY_ID, "David Bowie", "cov-bowie", 1, "david bowie"),
+      ArtistEntity("ar-beatles", MUSIC_LIBRARY_ID, "The Beatles", "cov-beatles", 2, "the beatles"),
+    )
+
+    private val MUSIC_ALBUMS = listOf(
+      album("al-abbey", MUSIC_LIBRARY_ID, "Abbey Road", "ar-beatles", "The Beatles", 3, 600),
+      album("al-hunky", MUSIC_LIBRARY_ID, "Hunky Dory", "ar-bowie", "David Bowie", 1, 200),
+      album("al-revolver", MUSIC_LIBRARY_ID, "Revolver", "ar-beatles", "The Beatles", 2, 400),
+    )
+
+    /**
+     * Deliberately **not** in alphabetical order of title inside `al-abbey`.
+     *
+     * `observeSongs` orders by disc, then track, then title. With titles that happened to sort the
+     * same way, an implementation that dropped the ordering entirely would still pass -- so
+     * "Something" is track 2 and "Oh! Darling" is track 3, and the two orders differ.
+     */
+    private val MUSIC_SONGS = listOf(
+      song("tr-a1", MUSIC_LIBRARY_ID, "al-abbey", "Come Together", 1, 200),
+      song("tr-a2", MUSIC_LIBRARY_ID, "al-abbey", "Something", 2, 200),
+      song("tr-a3", MUSIC_LIBRARY_ID, "al-abbey", "Oh! Darling", 3, 200),
+      song("tr-r1", MUSIC_LIBRARY_ID, "al-revolver", "Taxman", 1, 200),
+      song("tr-r2", MUSIC_LIBRARY_ID, "al-revolver", "Eleanor Rigby", 2, 200),
+      song("tr-h1", MUSIC_LIBRARY_ID, "al-hunky", "Changes", 1, 200),
+    )
+
+    // ---- the audiobook library ---------------------------------------------------------------
+    //
+    // Eight books, six of them started, so the Continue shelf is longer than a watch's limit of
+    // five and shorter than a car's of eight -- which is what makes the per-surface limit
+    // observable over real IPC rather than only in Task 2's unit tests.
+
+    private val BOOK_ARTISTS = listOf(
+      // An artist row in the audiobook library, so "the Artists tab is scoped to Music" is an
+      // assertion about a row that exists and is excluded, not about one that was never there.
+      ArtistEntity("ar-narrator", AUDIOBOOK_LIBRARY_ID, "Ann Author", null, 1, "ann author"),
+    )
+
+    private val BOOK_ALBUMS = listOf(
+      album("bk-alpha", AUDIOBOOK_LIBRARY_ID, "Alpha Book", "ar-narrator", "Eve Reader", 2, 200),
+      album("bk-beta", AUDIOBOOK_LIBRARY_ID, "Beta Book", "ar-narrator", "Fay Speaker", 2, 200),
+      album("bk-gamma", AUDIOBOOK_LIBRARY_ID, "Gamma Book", "ar-narrator", "Gil Voice", 2, 200),
+      album("bk-multi", AUDIOBOOK_LIBRARY_ID, "Multi Part Book", "ar-narrator", "Dee Narrator", 4, 400),
+      album("bk-nine", AUDIOBOOK_LIBRARY_ID, "Ninth Book", "ar-narrator", "Hal Teller", 2, 200),
+      album("bk-second", AUDIOBOOK_LIBRARY_ID, "Second Book", "ar-narrator", "Cy Chapter", 2, 200),
+      album("bk-tail", AUDIOBOOK_LIBRARY_ID, "Tail Book", "ar-narrator", "Ann Author", 1, 100),
+      album("bk-test", AUDIOBOOK_LIBRARY_ID, "Test Book", "ar-narrator", "Bea Bookwright", 3, 300),
+    )
+
+    private val BOOK_SONGS = BOOK_ALBUMS.flatMap { book ->
+      val parts = book.songCount
+      (1..parts).map { part ->
+        song(
+          id = "${book.id}-p$part",
+          libraryId = AUDIOBOOK_LIBRARY_ID,
+          albumId = book.id,
+          title = "${book.name} Part $part",
+          trackNumber = part,
+          durationSeconds = 100,
+        )
+      }
+    }
+
+    /**
+     * One row per started book, on a **different file** for two of them, at six distinct
+     * `lastPlayedAtEpochMs` and six distinct positions.
+     *
+     * Distinct on purpose: a Continue shelf sorted by a constant, and a percentage that is the same
+     * number for every book, both pass an assertion that only checks the set of ids.
+     */
+    private val PROGRESS_ROWS = listOf(
+      progress("bk-second-p1", positionMs = 50_000, lastPlayedAtEpochMs = 7_000),
+      // The second file of a three-file book: 100 s of part one, then 20 s into part two, so the
+      // book position is 120 s of 300 s. A rule that read the row's own position and ignored the
+      // files before it would report 20 s and a fraction of 0.0667.
+      progress("bk-test-p2", positionMs = 20_000, lastPlayedAtEpochMs = 6_000),
+      progress("bk-alpha-p1", positionMs = 20_000, lastPlayedAtEpochMs = 5_000),
+      progress("bk-beta-p1", positionMs = 40_000, lastPlayedAtEpochMs = 4_000),
+      progress("bk-gamma-p1", positionMs = 60_000, lastPlayedAtEpochMs = 3_000),
+      // Position zero *in the third file*: started, at exactly half of a four-part book. The one
+      // case where "the row says 0" and "the listener has not started" are different answers.
+      progress("bk-multi-p3", positionMs = 0, lastPlayedAtEpochMs = 2_000),
+      // The only finished book, and it is finished on its last (only) file.
+      progress("bk-tail-p1", positionMs = 100_000, lastPlayedAtEpochMs = 1_000, isFinished = true),
+    )
+
+    private fun album(
+      id: String,
+      libraryId: Int,
+      name: String,
+      artistId: String,
+      artistName: String,
+      songCount: Int,
+      durationSeconds: Int,
+    ) = AlbumEntity(
+      id = id,
+      libraryId = libraryId,
+      artistId = artistId,
+      name = name,
+      artistName = artistName,
+      coverArtId = "cov-$id",
+      songCount = songCount,
+      durationSeconds = durationSeconds,
+      sortName = name.lowercase(),
+    )
+
+    private fun song(
+      id: String,
+      libraryId: Int,
+      albumId: String,
+      title: String,
+      trackNumber: Int,
+      durationSeconds: Int,
+    ) = SongEntity(
+      id = id,
+      libraryId = libraryId,
+      albumId = albumId,
+      artistId = null,
+      title = title,
+      albumName = albumId,
+      artistName = "Artist of $albumId",
+      trackNumber = trackNumber,
+      discNumber = 1,
+      durationSeconds = durationSeconds,
+      suffix = "mp3",
+      coverArtId = "cov-$id",
+      sortTitle = title.lowercase(),
+    )
+
+    private fun progress(
+      mediaId: String,
+      positionMs: Long,
+      lastPlayedAtEpochMs: Long,
+      isFinished: Boolean = false,
+    ) = MediaProgressEntity(
+      mediaId = mediaId,
+      positionMs = positionMs,
+      isFinished = isFinished,
+      lastPlayedAtEpochMs = lastPlayedAtEpochMs,
+      speed = 1.0f,
+      skipSilence = false,
+      gainDb = 0.0f,
+    )
+  }
+}
+
+/**
+ * A `SubsonicSource` that answers cover-art URLs and refuses everything else.
+ *
+ * Hand-written, not a mock -- this project bans mock frameworks. `error(...)` rather than a benign
+ * default on every other member, so a browse call that reached the network would fail loudly rather
+ * than quietly return something plausible the test would then be asserting about.
+ *
+ * The URL it returns carries **no authentication parameters**, unlike the real one. That is not a
+ * simplification for convenience: a test fixture is a file, and a file is a place a real Subsonic
+ * token would outlive the session it was minted for.
+ */
+class RecordingArtSource : SubsonicSource {
+
+  val coverArtCalls: MutableList<Pair<String, Int?>> = mutableListOf()
+
+  override fun coverArtUrl(coverArtId: String, sizePx: Int?): String {
+    coverArtCalls += coverArtId to sizePx
+    return "http://art.invalid/$coverArtId/$sizePx"
+  }
+
+  override fun streamUrl(songId: String, format: StreamFormat): String =
+    error("the browse tree must never build a stream url; it builds identities")
+
+  override suspend fun ping(): ServerInfo = error("not used by the browse suite")
+  override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by the browse suite")
+  override suspend fun getScanStatus(): ScanStatus = error("not used by the browse suite")
+  override suspend fun getAlbumList2(
+    musicFolderId: Int,
+    type: AlbumListType,
+    size: Int,
+    offset: Int,
+  ): List<Album> = error("not used by the browse suite")
+  override suspend fun getAlbum(albumId: String, musicFolderId: Int): AlbumWithSongs =
+    error("not used by the browse suite")
+  override suspend fun search3(
+    query: String,
+    musicFolderId: Int,
+    artistCount: Int,
+    albumCount: Int,
+    songCount: Int,
+  ): SearchResults = error("not used by the browse suite")
+  override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> =
+    error("not used by the browse suite")
+}
