@@ -31,7 +31,11 @@ dependencies {
   androidTestImplementation(libs.androidx.test.ext)
   androidTestImplementation(libs.androidx.test.runner)
   androidTestImplementation(libs.coroutines.test)
-  androidTestImplementation(libs.okhttp.mockwebserver)
+  // `mockwebserver3`, not `okhttp-mockwebserver` (= `mockwebserver3-junit5`): see that
+  // catalogue entry's own note. The JUnit 5 extension cannot run under AndroidJUnitRunner and its
+  // transitive junit-jupiter-api/junit-platform-commons break `mergeDebugAndroidTestJavaResource`
+  // on a duplicate `META-INF/LICENSE.md`.
+  androidTestImplementation(libs.mockwebserver3)
   // Byte Buddy is stripped from every androidTest configuration project-wide by
   // `excludeByteBuddyFromInstrumentedTests` (build-logic); nothing to do here.
   androidTestImplementation(libs.assertj)

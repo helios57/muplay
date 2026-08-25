@@ -20,6 +20,24 @@ import javax.inject.Singleton
  * [LoadErrorHandlingPolicy] from scratch: everything that is not a 429 must keep Media3's own
  * behaviour, and 404/416/`ParserException` handling in particular is what makes seeking work.
  *
+ * **Where this has to be attached, or it does nothing.** On the `MediaSource.Factory`:
+ *
+ * ```
+ * ExoPlayer.Builder(context)
+ *   .setMediaSourceFactory(
+ *     DefaultMediaSourceFactory(dataSourceFactory).setLoadErrorHandlingPolicy(policy),
+ *   )
+ * ```
+ *
+ * `ExoPlayer.Builder` has no `setLoadErrorHandlingPolicy` of its own in Media3 1.11.0 — checked
+ * against the resolved artifact — so there is no compile error waiting for anyone who forgets;
+ * the player simply keeps `DefaultLoadErrorHandlingPolicy`'s three retries inside five seconds,
+ * every test of *this class* stays green, and the 429 handling this module exists for is absent
+ * from the running app. `ProgressiveMediaPeriod` reads the policy off the `MediaSource` that
+ * created it, which is why the factory is the only place that counts.
+ * `MuPlayDataSourceFactoryTest.twoRefusalsWithHttp429DoNotKillThePlayback` is the test that fails
+ * when the wiring is wrong rather than the logic.
+ *
  * `@Singleton` on the class with an `@Inject` constructor, rather than a `@Provides` in
  * `MediaModule`: a provider method whose whole body is a no-argument constructor call is the
  * boilerplate constructor injection exists to delete, and declaring both would leave one of the

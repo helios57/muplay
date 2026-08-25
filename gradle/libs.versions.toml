@@ -73,6 +73,16 @@ media3-ui-compose-material3 = { module = "androidx.media3:media3-ui-compose-mate
 okhttp                 = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-coroutines      = { module = "com.squareup.okhttp3:okhttp-coroutines", version.ref = "okhttp" }
 okhttp-mockwebserver   = { module = "com.squareup.okhttp3:mockwebserver3-junit5", version.ref = "okhttp" }
+# The same MockWebServer, without the JUnit 5 extension -- for **instrumented** test classpaths
+# only. `okhttp-mockwebserver` above is `mockwebserver3-junit5`, and the extension is the only
+# thing it adds; on a device that extension is useless (AndroidJUnitRunner runs JUnit 4) and
+# actively fatal: it drags in junit-jupiter-api and junit-platform-commons, both of which package
+# `META-INF/LICENSE.md`, and AGP's `mergeDebugAndroidTestJavaResource` refuses the duplicate with
+# "2 files found with path 'META-INF/LICENSE.md'". Observed on `:core:media`'s first connected run.
+# A `packaging { resources.excludes += ... }` block would also silence it, but that is a module
+# `android { }` block `ConventionTest` bans, and it would be papering over a dependency that has
+# no business on a device in the first place.
+mockwebserver3         = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 retrofit               = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
 retrofit-serialization = { module = "com.squareup.retrofit2:converter-kotlinx-serialization", version.ref = "retrofit" }
 serialization-json     = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
