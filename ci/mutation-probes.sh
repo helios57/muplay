@@ -1602,7 +1602,7 @@ PROBES = [
      '    .replace("\\"", "&quot;")\n'
      '    .replace("\'", "&apos;")\n'
      '    .replace("&", "&amp;")',
-     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 5),
+     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 8),
 
     # The quotes are part of the SOAPACTION header VALUE. Sent unquoted, some renderers accept it
     # and Sonos answers 401 -- the worst possible distribution, because it works on the developer's
