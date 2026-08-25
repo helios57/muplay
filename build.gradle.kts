@@ -560,6 +560,22 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.browse.BrowseCompletionStatus",
         "app.muplay.model.browse.BrowseMediaType",
         "app.muplay.model.browse.BrowseStyle",
+        //   `BrowsePaging`         Plan 5 Task 4. 6/6, from `BrowsePagingTest`. Four lines, and
+        //                          every branch in them is a value Android Auto really sends: a
+        //                          negative page, a non-positive size, a page past the end, and the
+        //                          `Int.MAX_VALUE` page size whose Int product goes negative at
+        //                          page 1. The upper clamp is the one that keeps the app alive --
+        //                          `MediaLibrarySessionImpl.verifyResultItems` throws on the
+        //                          session's own handler for a result longer than the page asked
+        //                          for, which is a process death, measured on the emulator.
+        //   `BrowseExtras`         Plan 5 Task 4. 11/11, from `BrowseExtrasTest`. The extras a car
+        //                          head unit reads: a style hint only on a browsable node, and a
+        //                          completion percentage only on a partially-played one. A `Map`
+        //                          and not a `Bundle` precisely so this stays on the fast tier;
+        //                          `BrowseItems.bundleOf` does the one Android-shaped step and is
+        //                          gated in `:core:media`.
+        "app.muplay.model.browse.BrowsePaging",
+        "app.muplay.model.browse.BrowseExtras",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -631,6 +647,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.browse.BrowseTree*",
         "app.muplay.model.browse.BrowseText",
         "app.muplay.model.BookSummary",
+        // Plan 5 Task 4: `BrowsePaging` 5/5 and `BrowseExtras` 24/24, both from JVM data alone.
+        // They carry the BRANCH rule above as well, and ride here for the reason every other
+        // pure-data class in this module does: `BrowseExtras` is mostly `put`s, and a deleted key
+        // moves no branch.
+        "app.muplay.model.browse.BrowsePaging",
+        "app.muplay.model.browse.BrowseExtras",
       ),
     ),
   ),
@@ -1092,6 +1114,66 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.database.RendererStore*",
         "app.muplay.database.CastPreferences",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 5 Task 4: the browse tree's data layer ------------------------------------------
+    // `BrowseTreeRepository` 82/82, `MirrorBookshelf` 10/10 and `BookProgress` 14/14 = 1.0000
+    // BRANCH, instrumented.
+    //
+    // BRANCH and not LINE, and this is the module's most branch-shaped code: `BrowseTreeRepository`
+    // is two exhaustive `when`s over a sealed `BrowseId` plus a `?.let` per lookup, and **every one
+    // of those null arms is a different answer a car renders differently** -- "this is not a folder"
+    // rather than "this folder is empty". A LINE floor over it is satisfied by a tree that answers
+    // every unknown id with an empty list. Eighty-two branches took twelve assertions to reach, and
+    // the last seven were found by reading this report rather than by reasoning: an unknown library,
+    // an unknown album, an unknown artist, an audiobook-only install, a cover-art URL that throws,
+    // and the root's own `node` arm. All are now driven by `BrowseTreeBrowserTest`.
+    //
+    // `requiresInstrumentedData` because Room needs a device, and because the execution data comes
+    // from `:core:media`'s connected suite rather than this module's own -- `Jacoco.kt`'s
+    // `mergedExecutionData` globs every project's `.ec`, which is the mechanism that lets a browse
+    // stack assembled in `:core:media`'s androidTest gate `:core:database`'s classes.
+    //
+    // **`MirrorBookshelf` and `BookProgress` are Plan 4 Task 4's to delete or reconcile** -- see
+    // `Bookshelf`'s own provenance note. Whoever does that owns re-measuring this entry rather than
+    // carrying the numbers forward.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside -- the only execution data these
+    // three classes have: "Rule violated for class app.muplay.database.BrowseTreeRepository:
+    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.BrowseTreeRepository",
+        "app.muplay.database.MirrorBookshelf",
+        "app.muplay.database.BookProgress",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The same three classes' LINE -- 55/55, 32/32 and 16/16 -- plus `BookPosition` 4/4, which
+    // carries **zero BRANCH counters** (JaCoCo's Kotlin data-class filter removes the generated
+    // `equals`/`hashCode`/`copy` entirely) and so needs a rule on the counter it actually has. It is
+    // listed by name rather than folded in as `Book*`, because a BRANCH rule over a set containing
+    // a branchless class gates the branchless one at nothing.
+    //
+    // The `$children$1`/`$node$1`/`$books$1` suspend continuations these patterns do not name carry
+    // zero counters of either kind, so `warnUngatedClasses` skips them and no rule could gate them
+    // -- the standing exception this table records for every `$Companion`.
+    //
+    // Falsified with the same `.ec` moved aside: "lines covered ratio is 0.00, but expected minimum
+    // is 0.90" for all four classes, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.BrowseTreeRepository",
+        "app.muplay.database.MirrorBookshelf",
+        "app.muplay.database.BookProgress",
+        "app.muplay.database.BookPosition",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1609,26 +1691,39 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.ControllerAccessPolicy"),
     ),
-    // The adapter half of the same decision: `MuPlaybackService$LibraryCallback` 2/2 = 1.0000
-    // BRANCH, instrumented, driven by `ControllerAccessGateTest` -- which calls the real
-    // `onConnect` with a real `ControllerInfo` for a package that is not this one, because
-    // `ControllerInfo` is Android-backed and there is no Robolectric here.
+    // The adapter half of the same decision: 2/2 = 1.0000 BRANCH, instrumented, driven by
+    // `ControllerAccessGateTest` -- which calls the real `onConnect` with a real `ControllerInfo`
+    // for a package that is not this one, because `ControllerInfo` is Android-backed and there is
+    // no Robolectric here.
     //
-    // It rides on the LINE rule below as well (6/6), and it needs this one too rather than only
-    // that one: the class is one `if`, so its two branches ARE the gate, and a LINE floor over a
-    // six-line class is satisfied by an `onConnect` that accepts everything.
+    // **The class moved in Plan 5 Task 4** and this include moved with it. Media3 takes exactly one
+    // `MediaLibrarySession.Callback`, so `MuPlaybackService$LibraryCallback` -- whose entire body
+    // was `onConnect` -- became `app.muplay.media.browse.MuPlayLibraryCallback`, which serves the
+    // browse tree as well. `warnUngatedClasses` is what caught the stale pattern, by name: *"this
+    // floor currently enforces nothing: it matches no class in this module at all"*. A JaCoCo
+    // include that stops matching does not fail; it silently gates nothing.
+    //
+    // It rides on the LINE rule further down as well (22/22), and it needs this one too rather than
+    // only that one: `onConnect` is one `if`, so its two branches ARE the gate, and a LINE floor
+    // over the whole class is satisfied by an `onConnect` that accepts everything.
+    //
+    // Falsified by deleting the `if` -- `onConnect` reduced to `super.onConnect(session,
+    // controller)` -- and running the device suite: `ControllerAccessGateTest`'s
+    // `anAppThePlatformDoesNotTrustWithMediaControlIsRefused` and
+    // `theSameConnectionIsRefusedOrAcceptedOnTheTrustFlagAlone` both went red. See
+    // task-4-report.md.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.MuPlaybackService*LibraryCallback"),
+      includes = listOf("app.muplay.media.browse.MuPlayLibraryCallback"),
       requiresInstrumentedData = true,
     ),
     // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 51/51
     // and its compiled lambdas (`controller$2` 7/7, `controller$2$1` 1/1, `listener$1` 2/2,
     // `connect$connected$1$1` 2/2, `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's
-    // two nested types (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 6/6 -- the connection
-    // gate, plus the "not supported" browse answer Plan 5 will fill in).
+    // `Companion` 1/1 (`sessionToken`). Its sibling `LibraryCallback` rode here at 6/6 until Plan 5
+    // Task 4 replaced it; see the note at the include list below.
     //
     // **Two of those lambda names changed in Task 5's fix round, and the patterns had to move with
     // them.** `connect$2$1` became `connect$connected$1$1` when the `suspendCoroutine` result was
@@ -1663,9 +1758,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `.ec` moved aside, "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered
     // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, and green again once restored.
     //
-    // `MuPlaybackService*Companion` and `*LibraryCallback` are listed by name rather than as
-    // `MuPlaybackService*`, deliberately: that pattern also matches `MuPlaybackService` itself,
-    // which measures 0.8710 and has its own rule below.
+    // `MuPlaybackService*Companion` is listed by name rather than as `MuPlaybackService*`,
+    // deliberately: that pattern also matches `MuPlaybackService` itself, which has its own rule
+    // below at a lower minimum.
     //
     // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
     // have: "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered ratio is 0.00,
@@ -1687,13 +1782,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.PlaybackConnection*startTicker*1",
         "app.muplay.media.MuPlayerFactory",
         "app.muplay.media.MuPlaybackService*Companion",
-        "app.muplay.media.MuPlaybackService*LibraryCallback",
+        // `MuPlaybackService$LibraryCallback` used to ride here at 6/6. Plan 5 Task 4 replaced it
+        // with `app.muplay.media.browse.MuPlayLibraryCallback`, which has its own LINE rule below;
+        // the pattern is deleted rather than left behind, because a pattern that matches nothing
+        // gates nothing and reads exactly like one that does.
       ),
       requiresInstrumentedData = true,
     ),
-    // `MuPlaybackService` itself: 27/31 = 0.8710 LINE, instrumented, and the **one floor in this
-    // module below 0.90**. The number is a measurement and so is the exception, so both are spelled
-    // out rather than rounded to a comfortable figure.
+    // `MuPlaybackService` itself: **39/43 = 0.9070 LINE**, instrumented. The number is a
+    // measurement and so is the exception, so both are spelled out rather than rounded to a
+    // comfortable figure.
+    //
+    // **Re-measured by Plan 5 Task 4, which changed this class**, per CLAUDE.md's rule that a
+    // recorded floor measurement is a measurement with a timestamp: it was 27/31 = 0.8710 when this
+    // entry was written. Task 4 added `@Inject lateinit var libraryCallback` and one
+    // `libraryCallback.release()` in `onDestroy`, and removed the nested `LibraryCallback` (a
+    // separate class, which never counted here). The four uncoverable lines below are unchanged;
+    // what grew is the covered count.
     //
     // Four lines cannot be covered by any test this project can run, and they are all of the miss:
     //
@@ -1708,17 +1813,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //            null and the notification silently does nothing when tapped, which is a defect a
     //            user reports and a developer cannot reproduce from a log.
     //
-    // 0.85 leaves those four lines and no more: one genuinely-uncovered line takes this to
-    // 26/31 = 0.8387 and fails. Watched failing at a minimum of 0.90 -- "Rule violated for class
-    // app.muplay.media.MuPlaybackService: lines covered ratio is 0.87, but expected minimum is
-    // 0.90", BUILD FAILED -- which is the falsification a fractional floor admits, and then
+    // **What 0.85 now catches, corrected.** This entry used to say "one genuinely-uncovered line
+    // takes this to 26/31 = 0.8387 and fails". At 43 lines that is no longer true, and it is exactly
+    // the stale-falsification shape CLAUDE.md describes: one added uncovered line is now 39/44 =
+    // 0.8864 and *passes*, two are 39/45 = 0.8667 and pass, and it takes **three** (39/46 = 0.8478)
+    // to fire. The minimum is left where its author put it rather than tightened by a passing lane,
+    // but the claim about what it catches is corrected to what was measured.
+    //
+    // Watched failing at a minimum of 0.92 -- "Rule violated for class
+    // app.muplay.media.MuPlaybackService: lines covered ratio is 0.90, but expected minimum is
+    // 0.92", BUILD FAILED -- which is the falsification a fractional floor admits, and then
     // restored.
     //
     // No BRANCH rule, and that is the honest reading rather than an omission: the class measures
-    // 2/12 = 0.1667, because ten of its twelve branches are the null-safe reads inside
-    // `onTaskRemoved` and the unreachable arm of the `checkNotNull` above. A BRANCH floor at 0.16
-    // would permit anything and is the vacuous shape this table exists to refuse; `warnUngatedClasses`
-    // is satisfied by the LINE rule, because a class matched by any rule is gated.
+    // 4/16 = 0.2500 (was 2/12 before Task 4's two `lateinit` reads, each of which the compiler
+    // emits an unreachable uninitialized-property arm for), because most of its branches are the
+    // null-safe reads inside `onTaskRemoved` and the unreachable arm of the `checkNotNull` above. A
+    // BRANCH floor at 0.25 would permit anything and is the vacuous shape this table exists to
+    // refuse; `warnUngatedClasses` is satisfied by the LINE rule, because a class matched by any
+    // rule is gated.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -1840,6 +1953,100 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ContentTypeSwitcher",
         "app.muplay.media.PlaybackLauncher",
         "app.muplay.media.PlaybackLauncher*play*2",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 5 Task 4: the browse tree on the wire -------------------------------------------
+    // `BrowseItems` 23/23, `MuPlayLibraryCallback$onGetChildren$1` 4/4 and
+    // `MuPlayLibraryCallback$onGetItem$1` 6/6 = 1.0000 BRANCH, instrumented. (`MuPlayLibraryCallback`
+    // itself carries the connection gate's 2/2 and is gated by its own rule further up, where the
+    // argument for gating that decision on BRANCH belongs.)
+    //
+    // Instrumented, and not by preference: `androidx.media3.common.MediaItem` reaches
+    // `android.net.Uri` and `android.os.Bundle`, which are unimplemented stubs in the JVM's
+    // `android.jar` -- a plain unit test of this mapping throws *"not mocked"* and the only escape
+    // is Robolectric, which spec sections 2 and 10 ban. Everything *decidable* off a device was
+    // pushed above this boundary on purpose (`BrowseTree`, `BrowseExtras`, `BrowsePaging` are all
+    // `:core:model`, all Tier 1), which is why what is left here is 23 branches of translation.
+    //
+    // The two lambda classes are where the interesting branches actually are: each is a decode that
+    // can fail and a lookup that can miss, i.e. the difference between "this is not a folder" and
+    // "this folder is empty" -- an answer a car renders differently and no other tier can observe.
+    // Both arms of both are driven by `BrowseTreeBrowserTest`, over a real `MediaBrowser`.
+    //
+    // `*onGetChildren*1`, not `$onGetChildren$1`: a literal `$` in a pattern never matches (this
+    // table's own doc, gotcha 3).
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside -- the only execution data these
+    // classes have: "Rule violated for class app.muplay.media.browse.BrowseItems: branches covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.browse.BrowseItems",
+        "app.muplay.media.browse.MuPlayLibraryCallback*onGetChildren*1",
+        "app.muplay.media.browse.MuPlayLibraryCallback*onGetItem*1",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // `MuPlayLibraryCallback$future$1` alone, at **0.85**, and this is the one floor Task 4 sets
+    // below 0.90. It measures 6/7 = 0.8571 BRANCH, and the seventh branch cannot be reached by any
+    // test: the class is the compiled body of `scope.launch { .. }`, and Kotlin's state machine
+    // emits `when (label) { 0 -> ..; 1 -> ..; else -> throw IllegalStateException("call to
+    // 'resume' before 'invoke'") }`. Only the coroutine machinery can produce that third arm, and
+    // only by being broken. `:core:database`'s `RendererStore` entry above records the same
+    // artefact and answers it by not gating BRANCH at all; this entry gates it at what it measures
+    // instead, because the other six branches here are worth gating.
+    //
+    // Those six are real and both driven: the suspension either side of `block()`, and
+    // `runCatching { .. }.getOrElse { .. }` in **both** directions -- the failure arm by
+    // `aRepositoryFailureBecomesAnErrorResultRatherThanASilentEmptyScreen`, which closes the
+    // database under the repository and asserts the browser receives an error result rather than a
+    // blank list. That arm is the whole reason this helper exists.
+    //
+    // 0.85 and not lower: one more genuinely uncovered branch takes it to 6/9 = 0.6667 and fails.
+    // Watched failing at 0.90: "Rule violated for class
+    // app.muplay.media.browse.MuPlayLibraryCallback.future.1: branches covered ratio is 0.86, but
+    // expected minimum is 0.90", BUILD FAILED, and restored.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.media.browse.MuPlayLibraryCallback*future*1"),
+      requiresInstrumentedData = true,
+    ),
+    // 1.0000 LINE, instrumented, on everything this task added to this module: `BrowseItems` 45/45,
+    // `MuPlayLibraryCallback` 22/22 and its three compiled lambdas (`onGetChildren$1` 7/7,
+    // `onGetItem$1` 7/7, `future$1` 5/5), and `DefaultSurfaceResolver` 8/8.
+    //
+    // **`DefaultSurfaceResolver` had no floor at all until now**, and printed an ungated-class
+    // warning on every run since Task 3 landed it. It is gated here rather than there because Task
+    // 4 is its first consumer -- the `@Binds` that puts it in the graph is in this task's
+    // `MediaModule` -- and a floor is owed by whoever makes a class reachable. LINE and not BRANCH
+    // because it has **zero BRANCH counters**: it is one expression that reads three values off a
+    // `ControllerInfo` and hands them to `BrowseSurfaces.of`, where every branch lives and where
+    // `:core:model`'s own BRANCH floor already gates them. A BRANCH rule over it would be the
+    // vacuous, NaN-scored shape this table's doc describes.
+    //
+    // `MuPlayLibraryCallback*` matches the outer class and all three lambdas; the suspend
+    // continuation classes it also matches carry zero counters of either kind, so they can never
+    // move this ratio -- the standing exception this module already records for its `$Companion`s.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside: "lines covered ratio is 0.00, but
+    // expected minimum is 0.90" for `app.muplay.media.browse.BrowseItems`,
+    // `app.muplay.media.browse.MuPlayLibraryCallback`, `.MuPlayLibraryCallback.future.1`,
+    // `.MuPlayLibraryCallback.onGetChildren.1`, `.MuPlayLibraryCallback.onGetItem.1` and
+    // `app.muplay.media.browse.DefaultSurfaceResolver` -- six classes, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.browse.BrowseItems",
+        "app.muplay.media.browse.MuPlayLibraryCallback*",
+        "app.muplay.media.browse.DefaultSurfaceResolver",
       ),
       requiresInstrumentedData = true,
     ),

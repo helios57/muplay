@@ -15,9 +15,12 @@ import app.muplay.database.BrowseTreeRepository
 import app.muplay.media.NoOpPlayer
 import app.muplay.media.QueueRepository
 import app.muplay.model.browse.BrowseExtras
+import app.muplay.model.browse.BrowseId
+import app.muplay.model.browse.BrowseSurface
 import app.muplay.model.browse.BrowseSurfaces
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
 import org.junit.Before
@@ -129,7 +132,7 @@ class BrowseTreeBrowserTest {
     // A fifth root child is dropped by Android Auto silently. The number is `BrowseSurface`'s own
     // constant rather than a literal 4 here, so the two cannot drift.
     assertThat(childIds(BrowseSurfaces.HINT_CAR, "muplay/root").size)
-      .isLessThanOrEqualTo(app.muplay.model.browse.BrowseSurface.MAX_CAR_ROOT_TABS)
+      .isLessThanOrEqualTo(BrowseSurface.MAX_CAR_ROOT_TABS)
   }
 
   // ---- Continue: the one shelf whose length is a property of the surface -----------------------
@@ -184,6 +187,7 @@ class BrowseTreeBrowserTest {
     assertThat(books).containsExactly(
       "muplay/book/bk-alpha",
       "muplay/book/bk-beta",
+      "muplay/book/bk-empty",
       "muplay/book/bk-gamma",
       "muplay/book/bk-multi",
       "muplay/book/bk-nine",
@@ -195,9 +199,13 @@ class BrowseTreeBrowserTest {
     // by both shelves would satisfy either list on its own.
     assertThat(books).isNotEqualTo(childIds(BrowseSurfaces.HINT_CAR, "muplay/continue"))
     assertThat(childTitles(BrowseSurfaces.HINT_CAR, "muplay/books")).containsExactly(
-      "Alpha Book", "Beta Book", "Gamma Book", "Multi Part Book",
+      "Alpha Book", "Beta Book", "Empty Book", "Gamma Book", "Multi Part Book",
       "Ninth Book", "Second Book", "Tail Book", "Test Book",
     )
+    // The author, from the album row, with `BrowseText`'s fallback where there is none. Asserted at
+    // two values so "the subtitle is the author" is not satisfied by a constant.
+    assertThat(childTitles(BrowseSurfaces.HINT_CAR, "muplay/books") { subtitleOf() }.take(3))
+      .containsExactly("Eve Reader · 1 min left", "Fay Speaker · 2 min left", "Unknown artist")
   }
 
   @Test
@@ -209,6 +217,7 @@ class BrowseTreeBrowserTest {
       .containsExactly(
         BrowseExtras.STATUS_PARTIALLY_PLAYED,
         BrowseExtras.STATUS_PARTIALLY_PLAYED,
+        BrowseExtras.STATUS_NOT_PLAYED,
         BrowseExtras.STATUS_PARTIALLY_PLAYED,
         BrowseExtras.STATUS_PARTIALLY_PLAYED,
         BrowseExtras.STATUS_NOT_PLAYED,
@@ -220,7 +229,7 @@ class BrowseTreeBrowserTest {
     // the one that proves the branch in `BrowseExtras.forNode`.
     assertThat(
       books.map { requireNotNull(it.mediaMetadata.extras).containsKey(BrowseExtras.COMPLETION_PERCENTAGE) },
-    ).containsExactly(true, true, true, true, false, true, false, true)
+    ).containsExactly(true, true, false, true, true, false, true, false, true)
     // Six distinct fractions: a percentage that was one constant passes both assertions above.
     assertThat(
       books
@@ -387,7 +396,7 @@ class BrowseTreeBrowserTest {
 
     assertThat(musicIds.first()).isEqualTo("muplay/shuffle/1")
     assertThat(bookIds.filter { it.startsWith("muplay/shuffle/") }).isEmpty()
-    assertThat(bookIds).hasSize(8)
+    assertThat(bookIds).hasSize(9)
   }
 
   @Test
@@ -453,21 +462,191 @@ class BrowseTreeBrowserTest {
       .isEqualTo(requireNotNull(fromList.mediaMetadata.extras).getInt(BrowseExtras.COMPLETION_STATUS))
   }
 
+  @Test
+  fun theLibrariesTabIsThePhoneOnlyPickerOfEveryLibraryWhateverItsRole() {
+    // The one root child no car or watch is offered, and the only node in the tree that is *not*
+    // scoped by role: it exists so a user can see the tagging they chose.
+    assertThat(childIds(hint = null, parentId = "muplay/libraries"))
+      .containsExactly("muplay/library/1", "muplay/library/2")
+    assertThat(childTitles(hint = null, parentId = "muplay/libraries"))
+      .containsExactly("Music", "Audiobooks")
+    assertThat(childTitles(hint = null, parentId = "muplay/libraries") { subtitleOf() })
+      .containsExactly("Music", "Audiobooks")
+  }
+
+  @Test
+  fun aMusicOnlyInstallIsOfferedNoBookTabsAtAll() {
+    // The other value of `BrowseTree.root`'s `hasAudiobooks`, end to end. Without it, "the root
+    // offers Continue and Books" is observed at exactly one input and a root that offered them
+    // unconditionally would pass every other test in this file.
+    val musicOnly = BrowseGraph.create(context, withAudiobooks = false)
+    val musicOnlyCallback = musicOnly.callback(context)
+    try {
+      assertThat(childIdsOf(musicOnlyCallback, "muplay/root"))
+        .containsExactly("muplay/albums", "muplay/artists", "muplay/libraries")
+      assertThat(childIdsOf(musicOnlyCallback, "muplay/books")).isEmpty()
+      assertThat(childIdsOf(musicOnlyCallback, "muplay/continue")).isEmpty()
+    } finally {
+      musicOnlyCallback.release()
+      musicOnly.close()
+    }
+  }
+
+  @Test
+  fun getItemAnswersForEveryKindOfNodeTheTreeServes() {
+    // One assertion over every `BrowseId` arm `onGetItem` can be handed, so an arm that fell
+    // through to another -- or to the root -- fails here rather than showing a driver the wrong
+    // screen title. Titles, not just result codes: two arms that both "succeed" are not two arms.
+    val ids = listOf(
+      "muplay/root",
+      "muplay/continue",
+      "muplay/books",
+      "muplay/albums",
+      "muplay/artists",
+      "muplay/libraries",
+      "muplay/library/2",
+      "muplay/shuffle/1",
+      "muplay/album/al-abbey",
+      "muplay/artist/ar-bowie",
+      "muplay/book/bk-test",
+      "bk-test-p1",
+    )
+
+    assertThat(ids.map { id -> awaitResult(browser(null)) { it.getItem(id) }.value?.mediaId })
+      .isEqualTo(ids)
+    assertThat(
+      ids.map { id ->
+        awaitResult(browser(null)) { it.getItem(id) }.value?.mediaMetadata?.title?.toString()
+      },
+    ).containsExactly(
+      "MuPlay",
+      "Continue",
+      "Books",
+      "Albums",
+      "Artists",
+      "Libraries",
+      "Audiobooks",
+      "Shuffle Music",
+      "Abbey Road",
+      "David Bowie",
+      "Test Book",
+      "Test Book Part 1",
+    )
+  }
+
+  @Test
+  fun aParentThatNamesARealKindButNoExistingRowIsRefused() {
+    // The other half of "refuses an unknown id": these three all decode perfectly well, and there
+    // is simply nothing behind them. A tree that answered them with an empty folder -- or with
+    // whatever the first library/album/artist happened to be -- passes every other test here.
+    assertThat(
+      listOf("muplay/library/99", "muplay/album/al-nope", "muplay/artist/ar-nope").map {
+        childrenResult(hint = null, parentId = it).resultCode
+      },
+    ).isNotEmpty.allSatisfy { assertThat(it).isNotEqualTo(LibraryResult.RESULT_SUCCESS) }
+    assertThat(
+      listOf("muplay/library/99", "muplay/artist/ar-nope", "muplay/shuffle/99").map { id ->
+        awaitResult(browser(null)) { it.getItem(id) }.resultCode
+      },
+    ).isNotEmpty.allSatisfy { assertThat(it).isNotEqualTo(LibraryResult.RESULT_SUCCESS) }
+  }
+
+  @Test
+  fun theRootHasNoNodeOfItsOwnAndTheCallbackBuildsItInstead() {
+    // `BrowseTreeRepository.node` answers `null` for the root on purpose -- it is the one node the
+    // tree does not build from a parent's children, because it has no parent. Asserted against the
+    // repository directly, since `onGetItem` short-circuits before reaching it, and asserted
+    // alongside the browser's answer so the two halves of that split are visible together.
+    assertThat(runBlocking { graph.treeRepository.node(BrowseId.Root, BrowseSurface.PHONE) }).isNull()
+    assertThat(awaitResult(browser(null)) { it.getItem("muplay/root") }.value?.mediaId)
+      .isEqualTo("muplay/root")
+  }
+
+  @Test
+  fun artworkThatCannotBeResolvedLeavesTheRowWithoutOneRatherThanFailingTheFolder() {
+    // A server that is not configured throws where the URL is built. A car asking for the Albums
+    // tab must still get the Albums tab.
+    graph.artSource.failingArtIds += "cov-al-hunky"
+    val items = children(hint = null, parentId = "muplay/albums")
+
+    assertThat(items.map(MediaItem::mediaId)).containsExactly(
+      "muplay/shuffle/1",
+      "muplay/album/al-abbey",
+      "muplay/album/al-hunky",
+      "muplay/album/al-revolver",
+    )
+    assertThat(items.map { it.mediaMetadata.artworkUri?.toString() }).containsExactly(
+      null,
+      "http://art.invalid/cov-al-abbey/512",
+      null,
+      "http://art.invalid/cov-al-revolver/512",
+    )
+  }
+
+  @Test
+  fun anAudiobookOnlyInstallIsOfferedNoMusicTabsAtAll() {
+    // The mirror image of `aMusicOnlyInstallIsOfferedNoBookTabsAtAll`, and the input that makes
+    // `hasMusic` a variable rather than a constant.
+    val booksOnly = BrowseGraph.create(context, withMusic = false)
+    val booksOnlyCallback = booksOnly.callback(context)
+    try {
+      assertThat(childIdsOf(booksOnlyCallback, "muplay/root"))
+        .containsExactly("muplay/continue", "muplay/books")
+      assertThat(childIdsOf(booksOnlyCallback, "muplay/albums")).isEmpty()
+    } finally {
+      booksOnlyCallback.release()
+      booksOnly.close()
+    }
+  }
+
+  @Test
+  fun anUndecodableParentIsRefusedRatherThanTreatedAsTheRoot() {
+    // `BrowseId.decode` answers `null` for an id this build does not recognise, and the callback
+    // has to turn that into an error: returning the root's children instead would send a driver to
+    // the top of the tree with no explanation. Three shapes, all of which decode to null.
+    assertThat(
+      listOf("muplay/nosuchkind/1", "muplay/library/+1", "muplay/root/").map {
+        childrenResult(hint = null, parentId = it).resultCode
+      },
+    ).isNotEmpty.allSatisfy { assertThat(it).isNotEqualTo(LibraryResult.RESULT_SUCCESS) }
+  }
+
+  @Test
+  fun aRepositoryFailureBecomesAnErrorResultRatherThanASilentEmptyScreen() {
+    // The `runCatching` arm, driven by a repository that really does throw: the database behind it
+    // is closed. An exception escaping here is logged by Media3 and reaches a driver as a blank
+    // list with nothing to chase, whereas an error result is rendered as an error.
+    val doomed = BrowseGraph.create(context)
+    val doomedCallback = doomed.callback(context)
+    doomed.close()
+    try {
+      val result = doomedCallback
+        .onGetChildren(session, ownController(), "muplay/books", 0, Int.MAX_VALUE, null)
+        .get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+      assertThat(result.resultCode).isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+      assertThat(result.value).isNull()
+    } finally {
+      doomedCallback.release()
+    }
+  }
+
   // ---- paging --------------------------------------------------------------------------------
 
   @Test
   fun childrenArePagedAndThePagesTileTheList() {
     val all = childIds(hint = null, parentId = "muplay/books")
-    val firstPage = childIds(hint = null, parentId = "muplay/books", page = 0, pageSize = 3)
-    val secondPage = childIds(hint = null, parentId = "muplay/books", page = 1, pageSize = 3)
-    val lastPage = childIds(hint = null, parentId = "muplay/books", page = 2, pageSize = 3)
-    val pastEnd = childIds(hint = null, parentId = "muplay/books", page = 9, pageSize = 3)
+    val firstPage = childIds(hint = null, parentId = "muplay/books", page = 0, pageSize = 4)
+    val secondPage = childIds(hint = null, parentId = "muplay/books", page = 1, pageSize = 4)
+    val lastPage = childIds(hint = null, parentId = "muplay/books", page = 2, pageSize = 4)
+    val pastEnd = childIds(hint = null, parentId = "muplay/books", page = 9, pageSize = 4)
 
-    assertThat(all).hasSize(8)
-    assertThat(firstPage).isEqualTo(all.take(3))
-    assertThat(secondPage).isEqualTo(all.drop(3).take(3))
-    // The last page is short, which is the case a `subList(from, from + pageSize)` gets wrong.
-    assertThat(lastPage).isEqualTo(all.drop(6))
+    assertThat(all).hasSize(9)
+    assertThat(firstPage).isEqualTo(all.take(4))
+    assertThat(secondPage).isEqualTo(all.drop(4).take(4))
+    // Nine books at four a page, so the last page holds **one**: the short-tail case a
+    // `subList(from, from + pageSize)` throws on rather than clamps.
+    assertThat(lastPage).isEqualTo(all.drop(8))
     assertThat(pastEnd).isEmpty()
     assertThat(firstPage).isNotEqualTo(secondPage)
   }
@@ -479,7 +658,7 @@ class BrowseTreeBrowserTest {
     // the future -- which a car renders as an unexplained empty screen either way, so the empty
     // list here is asserted alongside the full one rather than on its own.
     assertThat(childIds(hint = null, parentId = "muplay/books", page = 0, pageSize = Int.MAX_VALUE))
-      .hasSize(8)
+      .hasSize(9)
     assertThat(childIds(hint = null, parentId = "muplay/books", page = 1, pageSize = Int.MAX_VALUE))
       .isEmpty()
   }
@@ -494,7 +673,7 @@ class BrowseTreeBrowserTest {
 
     assertThat(graph.artSource.coverArtCalls).hasSize(3)
     assertThat(graph.artSource.coverArtCalls.map { it.first })
-      .containsExactly("cov-bk-alpha", "cov-bk-beta", "cov-bk-gamma")
+      .containsExactly("cov-bk-alpha", "cov-bk-beta", "cov-bk-empty")
   }
 
   @Test

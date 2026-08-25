@@ -80,8 +80,18 @@ class BrowseGraph private constructor(
      * @param withProgress whether to write [PROGRESS_ROWS]. Withheld by the tests that need every
      * book unheard, so that "a book carries no percentage" and "a book carries this percentage" are
      * two observations of one branch rather than one observation repeated.
+     * @param withAudiobooks whether library 2 is tagged `AUDIOBOOKS` at all. Withheld by the test
+     * that needs a music-only install: "the root offers a Books tab" is not observed until a tree
+     * that should not offer one has been asked.
+     * @param withMusic the same, from the other side: an audiobook-only install offers no Albums,
+     * Artists or Libraries tab.
      */
-    fun create(context: Context, withProgress: Boolean = true): BrowseGraph {
+    fun create(
+      context: Context,
+      withProgress: Boolean = true,
+      withAudiobooks: Boolean = true,
+      withMusic: Boolean = true,
+    ): BrowseGraph {
       val database = Room.inMemoryDatabaseBuilder(context, MuPlayDatabase::class.java).build()
       val artSource = RecordingArtSource()
       val (provider, storeFile) = fixedSubsonicSourceProvider(context, artSource)
@@ -96,8 +106,8 @@ class BrowseGraph private constructor(
         // Through `setRole`: `mergeFromServer` deliberately never writes the role column, so
         // seeding it in the entity above would leave both libraries UNASSIGNED and this whole
         // fixture would be testing an empty tree.
-        database.libraryDao().setRole(MUSIC_LIBRARY_ID, LibraryRole.MUSIC)
-        database.libraryDao().setRole(AUDIOBOOK_LIBRARY_ID, LibraryRole.AUDIOBOOKS)
+        if (withMusic) database.libraryDao().setRole(MUSIC_LIBRARY_ID, LibraryRole.MUSIC)
+        if (withAudiobooks) database.libraryDao().setRole(AUDIOBOOK_LIBRARY_ID, LibraryRole.AUDIOBOOKS)
 
         database.browseDao().replaceLibraryContents(
           MUSIC_LIBRARY_ID,
@@ -175,6 +185,10 @@ class BrowseGraph private constructor(
     private val BOOK_ALBUMS = listOf(
       album("bk-alpha", AUDIOBOOK_LIBRARY_ID, "Alpha Book", "ar-narrator", "Eve Reader", 2, 200),
       album("bk-beta", AUDIOBOOK_LIBRARY_ID, "Beta Book", "ar-narrator", "Fay Speaker", 2, 200),
+      // A book row the mirror holds no files for, and no author for either. Both are real states --
+      // an album whose songs a sync has not reached yet, and a rip with no album artist tag -- and
+      // both are branches in `MirrorBookshelf` that every other book here takes the other way.
+      album("bk-empty", AUDIOBOOK_LIBRARY_ID, "Empty Book", "ar-narrator", null, 0, 0),
       album("bk-gamma", AUDIOBOOK_LIBRARY_ID, "Gamma Book", "ar-narrator", "Gil Voice", 2, 200),
       album("bk-multi", AUDIOBOOK_LIBRARY_ID, "Multi Part Book", "ar-narrator", "Dee Narrator", 4, 400),
       album("bk-nine", AUDIOBOOK_LIBRARY_ID, "Ninth Book", "ar-narrator", "Hal Teller", 2, 200),
@@ -237,6 +251,10 @@ class BrowseGraph private constructor(
       // Position zero *in the third file*: started, at exactly half of a four-part book. The one
       // case where "the row says 0" and "the listener has not started" are different answers.
       progress("bk-multi-p3", positionMs = 0, lastPlayedAtEpochMs = 2_000),
+      // An **older** row on a **later** file. It is the only input in this fixture for which the
+      // "is this row more recent than the one I have?" test answers *no*, and without it a rule
+      // that simply took the last row it saw would be indistinguishable from the right one.
+      progress("bk-multi-p4", positionMs = 5_000, lastPlayedAtEpochMs = 1_500),
       // The only *actually* finished book, and it is finished on its last (here, only) file --
       // which is what makes it different from `bk-gamma` above.
       progress("bk-tail-p1", positionMs = 100_000, lastPlayedAtEpochMs = 1_000, isFinished = true),
@@ -247,7 +265,7 @@ class BrowseGraph private constructor(
       libraryId: Int,
       name: String,
       artistId: String,
-      artistName: String,
+      artistName: String?,
       songCount: Int,
       durationSeconds: Int,
     ) = AlbumEntity(
@@ -317,8 +335,18 @@ class RecordingArtSource : SubsonicSource {
 
   val coverArtCalls: MutableList<Pair<String, Int?>> = mutableListOf()
 
+  /**
+   * Art ids this source refuses to build a URL for.
+   *
+   * A real `SubsonicSourceProvider.current()` throws `NotConfiguredException` when no server has
+   * been set up, and the browse tree has to answer a car with the rows it already has rather than
+   * with an error. This is the only way to reach that arm from a test.
+   */
+  val failingArtIds: MutableSet<String> = mutableSetOf()
+
   override fun coverArtUrl(coverArtId: String, sizePx: Int?): String {
     coverArtCalls += coverArtId to sizePx
+    if (coverArtId in failingArtIds) error("no server is configured")
     return "http://art.invalid/$coverArtId/$sizePx"
   }
 
