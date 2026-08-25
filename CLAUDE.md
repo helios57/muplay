@@ -361,3 +361,29 @@ fails `check` on its own prose, naming that file as an offender. Describe the ha
 its method name — the same discipline `AndroidRoomConventionPlugin`'s own header keeps around the
 banned build tool's name, and the second time this repository has cost someone a build over a
 comment.
+
+## Worktrees share one Gradle build cache, and it serves cross-worktree results
+
+Every worktree under `.claude/worktrees/` uses the same `~/.gradle/caches/build-cache-1`.
+Measured in Plan 6 Task 6: `./gradlew check` in one worktree failed at
+`:core:media:lintDebug` **naming a file that existed in neither that worktree nor
+master** —
+
+    .claude/worktrees/p3t8b/core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt
+
+— a replayed failure from *another lane's* tree. The same run printed a stale
+`COVERAGE: :core:cast … 8 coverage floors` when the real number was 10.
+
+Both directions of that are bad. A replayed **failure** sends you debugging a file
+you cannot see. A replayed **success or notice** is worse, because that is a gate
+reporting on a tree it never looked at — the class of defect this repository
+exists to keep out of its own gates.
+
+`--no-build-cache` was green on the identical tree, so the cache entry, not the
+code, was wrong.
+
+**While more than one worktree is live, gate with `--no-build-cache`.** It costs
+about a minute on a warm daemon. Use it for the run whose result you are going to
+act on — a merge gate, a floor measurement, a falsification — and let the cache
+speed up ordinary iteration. If a failure names a path outside your own tree,
+suspect this before you suspect your change.
