@@ -20,6 +20,20 @@ working here at once. On device-busy, **wait and retry**. Never kill the
 emulator, never start a second, and never stop, restart or reseed the container
 — another agent's live suite may be mid-run against it.
 
+## Two concurrent instrumented runs corrupt each other's results
+
+Both `:app:connectedDebugAndroidTest` runs install the same `applicationId`
+(`app.muplay`). When a second agent starts one mid-run, the first is reinstalled
+underneath itself and its report shows `<failure></failure>` plus `Process
+crashed` **with no stack trace** — indistinguishable from a real product crash.
+
+Two runs were lost to this before `logcat` showed the other agent's journey
+starting inside the victim's window. If you see a crash with no stack trace,
+check `logcat` for another test class starting before you believe it.
+
+Serialise device runs across agents, or wrap each in wait-and-retry and confirm
+no other instrumentation is running first.
+
 ## Wait in bounded foreground commands, not on watchers
 
 Agents here have repeatedly parked waiting for a monitor or background-task
