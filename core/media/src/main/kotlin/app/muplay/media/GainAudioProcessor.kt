@@ -31,9 +31,16 @@ import java.nio.ByteBuffer
  * makes any override of it call the same method anyway. **Do not add an override here.**
  *
  * The cost of staying in the chain is paid back by [queueInput]'s fast path, which copies rather
- * than multiplies when the gain is exactly [ReplayGainPolicy.UNCHANGED] -- so an untagged library
- * is bit-identical to having no gain stage at all, and
- * `anUntaggedTrackIsBitIdenticalWithAndWithoutTheGainStage` asserts precisely that.
+ * than multiplies when the gain is exactly [ReplayGainPolicy.UNCHANGED].
+ *
+ * **That fast path is a performance property and nothing else, and no test here gates it.** An
+ * earlier version of this note claimed `anUntaggedTrackIsBitIdenticalWithAndWithoutTheGainStage`
+ * asserted it; the falsification says otherwise. Deleting the branch -- multiplying every sample by
+ * 1.0f instead -- left all 13 tests in `GainAudioProcessorTest` **green**, because
+ * `(sample * 1.0f).toInt()` is exact for every value a `Short` can hold, so the two paths agree bit
+ * for bit by construction. The bit-identity tests are still worth their keep: they gate the *stage*
+ * (a dropped sample, a wrong byte order, an off-by-one in the loop) rather than the branch. If this
+ * branch is ever removed as dead weight, nothing will go red, and that is the honest state of it.
  *
  * ### 16-bit PCM only, refused loudly
  *

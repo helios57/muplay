@@ -20,6 +20,7 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.assertj.core.api.Assertions.within
 import org.junit.After
 import org.junit.Before
@@ -113,12 +114,14 @@ class GainAudioProcessorTest {
   }
 
   /**
-   * The identity fast path, asserted as **bytes** rather than as "close to the input".
+   * A gain of exactly one leaves every sample exactly as it was, asserted as **bytes**.
    *
-   * `GainAudioProcessor` copies rather than multiplies at exactly [ReplayGainPolicy.UNCHANGED], and
-   * this is what stops that being removed as a micro-optimisation nobody needed: an untagged
-   * library has to be bit-identical to having no gain stage at all, and float arithmetic on a
-   * multiplier of 1.0f is not automatically so.
+   * **Measured caveat, stated because the obvious reading of this test is wrong.** It does *not*
+   * gate `GainAudioProcessor`'s identity fast path: removing that branch and multiplying by 1.0f
+   * instead leaves this test, and all 13 in this class, green -- `(sample * 1.0f).toInt()` is exact
+   * for every `Short`. What it does gate is the *stage*: a dropped sample, a wrong byte order, an
+   * off-by-one in the loop, a buffer that was flipped in the wrong place. The fast path is a
+   * performance property and this project has no test for it. See task-11-report.md.
    */
   @Test
   fun aGainOfExactlyOneIsAByteForByteCopy() {
@@ -141,6 +144,42 @@ class GainAudioProcessorTest {
     val input = shortArrayOf(20000, -20000, 32767, -32768)
 
     assertThat(processedWith(2.0f, input)).containsExactly(32767, -32768, 32767, -32768)
+  }
+
+  /**
+   * Anything that is not 16-bit PCM is **refused**, loudly, rather than passed through unchanged.
+   *
+   * "The gain silently did not apply" is the failure this whole task exists to remove, so the
+   * wrong-format arm has to throw. It is not reachable through the shipping pipeline -- Media3's
+   * own `ToInt16PcmAudioProcessor` runs ahead of this one in `DefaultAudioProcessorChain` -- which
+   * is exactly why it needs a test that reaches it directly: without this, `onConfigure` measured
+   * 1/2 BRANCH and the refusal was a claim rather than a behaviour.
+   */
+  @OptIn(UnstableApi::class)
+  @Test
+  fun anEncodingThisStageCannotHandleIsRefusedRatherThanPassedThrough() {
+    val processor = GainAudioProcessor()
+
+    assertThatThrownBy {
+      processor.configure(
+        AudioProcessor.AudioFormat(
+          FIXTURE_SAMPLE_RATE_HZ,
+          FIXTURE_CHANNEL_COUNT,
+          C.ENCODING_PCM_FLOAT,
+        ),
+      )
+    }.isInstanceOf(AudioProcessor.UnhandledAudioFormatException::class.java)
+
+    // The other arm, at the same call, so this is a discrimination rather than "configure throws".
+    assertThat(
+      processor.configure(
+        AudioProcessor.AudioFormat(
+          FIXTURE_SAMPLE_RATE_HZ,
+          FIXTURE_CHANNEL_COUNT,
+          C.ENCODING_PCM_16BIT,
+        ),
+      ).encoding,
+    ).isEqualTo(C.ENCODING_PCM_16BIT)
   }
 
   /**
@@ -302,9 +341,12 @@ class GainAudioProcessorTest {
   }
 
   /**
-   * An untagged library must be **bit-identical** to having no gain stage at all, not merely close
-   * to it. This is what `GainAudioProcessor`'s identity fast path is for, measured through a real
-   * decoder rather than only on the bench.
+   * An untagged library is **bit-identical** to having no gain stage at all, through a real decoder
+   * rather than only on the bench -- so inserting the stage into the shipping chain changed nothing
+   * for every library that carries no tags, which is most of them.
+   *
+   * Same measured caveat as [aGainOfExactlyOneIsAByteForByteCopy]: this is a property of the
+   * *stage*, not of the fast path inside it.
    */
   @Test
   fun anUntaggedTrackIsBitIdenticalWithAndWithoutTheGainStage() {

@@ -555,6 +555,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // any test in the module touches the object at all. That is the unfireable-declaration
         // case the ride-along paragraph above describes, not the `BrowseTree` case.
         "app.muplay.model.browse.BrowseSurfaces",
+        // Plan 3 Task 11, and a ride-along in the strict sense this list's paragraph above
+        // describes: `ReplayGain` is a three-field `data class` with no body, measured with **no
+        // BRANCH counter at all** and 0/4 LINE from this module's own tests -- the only code that
+        // constructs one lives in `:core:network`, `:core:database` and `:core:media`, whose
+        // execution data is not this module's. Exactly `RememberedRenderer`'s situation four
+        // entries up, and given the same answer: included so `warnUngatedClasses` has nothing to
+        // say, gating nothing, with a LINE rule deliberately withheld rather than satisfied by a
+        // `:core:model` test written only to light up compiler-generated `equals`/`copy` plumbing.
+        // The decisions this type carries are gated where they are made -- `ReplayGainPolicy`
+        // (`:core:media`, 12/12 BRANCH) and `ReplayGainMappingTest` (`:core:network`).
+        "app.muplay.model.ReplayGain",
         "app.muplay.model.browse.BrowseNode",
         "app.muplay.model.browse.BrowseCompletion",
         "app.muplay.model.browse.BrowseCompletionStatus",
@@ -1840,6 +1851,101 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ContentTypeSwitcher",
         "app.muplay.media.PlaybackLauncher",
         "app.muplay.media.PlaybackLauncher*play*2",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 3 Task 11. `ReplayGainPolicy` 12/12 = 1.0000 BRANCH from **JVM data alone** --
+    // `ReplayGainPolicyTest`, twelve tests, no emulator -- which is the whole reason the decibel
+    // arithmetic lives in a file with no Android import. The twelve are `gainDbFor`'s two elvis
+    // arms, and `linearGain`'s null gain, `coerceIn`'s two bounds, the null peak, the `peak <= 0`
+    // guard and `minOf`'s two arms.
+    //
+    // The `requiresInstrumentedData = false` is a measurement: with every project's `.ec` moved
+    // aside, `jacocoJvmCoverageVerification` still evaluated 13 of this module's 30 floors and this
+    // rule was among them, green.
+    //
+    // Falsified by withholding the test rather than by predicting what would happen -- and the
+    // prediction was wrong, which is why it is worth writing the measured number here. This author
+    // guessed 2/12 = 0.17, on the theory that `MediaItems`' instrumented tests would drive
+    // `gainDbFor`'s two elvis arms. They do, but not into *this* task's execution data: with
+    // `ReplayGainPolicyTest` moved aside, `jacocoJvmCoverageVerification` reports "Rule violated
+    // for class app.muplay.media.ReplayGainPolicy: branches covered ratio is **0.00**, but expected
+    // minimum is 0.90", BUILD FAILED. No other JVM test in this module touches the class at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ReplayGainPolicy"),
+    ),
+    // 10/10 and 14/14 = 1.0000 BRANCH, instrumented. Both classes are unreachable from the JVM
+    // tier: `GainAudioProcessor` extends a Media3 `BaseAudioProcessor` and `ReplayGainController`
+    // reads an `android.os.Bundle` off a `MediaItem`, and this project has no Robolectric.
+    //
+    // `GainAudioProcessor`'s ten are the empty-drain guard, `onConfigure`'s encoding check, the
+    // identity fast path and `queueInput`'s per-sample loop with its two `coerceIn` bounds. The
+    // encoding check's refusing arm is **not** reachable through the shipping pipeline -- Media3's
+    // own `ToInt16PcmAudioProcessor` runs ahead of this one -- so it is driven directly by
+    // `anEncodingThisStageCannotHandleIsRefusedRatherThanPassedThrough`, which is what took this
+    // class from 9/10 to 10/10 rather than a floor low enough to tolerate the gap.
+    //
+    // `ReplayGainController`'s fourteen were sixteen until the same review: `mediaItem
+    // ?.mediaMetadata?.extras` emitted an arm nothing can take (`MediaItem.mediaMetadata` is
+    // non-null in Media3), and it was deleted rather than excused -- `ContentTypeSwitcher`'s
+    // treatment, for `ContentTypeSwitcher`'s reason. `ProgressWriter.gainDbOf` had the identical
+    // shape and lost two the same way, which is why that class's own floor above now measures
+    // 22/22 where it measured 24/26.
+    //
+    // Falsified by moving the connected runs' `.ec` aside: "branches covered ratio is 0.00, but
+    // expected minimum is 0.90", BUILD FAILED, for both.
+    //
+    // **Moving this module's own `code_coverage/` is not enough, and getting that wrong the first
+    // time is what produced this paragraph.** `Jacoco.kt`'s `mergedExecutionData` reads *every*
+    // project's `outputs/code_coverage`, so `:app`'s journey and `:core:database`'s suite still
+    // credit these classes: with only `core/media`'s directory moved, `GainAudioProcessor` measured
+    // 5/10 BRANCH and 16/22 LINE and `MuPlayRenderersFactory` a full 13/13 LINE -- the rule fired
+    // for two of the three classes and would have been recorded as falsified while the third was
+    // not. Move `app/`, `core/database/` and `core/media/`'s together.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.GainAudioProcessor",
+        "app.muplay.media.ReplayGainController",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // 22/22, 9/9, 6/6 and 13/13 = 1.0000 LINE. `MuPlayRenderersFactory` is here and in no BRANCH
+    // rule because it has **no branches at all** -- a BRANCH rule over it would match a class with
+    // zero counters of its own kind, which JaCoCo scores NaN and reports as "no violation" at every
+    // minimum, the vacuous-floor shape this table's own doc describes.
+    //
+    // Gating those 13 lines matters more than the count suggests: they are the shipping audio
+    // pipeline. Four of them put `GainAudioProcessor` into `DefaultAudioSink`'s processor chain --
+    // the difference between ReplayGain being applied and being computed and thrown away -- and one
+    // is the `buildVideoRenderers` override that makes spec section 11's *"Video"* non-goal a
+    // property of the renderer array rather than a sentence.
+    //
+    // `ReplayGainPolicy` rides its LINE counter here rather than in the JVM-only rule above,
+    // because these six lines are covered by both tiers and the merged report is where that shows.
+    //
+    // Falsified with **every** project's `code_coverage/` moved aside (see the rule above for why
+    // this module's own is not enough): lines covered ratio 0.00 for `GainAudioProcessor`,
+    // `ReplayGainController` and `MuPlayRenderersFactory`, BUILD FAILED. `ReplayGainPolicy`'s LINE
+    // stays at 6/6 there, because its own JVM test is untouched by that -- it is falsified by
+    // withholding `ReplayGainPolicyTest` instead, which is recorded at its BRANCH rule above.
+    //
+    // That `MuPlayRenderersFactory` measures 13/13 LINE from `:app`'s journey **alone** is itself
+    // the useful fact in this rule: the production service really does build this renderer set.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.GainAudioProcessor",
+        "app.muplay.media.ReplayGainController",
+        "app.muplay.media.ReplayGainPolicy",
+        "app.muplay.media.MuPlayRenderersFactory",
       ),
       requiresInstrumentedData = true,
     ),

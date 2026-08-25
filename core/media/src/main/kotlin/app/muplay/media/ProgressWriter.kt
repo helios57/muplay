@@ -238,11 +238,18 @@ class ProgressWriter(
    * row it is about to write -- which for a discontinuity is the one being *left*, not the one the
    * player has already moved to.
    *
+   * A **non-null** parameter, and `item.mediaMetadata` read without a safe call: all three callers
+   * have already turned an absent item into an early `return`, and `MediaItem.mediaMetadata` is
+   * non-null in Media3. Written as `item?.mediaMetadata?.extras` it measured 8/10 BRANCH with both
+   * missing arms unreachable -- the same uncoverable-branch shape `ContentTypeSwitcher` and
+   * `PlaybackConnection`'s ticker deleted rather than excused, and for the same reason: a branch
+   * nothing can take reads as a case somebody thought about.
+   *
    * `containsKey` before `getFloat`: see `MediaItems.KEY_REPLAY_GAIN_DB` for why an absent key and
    * not a sentinel is the encoding.
    */
-  private fun gainDbOf(item: MediaItem?): Float? =
-    item?.mediaMetadata?.extras
+  private fun gainDbOf(item: MediaItem): Float? =
+    item.mediaMetadata.extras
       ?.takeIf { it.containsKey(MediaItems.KEY_REPLAY_GAIN_DB) }
       ?.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)
 

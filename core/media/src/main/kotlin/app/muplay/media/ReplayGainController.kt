@@ -27,7 +27,11 @@ class ReplayGainController(private val processor: GainAudioProcessor) : Player.L
    * `GainAudioProcessorTest` uses it that way, and so the same code path serves both.
    */
   fun applyTo(mediaItem: MediaItem?) {
-    val extras: Bundle? = mediaItem?.mediaMetadata?.extras
+    // `let`, not a second safe call: `MediaItem.mediaMetadata` is non-null in Media3, so
+    // `mediaItem?.mediaMetadata?.extras` emits an arm nothing can take -- measured 15/16 BRANCH
+    // with exactly that one missing. A `mediaItem` of `null` is real, though: Media3 reports a
+    // cleared queue that way, and `anItemThatCarriesNoTagsLeavesTheSamplesAlone` drives it.
+    val extras: Bundle? = mediaItem?.let { it.mediaMetadata.extras }
     // `containsKey` before `getFloat`, both times, and not `getFloat(key, sentinel)`: the whole
     // point of `MediaItems`' absent-key encoding is that no float value means "no decision", so a
     // default here would invent one. See `MediaItems.KEY_REPLAY_GAIN_DB`.
