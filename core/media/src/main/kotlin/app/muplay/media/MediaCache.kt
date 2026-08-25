@@ -45,12 +45,27 @@ object MediaCache {
   /**
    * [directory] is a parameter with a default rather than a hardcoded path so an instrumented test
    * can hold its own cache without evicting, or being evicted by, another test's. Production
-   * always takes the default — `MediaModule` calls the one-argument form.
+   * always takes the default — `MediaCacheModule` calls the one-argument form.
+   *
+   * [maxBytes] is a parameter for the same shape of reason, and it closes a hole that was real:
+   * neither the evictor nor its bound could be observed at all. `SimpleCache` exposes no evictor
+   * and `LeastRecentlyUsedCacheEvictor` has no `maxBytes` getter (both checked in 1.11.0), so the
+   * only assertion that ever touched [MAX_BYTES] read the *constant's declaration*. Replacing
+   * `LeastRecentlyUsedCacheEvictor(MAX_BYTES)` with `NoOpCacheEvictor()` — an unbounded cache that
+   * fills the user's device — left all 43 tests in this module green, and so did multiplying the
+   * bound by a hundred. Filling 512 MiB in a test is not an option; taking the bound as a
+   * parameter means a test can fill a cache of a size it chooses, and the same line then carries
+   * three facts at once: an evictor exists, it is least-recently-used, and its bound is the number
+   * it was given.
    */
-  fun create(context: Context, directory: File = File(context.cacheDir, DIRECTORY_NAME)): Cache =
+  fun create(
+    context: Context,
+    directory: File = File(context.cacheDir, DIRECTORY_NAME),
+    maxBytes: Long = MAX_BYTES,
+  ): Cache =
     SimpleCache(
       directory,
-      LeastRecentlyUsedCacheEvictor(MAX_BYTES),
+      LeastRecentlyUsedCacheEvictor(maxBytes),
       StandaloneDatabaseProvider(context),
     )
 }
