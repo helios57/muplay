@@ -6,6 +6,32 @@ import org.junit.jupiter.api.Test
 
 class StreamFormatTest {
 
+  /**
+   * The Ogg family as the server this client talks to indexes it, written out here so that a
+   * **missing member** of `StreamFormat.TRANSCODE_ONLY_SUFFIXES` is a red test rather than a
+   * silence.
+   *
+   * That distinction is the whole reason this list exists. `oga` was absent from the policy set
+   * and this class was 9/9 green with both of the `format/` mutation probes CAUGHT, because every
+   * assertion named only suffixes the set already contained -- a test can only observe an
+   * omission if something independent of the set says what the set must hold.
+   *
+   * The source is the pinned `deluan/navidrome:0.63.2` binary's own audio-extension table, read
+   * out of the running container: `... m4a mp4 m4b m4p ogg oga aif asf mpp ac3 als wav raw mid`,
+   * with `opus` and `flac` in the MIME table beside it. `oga` is the IANA-registered Ogg *audio*
+   * extension and it sits directly beside `ogg`, so this server indexes a `.oga` file and reports
+   * `suffix = "oga"` like any other. `mka` is not in that table at all and `webm` appears only as
+   * a MIME type, never as an indexed audio extension -- so neither is in this list, and adding
+   * either would be a guess rather than an observation.
+   */
+  private val oggFamilySuffixes = listOf("opus", "ogg", "oga")
+
+  /**
+   * Suffixes whose container cannot hold Opus, so `format=raw` is both correct and preferred.
+   * `""` and `null` are here for the same reason: an unknown suffix streams raw on purpose.
+   */
+  private val rawSuffixes = listOf("mp3", "flac", "m4a", "m4b", "aac", "wav", "wma", "MP3", "", null)
+
   @Test
   fun `raw is the wire value raw and carries no bitrate`() {
     assertThat(StreamFormat.Raw.wireValue).isEqualTo("raw")
@@ -49,6 +75,29 @@ class StreamFormatTest {
     assertThat(StreamFormat.forSuffix("ogg", 192)).isEqualTo(StreamFormat.Mp3(192))
   }
 
+  /**
+   * The rule stated over the whole family at once, so that dropping any one member reddens this.
+   *
+   * `oga` is the member that was missing: `forSuffix("oga", 192)` returned `Raw`, `streamUrl`
+   * sent `format=raw`, and an Ogg-Opus track reached the player as Opus mislabelled `audio/ogg`
+   * -- the exact harm spec section 4's "never Opus" exists to prevent, and the one Plan 6's Sonos
+   * renderer cannot decode. The per-suffix tests above are kept as named observations; this one
+   * is the observation none of them could make.
+   */
+  @Test
+  fun `every suffix the ogg container is indexed under is transcoded, in either case`() {
+    val cases = oggFamilySuffixes.flatMap { listOf(it, it.uppercase()) }
+
+    // A map rather than a loop of assertions: the failure names the suffix that came back wrong,
+    // and one member missing from the policy set is one entry wrong, not a silent pass.
+    assertThat(cases.associateWith { StreamFormat.forSuffix(it, 192) })
+      .isEqualTo(cases.associateWith { StreamFormat.Mp3(192) })
+
+    // The two lists in this class are a partition, not two independent opinions. The wrong way to
+    // silence this test is to move a suffix into `rawSuffixes`; this line contradicts that edit.
+    assertThat(rawSuffixes).doesNotContainAnyElementsOf(cases)
+  }
+
   @Test
   fun `the suffix is matched case-insensitively`() {
     // Navidrome sends lower case today. A mirror row is a String and nothing enforces that.
@@ -69,10 +118,8 @@ class StreamFormatTest {
     // The exact mapped list, not `allMatch`: `allMatch` over an empty list is vacuously true, and
     // a `forSuffix` that returned Raw for everything would also pass an `allMatch` written the
     // obvious way. Pairing this with the two transcode cases above is what makes both real.
-    val suffixes = listOf("mp3", "flac", "m4a", "m4b", "aac", "wav", "wma", "MP3", "", null)
-
-    assertThat(suffixes.map { StreamFormat.forSuffix(it, 192) })
-      .containsExactly(*Array(suffixes.size) { StreamFormat.Raw })
+    assertThat(rawSuffixes.map { StreamFormat.forSuffix(it, 192) })
+      .containsExactly(*Array(rawSuffixes.size) { StreamFormat.Raw })
   }
 
   @Test
