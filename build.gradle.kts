@@ -1524,6 +1524,95 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackLauncherKt"),
     ),
+    // ---- Plan 3 Task 6: audio focus, becoming-noisy, wake mode, and the content-type switch ----
+    // `PlaybackAudioAttributes` 2/2 = 1.0000 BRANCH from **JVM data alone**
+    // (`PlaybackAudioAttributesTest`, six tests, no emulator). That split is the entire reason this
+    // object exists apart from the builder call it feeds: `contentTypeFor` takes an `Int` and
+    // returns an `Int`, so spec section 5's one-line switch is gated by the fast tier while the
+    // `AudioAttributes` construction around it is not. Same argument as `StreamRetryPolicy` behind
+    // the Media3 error adapter and `ResumePolicy` behind the player.
+    //
+    // Two branches, and they are the whole decision: is this media type one of the two audiobook
+    // types, or anything else. A wrong answer is **invisible at runtime** -- focus still works, the
+    // app still pauses for a call -- and shows up only where nobody looks: a navigation prompt
+    // ducking music but interrupting speech, and a car mixing a notification differently over each.
+    //
+    // Confirmed JVM-measurable by deleting both connected runs' `.ec` and running
+    // `jacocoJvmCoverageVerification` alone: green, and this rule among the ones it evaluated.
+    // Falsified by withholding the covering test rather than by raising the minimum (at a measured
+    // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing --
+    // see the Task 8a entry above): with `PlaybackAudioAttributesTest` moved aside, "Rule violated
+    // for class app.muplay.media.PlaybackAudioAttributes: branches covered ratio is 0.00, but
+    // expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+    ),
+    // The same class's 8/8 = 1.0000 LINE, JVM, and it gates something the BRANCH rule above cannot:
+    // `of` is a branchless builder chain (`setUsage`, `setContentType`), and `USAGE_MEDIA` is what
+    // puts this app on the *media* volume stream rather than the notification or assistant stream.
+    // Per this table's own doc a LINE floor can only be moved by an added untested line, never by a
+    // deleted covered one -- so what this really gates is the class drifting into an untested
+    // block; the deleted-call case is `PlaybackAudioAttributesTest.the usage is always media`.
+    // Falsified the same way, same run: lines covered ratio 0.00 against a minimum of 0.90.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+    ),
+    // `ContentTypeSwitcher` 4/4 and `PlaybackLauncher` 2/2 = 1.0000 BRANCH, instrumented.
+    //
+    // `ContentTypeSwitcher`'s four are two real decisions with both arms driven: the transition to
+    // a null `mediaItem` (a cleared queue) and a null `MediaMetadata.mediaType` (any item built
+    // without metadata -- `MediaItem.fromUri`, which is most of this module's own device fixtures).
+    // It measured 5/6 as `mediaItem?.mediaMetadata?.mediaType ?: return`, where the middle safe call
+    // on a *platform* type emitted a null check nothing can reach; that arm was deleted rather than
+    // excused, which is the same treatment `PlaybackConnection`'s ticker got in Task 5.
+    //
+    // `PlaybackLauncher`'s two are `launchQueue(..) ?: return` -- Task 9 measured them 1/2 and
+    // recorded the class as deliberately ungated, because every line of it needs a `MediaController`
+    // bound to a real `MuPlaybackService`. That is still true, and it is exactly what
+    // `MuPlaybackServiceTest` now does: this task pointed its `setQueueAndPlay` helper at the
+    // production launcher instead of a hand-rolled `setMediaItems(items, 0, 0L)` (which is how
+    // `startIndex` came to be applied nowhere), and added the empty-queue case, so both arms are
+    // driven where they are applied.
+    //
+    // Falsified by moving both connected runs' `.ec` aside -- the only execution data either class
+    // has: "Rule violated for class app.muplay.media.ContentTypeSwitcher: branches covered ratio is
+    // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for `PlaybackLauncher`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ContentTypeSwitcher",
+        "app.muplay.media.PlaybackLauncher",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // 6/6, 12/12 and 6/6 = 1.0000 LINE, instrumented: the same two classes plus
+    // `PlaybackLauncher$play$2`, the compiled body of the `withContext(mainDispatcher)` block, which
+    // is where the three controller calls actually live (`setMediaItems`, `prepare`, `play`) and
+    // carries no BRANCH counter of its own. `*play*2`, not `$play$2`: a literal `$` in a pattern
+    // never matches (this table's own doc, gotcha 3). `PlaybackLauncher$play$1` -- the suspend
+    // continuation -- measures zero counters of either kind, so `warnUngatedClasses` skips it and no
+    // rule could gate it, the same standing exception this module records for its `$Companion`s.
+    //
+    // Falsified with the same `.ec` files moved aside: lines covered ratio 0.00 for all three.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ContentTypeSwitcher",
+        "app.muplay.media.PlaybackLauncher",
+        "app.muplay.media.PlaybackLauncher*play*2",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey

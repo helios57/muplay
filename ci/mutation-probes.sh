@@ -173,6 +173,7 @@ INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
+AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
 DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
 DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
 DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
@@ -1543,6 +1544,43 @@ PROBES = [
      "      hasNext = false,\n      hasPrevious = false,",
      "      hasNext = true,\n      hasPrevious = false,",
      "nothing playing can step neither forward nor back", 1),
+
+    # ---- Plan 3 Task 6: spec section 5's one-line switch ------------------------------------
+    # `audio/`, not `media/`, and that is a usability decision rather than a taxonomy one: there
+    # are sixteen `media/` probes now, so `./ci/mutation-probes.sh media/` is a twelve-minute run
+    # and the harness that drives this script caps a single call at ten minutes. A prefix per topic
+    # is what the rest of this table already does (`retry/`, `queue/`, `resume/`, `pcm/`, `cast/`).
+    #
+    # NOTE ON SCOPE: everything else this task added is observed on the **instrumented** tier --
+    # audio focus, becoming-noisy, wake mode, the per-song audiobook join in `QueueRepository`, and
+    # `startIndex` -- and this runner is JVM-only. Worse than merely out of reach: `run_suite()`
+    # clears the JVM result directories and Gradle then restores `:core:media:testDebugUnitTest`
+    # FROM-CACHE, because androidTest sources are not inputs to it, so an androidTest probe reports
+    # MISSED with *zero* failures and reads like a broken test rather than an unrunnable probe.
+    # Those mutations were run by hand and their transcripts are in task-6-report.md, the same way
+    # Task 3's and Task 7b's are.
+    #
+    # The switch itself is here because it was deliberately built to be: `contentTypeFor` takes an
+    # `Int` and returns an `Int` precisely so the decision is gated by the fast tier.
+    ("audio/content-type-always-speech", AUDIO_ATTRIBUTES,
+     "    else -> C.AUDIO_CONTENT_TYPE_MUSIC",
+     "    else -> C.AUDIO_CONTENT_TYPE_SPEECH",
+     # A music player that declares everything to be speech ducks under a navigation prompt and is
+     # mixed differently by a car head unit -- and nothing about playback looks wrong.
+     "music is music", 3),
+    ("audio/content-type-always-music", AUDIO_ATTRIBUTES,
+     "    -> C.AUDIO_CONTENT_TYPE_SPEECH",
+     "    -> C.AUDIO_CONTENT_TYPE_MUSIC",
+     # The other direction, and the one the app shipped until this task: an audiobook that a
+     # navigation prompt talks over instead of pausing.
+     "an audiobook chapter is speech", 3),
+    ("audio/usage-not-media", AUDIO_ATTRIBUTES,
+     "      .setUsage(C.USAGE_MEDIA)",
+     "      .setUsage(C.USAGE_ASSISTANT)",
+     # `USAGE_MEDIA` is what puts this app on the media volume stream. On the assistant stream the
+     # volume rocker stops changing the music's volume, which a user reports as "the volume buttons
+     # do nothing" and no playback test can see.
+     "the usage is always media", 1),
 ]
 
 
@@ -1611,6 +1649,8 @@ LATER_PROBE_FILES = [
     PLAYER_STATE,
     PLAYER_VM,
     PLAYBACK_LAUNCHER,
+    # Plan 3 Task 6.
+    AUDIO_ATTRIBUTES,
 ]
 
 
