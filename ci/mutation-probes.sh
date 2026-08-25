@@ -133,6 +133,7 @@ LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiSta
 STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
+RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -642,6 +643,52 @@ PROBES = [
     ("media/no-cross-protocol-redirects", MEDIA_MODULE,
      "      .build()", "      .followSslRedirects(false)\n      .build()",
      "redirects are followed, including across protocols", 1),
+
+    # ---- Plan 3 Task 8a: the resume policy -- two numbers, and one of them is the whole seam ----
+    # `NeverResume.resolve` is one expression returning two values, which is precisely the shape
+    # this file's history says goes unobserved: a caller's index and a playback position, either of
+    # which a single constant could satisfy. It is on the JVM tier for the same reason
+    # `StreamRetryPolicy` is -- `resolve(mediaIds, requestedIndex)` names no Media3 or Android type,
+    # deliberately, so the one thing in this application allowed to choose a playback position is
+    # reachable from here.
+    #
+    # Note what is NOT here and cannot be: the *application* of the decision. `MuPlayer`'s six
+    # `setMediaItem(s)` overrides are what carry the answer to the player, they are instrumented
+    # (`ForwardingPlayer`, `MediaItem`, a real `ExoPlayer`), and a policy consulted correctly by
+    # five of six overloads would leave every probe below green. Those mutations belong to Task 8b
+    # and are recorded in its report, the same way `LiveNavidromeTest`'s test-side probes are.
+    # `ProgressTableShapeTest`'s own falsifiability is likewise absent by scope: the only mutation
+    # that would exercise it adds a column to a Room `@Entity`, which changes the exported schema
+    # and reddens `:core:database` wholesale rather than the one guard; it is recorded in
+    # task-8a-report.md as a test-side check instead.
+    #
+    # 5, 4, 4 and 3 rather than 1: "music restarts from 0" is asserted from several angles on
+    # purpose, so breaking it reddens several. The counts are measured, and a count that drifts is
+    # the signal -- see the note on `expected failures` above before changing one.
+    ("resume/position-honoured", RESUME_POLICY,
+     "startPositionMs = 0L)", "startPositionMs = 30_000L)",
+     # The defect spec section 3's whole seam exists to prevent, in its purest form: a policy that
+     # resumes music. Nothing outside `ResumePolicy` may choose a position, so nothing outside it
+     # can be mutated to prove the rule is live.
+     "the plan-3 policy starts every item from zero", 5),
+    ("resume/position-from-queue", RESUME_POLICY,
+     "startPositionMs = 0L)", "startPositionMs = mediaIds.size.toLong())",
+     # The same value read off the queue instead of being zero. The index-varying test cannot see
+     # this -- it asks about one queue -- which is why the queue-varying one exists.
+     "the position is zero whatever queue it is shown", 4),
+    ("resume/index-hardcoded", RESUME_POLICY,
+     "ResumeTarget(startIndex = requestedIndex,", "ResumeTarget(startIndex = 0,",
+     # The index belongs to the CALLER: "play track 3 of this album" is a legitimate request and a
+     # policy that discards it breaks that, silently, for every album.
+     "the caller's chosen item is respected", 3),
+    ("resume/index-from-queue", RESUME_POLICY,
+     "ResumeTarget(startIndex = requestedIndex,",
+     "ResumeTarget(startIndex = mediaIds.lastIndex - requestedIndex,",
+     # An index chosen from a mirrored view of the queue -- the shape a "resume from the end"
+     # attempt reaches for. It names the wrong track for every queue longer than one item, and it
+     # is the order-sensitivity probe for this file: `mediaIds` is an ordered list and
+     # `requestedIndex` indexes into the order the caller passed, not into any other view of it.
+     "neither the queue's contents nor its order changes the answer", 4),
 ]
 
 
@@ -680,12 +727,30 @@ def apply(path, old, new):
     open(path, "w").write(src.replace(old, new))
 
 
+# Every file the probes above mutate that is not named on the `git checkout` line inside
+# `revert()` below. One name per line, and a separate list rather than more names on that line, for
+# a merge reason that is not hypothetical: several branches add a probe file at once, a union merge
+# of two edits to the *same* line produces either a duplicated `],` (a SyntaxError, loud) or a
+# silently wrong argument list, and this project has already had a union merge collapse two
+# `CoverageFloor(...)` calls in the root build script into one broken call. Appending a line to
+# this list conflicts with nothing.
+#
+# Getting an entry wrong here fails in the worst direction rather than the safe one -- a mutated
+# file that no `git checkout` names is left in the tree when the run ends, which is exactly the
+# stray-mutation incident this script's header describes -- so add the file here in the same edit
+# that adds the probe, never after.
+LATER_PROBE_FILES = [
+    RESUME_POLICY,
+]
+
+
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
          LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
         check=True,
     )
+    subprocess.run(["git", "checkout", "--", *LATER_PROBE_FILES], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's

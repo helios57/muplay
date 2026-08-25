@@ -25,6 +25,13 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.coroutines.core)
 
+  // Test-only, and only until Task 8b lands `ProgressWriter`, which needs `MediaProgressDao` at
+  // compile time and will promote this to `implementation`. `ProgressTableShapeTest` reflects over
+  // `MediaProgressEntity`'s declared fields to hold `media_progress` to spec section 3's shape;
+  // the guard belongs in the module whose writer would be the one tempted to add a queue column,
+  // and this is the smallest dependency that lets it live there.
+  testImplementation(project(":core:database"))
+
   testImplementation(libs.coroutines.test)
 
   androidTestImplementation(libs.androidx.test.core)
