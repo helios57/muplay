@@ -899,6 +899,127 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.75"),
       includes = listOf("app.muplay.library.CoverArtCacheKeyKt"),
     ),
+    // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that
+    // BrowseJourneyTest and ScopedShuffleJourneyTest compose and exercise them for real. ----
+    //
+    // LINE, not BRANCH, per this table's own doc: `LibraryScreenKt` measures 91/158 = 0.5759
+    // BRANCH and `AlbumScreenKt` 28/58 = 0.4828, and essentially all of that shortfall is Compose
+    // codegen -- every `@Composable` call site compiles to `$changed`-bitmask branches and skipping
+    // checks that no user-reachable behaviour corresponds to. Gating those would be gating the
+    // Compose compiler. LINE is the counter that answers the question worth asking of a screen:
+    // did this row, this message, this control actually render on a device.
+    //
+    // Measured from a merged JVM + instrumented report after the journeys landed:
+    //   LibraryScreenKt   56/62 = 0.9032 LINE
+    //   AlbumScreenKt     23/24 = 0.9583 LINE
+    //
+    // **`LibraryScreenKt` clears 0.90 by one line, and that is worth knowing before somebody is
+    // surprised by it.** The six lines it misses are: the private `LibraryScreen` overload's own
+    // declaration line and its closing brace (the same two-line artifact `SetupScreenKt` carries,
+    // documented on that floor above); the `NoLibraries` message, which no journey can reach
+    // because reaching the library screen at all requires tagged libraries; and the three lines of
+    // the `discardedOutOfScope > 0` warning, which is unreachable precisely *because* the scoping
+    // works -- `ScopedShuffleJourneyTest` exists to prove nothing is ever discarded. A seventh
+    // missed line drops this to 0.8871 and fails, which is the intended behaviour: somebody should
+    // look.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.library.LibraryScreenKt", "app.muplay.library.AlbumScreenKt"),
+      requiresInstrumentedData = true,
+    ),
+    // `CoverArtKt` -- what is left in `CoverArt.kt` once `coverArtCacheKey` moved out: the
+    // `CoverArtImage` Composable alone. 18/23 = 0.7826 LINE, and **0.90 is not reachable, which is
+    // a statement about the fixtures rather than about the tests**.
+    //
+    // The five missed lines are the whole `coverArtId == null` placeholder branch (the `Box`, its
+    // three modifier lines, and the early `return`). Navidrome synthesises a `coverArt` id for
+    // every album it serves, including ones whose files carry no embedded artwork -- both seeded
+    // albums do -- so no journey against this container can put a null through that parameter, and
+    // a JVM test cannot compose at all (no Robolectric, by constraint). Raising this to 0.90 would
+    // therefore not buy a test; it would buy a permanently red gate, which is how a gate gets
+    // switched off.
+    //
+    // 0.75, not 0.7826: one line of headroom, deliberately, for the same reason the floor above
+    // has one. What it still catches is the thing worth catching -- if `AsyncImage` and the
+    // `produceState` lookup stopped executing, this class drops to about 10/23 = 0.43.
+    //
+    // The day a fixture album with genuinely no cover art exists, this floor goes to 0.90 and the
+    // five lines above come with it. Recorded here so that is a decision somebody can act on
+    // rather than a number nobody can explain.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.75"),
+      includes = listOf("app.muplay.library.CoverArtKt"),
+      requiresInstrumentedData = true,
+    ),
+    // The Compose compiler's own nested classes for these three files: `LazyColumn`'s four
+    // `$$inlined$items$default$N` adapters, the `FilterChip` label lambda, `AlbumScreen`'s
+    // `LaunchedEffect` body, and `CoverArtImage`'s `produceState` body. Gated rather than excluded,
+    // and gated low rather than not at all -- the same ruling `:core:database`'s 0.50 rule for
+    // suspend/`Flow.map` artefacts already makes, and for the same reason: a pattern broad enough
+    // to catch every Compose artefact would also catch author-written nested classes, and this
+    // project would rather carry an honest low floor than a silent hole.
+    //
+    // Measured LINE, all of them: `$$inlined$items$default$4` 2/3 = 0.6667 (the lowest, and the
+    // only one under 1.00 -- it is `items`'s key/contentType adapter, whose `contentType` arm is
+    // never taken because `LibraryScreen` passes `key =` but not `contentType =`);
+    // `$$inlined$items$default$1`/`$2`/`$3` 1/1; `LibraryScreen$7$5$1$2$2$1` 1/1;
+    // `AlbumScreen$1$1` 1/1; `CoverArtImage$url$2$1` 3/3. Floored at 0.65 -- a real number this run
+    // produced, one line of headroom under the lowest of them, not a round one.
+    //
+    // `excludes` names the three file-classes explicitly: a `"...Kt*"` include matches the bare
+    // `"...Kt"` too (JaCoCo's `*` matches the empty string), and folding them in here would drop
+    // all three from their own floors above to this one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf(
+        "app.muplay.library.LibraryScreenKt*",
+        "app.muplay.library.AlbumScreenKt*",
+        "app.muplay.library.CoverArtKt*",
+      ),
+      excludes = listOf(
+        "app.muplay.library.LibraryScreenKt",
+        "app.muplay.library.AlbumScreenKt",
+        "app.muplay.library.CoverArtKt",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The two ViewModels' own coroutine and `Flow` codegen -- `$uiState$1`/`$2`, `$search$1`,
+    // `$refresh$1`, `$shuffle$1`, `$albums$1`, `$load$1`, the `$$inlined$flatMapLatest$1` pair, and
+    // the two anonymous `LibrarySource`/`AlbumSource` adapters the `@Inject` secondary constructors
+    // wire to the real repositories. Task 9's own floor comment explains why the *outer* classes
+    // need exact-name includes: a `"LibraryViewModel*"` wildcard cannot hold a BRANCH floor here,
+    // because these nested classes measure 0.50-0.90 BRANCH and would drag it under any minimum
+    // worth setting. This is the other half of that ruling -- the nested classes get their own
+    // rule, on the counter that suits them.
+    //
+    // LINE, for the same reason `:core:database`'s equivalent rule is LINE: what is worth knowing
+    // about compiler-generated continuation machinery is whether it ran, not which of its
+    // state-machine arms the compiler emitted. Measured: `LibraryViewModel$1` 7/8 = 0.8750 (the
+    // Hilt-only `LibrarySource` adapter -- its eighth line is `allIds`, which the journeys never
+    // reach because a library is always selected by then); every other class here 1/1 to 10/10 at
+    // 1.0000, and `$currentLibraryId$1`/`$Companion` at 0/0, JaCoCo's isNaN pass. Floored at 0.85.
+    //
+    // `AlbumViewModel*Fetch*` is excluded rather than left to ride along: Task 9's BRANCH rule
+    // above already names it, and a class matched by two floors is a class whose failure message
+    // names the wrong rule.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.library.LibraryViewModel*", "app.muplay.library.AlbumViewModel*"),
+      excludes = listOf(
+        "app.muplay.library.LibraryViewModel",
+        "app.muplay.library.AlbumViewModel",
+        "app.muplay.library.AlbumViewModel*Fetch*",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
