@@ -69,6 +69,27 @@ object DeviceDescription {
    */
   const val MAX_DESCRIPTION_BYTES: Int = 512 * 1024
 
+  /**
+   * How deep `deviceList` nesting may go before the description is refused.
+   *
+   * The root device is depth 0, so a Sonos -- root `ZonePlayer`, embedded `MediaRenderer` and
+   * `MediaServer` -- reaches 1, and this is four times the deepest shape anyone has published.
+   *
+   * It is a **bound on the stack**, not a taste in schemas. [parseDevice] walks the tree by
+   * recursion, and a walk with nothing stopping it is not a refusal but a `StackOverflowError`:
+   * measured here, `<root><device>` plus ten thousand nested `<deviceList><device>` pairs is
+   * 420,030 characters, comfortably under [MAX_DESCRIPTION_BYTES], parses into a DOM without
+   * complaint, and then blows the stack in the walk. Android's stacks are smaller, so it blows
+   * shallower there.
+   *
+   * That was contained only by luck -- Kotlin's `runCatching` catches `Throwable`, so
+   * `RendererDirectory.describe` happened to drop the device -- and luck is not the contract:
+   * [parse] is public API whose KDoc enumerates what it throws, and Task 3's `SoapClient` tells
+   * Tasks 5, 8 and 9 that one `catch (e: IOException)` around a call is complete. An `Error`
+   * escaping into one of those is a crash, and swallowing one is not a state to carry on from.
+   */
+  const val MAX_DEVICE_DEPTH: Int = 8
+
   fun parse(xml: String, descriptionUrl: URI): UpnpDevice {
     if (xml.length > MAX_DESCRIPTION_BYTES) {
       throw MalformedDescriptionException(
@@ -92,7 +113,7 @@ object DeviceDescription {
     val deviceElement = childElement(root, "device")
       ?: throw MalformedDescriptionException("device description at $descriptionUrl has no <device> element")
 
-    return parseDevice(deviceElement, base)
+    return parseDevice(deviceElement, base, descriptionUrl, depth = 0)
   }
 
   /**
@@ -105,11 +126,31 @@ object DeviceDescription {
    * is a gate that can silently not run, which is the defect class this project exists to prevent.
    *
    * So the refusal is also done here, in code that behaves identically on both platforms, and it
-   * is **this** check the test asserts against. The factory features stay as defence in depth.
+   * is **this** check -- by its own wording -- that the tests assert against. The factory features
+   * stay as defence in depth.
+   *
+   * ### The whole document, not a prologue-sized window
+   *
+   * This used to scan the first 4096 characters, on the reasoning that a `DOCTYPE` is only legal
+   * in the prolog. It is, and the prolog has no length limit: a **comment** is legal `Misc` before
+   * the doctype, so `<!--` + five thousand spaces + `-->` + `<!DOCTYPE root [<!ENTITY xxe SYSTEM
+   * "file:///etc/hostname">]>` is a perfectly well-formed document, five thousand characters
+   * short of [MAX_DESCRIPTION_BYTES], with its doctype at index 5008. The window returned false
+   * on it.
+   *
+   * No test in this project could see that hole, and the reason is exactly the reason the window
+   * was dangerous: on the JVM the Apache feature above *does* catch it, so the bypass is invisible
+   * here and live on Android, where that feature is expected to be refused at `setFeature` and
+   * Expat will fetch a `SYSTEM` entity with no `EntityResolver` in the way. The regression test
+   * therefore asserts this function's own sentence and not merely the refusal.
+   *
+   * A `contains` over a string already capped at [MAX_DESCRIPTION_BYTES] is free. Refusing a
+   * description that carries the literal `<!DOCTYPE` inside a text node is the right side to fail
+   * on: this document comes from an unauthenticated device on the local network, and no renderer
+   * has any business putting that string in a friendly name.
    */
   private fun rejectDoctype(xml: String, descriptionUrl: URI) {
-    val prologue = xml.take(DOCTYPE_SCAN_BYTES)
-    if (prologue.contains("<!DOCTYPE", ignoreCase = true)) {
+    if (xml.contains("<!DOCTYPE", ignoreCase = true)) {
       throw MalformedDescriptionException(
         "device description at $descriptionUrl declares a DOCTYPE. MuPlay refuses one: this " +
           "document comes from an unauthenticated device on the local network, and a DOCTYPE is " +
@@ -117,8 +158,6 @@ object DeviceDescription {
       )
     }
   }
-
-  private const val DOCTYPE_SCAN_BYTES = 4096
 
   private fun hardenedFactory(): DocumentBuilderFactory =
     DocumentBuilderFactory.newInstance().apply {
@@ -138,19 +177,31 @@ object DeviceDescription {
       runCatching { setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
     }
 
-  private fun parseDevice(element: Element, base: URI): UpnpDevice = UpnpDevice(
-    deviceType = childText(element, "deviceType").orEmpty(),
-    udn = childText(element, "UDN").orEmpty(),
-    friendlyName = childText(element, "friendlyName").orEmpty(),
-    manufacturer = childText(element, "manufacturer"),
-    modelName = childText(element, "modelName"),
-    services = childElement(element, "serviceList")
-      ?.let { list -> childElements(list, "service").mapNotNull { parseService(it, base) } }
-      .orEmpty(),
-    embedded = childElement(element, "deviceList")
-      ?.let { list -> childElements(list, "device").map { parseDevice(it, base) } }
-      .orEmpty(),
-  )
+  /** @param depth 0 for the root device, one more for each `deviceList` it is nested inside. */
+  private fun parseDevice(element: Element, base: URI, descriptionUrl: URI, depth: Int): UpnpDevice {
+    // Refused rather than walked. See MAX_DEVICE_DEPTH: without this the walk is a
+    // StackOverflowError on a document that is well under every other bound here.
+    if (depth > MAX_DEVICE_DEPTH) {
+      throw MalformedDescriptionException(
+        "device description at $descriptionUrl nests devices more than $MAX_DEVICE_DEPTH deep",
+      )
+    }
+    return UpnpDevice(
+      deviceType = childText(element, "deviceType").orEmpty(),
+      udn = childText(element, "UDN").orEmpty(),
+      friendlyName = childText(element, "friendlyName").orEmpty(),
+      manufacturer = childText(element, "manufacturer"),
+      modelName = childText(element, "modelName"),
+      services = childElement(element, "serviceList")
+        ?.let { list -> childElements(list, "service").mapNotNull { parseService(it, base) } }
+        .orEmpty(),
+      embedded = childElement(element, "deviceList")
+        ?.let { list ->
+          childElements(list, "device").map { parseDevice(it, base, descriptionUrl, depth + 1) }
+        }
+        .orEmpty(),
+    )
+  }
 
   private fun parseService(element: Element, base: URI): UpnpService? {
     val type = childText(element, "serviceType") ?: return null
