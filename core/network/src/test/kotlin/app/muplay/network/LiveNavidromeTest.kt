@@ -133,20 +133,6 @@ class LiveNavidromeTest {
   }
 
   @Test
-  fun `a non-numeric musicFolderId puts an audiobook chapter into the music shuffle`() = runTest {
-    // The user-visible failure this whole application exists to prevent, reproduced end to end:
-    // ask the server to shuffle the *music* library with an unparseable scope and it hands back
-    // the audiobook as well, indistinguishable from a song (Navidrome types every media file
-    // `"type": "music"`). The `Test Book.m4b` is a 15-second stand-in for chapter 14 of a novel.
-    val scoped = songTitles(randomSongs(MUSIC_LIBRARY_ID.toString()))
-    val leaked = songTitles(randomSongs("abc"))
-
-    assertThat(scoped).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
-    assertThat(leaked).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3", "Test Book")
-    assertThat(leaked).describedAs("the audiobook, inside a music shuffle").contains("Test Book")
-  }
-
-  @Test
   fun `both AlbumListType wire values are types this server implements`() = runTest {
     // `AlbumListType`'s two wire values are a protocol contract with this server, and `NEWEST` is
     // sent by nothing in the build yet -- so nothing else would notice a typo in it until a user
@@ -177,20 +163,41 @@ class LiveNavidromeTest {
 
   // --- library-scoped shuffle: the headline feature, proved against the real server -------------
 
+  /**
+   * Fix round 1, N-3 (LOW): the brief's own rationale for `repeat(50)` -- "over a four-item
+   * corpus makes an unscoped result overwhelmingly likely to show up" -- does not hold at
+   * `size = 500` against a 3-track music library: every draw returns the whole library
+   * deterministically, so a scope leak shows up on draw one (confirmed directly:
+   * task-7-report.md's mutation #2 failed on its first draw, not its fiftieth) and the other 49
+   * add nothing to *that* assertion. Rather than shrinking the request (which would weaken the
+   * "never" in this test's own name -- a smaller draw could miss a leak by chance) the fifty
+   * draws are re-purposed for the property they are actually suited to prove: fix round 1, N-2
+   * (MEDIUM), that the server -- and everything between it and this assertion -- is truly
+   * randomising rather than returning a fixed order every time. A `.sortedBy` or any other
+   * deterministic reordering inserted anywhere in that path would collapse every draw's title
+   * order to the same value; `distinctDrawOrders` catches that directly, which no single draw,
+   * however many times repeated, ever could.
+   */
   @Test
   fun `shuffling the music library never returns the audiobook`() = runTest {
-    // The whole feature in one assertion, against the real server. `ci/configure-libraries.sh`
-    // seeds library 1 "Music" with three tracks and library 2 "Audiobooks" with "Test Book";
-    // fifty draws over a four-item corpus makes an unscoped result overwhelmingly likely to
-    // show up, and a scoped one certain not to.
+    // `ci/configure-libraries.sh` seeds library 1 "Music" with three tracks and library 2
+    // "Audiobooks" with "Test Book". See this test's own doc for what the fifty draws prove.
     val client = client("testpass")
+    val distinctDrawOrders = mutableSetOf<List<String>>()
 
     repeat(50) {
       val titles = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).map { it.title }
       assertThat(titles).isNotEmpty
       assertThat(titles).doesNotContain(AUDIOBOOK_TITLE)
       assertThat(titles).allMatch { it in MUSIC_TITLES }
+      distinctDrawOrders += titles
     }
+
+    // The property fifty draws can actually prove that one cannot: real randomisation, not fifty
+    // identical draws laundered through a loop.
+    assertThat(distinctDrawOrders.size)
+      .describedAs("distinct draw orders across 50 draws of the same 3-track library")
+      .isGreaterThan(1)
   }
 
   @Test
@@ -198,7 +205,7 @@ class LiveNavidromeTest {
     // The control. Without it, the test above would pass just as well against a client that
     // returned nothing at all, or against a server with an empty audiobook library -- which is
     // exactly the shape of the eleventh silent gate this project already shipped once.
-    val titles = client("testpass").getRandomSongs(musicFolderId = AUDIOBOOK_LIBRARY_ID, size = 500)
+    val titles = client("testpass").getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500)
       .map { it.title }
 
     assertThat(titles).containsExactly(AUDIOBOOK_TITLE)
@@ -244,7 +251,7 @@ class LiveNavidromeTest {
 
     assertThat(client.search3("Test", MUSIC_LIBRARY_ID, 10, 10, 10).songs.map { it.title })
       .containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
-    assertThat(client.search3("Test", AUDIOBOOK_LIBRARY_ID, 10, 10, 10).songs.map { it.title })
+    assertThat(client.search3("Test", AUDIOBOOKS_LIBRARY_ID, 10, 10, 10).songs.map { it.title })
       .containsExactly(AUDIOBOOK_TITLE)
   }
 
@@ -254,7 +261,7 @@ class LiveNavidromeTest {
 
     assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
       .containsExactly("Test Album")
-    assertThat(client.getAlbumList2(AUDIOBOOK_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
+    assertThat(client.getAlbumList2(AUDIOBOOKS_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
       .containsExactly("Test Book")
     // The paging loop's termination condition, against the real server: past the end is an empty
     // list, not an error.
@@ -282,7 +289,7 @@ class LiveNavidromeTest {
     //
     // Asserted through the raw JSON because `Song` deliberately does not model `type` -- reading
     // a field that is always the same constant would be reading nothing.
-    val body = rawRest("getRandomSongs", mapOf("size" to "500", "musicFolderId" to AUDIOBOOK_LIBRARY_ID.toString()))
+    val body = rawRest("getRandomSongs", mapOf("size" to "500", "musicFolderId" to AUDIOBOOKS_LIBRARY_ID.toString()))
 
     assertThat(body).contains(AUDIOBOOK_TITLE)
     assertThat(body).contains("\"type\":\"music\"")
@@ -319,14 +326,8 @@ class LiveNavidromeTest {
   private fun albumList(params: Map<String, String>): SubsonicResponseBody =
     rawCommand("getAlbumList2", params)
 
-  private fun randomSongs(musicFolderId: String): SubsonicResponseBody =
-    rawCommand("getRandomSongs", mapOf("size" to "500", "musicFolderId" to musicFolderId))
-
   private fun albumNames(body: SubsonicResponseBody): List<String> =
     body.albumList2?.album.orEmpty().map { it.name }
-
-  private fun songTitles(body: SubsonicResponseBody): List<String> =
-    body.randomSongs?.song.orEmpty().map { it.title }
 
   /**
    * A `getRandomSongs` request built by hand, so a `musicFolderId` that [SubsonicClient]'s own
@@ -393,8 +394,6 @@ class LiveNavidromeTest {
     /** The ids `ci/configure-libraries.sh` produces: library 1 is "Music", library 2 "Audiobooks". */
     const val MUSIC_LIBRARY_ID = 1
     const val AUDIOBOOKS_LIBRARY_ID = 2
-    /** Same library as [AUDIOBOOKS_LIBRARY_ID]; singular name matches this task's own brief. */
-    const val AUDIOBOOK_LIBRARY_ID = 2
     const val AUDIOBOOK_TITLE = "Test Book"
     val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
     /** Three mp3s plus one m4b — ci/seed-fixtures.sh, and the count configure-libraries.sh waits for. */
