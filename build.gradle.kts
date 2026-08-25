@@ -345,13 +345,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // for NaN), and including them is what keeps `warnUngatedClasses` from flagging them on every
     // run. That is honest for these specifically because they contain **no author-written
     // executable code at all** -- read them: `ServerInfo`, `MusicLibrary`, `Album`,
-    // `AlbumWithSongs`, `Artist`, `Song` and `ScanStatus` are `data class` declarations with no
-    // body, and `LibraryRole`/`AlbumListType` are `enum class` declarations whose only members are
-    // constructor properties, so every line JaCoCo counts in them is compiler-generated
-    // `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that would be gating the
-    // Kotlin compiler, the same argument this table already makes about Compose's synthetic
-    // branches. If any of them grows a body, it needs a rule of its own -- which is exactly what
-    // happened to `SearchResults`, and why it is listed above rather than here.
+    // `AlbumWithSongs`, `Artist`, `Song`, `ScanStatus` and `ShuffleResult` are `data class`
+    // declarations with no body, and `LibraryRole`/`AlbumListType` are `enum class` declarations
+    // whose only members are constructor properties, so every line JaCoCo counts in them is
+    // compiler-generated `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that
+    // would be gating the Kotlin compiler, the same argument this table already makes about
+    // Compose's synthetic branches. If any of them grows a body, it needs a rule of its own --
+    // which is exactly what happened to `SearchResults`, and why it is listed above rather than
+    // here.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -368,6 +369,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.Artist",
         "app.muplay.model.ScanStatus",
         "app.muplay.model.Song",
+        "app.muplay.model.ShuffleResult",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -639,6 +641,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.database.SyncEngine*"),
       requiresInstrumentedData = true,
     ),
+    // `ShuffleRepository`'s one author-written branch: `shuffle`'s early `if (returned.isEmpty())`
+    // return, which `anEmptyServerResponseIsAnEmptyResultRatherThanAnError` exercises true and
+    // every other `ShuffleRepositoryTest` case exercises false. The scope guard itself
+    // (`returned.filter { it.id in confirmed }`) is a lambda with no branch of its own in this
+    // class's bytecode -- its predicate's `Set.contains` compiles to a method call, not a branch
+    // instruction here, which is exactly why `aSongFromAnotherLibraryIsDroppedAndCounted` and
+    // `aSongTheMirrorHasNeverSeenIsDropped` are proved by mutation (task-7-report.md) rather than
+    // by this floor: a BRANCH rule cannot tell `returned.filter { it.id in confirmed }` apart from
+    // `returned` unfiltered, since both compile to the same 2 branches in this method. Measured
+    // 2/2 from a real `jacocoTestReport` run (instrumented-only, like every other repository
+    // here).
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.ShuffleRepository"),
+      requiresInstrumentedData = true,
+    ),
     // Everything whose value is "did this line run at all": the Room database class, the Hilt
     // providers, the entities that need an emulator to be reached at all (LibraryEntity,
     // MediaProgressEntity -- unlike the three mirror entities above, nothing JVM-side ever
@@ -646,7 +666,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // (LibraryEntity, NotConfiguredException, MirrorReplacement), and every class above that also
     // has its own BRANCH rule (including `BrowseDao`, whose own `require` branches are gated
     // above; it stays listed here too for its LINE ratio, the same dual-listing `LibraryRepository`
-    // and `SubsonicSourceProvider` already have). No separate BRANCH entry for
+    // and `SubsonicSourceProvider` already have -- `ShuffleRepository` now too, 10/10 LINE).
+    // No separate BRANCH entry for
     // LibraryDao/LibraryEntity/MediaProgressEntity/MirrorReplacement -- they contain no
     // author-written conditional, so a BRANCH rule would match only zero-total counters and pass
     // silently at every minimum through JaCoCo's isNaN branch.
@@ -685,6 +706,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.LibraryRepository",
         "app.muplay.database.SubsonicSourceProvider",
         "app.muplay.database.BrowseRepository",
+        "app.muplay.database.ShuffleRepository",
         "app.muplay.database.NotConfiguredException",
         "app.muplay.database.EmptyLibraryListException",
         "app.muplay.database.SyncEngine*",
@@ -706,6 +728,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // and keeps this rule's reasoning -- "one rule for every suspend/Flow.map artefact in this
     // module" -- true without a second near-duplicate rule.
     //
+    // `ShuffleRepository*` rides along too, for the same reason: `shuffle`'s own suspend
+    // continuation (`ShuffleRepository$shuffle$1`) and `ShuffleRepository$Companion` (a bare
+    // `const val`, so no getter and no counters at all -- unlike a plain `val` companion member)
+    // both measure 0/0 LINE, JaCoCo's isNaN branch, not "excluded".
+    //
     // Gated rather than excluded, and gated low rather than not at all. Excluding them the way
     // Room's `_Impl` and Hilt's generated types are excluded would be defensible, but those have
     // dedicated, stable name shapes; a pattern broad enough to catch every coroutine artefact
@@ -722,6 +749,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.LibraryRepository*",
         "app.muplay.database.SubsonicSourceProvider*",
         "app.muplay.database.BrowseRepository*",
+        "app.muplay.database.ShuffleRepository*",
       ),
       excludes = listOf(
         "app.muplay.database.CredentialStore",
@@ -729,6 +757,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.LibraryRepository",
         "app.muplay.database.SubsonicSourceProvider",
         "app.muplay.database.BrowseRepository",
+        "app.muplay.database.ShuffleRepository",
       ),
       requiresInstrumentedData = true,
     ),

@@ -133,20 +133,6 @@ class LiveNavidromeTest {
   }
 
   @Test
-  fun `a non-numeric musicFolderId puts an audiobook chapter into the music shuffle`() = runTest {
-    // The user-visible failure this whole application exists to prevent, reproduced end to end:
-    // ask the server to shuffle the *music* library with an unparseable scope and it hands back
-    // the audiobook as well, indistinguishable from a song (Navidrome types every media file
-    // `"type": "music"`). The `Test Book.m4b` is a 15-second stand-in for chapter 14 of a novel.
-    val scoped = songTitles(randomSongs(MUSIC_LIBRARY_ID.toString()))
-    val leaked = songTitles(randomSongs("abc"))
-
-    assertThat(scoped).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3")
-    assertThat(leaked).containsExactlyInAnyOrder("Track 1", "Track 2", "Track 3", "Test Book")
-    assertThat(leaked).describedAs("the audiobook, inside a music shuffle").contains("Test Book")
-  }
-
-  @Test
   fun `both AlbumListType wire values are types this server implements`() = runTest {
     // `AlbumListType`'s two wire values are a protocol contract with this server, and `NEWEST` is
     // sent by nothing in the build yet -- so nothing else would notice a typo in it until a user
@@ -175,6 +161,157 @@ class LiveNavidromeTest {
     assertThat(body.error?.message).contains("not implemented")
   }
 
+  // --- library-scoped shuffle: the headline feature, proved against the real server -------------
+
+  /**
+   * Fix round 1, N-3 (LOW): the brief's own rationale for `repeat(50)` -- "over a four-item
+   * corpus makes an unscoped result overwhelmingly likely to show up" -- does not hold at
+   * `size = 500` against a 3-track music library: every draw returns the whole library
+   * deterministically, so a scope leak shows up on draw one (confirmed directly:
+   * task-7-report.md's mutation #2 failed on its first draw, not its fiftieth) and the other 49
+   * add nothing to *that* assertion. Rather than shrinking the request (which would weaken the
+   * "never" in this test's own name -- a smaller draw could miss a leak by chance) the fifty
+   * draws are re-purposed for the property they are actually suited to prove: fix round 1, N-2
+   * (MEDIUM), that the server -- and everything between it and this assertion -- is truly
+   * randomising rather than returning a fixed order every time. A `.sortedBy` or any other
+   * deterministic reordering inserted anywhere in that path would collapse every draw's title
+   * order to the same value; `distinctDrawOrders` catches that directly, which no single draw,
+   * however many times repeated, ever could.
+   */
+  @Test
+  fun `shuffling the music library never returns the audiobook`() = runTest {
+    // `ci/configure-libraries.sh` seeds library 1 "Music" with three tracks and library 2
+    // "Audiobooks" with "Test Book". See this test's own doc for what the fifty draws prove.
+    val client = client("testpass")
+    val distinctDrawOrders = mutableSetOf<List<String>>()
+
+    repeat(50) {
+      val titles = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).map { it.title }
+      assertThat(titles).isNotEmpty
+      assertThat(titles).doesNotContain(AUDIOBOOK_TITLE)
+      assertThat(titles).allMatch { it in MUSIC_TITLES }
+      distinctDrawOrders += titles
+    }
+
+    // The property fifty draws can actually prove that one cannot: real randomisation, not fifty
+    // identical draws laundered through a loop.
+    assertThat(distinctDrawOrders.size)
+      .describedAs("distinct draw orders across 50 draws of the same 3-track library")
+      .isGreaterThan(1)
+  }
+
+  @Test
+  fun `shuffling the audiobook library returns the audiobook`() = runTest {
+    // The control. Without it, the test above would pass just as well against a client that
+    // returned nothing at all, or against a server with an empty audiobook library -- which is
+    // exactly the shape of the eleventh silent gate this project already shipped once.
+    val titles = client("testpass").getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500)
+      .map { it.title }
+
+    assertThat(titles).containsExactly(AUDIOBOOK_TITLE)
+  }
+
+  @Test
+  fun `an unknown numeric library id fails closed`() = runTest {
+    // Navidrome rejects a numeric id it does not know rather than widening the scope: error 70,
+    // "Library 99 not found or not accessible". Pinned here because the *next* test depends on
+    // this being the contrast case.
+    val result = runCatching { client("testpass").getRandomSongs(musicFolderId = 99, size = 10) }
+
+    assertThat(result.isFailure).isTrue
+    val error = result.exceptionOrNull()
+    assertThat(error).isInstanceOf(SubsonicErrorException::class.java)
+    assertThat((error as SubsonicErrorException).code).isEqualTo(70)
+  }
+
+  /**
+   * The trap that makes `musicFolderId` a non-null `Int` everywhere in this codebase, pinned
+   * against the real server.
+   *
+   * A `musicFolderId` Navidrome cannot parse is **silently ignored** — `status: "ok"`, and the
+   * response covers every library. This test deliberately bypasses [SubsonicClient], because
+   * [SubsonicClient] is built so that this cannot be expressed: it takes an `Int`. The raw
+   * request below is the only way to reach the behaviour, and the assertion is what stops anyone
+   * "simplifying" that `Int` to a `String` or an `Int?` on the grounds that the server validates
+   * its input. It does not.
+   */
+  @Test
+  fun `a non-numeric library id is ignored and silently widens the scope`() = runTest {
+    listOf("", "abc", "1abc").forEach { malformed ->
+      val titles = rawRandomSongTitles(malformed)
+
+      assertThat(titles).describedAs("musicFolderId='%s'", malformed).contains(AUDIOBOOK_TITLE)
+      assertThat(titles).describedAs("musicFolderId='%s'", malformed).containsAll(MUSIC_TITLES)
+    }
+  }
+
+  @Test
+  fun `search3 is scoped by the same mechanism and the same trap`() = runTest {
+    val client = client("testpass")
+
+    assertThat(client.search3("Test", MUSIC_LIBRARY_ID, 10, 10, 10).songs.map { it.title })
+      .containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
+    assertThat(client.search3("Test", AUDIOBOOKS_LIBRARY_ID, 10, 10, 10).songs.map { it.title })
+      .containsExactly(AUDIOBOOK_TITLE)
+  }
+
+  @Test
+  fun `getAlbumList2 is scoped and pages`() = runTest {
+    val client = client("testpass")
+
+    assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
+      .containsExactly("Test Album")
+    assertThat(client.getAlbumList2(AUDIOBOOKS_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
+      .containsExactly("Test Book")
+    // The paging loop's termination condition, against the real server: past the end is an empty
+    // list, not an error.
+    assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 99))
+      .isEmpty()
+  }
+
+  @Test
+  fun `getAlbum returns the album's tracks and stamps the library the caller scoped by`() = runTest {
+    val client = client("testpass")
+    val album = client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).single()
+
+    val withSongs = client.getAlbum(album.id, MUSIC_LIBRARY_ID)
+
+    assertThat(withSongs.songs.map { it.title }).containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
+    assertThat(withSongs.songs).allMatch { it.libraryId == MUSIC_LIBRARY_ID }
+  }
+
+  @Test
+  fun `the real server reports every song as type music including the audiobook`() = runTest {
+    // Spec section 4's central claim, asserted rather than quoted: Navidrome hardcodes
+    // child.Type = "music" for every media file, so no response can ever tell a client that
+    // something is an audiobook. This is why LibraryRole is an out-of-band, user-made decision
+    // and why the mirror stamps a library id on every row.
+    //
+    // Asserted through the raw JSON because `Song` deliberately does not model `type` -- reading
+    // a field that is always the same constant would be reading nothing.
+    val body = rawRest("getRandomSongs", mapOf("size" to "500", "musicFolderId" to AUDIOBOOKS_LIBRARY_ID.toString()))
+
+    assertThat(body).contains(AUDIOBOOK_TITLE)
+    assertThat(body).contains("\"type\":\"music\"")
+    assertThat(body).doesNotContain("\"audiobook\"")
+  }
+
+  @Test
+  fun `getScanStatus reports a lastScan watermark and does not trigger a scan`() = runTest {
+    val client = client("testpass")
+
+    val first = client.getScanStatus()
+    assertThat(first.isScanning).isFalse
+    assertThat(first.lastScan).isNotNull.isNotBlank
+    assertThat(first.scannedCount).isEqualTo(SEEDED_TRACK_COUNT)
+
+    // Tempo's getScanStatus calls startScan, re-scanning the whole server on every poll. If this
+    // client did the same, the second call would find a scan running (or a moved watermark).
+    val second = client.getScanStatus()
+    assertThat(second.isScanning).isFalse
+    assertThat(second.lastScan).isEqualTo(first.lastScan)
+  }
+
   // --- raw Subsonic, deliberately not through SubsonicClient -----------------------------------
 
   private fun scopedAlbumList(musicFolderId: String): SubsonicResponseBody =
@@ -189,14 +326,32 @@ class LiveNavidromeTest {
   private fun albumList(params: Map<String, String>): SubsonicResponseBody =
     rawCommand("getAlbumList2", params)
 
-  private fun randomSongs(musicFolderId: String): SubsonicResponseBody =
-    rawCommand("getRandomSongs", mapOf("size" to "500", "musicFolderId" to musicFolderId))
-
   private fun albumNames(body: SubsonicResponseBody): List<String> =
     body.albumList2?.album.orEmpty().map { it.name }
 
-  private fun songTitles(body: SubsonicResponseBody): List<String> =
-    body.randomSongs?.song.orEmpty().map { it.title }
+  /**
+   * A `getRandomSongs` request built by hand, so a `musicFolderId` that [SubsonicClient]'s own
+   * `Int` parameter makes unrepresentable can still be sent to the real server. Used only to pin
+   * the server's silent-widening behaviour.
+   */
+  private fun rawRandomSongTitles(musicFolderId: String): List<String> {
+    val body = rawRest("getRandomSongs", mapOf("size" to "500", "musicFolderId" to musicFolderId))
+    return Regex(""""title":"([^"]*)"""").findAll(body).map { it.groupValues[1] }.toList()
+  }
+
+  /** One raw Subsonic GET, authenticated exactly as the client authenticates, returning the body. */
+  private fun rawRest(command: String, params: Map<String, String>): String {
+    val salt = "0123456789abcdef"
+    val auth = SubsonicAuth.authParams(
+      SubsonicCredentials(baseUrl = baseUrl, username = "admin", password = "testpass"),
+      salt,
+    )
+    val url = "$baseUrl/rest/$command".toHttpUrl().newBuilder().apply {
+      (auth + params).forEach { (name, value) -> addQueryParameter(name, value) }
+    }.build()
+    return OkHttpClient().newCall(Request.Builder().url(url).build()).execute()
+      .use { checkNotNull(it.body).string() }
+  }
 
   /**
    * One Subsonic GET, built and authenticated **here** rather than through [SubsonicClient].
@@ -239,6 +394,10 @@ class LiveNavidromeTest {
     /** The ids `ci/configure-libraries.sh` produces: library 1 is "Music", library 2 "Audiobooks". */
     const val MUSIC_LIBRARY_ID = 1
     const val AUDIOBOOKS_LIBRARY_ID = 2
+    const val AUDIOBOOK_TITLE = "Test Book"
+    val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
+    /** Three mp3s plus one m4b — ci/seed-fixtures.sh, and the count configure-libraries.sh waits for. */
+    const val SEEDED_TRACK_COUNT = 4
 
     val json = Json { ignoreUnknownKeys = true }
   }
