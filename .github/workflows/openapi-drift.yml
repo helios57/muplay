@@ -1,0 +1,80 @@
+name: OpenAPI drift
+
+# Nightly and on demand. NOT on pull_request: this workflow asks a question about the *upstream
+# world*, which can change while this repository does not, so a failure here is never a reason to
+# block a change somebody wrote. Spec section 10 calls it "non-blocking" and means it.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Read-only. This workflow reports; it does not open an issue, push a refreshed spec, or comment
+# on anything. Refreshing the vendored copy is a human decision, because it can turn
+# `NavidromeSpecDeviationTest`'s pinned assertions red on purpose.
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The vendored copy, byte for byte, is the subject. `opensubsonic-1.16.1.json` is the file
+      # `OpenApiFixtureValidator` loads, so this compares the exact artefact the oracle uses --
+      # not a rendering of it, and not a version string that can lag the content.
+      - name: Fetch the upstream specification
+        id: fetch
+        run: |
+          set -euo pipefail
+          curl -fsSL "$UPSTREAM_SPEC_URL" -o /tmp/upstream.json
+          # Normalised through `jq -S` so a key reordering is not reported as drift. A reordering
+          # is not drift; a changed schema is.
+          jq -S . /tmp/upstream.json > /tmp/upstream.norm.json
+          jq -S . core/testing/src/main/resources/openapi/opensubsonic-1.16.1.json > /tmp/vendored.norm.json
+          if diff -q /tmp/vendored.norm.json /tmp/upstream.norm.json >/dev/null; then
+            echo "drifted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+            # `|| true` is load-bearing, not defensive noise. `diff` exits **1** when the files
+            # differ, and `head` SIGPIPEs it when the diff runs past 400 lines; under this step's
+            # own `set -euo pipefail` either one aborts the step here -- on the *drift* path only.
+            # Measured before this line existed, by changing one character in the vendored copy:
+            # the step died right here and printed nothing at all, the Report step never ran, and
+            # the only signal was a red tick on a workflow that is deliberately non-blocking and
+            # therefore watched by nobody. A drift check that reports drift by dying silently is
+            # the exact defect it exists to prevent.
+            diff -u /tmp/vendored.norm.json /tmp/upstream.norm.json | head -400 > /tmp/drift.diff || true
+          fi
+        env:
+          # The exact URL Plan 1 vendored from -- see Plan 1 Task 3, which fetched this file with
+          # the same `curl`. **Re-confirmed on 2026-08-25, from this repository, before committing
+          # this file**: HTTP 200, 453,720 bytes, `openapi: 3.0.0`, `info.version: 1.16.1`, **87
+          # paths and 195 schemas** -- the same two numbers spec section 10 quotes -- and, through
+          # `jq -S`, byte-identical to the vendored copy. So this check's first real run must
+          # report NO DRIFT; anything else on day one means the fetch is wrong rather than that
+          # upstream moved.
+          #
+          # Two URLs guessed on the way to this one both 404 and are recorded so nobody retries
+          # them: `raw.githubusercontent.com/opensubsonic/open-subsonic-api/main/static/
+          # open-subsonic-api.json`, and the same path without `static/`.
+          UPSTREAM_SPEC_URL: https://opensubsonic.netlify.app/docs/openapi/openapi.json
+
+      # A workflow whose only failure mode is silence is the defect class this project keeps
+      # finding. Say the answer out loud on every run, including the boring one.
+      - name: Report
+        run: |
+          if [ "${{ steps.fetch.outputs.drifted }}" = "true" ]; then
+            echo "DRIFT: the vendored OpenSubsonic specification differs from upstream."
+            cat /tmp/drift.diff
+          else
+            echo "NO DRIFT: the vendored OpenSubsonic specification matches upstream."
+          fi
+
+      - name: Upload the diff
+        if: steps.fetch.outputs.drifted == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: openapi-drift
+          path: /tmp/drift.diff

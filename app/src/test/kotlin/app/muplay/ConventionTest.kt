@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test
  */
 class ConventionTest {
 
+  /** The exact declaration `verifyNoMockFrameworks`'s ban list is written as, named once. */
+  private val BANNED_MOCK_GROUPS_DECLARATION = "val BANNED_MOCK_GROUPS = listOf("
+
   private fun repoRoot(): File {
     var dir = File(".").absoluteFile
     repeat(8) {
@@ -188,12 +191,14 @@ class ConventionTest {
     // — the bytecode engine Mockito is built on — and `:app`'s `debugUnitTestRuntimeClasspath`
     // resolves 141 artifacts, not four.
     //
-    // The *conclusion* survives: a whole-graph resolution across every `testRuntimeClasspath`,
-    // `testDebugRuntimeClasspath` and `androidTestDebugRuntimeClasspath` in the build finds no
+    // The *conclusion* survived: a whole-graph resolution across every `testRuntimeClasspath`,
+    // `testDebugRuntimeClasspath` and `androidTestDebugRuntimeClasspath` in the build found no
     // Mockito, MockK, EasyMock, PowerMock, JMockit or Objenesis; Byte Buddy's only parent is
-    // AssertJ. But the graph is no longer four modules with no transitive candidates, so a real
-    // per-build resolved-classpath guard wired into `check` is now worth writing rather than
-    // argued away — carried forward, not done here.
+    // AssertJ. But the graph is no longer four modules with no transitive candidates, so the real
+    // per-build resolved-classpath guard was worth writing — and Plan 2 Task 10 wrote it:
+    // `verifyNoMockFrameworks` (root build.gradle.kts), registered in every subproject that has a
+    // test configuration and wired into `check`. Two guards, deliberately: this one is textual and
+    // runs in seconds with no resolution; that one resolves and is the real answer.
     //
     // The list below is *declared* names. Mokkery and Mockative are the two Kotlin mocking
     // libraries a contributor is most likely to reach for now; neither was covered.
@@ -201,8 +206,57 @@ class ConventionTest {
     val catalogue = File(repoRoot(), "gradle/libs.versions.toml").readText().lowercase()
     banned.forEach { assertThat(catalogue).doesNotContain(it) }
     (moduleBuildFiles() + buildLogicFiles()).forEach { f ->
-      val text = f.readText().lowercase()
+      val text = scannableText(f).lowercase()
       banned.forEach { assertThat(text).describedAs(f.path).doesNotContain(it) }
+    }
+  }
+
+  /**
+   * The one region of the repository where a banned framework's name is *supposed* to appear:
+   * `verifyNoMockFrameworks`'s own `BANNED_MOCK_GROUPS` list in the root build script.
+   *
+   * A guard that bans a word cannot also be the file that names the word, and the honest fix is a
+   * carve-out that is itself checked rather than a file-level exemption. So this is deliberately
+   * narrow — one named `val`, in one file — and
+   * [`the mock-framework ban list is the only place the root build script names one`] asserts both
+   * halves that keep it from becoming a hole: that the carve-out matches something, and that every
+   * name the textual rule bans is actually covered by a group inside it.
+   */
+  private fun bannedMockGroupsDeclaration(): String {
+    val rootBuild = File(repoRoot(), "build.gradle.kts").readText()
+    val start = rootBuild.indexOf(BANNED_MOCK_GROUPS_DECLARATION)
+    if (start < 0) return ""
+    val end = rootBuild.indexOf("\n)", start)
+    return if (end < 0) "" else rootBuild.substring(start, end + 2)
+  }
+
+  /** [file]'s text with [bannedMockGroupsDeclaration] removed, when [file] is the root build script. */
+  private fun scannableText(file: File): String {
+    val text = file.readText()
+    if (file.canonicalFile != File(repoRoot(), "build.gradle.kts").canonicalFile) return text
+    val declaration = bannedMockGroupsDeclaration()
+    return if (declaration.isEmpty()) text else text.replace(declaration, "")
+  }
+
+  @Test
+  fun `the mock-framework ban list is the only place the root build script names one`() {
+    // Two assertions, and the first is the one that matters: a carve-out that stops matching is
+    // indistinguishable, from the outside, from a carve-out that is not needed — the rule above
+    // would go on passing while the root build script became free to declare Mockito.
+    val declaration = bannedMockGroupsDeclaration()
+    assertThat(declaration)
+      .describedAs("`val $BANNED_MOCK_GROUPS_DECLARATION` in the root build script — the one region " +
+        "`no mock framework is declared in any build file or convention plugin` skips")
+      .isNotEmpty()
+
+    // ...and the carve-out may not be wider than the guard it exists for. Every name the textual
+    // rule bans has to be covered by a Maven group inside this list, or the two guards disagree
+    // about what a mock framework is and the resolved-classpath one is the weaker of the two.
+    val groups = declaration.lowercase()
+    listOf("mockito", "mockk", "easymock", "powermock", "mokkery", "mockative", "jmockit").forEach {
+      assertThat(groups)
+        .describedAs("verifyNoMockFrameworks's BANNED_MOCK_GROUPS must cover `$it`")
+        .contains(it)
     }
   }
 

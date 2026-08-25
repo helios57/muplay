@@ -1,6 +1,8 @@
 import java.io.File
 import java.math.BigDecimal
 import javax.xml.parsers.DocumentBuilderFactory
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.PathSensitivity
@@ -332,7 +334,8 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   only through Hilt's DI graph at 0/8 and 0/4 LINE). All of them are named, by measured ratio,
  *   in `warnUngatedClasses`'s output on every run.
  *
- * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
+ * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **61/63 = 0.9683**, up from
+ *   20/21 = 0.9524 before Task 10 added the Tier 2 journeys), the one
  *   aggregate rule in this table, and the one place where that is the right shape rather than a
  *   compromise — with one cost, stated here rather than only in a report: `matchesFloor` below
  *   returns `true` unconditionally for a `"BUNDLE"`-element floor, so **no class in `:app` can
@@ -897,8 +900,135 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.75"),
       includes = listOf("app.muplay.library.CoverArtCacheKeyKt"),
     ),
+    // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that
+    // BrowseJourneyTest and ScopedShuffleJourneyTest compose and exercise them for real. ----
+    //
+    // LINE, not BRANCH, per this table's own doc: `LibraryScreenKt` measures 91/158 = 0.5759
+    // BRANCH and `AlbumScreenKt` 28/58 = 0.4828, and essentially all of that shortfall is Compose
+    // codegen -- every `@Composable` call site compiles to `$changed`-bitmask branches and skipping
+    // checks that no user-reachable behaviour corresponds to. Gating those would be gating the
+    // Compose compiler. LINE is the counter that answers the question worth asking of a screen:
+    // did this row, this message, this control actually render on a device.
+    //
+    // Measured from a merged JVM + instrumented report after the journeys landed:
+    //   LibraryScreenKt   56/62 = 0.9032 LINE
+    //   AlbumScreenKt     23/24 = 0.9583 LINE
+    //
+    // **`LibraryScreenKt` clears 0.90 by one line, and that is worth knowing before somebody is
+    // surprised by it.** The six lines it misses are: the private `LibraryScreen` overload's own
+    // declaration line and its closing brace (the same two-line artifact `SetupScreenKt` carries,
+    // documented on that floor above); the `NoLibraries` message, which no journey can reach
+    // because reaching the library screen at all requires tagged libraries; and the three lines of
+    // the `discardedOutOfScope > 0` warning, which is unreachable precisely *because* the scoping
+    // works -- `ScopedShuffleJourneyTest` exists to prove nothing is ever discarded. A seventh
+    // missed line drops this to 0.8871 and fails, which is the intended behaviour: somebody should
+    // look.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.library.LibraryScreenKt", "app.muplay.library.AlbumScreenKt"),
+      requiresInstrumentedData = true,
+    ),
+    // `CoverArtKt` -- what is left in `CoverArt.kt` once `coverArtCacheKey` moved out: the
+    // `CoverArtImage` Composable alone. 18/23 = 0.7826 LINE, and **0.90 is not reachable, which is
+    // a statement about the fixtures rather than about the tests**.
+    //
+    // The five missed lines are the whole `coverArtId == null` placeholder branch (the `Box`, its
+    // three modifier lines, and the early `return`). Navidrome synthesises a `coverArt` id for
+    // every album it serves, including ones whose files carry no embedded artwork -- both seeded
+    // albums do -- so no journey against this container can put a null through that parameter, and
+    // a JVM test cannot compose at all (no Robolectric, by constraint). Raising this to 0.90 would
+    // therefore not buy a test; it would buy a permanently red gate, which is how a gate gets
+    // switched off.
+    //
+    // 0.75, not 0.7826: one line of headroom, deliberately, for the same reason the floor above
+    // has one. What it still catches is the thing worth catching -- if `AsyncImage` and the
+    // `produceState` lookup stopped executing, this class drops to about 10/23 = 0.43.
+    //
+    // **This floor is permanent, not provisional.** An earlier draft said it returns to 0.90 "the
+    // day a fixture album with genuinely no cover art exists" -- but this task's own live check
+    // against `ci-navidrome-1` found Navidrome **synthesises a `coverArt` id for every album**,
+    // including both artwork-free seeded ones. So that day cannot arrive from a fixture, and the
+    // route back to 0.90 is a placeholder branch reached only by a server that does not behave
+    // like Navidrome. Raising it would need a hand-built response, not a corpus change. The
+    // five lines above come with it. Recorded here so that is a decision somebody can act on
+    // rather than a number nobody can explain.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.75"),
+      includes = listOf("app.muplay.library.CoverArtKt"),
+      requiresInstrumentedData = true,
+    ),
+    // The Compose compiler's own nested classes for these three files: `LazyColumn`'s four
+    // `$$inlined$items$default$N` adapters, the `FilterChip` label lambda, `AlbumScreen`'s
+    // `LaunchedEffect` body, and `CoverArtImage`'s `produceState` body. Gated rather than excluded,
+    // and gated low rather than not at all -- the same ruling `:core:database`'s 0.50 rule for
+    // suspend/`Flow.map` artefacts already makes, and for the same reason: a pattern broad enough
+    // to catch every Compose artefact would also catch author-written nested classes, and this
+    // project would rather carry an honest low floor than a silent hole.
+    //
+    // Measured LINE, all of them: `$$inlined$items$default$4` 2/3 = 0.6667 (the lowest, and the
+    // only one under 1.00 -- it is `items`'s key/contentType adapter, whose `contentType` arm is
+    // never taken because `LibraryScreen` passes `key =` but not `contentType =`);
+    // `$$inlined$items$default$1`/`$2`/`$3` 1/1; `LibraryScreen$7$5$1$2$2$1` 1/1;
+    // `AlbumScreen$1$1` 1/1; `CoverArtImage$url$2$1` 3/3. Floored at 0.65 -- a real number this run
+    // produced, one line of headroom under the lowest of them, not a round one.
+    //
+    // `excludes` names the three file-classes explicitly: a `"...Kt*"` include matches the bare
+    // `"...Kt"` too (JaCoCo's `*` matches the empty string), and folding them in here would drop
+    // all three from their own floors above to this one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf(
+        "app.muplay.library.LibraryScreenKt*",
+        "app.muplay.library.AlbumScreenKt*",
+        "app.muplay.library.CoverArtKt*",
+      ),
+      excludes = listOf(
+        "app.muplay.library.LibraryScreenKt",
+        "app.muplay.library.AlbumScreenKt",
+        "app.muplay.library.CoverArtKt",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The two ViewModels' own coroutine and `Flow` codegen -- `$uiState$1`/`$2`, `$search$1`,
+    // `$refresh$1`, `$shuffle$1`, `$albums$1`, `$load$1`, the `$$inlined$flatMapLatest$1` pair, and
+    // the two anonymous `LibrarySource`/`AlbumSource` adapters the `@Inject` secondary constructors
+    // wire to the real repositories. Task 9's own floor comment explains why the *outer* classes
+    // need exact-name includes: a `"LibraryViewModel*"` wildcard cannot hold a BRANCH floor here,
+    // because these nested classes measure 0.50-0.90 BRANCH and would drag it under any minimum
+    // worth setting. This is the other half of that ruling -- the nested classes get their own
+    // rule, on the counter that suits them.
+    //
+    // LINE, for the same reason `:core:database`'s equivalent rule is LINE: what is worth knowing
+    // about compiler-generated continuation machinery is whether it ran, not which of its
+    // state-machine arms the compiler emitted. Measured: `LibraryViewModel$1` 7/8 = 0.8750 (the
+    // Hilt-only `LibrarySource` adapter -- its eighth line is `allIds`, which the journeys never
+    // reach because a library is always selected by then); every other class here 1/1 to 10/10 at
+    // 1.0000, and `$currentLibraryId$1`/`$Companion` at 0/0, JaCoCo's isNaN pass. Floored at 0.85.
+    //
+    // `AlbumViewModel*Fetch*` is excluded rather than left to ride along: Task 9's BRANCH rule
+    // above already names it, and a class matched by two floors is a class whose failure message
+    // names the wrong rule.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.library.LibraryViewModel*", "app.muplay.library.AlbumViewModel*"),
+      excludes = listOf(
+        "app.muplay.library.LibraryViewModel",
+        "app.muplay.library.AlbumViewModel",
+        "app.muplay.library.AlbumViewModel*Fetch*",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
-  // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
+  // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
+  // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
   // why there is no BRANCH entry.
   // `requiresInstrumentedData`: every line here is Compose/DI wiring the emulator journey runs;
@@ -1833,5 +1963,173 @@ project(":app") {
         // assert on, so a checkout at a different absolute path must still hit the build cache.
         .withPathSensitivity(PathSensitivity.RELATIVE)
     }
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// The resolved-classpath mock guard.
+//
+// `plan-2-inherited.md` item 3, and `ConventionTest`'s own note asking for it. That test bans mock
+// frameworks by scanning *declared* names in the catalogue, module build files and build-logic
+// sources -- which cannot catch one arriving transitively, and this plan adds Room, DataStore,
+// Coil, Hilt-navigation and their transitive graphs, exactly when "declared" and "resolved" stop
+// being the same set. Two guards, deliberately: the textual one runs in seconds with no
+// resolution, this one is the real answer.
+// ------------------------------------------------------------------------------------------------
+
+/**
+ * Every mock framework this project bans, by Maven group. Groups rather than artifact names
+ * because a framework's artifact set changes between versions while its group does not, and
+ * because a group match cannot be defeated by a rename.
+ *
+ * `org.objenesis` is on the list although it is not itself a mock framework: it is the
+ * instantiation engine every JVM mocking library depends on, so its presence on a test runtime
+ * classpath means one of them arrived, whatever it is called.
+ *
+ * **`ConventionTest`'s `no mock framework is declared in any build file or convention plugin`
+ * scans this file too, and would fail on the literals below.** It carves out this one declaration
+ * by name and, in the same rule, asserts that every name *it* bans is covered by a group here --
+ * so the carve-out cannot quietly become a hole, and the two guards cannot drift apart. See that
+ * test.
+ */
+val BANNED_MOCK_GROUPS = listOf(
+  "org.mockito",
+  "io.mockk",
+  "org.easymock",
+  "org.powermock",
+  "dev.mokkery",
+  "io.mockative",
+  "org.jmockit",
+  "org.objenesis",
+)
+
+/**
+ * Which resolvable configurations actually reach a test JVM or a test APK, **matched rather than
+ * listed** -- and that is a correction this task measured, not a preference.
+ *
+ * The brief named three literals: `testRuntimeClasspath`, `testDebugRuntimeClasspath` and
+ * `androidTestDebugRuntimeClasspath`. Only the first exists in this build. Every Android module
+ * calls them `debugUnitTestRuntimeClasspath` and `debugAndroidTestRuntimeClasspath` -- printed
+ * from the build itself, per project:
+ *
+ *     :app, :core:database, :core:designsystem, :feature:setup, :feature:library
+ *         -> [debugAndroidTestRuntimeClasspath, debugRuntimeClasspath,
+ *             debugUnitTestRuntimeClasspath, releaseRuntimeClasspath]
+ *     :core:model, :core:network, :core:testing
+ *         -> [runtimeClasspath, testRuntimeClasspath]
+ *
+ * So the literal list covered **three of eight modules and none of the Android ones** -- including
+ * `:app`, whose `debugUnitTestRuntimeClasspath` `ConventionTest`'s own comment already records as
+ * resolving 141 artifacts. Combined with the brief's `if (resolvedByConfiguration.isEmpty())
+ * return@afterEvaluate`, the guard would simply not have been registered for those five projects:
+ * `./gradlew verifyNoMockFrameworks` would have reported success having inspected the three
+ * modules least likely to acquire a transitive mock, which is a guard reporting safety it did not
+ * measure.
+ *
+ * A pattern rather than a longer list because the failure above was a *name* failure: any
+ * configuration that both mentions a test and is a runtime classpath is in scope, whatever a
+ * future AGP calls it, and a pattern that stops matching in a project still fails loudly through
+ * [MockFrameworkChecker]'s empty-input branch rather than silently shrinking the guard.
+ * `debugRuntimeClasspath`/`releaseRuntimeClasspath`/`runtimeClasspath` are deliberately excluded:
+ * a mock framework on a *production* classpath is a different (worse) problem and one
+ * `ConventionTest`'s declared-name scan already covers.
+ */
+val MOCK_GUARD_CONFIGURATION_PATTERN = Regex("^.*[Tt]est.*RuntimeClasspath$")
+
+/** The name of the guard task, so the workflow step and `ConventionTest` can name the same string. */
+val MOCK_GUARD_TASK_NAME = "verifyNoMockFrameworks"
+
+object MockFrameworkChecker {
+  /**
+   * Fails when any [banned] group appears in [resolved], and **also** fails when [resolved] is
+   * empty. The second half is the point: a check that cannot report its own subject's absence is
+   * not a check, and a guard that silently inspects zero classpaths reads exactly like a guard
+   * that found nothing wrong.
+   */
+  fun check(projectPath: String, resolved: Map<String, List<String>>, banned: List<String>) {
+    if (resolved.isEmpty()) {
+      throw GradleException(
+        "$projectPath: verifyNoMockFrameworks resolved no classpaths at all. Either this project " +
+          "has no test configuration (in which case it should not have this task) or the names " +
+          "MOCK_GUARD_CONFIGURATION_PATTERN matches have drifted. A guard that inspects " +
+          "nothing passes for the wrong reason.",
+      )
+    }
+    val offenders = resolved.flatMap { (configuration, artifacts) ->
+      artifacts.filter { artifact -> banned.any { artifact.startsWith("$it:") } }
+        .map { "$configuration -> $it" }
+    }
+    if (offenders.isNotEmpty()) {
+      throw GradleException(
+        "$projectPath: a mock framework reached a test classpath: $offenders. This project uses " +
+          "hand-written fakes only (see the spec's testing section); a test satisfied by a mock " +
+          "returning what it was told returns no information.",
+      )
+    }
+  }
+}
+
+subprojects {
+  // `afterEvaluate`, because a project's configurations do not exist until its own build script
+  // and its plugins have run -- the same reason the `liveNavidromeTest` registration above uses it.
+  afterEvaluate {
+    // `:core` and `:feature` are container projects: `settings.gradle.kts` includes `:core:model`
+    // and friends, which brings their parents into the build with no plugins, no configurations
+    // and no `check` task. That -- not "a module with no tests" -- is the only legitimate reason
+    // to skip, and it is tested by asking for the thing this guard actually attaches to rather
+    // than by name-matching a path. Confirmed by running it the other way first: with no condition
+    // at all the build died with "Task with name 'check' not found in project ':core'".
+    if (tasks.findByName("check") == null) return@afterEvaluate
+
+    val modulePath = path
+    val banned = BANNED_MOCK_GROUPS
+
+    val guard = tasks.register(MOCK_GUARD_TASK_NAME) {
+      group = "verification"
+      description = "Fails if any mock framework is on a resolved test runtime classpath."
+
+      // **Read here, inside the task's own configuration block, not in `afterEvaluate` above.**
+      // `tasks.register` is lazy, so this runs when the task is realized -- after AGP's variant
+      // callbacks have created `debugUnitTestRuntimeClasspath` and
+      // `debugAndroidTestRuntimeClasspath`. Read one level out, in `afterEvaluate`, and every
+      // Android module reports an entirely empty container: measured, printed per project,
+      // `:app -> []`, `:core:database -> []`, `:core:designsystem -> []`, `:feature:library -> []`,
+      // `:feature:setup -> []`, against `[runtimeClasspath, testRuntimeClasspath]` for the three
+      // JVM modules. With the brief's early return on an empty result that is a guard which
+      // quietly stops existing for five of eight projects while `./gradlew verifyNoMockFrameworks`
+      // still says BUILD SUCCESSFUL.
+      val inputs = configurations
+        .filter { it.isCanBeResolved && MOCK_GUARD_CONFIGURATION_PATTERN.matches(it.name) }
+        .sortedBy { it.name }
+        .map { configuration ->
+          // A lazy Provider captured at configuration time, never a live Configuration read inside
+          // the task action: this is the pattern `Jacoco.kt`'s agent assertion already uses, and it
+          // is what keeps the configuration cache able to serialize this task.
+          //
+          // The **resolution result**, not `incoming.artifacts.resolvedArtifacts`, which the brief
+          // used. Artifacts are files, so asking for them makes this guard build every project
+          // dependency first -- and asking for them from a task action fails outright:
+          // `:core:network:verifyNoMockFrameworks` died with "Querying the mapped value of
+          // provider(java.util.Set) before task ':core:model:jar' has completed is not supported".
+          // A guard on *which components are on the graph* needs the graph, not the jars.
+          configuration.name to configuration.incoming.resolutionResult.rootComponent.map { root ->
+            val seen = LinkedHashSet<String>()
+            val queue = ArrayDeque<ResolvedComponentResult>()
+            queue.add(root)
+            while (queue.isNotEmpty()) {
+              val component = queue.removeFirst()
+              if (!seen.add(component.id.displayName)) continue
+              component.dependencies.filterIsInstance<ResolvedDependencyResult>()
+                .forEach { queue.add(it.selected) }
+            }
+            seen.toList()
+          }
+        }
+
+      doLast {
+        MockFrameworkChecker.check(modulePath, inputs.associate { it.first to it.second.get() }, banned)
+      }
+    }
+    tasks.named("check") { dependsOn(guard) }
   }
 }

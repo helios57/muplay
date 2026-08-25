@@ -18,9 +18,10 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 
 /**
@@ -63,8 +64,21 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class FirstRunJourneyTest {
 
-  @get:Rule
   val composeRule = createAndroidComposeRule<MainActivity>()
+
+  /**
+   * **The reset has to happen before the Activity is created, which is why this is a `RuleChain`
+   * and not a `@Before` method any more.**
+   *
+   * As of Plan 2 Task 10 the app decides where it opens (`StartDestinationViewModel`) from stored
+   * state, in the ViewModel's `init` — i.e. during the first composition, which
+   * `createAndroidComposeRule` performs as part of *its* statement. A `@Before` method runs inside
+   * that statement, after the launch, so a reset written there was read too late: every test in
+   * this class opened on the library screen instead of on setup and died looking for a "Server
+   * URL" field. `RuleChain.outerRule(...)` is what puts the reset genuinely first.
+   */
+  @get:Rule
+  val rules: RuleChain = RuleChain.outerRule(ResetLibraryTagging()).around(composeRule)
 
   /**
    * Resets every library back to [LibraryRole.UNASSIGNED] before each test.
@@ -84,10 +98,11 @@ class FirstRunJourneyTest {
    * cannot be used the same way: it would not be part of the real `MuPlayApplication`'s generated
    * Hilt component at all.
    */
-  @Before
-  fun resetLibraryTagging() = runBlocking {
-    val repository = libraryRepository()
-    repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
+  private inner class ResetLibraryTagging : ExternalResource() {
+    override fun before() = runBlocking {
+      val repository = libraryRepository()
+      repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
+    }
   }
 
   /**
