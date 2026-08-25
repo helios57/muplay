@@ -294,3 +294,46 @@ assertion-that-cannot-fail class, aimed at the gates rather than at the product.
 **Re-run the falsification when you touch a floor, and correct the comment when
 the number moves.** Do not copy a recorded falsification forward; it is evidence
 of one past run, not a property.
+
+## Backticked test names do not reach the device tier at all
+
+This project's JVM tier uses `` fun `a name with spaces`() ``. On the **device** tier that fails
+the build outright:
+
+    :integrations:core:dexBuilderDebugAndroidTest FAILED
+    D8: Space characters in SimpleName 'the provided clock reads the wall clock in utc' are not
+    allowed prior to DEX version 040 (method name ... on class ...IntegrationsDataModuleTest)
+
+`minSdk 26` compiles DEX 035, which forbids spaces in any SimpleName — method or class. Both were
+measured here; there is no lambda-free exception.
+
+The variant that costs the time is a backticked `runTest`, because Kotlin names the lambda's
+synthetic class after its enclosing method and D8 then reports a **class** nobody wrote:
+
+    Space characters in SimpleName 'app/muplay/integrations/MediaRequestRepositoryTest$setStatus
+    round-trips a status that carries data$1'
+
+Every instrumented test class here is camelCase for this reason. Expect plan documents written
+from the JVM tier's habits to get this wrong, and expect to rename the whole class at once.
+
+## A module that newly applies `muplay.android.room` needs `schemas/` to exist first
+
+`AndroidRoomConventionPlugin.RoomSchemaArgProvider` declares `<module>/schemas` as an
+`@InputDirectory`, and Gradle refuses to *configure* the KSP task against a directory that is not
+there — so the failure arrives before any compilation and does not mention Room:
+
+    A problem was found with the configuration of task ':integrations:core:kspDebugKotlin'
+    Input file does not exist ... property 'commandLineArgumentProviders.$1.schemaDir'
+    specifies directory '.../integrations/core/schemas' which doesn't exist
+
+`mkdir <module>/schemas` once. The first successful build fills it and the JSON is committed, so
+only the module that introduces a database ever meets this.
+
+## `verifyReleaseNoDestructiveMigration` reads comments too
+
+`VerifyNoDestructiveMigrationTask` is a plain `contains` over the whole file text. A KDoc sentence
+explaining that a provider deliberately does *not* call the destructive-migration escape hatch
+fails `check` on its own prose, naming that file as an offender. Describe the hatch without writing
+its method name — the same discipline `AndroidRoomConventionPlugin`'s own header keeps around the
+banned build tool's name, and the second time this repository has cost someone a build over a
+comment.

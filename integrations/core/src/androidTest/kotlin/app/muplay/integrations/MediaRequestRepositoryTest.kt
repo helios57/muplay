@@ -30,15 +30,15 @@ import org.junit.Test
  * service's rows and only those`). The *credential* combinations the rule also names are not
  * reachable from this class: the request store holds no credential and never reads one.
  *
- * **camelCase method names, not this project's JVM-tier backticks.** Every test here is a
- * `runTest`, and the Kotlin compiler names the suspend lambda it generates after its enclosing
- * method — so a backticked name becomes a DEX SimpleName with spaces in it, which D8 refuses below
- * DEX version 040 (`minSdk 26` compiles 035). Measured here, not assumed: with backticks,
- * `:integrations:core:dexBuilderDebugAndroidTest` failed with *"Space characters in SimpleName
- * 'app/muplay/integrations/MediaRequestRepositoryTest${'$'}setStatus round-trips a status that
- * carries data${'$'}1' are not allowed prior to DEX version 040"*. Every instrumented test class in
- * this repository is camelCase for this reason; the plan's Step 3 listing was written in backticks
- * and is wrong on that one point.
+ * **camelCase method names, not this project's JVM-tier backticks.** A name with spaces in it is a
+ * DEX SimpleName with spaces in it, and D8 refuses those below DEX version 040 — `minSdk 26`
+ * compiles 035. Measured both ways here rather than assumed: a plain backticked method fails with
+ * *"Space characters in SimpleName 'the provided clock reads the wall clock in utc' … (method name
+ * … on class …)"*, and a backticked `runTest` fails on the **lambda class** Kotlin names after its
+ * enclosing method (*"SimpleName 'MediaRequestRepositoryTest${'$'}setStatus round-trips a status
+ * that carries data${'$'}1'"*) — which names a class nobody wrote and is the more confusing of the
+ * two. Every instrumented test class in this repository is camelCase for this reason; the plan's
+ * Step 3 listing was written in backticks and is wrong on that one point.
  */
 class MediaRequestRepositoryTest {
 
