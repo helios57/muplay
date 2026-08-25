@@ -77,16 +77,20 @@ object SoapNames {
   private val NAME = Regex("[A-Za-z_][A-Za-z0-9._-]{0,${MAX_NAME_LENGTH - 1}}")
 
   /** @throws MalformedSoapRequestException unless [serviceType] is a URN this client will write. */
-  fun requireServiceType(serviceType: String): String =
-    if (SERVICE_TYPE.matches(serviceType)) {
-      serviceType
-    } else {
-      refuse("service type", serviceType, "a UPnP service type is a URN")
+  fun requireServiceType(serviceType: String): String {
+    if (!SERVICE_TYPE.matches(serviceType)) {
+      throw refusal("service type", serviceType, "a UPnP service type is a URN")
     }
+    return serviceType
+  }
 
   /** @throws MalformedSoapRequestException unless [action] is an XML name this client will write. */
-  fun requireAction(action: String): String =
-    if (NAME.matches(action)) action else refuse("action name", action, "a UPnP action name is an XML name")
+  fun requireAction(action: String): String {
+    if (!NAME.matches(action)) {
+      throw refusal("action name", action, "a UPnP action name is an XML name")
+    }
+    return action
+  }
 
   /**
    * The same rule as [requireAction], for the `in`/`out` argument names that become element names.
@@ -96,8 +100,12 @@ object SoapNames {
    * well-formed XML or throws, with no third outcome where a caller's string silently rewrites the
    * document's shape.
    */
-  fun requireArgumentName(name: String): String =
-    if (NAME.matches(name)) name else refuse("argument name", name, "a SOAP argument name is an XML name")
+  fun requireArgumentName(name: String): String {
+    if (!NAME.matches(name)) {
+      throw refusal("argument name", name, "a SOAP argument name is an XML name")
+    }
+    return name
+  }
 
   /**
    * The control URL, checked for exactly what [app.muplay.cast.http.CastHttpClient.exchange] would
@@ -110,16 +118,28 @@ object SoapNames {
    */
   fun requireControlUrl(url: URI): URI {
     if (url.scheme?.equals("http", ignoreCase = true) != true) {
-      refuse("control url", url.toString(), "a renderer has no TLS and this client speaks http only")
+      throw refusal("control url", url.toString(), "a renderer has no TLS and this client speaks http only")
     }
-    if (url.host.isNullOrEmpty()) {
-      refuse("control url", url.toString(), "there is no host to open a socket to")
+    // `== null`, not `isNullOrEmpty()`, and it mirrors `CastHttpClient`'s own `requireNotNull` on
+    // purpose: `URI.getHost()` returns null rather than "" for an authority it cannot parse as
+    // server-based, so an emptiness check here would be a second arm no input can reach.
+    if (url.host == null) {
+      throw refusal("control url", url.toString(), "there is no host to open a socket to")
     }
     return url
   }
 
-  private fun refuse(role: String, value: String, because: String): Nothing =
-    throw MalformedSoapRequestException(
+  /**
+   * The refusal, **built and returned rather than thrown from here**.
+   *
+   * A `Nothing`-returning `refuse()` reads better and measures as dead code: JaCoCo places its
+   * probe after the call, a call that never returns never reaches it, and every refusal path in
+   * this object reported 0 covered instructions while the tests that drive them were green. That
+   * is the "a floor that cannot fail" family of defect arriving from the other direction -- an
+   * assertion that cannot be *seen* to pass -- so the throw happens at each call site instead.
+   */
+  private fun refusal(role: String, value: String, because: String): MalformedSoapRequestException =
+    MalformedSoapRequestException(
       "refusing to build a SOAP request from the $role \"${quoteSafely(value)}\": $because, and " +
         "this one is not. It came from a device description an unauthenticated device on the " +
         "local network served, and it would be written into a header value, an XML name or a URL.",

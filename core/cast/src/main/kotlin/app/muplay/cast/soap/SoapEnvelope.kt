@@ -100,8 +100,11 @@ object SoapEnvelope {
       it.nodeName.substringAfterLast(':') == "${action}Response"
     } ?: return emptyMap()
 
+    // `child.textContent`, not `child.textContent.orEmpty()`: `textContent` is a platform type, so
+    // the `.orEmpty()` inserts a null branch for a value the DOM never produces -- an arm no test
+    // can reach. `DeviceDescription` records the same trade-off on its own `childText`.
     return childElements(response).associate { child ->
-      child.nodeName.substringAfterLast(':') to child.textContent.orEmpty()
+      child.nodeName.substringAfterLast(':') to child.textContent
     }
   }
 
@@ -121,9 +124,9 @@ object SoapEnvelope {
     val fault = childElements(body).firstOrNull { it.nodeName.substringAfterLast(':') == "Fault" }
       ?: return null
     val detail = descendant(fault, "UPnPError") ?: return UpnpFault(UpnpError.ACTION_FAILED, null)
-    val code = descendant(detail, "errorCode")?.textContent?.trim()?.toIntOrNull()
+    val code = trimmedTextOf(descendant(detail, "errorCode"))?.toIntOrNull()
       ?: return UpnpFault(UpnpError.ACTION_FAILED, null)
-    return UpnpFault(code, descendant(detail, "errorDescription")?.textContent?.trim())
+    return UpnpFault(code, trimmedTextOf(descendant(detail, "errorDescription")))
   }
 
   /**
@@ -156,7 +159,10 @@ object SoapEnvelope {
         ).forEach { (feature, value) -> runCatching { setFeature(feature, value) } }
       }.newDocumentBuilder().parse(xml.byteInputStream(Charsets.UTF_8))
     }.getOrNull() ?: return null
-    val root = document.documentElement ?: return null
+    // No null guard on `documentElement`, for the reason `DeviceDescription.parse` records against
+    // its own: a `Document` that parsed has one, and an elvis here would be a branch no test could
+    // ever reach.
+    val root = document.documentElement
     return childElements(root).firstOrNull { it.nodeName.substringAfterLast(':') == "Body" }
   }
 
@@ -169,6 +175,14 @@ object SoapEnvelope {
     }
     return children
   }
+
+  /**
+   * The trimmed text of [element], or `null` when there is no such element.
+   *
+   * One nullable check, on the one value that is really nullable. A `?.textContent?.trim()` chain
+   * would add a second on `textContent`, which is a platform type the DOM never returns null for.
+   */
+  private fun trimmedTextOf(element: Element?): String? = element?.let { it.textContent.trim() }
 
   /** First descendant with this local name, at any depth -- fault details nest inconsistently. */
   private fun descendant(parent: Element, localName: String): Element? {
