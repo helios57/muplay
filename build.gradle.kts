@@ -2082,11 +2082,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // because a CLASS rule over a class with none is a `0/0` COVEREDRATIO, which is `NaN`, which
     // JaCoCo reports as no violation at every minimum:
     //
-    //   `SoapEnvelope`   32/32 -- `render`'s three validations, `parseResponse`'s "no Body", "no
+    //   `SoapEnvelope`   34/34 -- `render`'s three validations, `parseResponse`'s "no Body", "no
     //                    response element" and "a response for a different action" arms,
     //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
     //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
-    //                    refusal and the unparseable-XML arm.
+    //                    refusal, the unparseable-XML arm, and (Task 2's fix round) `descendant`'s
+    //                    depth bound refusing and permitting -- the same StackOverflowError this
+    //                    module's `DeviceDescription.parseDevice` carried, in the walker
+    //                    `SoapClient.invoke` reaches on **every** response, outside its
+    //                    `try`/`catch`. Was 32/32.
     //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
     //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
     //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
