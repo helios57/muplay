@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.database.KeystoreCipher
 import app.muplay.database.KeystoreKeys
 import java.io.File
 import java.util.Base64
@@ -269,6 +270,36 @@ class IntegrationCredentialStoreTest {
     // for the Navidrome password.
     assertThat(store.load(IntegrationService.LIDARR)).isNull()
     assertThat(store.configured.first()).isEmpty()
+  }
+
+  /**
+   * A complete, **openable** Bindery entry on disk reads as not configured until Task 7 adds the
+   * member — and, critically, is not mistaken for Lidarr's.
+   *
+   * Planted the way a downgrade or a restore from a newer build would leave it: Bindery's own
+   * Keystore alias, its own two preference keys, a secret that really does open. Everything `read`
+   * checks passes, so the only thing that can decide the answer is the `when` over `service` — and
+   * a `read` that ignored its `service` argument would return a `Lidarr` credential here. That arm
+   * was reachable by no other test in this suite, which is exactly why it was worth writing rather
+   * than excusing with a lower coverage floor.
+   */
+  @Test
+  fun aStoredBinderyEntryReadsAsNotConfiguredRatherThanAsLidarrs() = runTest {
+    store.save(lidarr)
+    val sealed = KeystoreCipher.seal(
+      KeystoreKeys.getOrCreate(IntegrationCredentialStore.keyAlias(IntegrationService.BINDERY)),
+      "bindery-secret",
+    )
+    dataStore.edit {
+      it[stringPreferencesKey("bindery_base_url")] = "https://bindery.example.com/"
+      it[stringPreferencesKey("bindery_sealed_secret")] = Base64.getEncoder().encodeToString(sealed)
+    }
+
+    assertThat(store.load(IntegrationService.BINDERY)).isNull()
+    // ...and it disturbs neither the service that IS configured nor what `configured` reports.
+    assertThat(store.configured.first().keys).containsExactly(IntegrationService.LIDARR)
+    assertThat((store.load(IntegrationService.LIDARR) as IntegrationCredentials.Lidarr).apiKey)
+      .isEqualTo(API_KEY)
   }
 
   /**
