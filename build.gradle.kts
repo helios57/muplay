@@ -1502,58 +1502,6 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.cast.net.LocalAddress"),
     ),
-  ),
-  // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
-  // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
-  // floor and why it lives in this module rather than inside either client. Measured in Plan 7
-  // Task 1 Step 8; re-measured in Task 10 once the credential store and the request store are in.
-  //
-  // Two rules because the module carries two kinds of class, and one measured fact decides which
-  // rule each gets: **only three classes here carry a BRANCH counter at all**. JaCoCo's Kotlin
-  // filters remove the generated `equals`/`hashCode`/`toString`/`copy` of a `data class` and the
-  // whole of a `data object` from the report, and they remove an enum's `values`/`valueOf` -- so
-  // `BaseUrlResult`'s five members and `CleartextPolicy`'s two contribute no branches for any rule
-  // to gate, and `IntegrationService` contributes none either. Measured:
-  //
-  //   IntegrationBaseUrl$Companion   BRANCH 16/16   LINE 19/19
-  //   IntegrationBaseUrlKt           BRANCH  8/8    LINE 11/11
-  //   IntegrationBaseUrl             BRANCH  6/6    LINE  5/5
-  //   IntegrationService             BRANCH  n/a    LINE  3/3
-  //   BaseUrlResult$Valid            BRANCH  n/a    LINE  1/1
-  //   BaseUrlResult$CleartextForbidden BRANCH n/a   LINE  1/1
-  //   BaseUrlResult, BaseUrlResult$Blank/$MissingScheme/$Malformed, CleartextPolicy and both of
-  //   its members: no BRANCH and no LINE counter at all, so no rule can gate them and
-  //   `warnUngatedClasses` skips them.
-  //
-  // 30/30 BRANCH against the 0.90 target, not written as 1.00: this table's floors are set at the
-  // project target and rounded down from the measurement, and a floor at the measured 1.00 would
-  // go red on a refactor that changed nothing. Falsified rather than assumed, twice, both recorded
-  // in task-1-report.md: withholding `a url equals only itself and another url with the same
-  // value` alone drops `IntegrationBaseUrl` to 4/6 = 0.6667 and this floor fails at its real
-  // minimum; withholding the three tests that name an `IntegrationService` drops
-  // `IntegrationBaseUrlKt` to 0/8 and `IntegrationService` to LINE 0/3, failing one rule each.
-  //
-  // The LINE rule names `IntegrationService` and `BaseUrlResult*` explicitly rather than widening
-  // the BRANCH rule's pattern to `app.muplay.integrations.*`: those two are the classes this task
-  // measured and decided about, and a wildcard would also swallow every class Tasks 2-11 add to
-  // this module into a rule that cannot fail on them, which is the silent hole
-  // `warnUngatedClasses` exists to report. A genuinely new class here should show up as ungated.
-  ":integrations:core" to listOf(
-    CoverageFloor(
-      counter = "BRANCH",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.IntegrationBaseUrl*"),
-    ),
-    CoverageFloor(
-      counter = "LINE",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf(
-        "app.muplay.integrations.IntegrationService",
-        "app.muplay.integrations.BaseUrlResult*",
-      ),
-    ),
     // Plan 6 Task 2, `app.muplay.cast.discovery`. Every class below with an author-written branch
     // measures **1.0000** today, and each number is from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`
@@ -1628,6 +1576,58 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.discovery.DatagramSsdpTransport*",
         "app.muplay.cast.discovery.RendererDirectory*",
         "app.muplay.cast.discovery.SsdpTransport",
+      ),
+    ),
+  ),
+  // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
+  // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
+  // floor and why it lives in this module rather than inside either client. Measured in Plan 7
+  // Task 1 Step 8; re-measured in Task 10 once the credential store and the request store are in.
+  //
+  // Two rules because the module carries two kinds of class, and one measured fact decides which
+  // rule each gets: **only three classes here carry a BRANCH counter at all**. JaCoCo's Kotlin
+  // filters remove the generated `equals`/`hashCode`/`toString`/`copy` of a `data class` and the
+  // whole of a `data object` from the report, and they remove an enum's `values`/`valueOf` -- so
+  // `BaseUrlResult`'s five members and `CleartextPolicy`'s two contribute no branches for any rule
+  // to gate, and `IntegrationService` contributes none either. Measured:
+  //
+  //   IntegrationBaseUrl$Companion   BRANCH 16/16   LINE 19/19
+  //   IntegrationBaseUrlKt           BRANCH  8/8    LINE 11/11
+  //   IntegrationBaseUrl             BRANCH  6/6    LINE  5/5
+  //   IntegrationService             BRANCH  n/a    LINE  3/3
+  //   BaseUrlResult$Valid            BRANCH  n/a    LINE  1/1
+  //   BaseUrlResult$CleartextForbidden BRANCH n/a   LINE  1/1
+  //   BaseUrlResult, BaseUrlResult$Blank/$MissingScheme/$Malformed, CleartextPolicy and both of
+  //   its members: no BRANCH and no LINE counter at all, so no rule can gate them and
+  //   `warnUngatedClasses` skips them.
+  //
+  // 30/30 BRANCH against the 0.90 target, not written as 1.00: this table's floors are set at the
+  // project target and rounded down from the measurement, and a floor at the measured 1.00 would
+  // go red on a refactor that changed nothing. Falsified rather than assumed, twice, both recorded
+  // in task-1-report.md: withholding `a url equals only itself and another url with the same
+  // value` alone drops `IntegrationBaseUrl` to 4/6 = 0.6667 and this floor fails at its real
+  // minimum; withholding the three tests that name an `IntegrationService` drops
+  // `IntegrationBaseUrlKt` to 0/8 and `IntegrationService` to LINE 0/3, failing one rule each.
+  //
+  // The LINE rule names `IntegrationService` and `BaseUrlResult*` explicitly rather than widening
+  // the BRANCH rule's pattern to `app.muplay.integrations.*`: those two are the classes this task
+  // measured and decided about, and a wildcard would also swallow every class Tasks 2-11 add to
+  // this module into a rule that cannot fail on them, which is the silent hole
+  // `warnUngatedClasses` exists to report. A genuinely new class here should show up as ungated.
+  ":integrations:core" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.IntegrationBaseUrl*"),
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.IntegrationService",
+        "app.muplay.integrations.BaseUrlResult*",
       ),
     ),
   ),
