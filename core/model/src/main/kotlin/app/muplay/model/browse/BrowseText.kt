@@ -1,7 +1,5 @@
 package app.muplay.model.browse
 
-import kotlin.math.max
-
 /**
  * The handful of strings the browse tree puts in front of a driver.
  *
@@ -23,17 +21,27 @@ object BrowseText {
   /**
    * "12 h 34 min left", "59 min left", "under a minute left".
    *
-   * Clamped at zero: `remainingMs` is a subtraction of two independently-sourced numbers (a
-   * container's declared duration and a player's reported position), and Media3 reports positions
-   * past a declared duration on streams whose duration was estimated. "-3 min left" is a worse
-   * answer than "under a minute left".
+   * A negative [remainingMs] is a real input, not a caller error: the value is a subtraction of two
+   * independently-sourced numbers (a container's declared duration and a player's reported
+   * position), and Media3 reports positions past a declared duration on streams whose duration was
+   * estimated. "-3 min left" is a worse answer than "under a minute left".
+   *
+   * It is handled by the **order of the bands**, not by a clamp. The first arm's test is `<`, so
+   * every negative value satisfies it and never reaches the arithmetic below. An earlier draft
+   * opened with `max(0L, remainingMs)`; that clamp was measured to be unfalsifiable -- removing it
+   * changed no output for any input, including `Long.MIN_VALUE` -- and this project does not ship
+   * code no test can fail on. `BrowseTextTest` pins the negative case against the band order
+   * instead, which is what actually decides it: hoist `hours == 0L` above this arm and `-1` starts
+   * rendering as "0 min left".
+   *
+   * [BookSummary.remainingMs][app.muplay.model.BookSummary.remainingMs] clamps at zero on its own
+   * account, where the clamp *is* observable. This function does not depend on that.
    */
   fun remainingLabel(remainingMs: Long): String {
-    val clamped = max(0L, remainingMs)
-    val hours = clamped / HOUR_MS
-    val minutes = (clamped % HOUR_MS) / MINUTE_MS
+    val hours = remainingMs / HOUR_MS
+    val minutes = (remainingMs % HOUR_MS) / MINUTE_MS
     return when {
-      clamped < MINUTE_MS -> "under a minute left"
+      remainingMs < MINUTE_MS -> "under a minute left"
       hours == 0L -> "$minutes min left"
       minutes == 0L -> "$hours h left"
       else -> "$hours h $minutes min left"

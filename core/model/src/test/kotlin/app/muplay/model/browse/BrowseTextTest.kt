@@ -45,7 +45,20 @@ class BrowseTextTest {
     // `remainingMs` is `durationMs - positionMs`, and a position past the end is reachable: Media3
     // reports a position beyond a container's declared duration on a stream whose duration was
     // estimated. "-3 min left" on a car screen is worse than "under a minute left".
-    assertThat(BrowseText.remainingLabel(-1L)).isEqualTo("under a minute left")
+    //
+    // What this actually pins is the **order of the bands**: the "under a minute" arm is first and
+    // its test is `<`, so every negative satisfies it before any division runs. Hoist `hours == 0L`
+    // above it and `-1` renders as "0 min left"; this test goes red, which is the point. It was
+    // written first against a `max(0L, remainingMs)` clamp, and that clamp turned out to be
+    // unfalsifiable -- no input, `Long.MIN_VALUE` included, changed its answer -- so the clamp went
+    // and the sample that proves it was never load-bearing stayed.
+    assertThat(listOf(-1L, -59_999L, -3_600_000L, Long.MIN_VALUE).map(BrowseText::remainingLabel))
+      .containsExactly(
+        "under a minute left",
+        "under a minute left",
+        "under a minute left",
+        "under a minute left",
+      )
   }
 
   @Test

@@ -323,9 +323,13 @@ class BrowseTreeTest {
 
   @Test
   fun `the albums node puts one shuffle per music library first, in library id order`() {
+    // Supplied highest-id-first, and named so that **name order and id order disagree**: by name
+    // this is Music(3) then Vinyl rips(1), by id it is Vinyl rips(1) then Music(3). An earlier
+    // draft of this fixture had the names the other way round, where the two orders happened to
+    // coincide -- and a `sortedBy(MusicLibrary::name)` mutation survived the whole suite.
     val libraries = listOf(
-      MusicLibrary(id = 3, name = "Vinyl rips", role = LibraryRole.MUSIC),
-      MusicLibrary(id = 1, name = "Music", role = LibraryRole.MUSIC),
+      MusicLibrary(id = 3, name = "Music", role = LibraryRole.MUSIC),
+      MusicLibrary(id = 1, name = "Vinyl rips", role = LibraryRole.MUSIC),
     )
 
     val nodes = BrowseTree.albumsNodes(libraries, listOf(ALBUM_A, ALBUM_B))
@@ -334,7 +338,7 @@ class BrowseTreeTest {
       "muplay/shuffle/1", "muplay/shuffle/3", "muplay/album/al-a", "muplay/album/al-b",
     )
     assertThat(nodes.map { it.title })
-      .containsExactly("Shuffle Music", "Shuffle Vinyl rips", "Abbey Road", "Blue Train")
+      .containsExactly("Shuffle Vinyl rips", "Shuffle Music", "Abbey Road", "Blue Train")
     assertThat(nodes.map { it.isPlayable }).containsExactly(true, true, true, true)
     assertThat(nodes.map { it.isBrowsable }).containsExactly(false, false, true, true)
     // A shuffle row is a verb, not an album: no art, no subtitle, no duration to render.
@@ -524,14 +528,20 @@ class BrowseTreeTest {
   }
 
   @Test
-  fun `library nodes are ordered by id, not by the order they arrived in`() {
+  fun `library nodes are ordered by id, not by name and not by the order they arrived in`() {
+    // Three orders, all different, so exactly one of them can pass: supplied is 9 then 1, by name
+    // is "Alpha disk"(9) then "Zulu music"(1), by id is 1 then 9. Same lesson as the shuffle rows
+    // above -- a fixture whose name order and id order agree cannot tell `sortedBy(id)` from
+    // `sortedBy(name)`, and a `sortedBy(name)` mutation survived until this fixture was rewritten.
     val libraries = listOf(
-      MusicLibrary(id = 9, name = "New disk", role = LibraryRole.UNASSIGNED),
-      MusicLibrary(id = 1, name = "Music", role = LibraryRole.MUSIC),
+      MusicLibrary(id = 9, name = "Alpha disk", role = LibraryRole.UNASSIGNED),
+      MusicLibrary(id = 1, name = "Zulu music", role = LibraryRole.MUSIC),
     )
 
     assertThat(BrowseTree.libraryNodes(libraries).map { it.id.encode() })
       .containsExactly("muplay/library/1", "muplay/library/9")
+    assertThat(BrowseTree.libraryNodes(libraries).map { it.title })
+      .containsExactly("Zulu music", "Alpha disk")
   }
 
   // --- the credential rule ---------------------------------------------------------------------
