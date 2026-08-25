@@ -1,5 +1,11 @@
 plugins {
   id("muplay.android.library")
+  // Task 3. A **second** RoomDatabase, in this module rather than a table in `MuPlayDatabase`:
+  // deleting this plan should delete its storage, and any version number claimed inside
+  // `MuPlayDatabase` would be a guess about what Plans 3-6 did to it. This convention plugin
+  // exports the schema to `integrations/core/schemas/` and wires
+  // `verifyReleaseNoDestructiveMigration` into `check` for free.
+  id("muplay.android.room")
   id("muplay.android.hilt")
 }
 
@@ -29,6 +35,14 @@ dependencies {
   implementation(libs.coroutines.core)
   implementation(libs.datastore.preferences)
 
+  // Task 3 adds nothing here on purpose. `muplay.android.room` brings `room-runtime` (which is
+  // where `androidx.room.Room` and `RoomDatabase` live), the KSP processor and `room-testing`, and
+  // `coroutines-test` was already on `androidTestImplementation` for Task 2. The plan's Step 5
+  // also asked for `testImplementation(libs.coroutines.test)` and `androidTestImplementation(
+  // libs.turbine)`: neither is used by a line of this task's tests -- `RequestStatusTest` is
+  // synchronous and `MediaRequestRepositoryTest` reads its flows with `first()` -- and this plan's
+  // dependency-minimalism rule says an artifact nothing uses does not get declared. See
+  // task-3-report.md.
   androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.ext)
   androidTestImplementation(libs.androidx.test.runner)

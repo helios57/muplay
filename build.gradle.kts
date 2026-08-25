@@ -2392,14 +2392,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // JaCoCo reports as no violation at every minimum:
     //
     //   `SoapEnvelope`   34/34 -- `render`'s three validations, `parseResponse`'s "no Body", "no
-    //                    response element" and "a response for a different action" arms,
+    //                    response element" and "a response for a different action" arms (all
+    //                    three now answering `null` rather than an empty map -- Task 3's fix
+    //                    round, the review's MEDIUM: "the device answered nothing" and "the device
+    //                    answered no out arguments" are different facts, and `SoapClient.invoke`
+    //                    turns only the first into a `SoapTransportException`),
     //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
     //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
     //                    refusal, the unparseable-XML arm, and (Task 2's fix round) `descendant`'s
     //                    depth bound refusing and permitting -- the same StackOverflowError this
     //                    module's `DeviceDescription.parseDevice` carried, in the walker
     //                    `SoapClient.invoke` reaches on **every** response, outside its
-    //                    `try`/`catch`. Was 32/32.
+    //                    `try`/`catch`. Was 32/32. `render`'s escaping of argument values (the
+    //                    same fix round, the review's HIGH 1) adds no branch: it is a call.
     //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
     //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
     //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
@@ -2413,17 +2418,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // included so `warnUngatedClasses` stays quiet, gating nothing. The floor is not vacuous
     // regardless: 72 of its BRANCH counters come from the five classes above.
     //
-    // Falsified rather than assumed, and the first two attempts are recorded because they are the
-    // interesting part: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and the other unusable
-    // values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and this floor still
-    // passes (the `NOT_IMPLEMENTED` arm is also driven by `FakeRendererStrictnessTest`'s
-    // seek-target rejection), and withholding `SoapEnvelopeTest`'s `a fault this client cannot
-    // read a code out of is still a fault` alone leaves it at **29/32 = 0.9062**, still passing.
-    // What does fire it: withholding that test together with `a body that is not xml at all, or
-    // has no Body element, is empty rather than an exception` and `a fault carrying a DOCTYPE is
-    // refused rather than parsed` drops `SoapEnvelope` to **27/32 = 0.84** and this floor fails --
-    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.84,
+    // Falsified rather than assumed, and RE-MEASURED in Task 3's fix round -- which is the part
+    // worth reading, because the previously recorded falsification had gone stale and would have
+    // been believed. It said that withholding `SoapEnvelopeTest`'s `a fault this client cannot
+    // read a code out of is still a fault`, `a body that is not xml at all, or has no Body
+    // element, ...` and `a fault carrying a DOCTYPE is refused rather than parsed` together drops
+    // `SoapEnvelope` to 27/32 = 0.84 and fires this floor. Withholding exactly those three today
+    // leaves it at **32/34 = 0.9412 and this floor GREEN**: the fix round gave three of those arms
+    // second drivers (`SoapClientTest`'s `a 200 with no response element is a transport failure`
+    // reaches the "no Body" arm, and `FakeRendererStrictnessTest`'s `a body carrying a DOCTYPE is
+    // refused rather than parsed` reaches `declaresDoctype`, which the fake now shares rather than
+    // copies). Withholding those three **plus** `a doctype hidden behind a five kilobyte comment
+    // is still seen by the guard`, `a response for a different action is not accepted as this one`
+    // and the fake's own DOCTYPE test drops it to **30/34 = 0.8824** and this floor fails --
+    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.88,
     // but expected minimum is 0.90"*.
+    //
+    // The other recorded near-miss still stands: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and
+    // the other unusable values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and
+    // this floor still passes, the `NOT_IMPLEMENTED` arm being also driven by
+    // `FakeRendererStrictnessTest`'s seek-target rejection.
     //
     // The measurement is 1.0000 and the floor is 0.90 on purpose -- raising a minimum above a
     // measured 1.0000 is not a way to watch a gate fire, because JaCoCo validates the minimum is
@@ -2453,16 +2467,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                     over the one class in this package whose ordering defect this task
     //                     exists to prevent. LINE 12/12.
     //   `SoapClient*`     `SoapClient` itself is LINE 3/3 with no branches; the real body is the
-    //                     `invoke$2` continuation, LINE 18/18 and BRANCH **5/6** -- the missing
+    //                     `invoke$2` continuation, LINE 19/19 and BRANCH **7/8** -- the missing
     //                     arm being the coroutine `label` check whose other arm is unreachable by
     //                     construction, exactly as recorded for `RendererDirectory$describe$xml$1`
     //                     above. Lowering a BRANCH floor to fit that is what this table refuses to
-    //                     do, so LINE gates what can honestly be gated.
+    //                     do, so LINE gates what can honestly be gated. Was LINE 18/18 and BRANCH
+    //                     5/6; Task 3's fix round added the elvis that turns an unreadable 200
+    //                     into a `SoapTransportException`, which is one line and two branches.
     //
-    // Falsified: withholding `XmlTextTest`'s two `unescape` tests drops `XmlText` to LINE
-    // **6/12 = 0.50** and this floor fails -- *"Rule violated for class app.muplay.cast.soap.XmlText:
-    // lines covered ratio is 0.50, but expected minimum is 0.90"*. Nothing else in this module
-    // calls `unescape`; Task 4's DIDL round trip will be the second caller.
+    // Falsified, and RE-MEASURED in that fix round because the note here had gone stale in the way
+    // it predicted itself: it said withholding `XmlTextTest`'s two `unescape` tests drops `XmlText`
+    // to LINE 6/12 = 0.50, and added *"Task 4's DIDL round trip will be the second caller"*. Task 4
+    // landed. Withholding those two alone now leaves `XmlText` at **12/12 = 1.0000 and this floor
+    // GREEN**. What fires it is those two together with `DidlLiteTest`'s two decoding tests --
+    // `didl survives being embedded in a soap envelope and read back out` and `the metadata
+    // argument carries the document escaped exactly once` -- which drops `XmlText` to
+    // **6/12 = 0.50**: *"Rule violated for class app.muplay.cast.soap.XmlText: lines covered ratio
+    // is 0.50, but expected minimum is 0.90"*.
+    //
+    // The `SoapClient*` half of this floor is the honest weak one, and the measurement is recorded
+    // rather than hidden: withholding all four of `SoapClientTest`'s failure-path tests (`a
+    // renderer that has gone away`, `a refused action throws with the device's own error code`, `a
+    // status this client cannot read`, `a 200 with no response element is a transport failure`)
+    // leaves `invoke$2` at LINE **18/19 = 0.9474** -- still green -- while its BRANCH falls to
+    // 5/8 = 0.6250. That is what a LINE floor over a class whose every line has several callers
+    // buys, and it is why the four mutation probes on `SoapClient` in `ci/mutation-probes.sh`, not
+    // this floor, are what actually holds that class.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -2748,6 +2778,147 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.IntegrationCredentialStore",
         "app.muplay.integrations.IntegrationCredentialStore*Companion",
       ),
+      requiresInstrumentedData = true,
+    ),
+    // Task 3, the request store. Four rules, and which tier each lands in is a measurement rather
+    // than a preference: the status type is pure Kotlin and reachable from the JVM, and everything
+    // that touches Room is not reachable without a device at all.
+    //
+    // The **fast tier**, enforced by `jacocoJvmCoverageVerification` on every pull request:
+    // `RequestStatusKt` (the two `when` cascades that decide what goes in the `status` and
+    // `status_detail` columns) at **18/18 BRANCH, 14/14 LINE**, and `RequestStatus$Companion`
+    // (`fromStored`, the read side of the same two columns) at **16/16 BRANCH, 8/8 LINE**.
+    // `RequestStatusTest` is a plain JUnit 5 test -- a `when` over a sealed interface and a
+    // `toIntOrNull` name no Android type -- so this is genuinely a Tier 1 floor and not one that
+    // only the 45-minute tier can see.
+    //
+    // `storedName`/`storedDetail` are **extension properties in `RequestStatus.kt`, not members of
+    // the interface**, and that is what makes `RequestStatusKt` exist to be gated. As interface
+    // members with default getters they compiled to a JVM default method plus a
+    // `RequestStatus$DefaultImpls` Java-compat bridge that no Kotlin call site reaches: measured
+    // at **LINE 0/4** here, in a class 0.90 fails outright and a 0.00 minimum could never fail --
+    // the unfireable floor this project has shipped once and does not intend to ship again. See
+    // the KDoc on those two properties.
+    //
+    // Falsified, not assumed, and the withholding is recorded because a record like this goes
+    // stale the moment a second caller appears (see CLAUDE.md's note on exactly that): withholding
+    // `every member round-trips to an equal value` **and** `the detail column carries the member's
+    // data and nothing else` from `RequestStatusTest` drops `RequestStatusKt` to **8/18 = 0.4444**
+    // BRANCH and `RequestStatus$Companion` to **10/16 = 0.6250**, and
+    // `jacocoJvmCoverageVerification` fails on both. One of the two alone is not enough --
+    // `roundTrip` in the first reads `storedDetail` for every member, which is what the second
+    // asserts about.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.RequestStatusKt",
+        "app.muplay.integrations.RequestStatus*Companion",
+      ),
+    ),
+    // The same two classes' LINE, plus the three data-carrying members' 1/1 constructors
+    // (`RequestStatus$Downloading`, `$Arrived`, `$Failed`) and `MediaRequest$Companion`'s `idFor`
+    // (1/1) -- every one of them measured 1.0000 and every one of them reachable from the JVM
+    // tier, since `RequestStatusTest` constructs each member at two values and calls `idFor` at
+    // three. `RequestStatus` itself and its two `data object` members carry no counter of either
+    // kind and ride along, exactly as `IntegrationCredentials` does in the rule above.
+    //
+    // Falsified by withholding `the request id is derived from the service and the external id`
+    // alone: `MediaRequest$Companion` drops to **LINE 0/1 = 0.0000** and this rule fails. (The two
+    // withheld tests recorded against the BRANCH rule above also take `RequestStatusKt` to LINE
+    // 7/14 = 0.5000 and the companion to 6/8 = 0.7500, so this rule has two independent
+    // falsifications rather than one.)
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.RequestStatusKt",
+        "app.muplay.integrations.RequestStatus",
+        "app.muplay.integrations.RequestStatus*",
+        "app.muplay.integrations.MediaRequest*Companion",
+      ),
+      excludes = listOf("app.muplay.integrations.MediaRequestRepository*"),
+    ),
+    // `MediaRequestRepository`'s own author-written branches: **11/12**, instrumented only. Real
+    // Room and real SQL need a device, and a fake DAO would not prove the two properties this
+    // class exists to have -- that the newest-first order comes out of the query rather than out
+    // of insertion luck, and that `requests(service)` passes its argument through.
+    //
+    // The twelfth branch is Kotlin's unreachable null path of `existing?.status ?: ...`: JaCoCo
+    // counts four branches on that line and the `existing.status == null` arm cannot happen,
+    // because the column is a non-null `String`. Same artifact, same reason, as
+    // `IntegrationCredentialStore`'s eighteenth branch four rules up and `CoverArtCacheKeyKt`'s
+    // fourth in `:feature:library` -- so **0.90 against a measured 0.9167 is the honest ceiling**
+    // and a 1.00 here would fail the build on the Kotlin compiler rather than on this project's
+    // code.
+    //
+    // LINE for the row's storage shapes in the same rule set below rather than here: this class
+    // measures 43/43 LINE, and the entity, the database and the model have no branches at all.
+    //
+    // Falsified by withholding `reRequestingTheSameThingUpdatesTheRowRatherThanDuplicatingIt` and
+    // `reRecordingKeepsTheStatusTheRowAlreadyReached` from `MediaRequestRepositoryTest`: those two
+    // are the only tests that re-record an existing row, so all three `existing?.x ?: y` arms go
+    // uncovered and this class drops to **5/12 = 0.4167**, failing at its real minimum.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.MediaRequestRepository"),
+      requiresInstrumentedData = true,
+    ),
+    // The instrumented LINE side: `MediaRequestRepository` 43/43, `MediaRequest` 10/10 (its
+    // constructor and nine property getters, which only a row read back out of SQLite reaches),
+    // `db.MediaRequestEntity` 12/12 and `db.IntegrationRequestsDatabase` 1/1. All four measured
+    // 1.0000, gated at the project target rather than at the measurement for the reason the
+    // `IntegrationBaseUrl` entry above gives: a floor pinned to 1.00 goes red on a refactor that
+    // changed nothing.
+    //
+    // `db.MediaRequestDao` and `IntegrationRequestsDatabase$Companion` carry no counters and ride
+    // along. Room's generated `MediaRequestDao_Impl`/`IntegrationRequestsDatabase_Impl` are not in
+    // the report at all -- generated code is excluded before it gets here -- which is what keeps
+    // this rule's `db.*` wildcard from gating a code generator's output.
+    //
+    // Falsified, and the **first attempt failed to falsify it**, which is worth recording rather
+    // than quietly fixing: withholding the four `setStatus*` tests and `forgetRemovesOnlyTheRowIt
+    // Names` left this class at **42/43 = 0.9767 and green**, because
+    // `reRecordingKeepsTheStatusTheRowAlreadyReached` is a *second caller* of `setStatus` and kept
+    // its body covered -- exactly the stale-falsification-record shape CLAUDE.md describes.
+    // Withholding that sixth test as well drops it to **36/43 = 0.8372** and the rule fires. If a
+    // seventh caller of `setStatus` ever arrives, this record needs re-measuring.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.MediaRequestRepository",
+        "app.muplay.integrations.MediaRequest",
+        "app.muplay.integrations.db.*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The Kotlin compiler's own output for `requests()`'s two `Flow.map`s, gated low rather than
+    // not at all -- the identical trade the `IntegrationCredentialStore*` rule above makes, for
+    // the identical reason. Measured: `requests$$inlined$map$1` and `$2` at 2/3 = 0.6667 each, and
+    // `$1$2`/`$2$2` at 1/2 = 0.5000 each; `$1$1`, `$2$1`, `$1$2$1`, `$2$2$1` and `record$1` carry
+    // no LINE counter at all (JaCoCo's isNaN pass, which is not the same thing as excluded). 0.50
+    // is a number this run produced.
+    //
+    // `excludes` keeps `MediaRequestRepository` itself out, so its real 0.90 rules above stay the
+    // ones that gate it.
+    //
+    // Falsified by withholding the four tests that collect `requests(service)` --
+    // `nothingIsStoredBeforeAnythingIsRecorded`, `requestsForOneServiceComeBackNewestFirstToo`,
+    // `requestsFilteredByServiceReturnsThatServicesRowsAndOnlyThose` and
+    // `aServiceWithNoRowsOfItsOwnReadsAsEmptyEvenWhenTheTableIsNot`: `requests$$inlined$map$2`
+    // goes to **0/3** and `$2$2` to **0/2**, and the rule fails on both.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.50"),
+      includes = listOf("app.muplay.integrations.MediaRequestRepository*"),
+      excludes = listOf("app.muplay.integrations.MediaRequestRepository"),
       requiresInstrumentedData = true,
     ),
   ),
