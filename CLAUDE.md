@@ -44,6 +44,22 @@ It takes an exclusive kernel lock, so runs queue instead of overlapping, and it
 tells you who holds the device while you wait. Exit **75** means the wait ran
 out and *nothing was measured* — never report that as a test failure.
 
+**Build outside the lock.** Compiling needs no device, so wrapping the whole
+Gradle invocation holds the emulator hostage through a build every other agent
+then waits on. Assemble first, unlocked, and lock only the install-and-run:
+
+    ./gradlew :core:media:assembleDebugAndroidTest :core:media:assembleDebug
+    ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest
+
+The second command finds its build up to date, so the critical section shrinks
+to install plus execution. While iterating, narrow it further to the class you
+are working on:
+
+    ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.class=app.muplay.media.MediaCacheTest
+
+Run the module's full connected suite once, at the end, before you report.
+
 The lock is held on an open file descriptor, so a killed agent releases it. Do
 not replace it with a PID file, and do not add a liveness check that parses one.
 
