@@ -44,16 +44,16 @@ fun SetupScreen(
   viewModel: SetupViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  // N-5 (review round 1, task-8-review.md): unobserved by any test today -- deleting this whole
-  // effect leaves every test in both tiers green, because `MuPlayApp.kt` currently wires
-  // `onSetupComplete = {}` and there is no destination for a real callback to reach yet. Harmless
-  // now; becomes a real risk the moment a later task supplies a non-no-op callback, at which point
-  // a silent failure to invoke it here would look like a bug in the navigation code that receives
-  // it instead. Whoever wires real navigation should add a test that actually observes this
-  // firing (a `SetupScreen`-level Compose test with the primary/test-seam `SetupViewModel`
-  // constructor and an explicit `viewModel =` argument, bypassing `hiltViewModel()`, needs no new
-  // Hilt testing infrastructure and was deliberately not added here to keep this round's fix
-  // scoped to what was found).
+  // Observed, as of Task 9's review round 1 (N-1). This effect was flagged by Task 8's own review
+  // (N-5, task-8-review.md) as unobserved by any test: `MuPlayApp.kt` wired `onSetupComplete = {}`
+  // then, so deleting the whole effect left both tiers green. Task 9 supplied the real callback
+  // (`backStack.clear(); backStack.add(LibraryRoute)`), and
+  // `FirstRunJourneyTest.completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen` now walks
+  // the flow to Ready and asserts the *browse* screen's own controls are on screen afterwards --
+  // so deleting this effect, or reverting the callback to a no-op, strands that test on the setup
+  // screen. Note what this costs and why it is right: reaching Ready no longer renders
+  // `Text("Setup complete")` to anybody, because the host navigates away in the same frame, so the
+  // journey's old assertion on that string was not weakened but replaced -- see that test's doc.
   LaunchedEffect(uiState) {
     if (uiState is SetupUiState.Ready) onSetupComplete()
   }
