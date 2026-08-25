@@ -44,11 +44,30 @@
 # list exited 1 on a stale `auth/empty-authParams` count, and an independent review re-proved it by
 # weakening a stamp test in a throwaway worktree.
 #
-# SCOPE. Production-code mutations only. The falsifiability probes for `LiveNavidromeTest`'s six
-# scoping assertions are *test-side* (they change which musicFolderId the test sends, to prove the
-# assertion discriminates rather than that the client is right), so they do not belong here; they
-# are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
-# Navidrome container.
+# SCOPE. Production-code mutations only. The falsifiability
+# probes for `LiveNavidromeTest`'s six scoping assertions are *test-side* (they change which
+# musicFolderId the test sends, to prove the assertion discriminates rather than that the client is
+# right), so they do not belong here; they are recorded in task-3-report.md instead. This script
+# runs the JVM suites only and needs no Navidrome container.
+#
+# AND A HARDER LIMIT THAN "PRODUCTION CODE ONLY", MEASURED IN PLAN 3 TASK 7B: this runner cannot see
+# a mutation to any file the JVM tier does not declare as a task *input*, however loudly a test
+# reading that file at runtime would fail. `run_suite()` deletes the result directories to force a
+# re-run, but Gradle then restores `:core:media:testDebugUnitTest` FROM-CACHE, because an
+# androidTest source is not an input to it and the cache key therefore did not move.
+#
+# Measured, not deduced. Task 7b wrote a probe that hand-builds an `ExoPlayer` inside `GaplessTest`
+# -- exactly the defect `PlayerConstructionTest`'s scan of `core/media/src` exists to refuse -- and
+# this runner reported MISSED with **zero** failures in the whole suite. The same mutation, applied
+# by hand and run as `./gradlew --no-build-cache :core:media:test`, fails as designed:
+# "PlayerConstructionTest > an ExoPlayer is constructed in exactly one place() FAILED". The probe
+# was therefore removed rather than left MISSED, and the falsification is recorded by hand in
+# task-7b-report.md.
+#
+# So: a probe on a repo-walking scanner's *subject* belongs here only if that subject is inside a
+# source set the invocation below already compiles. Adding `--no-build-cache` to fix one such probe
+# would pay a full recompilation on every one of the probes in this list, which is not a trade this
+# script makes.
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
@@ -1172,6 +1191,43 @@ PROBES = [
      "    val player: ExoPlayer = playerFactory.create()",
      "    val player: ExoPlayer = ExoPlayer.Builder(this).build()",
      "an ExoPlayer is constructed in exactly one place", 1),
+    # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
+    # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
+    # a policy that lost either one is silently wrong on a device nobody is watching.
+    ("media/task-removal-stops-while-playing", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    true",
+     "music that is playing survives the user tidying their recents list", 1),
+    ("media/task-removal-keeps-an-empty-queue-alive", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    playWhenReady != true",
+     # 2, measured: the same mutation also reddens `no session at all is the clearest reason to
+     # stop`, because with `mediaItemCount = null` and `playWhenReady = true` the surviving half of
+     # the condition answers "keep running" for a service that has no player.
+     "an empty queue stops the service even when the player is ready to play", 2),
+    # A format the server transcodes on the fly has no `Content-Length`, so `player.duration` is
+    # `C.TIME_UNSET` for the whole track and the metadata is the only source that knows. Dropping
+    # the fallback shows every Opus track as unknown length on the lock screen, in Auto, in Wear
+    # and in the seek bar -- and moves no other assertion in this project.
+    ("media/duration-metadata-ignored", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     "the metadata's duration is used when the extractor had none", 1),
+    # The other direction: the metadata is what the *server* said about the file, the player is
+    # what the extractor measured of the bytes actually playing. Preferring the wrong one is a
+    # seek bar that disagrees with the audio.
+    ("media/duration-metadata-wins", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (metadataDurationMs ?: playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     # 2, measured: it also reddens `an unknown duration is zero, never a negative sentinel`,
+     # whose `playerDurationMs = -1L` case exists precisely to pin which source is consulted first.
+     "the player's own duration wins, because it measured what is playing", 2),
+    # `NOTHING_PLAYING` is what four downstream tasks render before anything is loaded. A `true`
+    # here is an enabled "next" button with no queue behind it, and it moves no branch anywhere.
+    ("media/nothing-playing-has-next", PLAYBACK_STATE,
+     "      hasNext = false,\n      hasPrevious = false,",
+     "      hasNext = true,\n      hasPrevious = false,",
+     "nothing playing can step neither forward nor back", 1),
     # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
     # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
     # a policy that lost either one is silently wrong on a device nobody is watching.
