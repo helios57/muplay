@@ -1138,6 +1138,13 @@ LATER_PROBE_FILES = [
     BROWSE_ID,
     BASE_URL,
     INTEGRATION_SERVICE,
+    # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
+    # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
+    # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
+    # Exactly the "fails in the worst direction" this list's own comment above warns about.
+    PLAYER_STATE,
+    PLAYER_VM,
+    PLAYBACK_LAUNCHER,
 ]
 
 
