@@ -1,5 +1,7 @@
 package app.muplay.ui
 
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -11,9 +13,12 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import app.muplay.library.AlbumScreen
 import app.muplay.library.LibraryScreen
+import app.muplay.player.MiniPlayer
+import app.muplay.player.PlayerScreen
 import app.muplay.setup.SetupScreen
 import app.muplay.ui.navigation.AlbumRoute
 import app.muplay.ui.navigation.LibraryRoute
+import app.muplay.ui.navigation.PlayerRoute
 import app.muplay.ui.navigation.SetupRoute
 
 /**
@@ -51,29 +56,55 @@ fun MuPlayApp(
 @Composable
 private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
   val backStack = rememberNavBackStack(start)
+  val openPlayer = { backStack.add(PlayerRoute) }
 
-  NavDisplay(
-    backStack = backStack,
-    onBack = { backStack.removeLastOrNull() },
+  Scaffold(
     modifier = modifier,
-    entryProvider = entryProvider {
-      entry<SetupRoute> {
-        SetupScreen(
-          onSetupComplete = {
-            // Replace rather than push: going "back" into setup after finishing it would offer to
-            // re-enter credentials the app already has.
-            backStack.clear()
-            backStack.add(LibraryRoute)
-          },
-        )
+    bottomBar = {
+      // **Around the `NavDisplay`, not inside a destination.** A mini player that lived in the
+      // library entry would be torn down and rebuilt on every navigation, and would simply not
+      // exist on the album screen -- so the one control that gets a user back to what is playing
+      // would vanish exactly where they went looking for it.
+      //
+      // Hidden on the player screen itself: a mini player under a full player is two controls for
+      // one thing, and the top one wins by accident.
+      //
+      // `MiniPlayer` renders nothing at all when nothing is playing, so this bar takes no space
+      // before the first track -- that decision is the composable's, not this call site's.
+      if (backStack.lastOrNull() != PlayerRoute) {
+        MiniPlayer(onOpenPlayer = { openPlayer() })
       }
-      entry<LibraryRoute> {
-        LibraryScreen(onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) })
-      }
-      // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round
-      // established that Navigation 3 populates no `SavedStateHandle` argument for a `NavKey`'s
-      // properties, so the key's id is passed as an ordinary parameter. See `AlbumScreen`'s doc.
-      entry<AlbumRoute> { route -> AlbumScreen(albumId = route.albumId) }
     },
-  )
+  ) { padding ->
+    NavDisplay(
+      backStack = backStack,
+      onBack = { backStack.removeLastOrNull() },
+      modifier = Modifier.padding(padding),
+      entryProvider = entryProvider {
+        entry<SetupRoute> {
+          SetupScreen(
+            onSetupComplete = {
+              // Replace rather than push: going "back" into setup after finishing it would offer
+              // to re-enter credentials the app already has.
+              backStack.clear()
+              backStack.add(LibraryRoute)
+            },
+          )
+        }
+        entry<LibraryRoute> {
+          LibraryScreen(
+            onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) },
+            onOpenPlayer = { openPlayer() },
+          )
+        }
+        // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round
+        // established that Navigation 3 populates no `SavedStateHandle` argument for a `NavKey`'s
+        // properties, so the key's id is passed as an ordinary parameter. See `AlbumScreen`'s doc.
+        entry<AlbumRoute> { route ->
+          AlbumScreen(albumId = route.albumId, onOpenPlayer = { openPlayer() })
+        }
+        entry<PlayerRoute> { PlayerScreen() }
+      },
+    )
+  }
 }

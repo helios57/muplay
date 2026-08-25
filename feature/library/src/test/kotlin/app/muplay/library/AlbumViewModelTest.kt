@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -67,6 +68,13 @@ class AlbumViewModelTest {
     override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String {
       coverArtCalls += coverArtId to sizePx
       return "cover:$coverArtId:$sizePx"
+    }
+
+    /** Song **ids** and the start index, so a test can assert which album was launched and from
+     *  which track -- not merely that something was played. */
+    val playCalls = mutableListOf<Pair<List<String>, Int>>()
+    override suspend fun play(songs: List<Song>, startIndex: Int) {
+      playCalls += songs.map { it.id } to startIndex
     }
   }
 
@@ -295,4 +303,71 @@ class AlbumViewModelTest {
       assertThat(first).isEqualTo("cover:al-abc:64")
       assertThat(second).isEqualTo("cover:al-xyz:512")
     }
+
+  /**
+   * This album's songs, from the row that was tapped, in the order the screen is showing them.
+   *
+   * Two disjoint observations of the index for the reason this project keeps rediscovering: a
+   * `startIndex` hardcoded to 0 makes every track on an album screen play track 1, and one
+   * observation cannot see it. The fixture's two albums have disjoint song ids, so a launcher fed
+   * the *other* album's songs fails here as well.
+   */
+  @Test
+  fun `playing a track launches this album's songs from that track`() = runTest(dispatcher) {
+    val source = FakeAlbumSource()
+    source.albumsById["a"] = album("a", "First", 1)
+    source.setSongs("a", listOf(song("s1", "One", "a", 1), song("s2", "Two", "a", 1), song("s3", "Three", "a", 1)))
+    val vm = warm(source)
+    vm.load("a")
+    advanceUntilIdle()
+
+    vm.play(0)
+    advanceUntilIdle()
+    assertThat(source.playCalls).containsExactly(listOf("s1", "s2", "s3") to 0)
+
+    vm.play(2)
+    advanceUntilIdle()
+    assertThat(source.playCalls)
+      .containsExactly(listOf("s1", "s2", "s3") to 0, listOf("s1", "s2", "s3") to 2)
+  }
+
+  /**
+   * The album that is on screen, not the one that was on screen before. The Activity-scoped view
+   * model store this app installs means one instance really does serve album A then album B (see
+   * [AlbumViewModel]'s own doc), so "plays the previous album's queue" is a reachable bug rather
+   * than a hypothetical one.
+   */
+  @Test
+  fun `playing a track after switching albums launches the album now on screen`() =
+    runTest(dispatcher) {
+      val source = FakeAlbumSource()
+      source.albumsById["a"] = album("a", "First", 1)
+      source.albumsById["b"] = album("b", "Second", 2)
+      source.setSongs("a", listOf(song("s1", "One", "a", 1)))
+      source.setSongs("b", listOf(song("t1", "Alpha", "b", 2), song("t2", "Beta", "b", 2)))
+      val vm = warm(source)
+      vm.load("a")
+      advanceUntilIdle()
+      vm.load("b")
+      advanceUntilIdle()
+
+      vm.play(1)
+      advanceUntilIdle()
+
+      assertThat(source.playCalls).containsExactly(listOf("t1", "t2") to 1)
+    }
+
+  /** A tap arriving before the album has loaded -- or after `stateIn(WhileSubscribed)` has dropped
+   *  back to `Loading` -- must do nothing rather than launch an empty queue. */
+  @Test
+  fun `playing a track before the album has loaded touches nothing`() = runTest(dispatcher) {
+    val source = FakeAlbumSource()
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    vm.play(0)
+    advanceUntilIdle()
+
+    assertThat(source.playCalls).isEmpty()
+  }
 }

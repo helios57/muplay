@@ -7,10 +7,12 @@ import app.muplay.database.LibraryRepository
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.SyncEngine
 import app.muplay.database.SyncState
+import app.muplay.media.PlaybackLauncher
 import app.muplay.model.Album
 import app.muplay.model.MusicLibrary
 import app.muplay.model.SearchResults
 import app.muplay.model.ShuffleResult
+import app.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -45,6 +47,14 @@ interface LibrarySource {
   suspend fun syncIfStale(): SyncState
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
   suspend fun allIds(): List<Int>
+
+  /**
+   * Starts playback. On the seam for the same reason every other member is: [PlaybackLauncher]
+   * builds a `MediaController` handshake, which needs a bound media session and therefore a device.
+   * The arguments are the whole contract -- **which** songs, from **which** index -- and a JVM test
+   * can hold both to a value here.
+   */
+  suspend fun play(songs: List<Song>, startIndex: Int)
 }
 
 /**
@@ -63,6 +73,7 @@ class LibraryViewModel(
     browseRepository: BrowseRepository,
     shuffleRepository: ShuffleRepository,
     syncEngine: SyncEngine,
+    playbackLauncher: PlaybackLauncher,
   ) : this(
     object : LibrarySource {
       override val libraries: Flow<List<MusicLibrary>> = libraryRepository.libraries
@@ -75,6 +86,8 @@ class LibraryViewModel(
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
       override suspend fun allIds(): List<Int> = libraryRepository.allIds()
+      override suspend fun play(songs: List<Song>, startIndex: Int) =
+        playbackLauncher.play(songs, startIndex)
     },
   )
 
@@ -168,6 +181,24 @@ class LibraryViewModel(
         is SyncState.Failed -> "Could not reach the server. Showing your last synced library."
       }
     }
+  }
+
+  /**
+   * Plays the shuffle result, from the row the user tapped.
+   *
+   * The songs come from `ShuffleRepository`, which has already dropped anything the mirror does not
+   * agree belongs to the selected library -- see Plan 2 Task 7. This method adds no scope check of
+   * its own, deliberately: a second, weaker copy of that guard here would be a place for the two to
+   * disagree, and the one that is wrong would be the one nobody tested.
+   *
+   * The early return is not defensive padding: `uiState` is `Loading` until the mirror has been
+   * read, and a shuffle row cannot be tapped then -- but `stateIn(WhileSubscribed)` also drops back
+   * to its initial value once the screen has been gone for five seconds, so a stale tap really can
+   * arrive here in a non-`Content` state.
+   */
+  fun playShuffled(startIndex: Int) {
+    val content = uiState.value as? LibraryUiState.Content ?: return
+    viewModelScope.launch { source.play(content.shuffled, startIndex) }
   }
 
   private suspend fun currentLibraryId(): Int? =
