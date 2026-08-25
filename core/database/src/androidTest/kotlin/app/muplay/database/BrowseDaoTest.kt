@@ -8,6 +8,8 @@ import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.ArtistEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
+import app.muplay.model.Album
+import app.muplay.model.Song
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
@@ -469,5 +471,68 @@ class BrowseDaoTest {
 
     assertThat(dao.observeAlbumsByArtist(1, "artist-1").first().map { it.name })
       .containsExactly("Apple Album", "Mango Album", "Zebra Album")
+  }
+
+  /**
+   * N2-3: every ordering test above builds its rows by hand (`name.lowercase()` for the sort key),
+   * so a hardcoded `sortName`/`sortTitle` inside `MirrorMapper` itself was invisible to all of
+   * them -- the DAO's `ORDER BY` and the mapper's sort-key derivation were each proven correct in
+   * isolation, never together. This test builds every row through the real `MirrorMapper`
+   * functions instead (`artistEntities`, `albumEntity`, `songEntity`), so a broken sort key
+   * anywhere in the mapper reddens this test the same way a broken `ORDER BY` does -- the two
+   * halves of Task 5's own ordering claim, connected in one place.
+   */
+  @Test
+  fun rowsBuiltThroughMirrorMapperSortByTheKeyItActuallyComputes() = runTest {
+    val albums = listOf(
+      Album(
+        id = "mm-zeta", libraryId = 1, name = "Zeta Album", artistId = "mm-artist",
+        artistName = "Zeta Artist", coverArtId = null, songCount = 1, durationSeconds = 5,
+      ),
+      Album(
+        id = "mm-mango", libraryId = 1, name = "Mango Album", artistId = "mm-artist",
+        artistName = "Zeta Artist", coverArtId = null, songCount = 1, durationSeconds = 5,
+      ),
+      Album(
+        id = "mm-alpha", libraryId = 1, name = "Alpha Album", artistId = "mm-artist",
+        artistName = "Zeta Artist", coverArtId = null, songCount = 1, durationSeconds = 5,
+      ),
+    )
+    val songs = listOf(
+      Song(
+        id = "mm-song-zeta", libraryId = 1, title = "Zeta Song", albumId = "mm-zeta",
+        albumName = "Zeta Album", artistId = "mm-artist", artistName = "Zeta Artist",
+        trackNumber = null, discNumber = null, durationSeconds = 5, suffix = "mp3",
+        coverArtId = null,
+      ),
+      Song(
+        id = "mm-song-mango", libraryId = 1, title = "Mango Song", albumId = "mm-zeta",
+        albumName = "Zeta Album", artistId = "mm-artist", artistName = "Zeta Artist",
+        trackNumber = null, discNumber = null, durationSeconds = 5, suffix = "mp3",
+        coverArtId = null,
+      ),
+      Song(
+        id = "mm-song-alpha", libraryId = 1, title = "Alpha Song", albumId = "mm-zeta",
+        albumName = "Zeta Album", artistId = "mm-artist", artistName = "Zeta Artist",
+        trackNumber = null, discNumber = null, durationSeconds = 5, suffix = "mp3",
+        coverArtId = null,
+      ),
+    )
+
+    dao.replaceLibraryContents(
+      libraryId = 1,
+      artists = MirrorMapper.artistEntities(albums),
+      albums = albums.map(MirrorMapper::albumEntity),
+      songs = songs.map(MirrorMapper::songEntity),
+    )
+
+    // All three share one artist (same artistId), inserted zeta/mango/alpha -- out of sort order
+    // on every axis at once. Every song ties on disc (null) and track (null), so sortTitle alone
+    // decides their order -- exactly the field N2-3 found unobserved anywhere in the repo.
+    assertThat(dao.observeAlbums(1).first().map { it.name })
+      .containsExactly("Alpha Album", "Mango Album", "Zeta Album")
+    assertThat(dao.observeArtists(1).first().map { it.name }).containsExactly("Zeta Artist")
+    assertThat(dao.observeSongs("mm-zeta").first().map { it.title })
+      .containsExactly("Alpha Song", "Mango Song", "Zeta Song")
   }
 }

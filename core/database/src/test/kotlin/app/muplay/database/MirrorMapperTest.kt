@@ -73,6 +73,10 @@ class MirrorMapperTest {
     )
 
     assertThat(MirrorMapper.song(MirrorMapper.songEntity(song))).isEqualTo(song)
+    // N2-3: sortTitle is write-only -- song(entity) never reads it back, so the round trip above
+    // cannot see it at all. Before this line it was observed nowhere in the whole repo. First of
+    // two disjoint observations.
+    assertThat(MirrorMapper.songEntity(song).sortTitle).isEqualTo("track 1")
   }
 
   @Test
@@ -115,13 +119,20 @@ class MirrorMapperTest {
 
   @Test
   fun `a derived artist takes its library id from its albums`() {
-    val artists = MirrorMapper.artistEntities(listOf(album("a1", "First", libraryId = 9)))
+    val artists = MirrorMapper.artistEntities(
+      listOf(album("a1", "First", artistName = "Solo Artist", libraryId = 9)),
+    )
 
     assertThat(artists.single().libraryId).isEqualTo(9)
     // N-2/L: every other test in this file derives a two-album artist (albumCount = 2), so a
     // hardcoded "2" in `albumCount = ordered.size` would still pass them all. This one-album
     // fixture gives a second, disjoint observation.
     assertThat(artists.single().albumCount).isEqualTo(1)
+    // N2-3: sortName is write-only -- artist(entity) never reads it back -- so no round trip can
+    // reach it. Observed here at "solo artist", disjoint from "test artist" (the only other place
+    // this field is asserted, in "artists are derived from the albums of one library" above) --
+    // a hardcoded literal from either test would fail the other.
+    assertThat(artists.single().sortName).isEqualTo("solo artist")
   }
 
   @Test
@@ -222,6 +233,8 @@ class MirrorMapperTest {
     )
 
     assertThat(MirrorMapper.song(MirrorMapper.songEntity(song))).isEqualTo(song)
+    // N2-3: second, disjoint sortTitle observation.
+    assertThat(MirrorMapper.songEntity(song).sortTitle).isEqualTo("chapter seven")
   }
 
   @Test
@@ -238,6 +251,10 @@ class MirrorMapperTest {
     )
 
     assertThat(MirrorMapper.album(MirrorMapper.albumEntity(second))).isEqualTo(second)
+    // N2-3: sortName is write-only -- album(entity) never reads it back, so the round trip above
+    // cannot see it. Second, disjoint observation ("test album" is the only other one, in "an
+    // album maps to an entity with its stamped library id intact").
+    assertThat(MirrorMapper.albumEntity(second).sortName).isEqualTo("a completely different album")
   }
 
   @Test

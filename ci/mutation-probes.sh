@@ -315,6 +315,20 @@ PROBES = [
      # 2, not 1: removing the whole escape chain also breaks the backslash-ordering test (a
      # literal backslash no longer gets doubled first) -- measured, not assumed.
      "searchPattern escapes the caller's own percent and underscore", 2),
+
+    # ---- N2-3, re-review round 1: the three write-only sort keys -- no round trip can reach
+    # them (the reverse mappers never read them back), so each needed its own second, disjoint
+    # fixture. A hardcode to either of the two values in use always reddens exactly one test;
+    # measured for both literals during the fix, one recorded here.
+    ("mapper/song-sortTitle", MIRROR,
+     "    sortTitle = sortKey(song.title),", '    sortTitle = "track 1",',
+     "a second song, every field disjoint from the first, still round-trips", 1),
+    ("mapper/album-sortName", MIRROR,
+     "    sortName = sortKey(album.name),", '    sortName = "test album",',
+     "a second album, every field disjoint from the first, still round-trips", 1),
+    ("mapper/artistEntities-sortName", MIRROR,
+     "          sortName = sortKey(name),", '          sortName = "test artist",',
+     "a derived artist takes its library id from its albums", 1),
 ]
 
 
