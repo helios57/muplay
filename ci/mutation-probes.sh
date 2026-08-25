@@ -1720,9 +1720,25 @@ PROBES = [
     # security posture and a test that proves nothing. Four reds, and the fourth matters most:
     # `each of the four arguments changes the answer on its own` exists so that `ownPackageName` is
     # a live argument rather than one the function could ignore.
+    #
+    # Replaces the whole tail of the `when`, not just the guard line: dropping the guard alone
+    # leaves the original `else -> BrowseSurface.PHONE` behind it, which is two `else` arms in one
+    # `when` and so a COMPILE error rather than a mutation. That version of this probe aborted the
+    # whole filtered list -- and reported it as `run_suite(): no test results were written for
+    # [every module]`, which reads exactly like the untouched-module false alarm master documents.
+    # It is not that: when the mutated module is in the list, suspect the mutation does not compile.
     ("browse/surface-hint-from-anyone", BROWSE_SURFACE,
-     "    packageName == ownPackageName -> when (hintSurface) {",
-     "    else -> when (hintSurface) {",
+     "    packageName == ownPackageName -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n"
+     "    else -> BrowseSurface.PHONE\n",
+     "    else -> when (hintSurface) {\n"
+     "      HINT_CAR -> BrowseSurface.CAR\n"
+     "      HINT_WATCH -> BrowseSurface.WATCH\n"
+     "      else -> BrowseSurface.PHONE\n"
+     "    }\n",
      "a hint is honoured from our own package and refused from any other", 4),
 
     # Exact match, not prefix. `com.google.android.projection.gearhead.evil` is installable, and a
