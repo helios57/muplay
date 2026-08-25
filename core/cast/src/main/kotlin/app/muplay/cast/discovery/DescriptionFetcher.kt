@@ -18,10 +18,13 @@ import java.net.URI
  * in the picker. [RendererDirectory] treats them per device, so one of them never empties the
  * picker of the rest.
  *
- * **This does not bound the body it reads.** [CastHttpClient] reads to the `Content-Length` or to
- * the peer's close, so a hostile device on the LAN can make this allocate. The size limit that
- * exists ([DeviceDescription.MAX_DESCRIPTION_BYTES]) is applied *after* the bytes are in memory,
- * which is a real limit of Task 1's client rather than something this function can fix from here.
+ * The body is bounded by [CastHttpClient] itself
+ * ([CastHttpClient.DEFAULT_MAX_BODY_BYTES], 1 MiB), which is the cap that matters: a hostile
+ * device on the LAN chooses what this fetches, and a `Content-Length` it declares over that cap is
+ * refused before a byte of it is buffered. [DeviceDescription.MAX_DESCRIPTION_BYTES] (512 KiB) is
+ * the *parser's* second, tighter opinion, applied to a document already in memory -- deliberately
+ * two limits rather than one, because the two are about different things and the socket-side one
+ * is the one that stops an allocation.
  */
 object DescriptionFetcher {
 
