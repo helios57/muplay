@@ -195,7 +195,21 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  * - **`:core:network`, `:core:testing`** — no `@Composable` code at all (neither module even
  *   applies the Compose convention plugin), and nothing within them that needs separating: a
  *   single `"BUNDLE"`-element BRANCH rule each (an aggregate across the whole module), measuring
- *   100% today (**56/56** and 6/6 real branches) against the full 0.90 target. `:core:network`'s
+ *   100% today (**56/56** and **28/28** real branches) against the full 0.90 target.
+ *
+ *   `:core:testing` was 6/6 until Plan 3 Task 7 added `PcmAnalysis`, the pure-JVM analyser the
+ *   gapless measurement is read through, which is 22 of those 28. A BUNDLE aggregate is the shape
+ *   `:core:model`'s entry below warns about, so the question was asked here rather than assumed,
+ *   and answered by deletion in both directions: with `PcmAnalysisTest` deleted this floor fails
+ *   at **6/28 = 0.21**, and with `OpenApiFixtureValidatorTest` deleted it fails at
+ *   **22/28 = 0.78**. Neither class can hide behind the other's coverage, which is the only
+ *   property that made the aggregate honest here in the first place; a third class arriving is
+ *   what would change that answer. (Raising this floor above its measured 1.00 is not a way to
+ *   watch it fire, incidentally: JaCoCo rejects a minimum outside 0.0..1.0 as a configuration
+ *   error — *"given minimum ratio is 1.01, but must be between 0.0 and 1.0"* — which fails the
+ *   build without ever reading a ratio. Deleting the tests is what actually exercises the gate.)
+ *
+ *   `:core:network`'s
  *   branch population went 30 → 56 in Plan 2 Task 3, and the floor is not decorative there: with
  *   the six browse commands added but before the three `OK_WITH_NO_PAYLOAD` tests that reach
  *   their absent-container branches, the same module measured **46/56 = 0.8214** and this floor
@@ -893,20 +907,130 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // ---- Plan 3 Task 4: the queue, and the two classes that turn it into MediaItems -----------
+    // 10/10 = 1.0000 BRANCH from **JVM data alone** -- `PlaybackQueueTest`, six tests, no
+    // emulator. Measured by deleting the connected run's `.ec` and re-reporting, which is what
+    // `requiresInstrumentedData = false` claims here; the ten branches are the two `require`s in
+    // `init` (`isNotEmpty`, and `startIndex in songs.indices`, which the compiler emits as a range
+    // check with several arms), and every one of them is driven by a test that asserts the
+    // resulting *message*, not merely that something was thrown.
+    //
+    // Falsified the other way round, because a floor measuring exactly 1.0000 cannot be falsified
+    // by raising its minimum: JaCoCo validates `minimum` *before* comparing anything, so 1.01
+    // fails with "Rule violated for class app.muplay.media.PlaybackQueue: given minimum ratio is
+    // 1.01, but must be between 0.0 and 1.0" -- measured here, and the identical message
+    // zero-coverage code would produce, which proves nothing about any test. Watched failing with
+    // `PlaybackQueueTest` moved aside instead: "Rule violated for class
+    // app.muplay.media.PlaybackQueue: branches covered ratio is 0.00, but expected minimum is
+    // 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackQueue"),
+    ),
+    // `PlaybackQueue$Companion` -- the `of` factory -- measures 1/1 LINE and **no branches at
+    // all**, so it needs a rule of its own on the counter it actually carries: a BRANCH rule over
+    // it would be the vacuous, NaN-scored shape this table's own doc describes, and
+    // `warnVacuousFloors` would say so on every run. It is not folded into the rule above as
+    // `PlaybackQueue*` for exactly that reason -- that pattern matches both classes, and a BRANCH
+    // rule over a set containing a branchless class still gates the branchless one at nothing.
+    //
+    // `*Companion`, not `$Companion`: a literal `$` in a pattern never matches (see this table's
+    // own doc, gotcha 3). JVM-measurable, same run as above. Watched failing with
+    // `PlaybackQueueTest` moved aside: "Rule violated for class
+    // app.muplay.media.PlaybackQueue.Companion: lines covered ratio is 0.00, but expected minimum
+    // is 0.90".
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackQueue*Companion"),
+    ),
+    // `MediaItems` 2/2 and `QueueRepository` 2/2 = 1.0000 BRANCH, instrumented -- both measure
+    // 0/2 from JVM data alone, because `MediaItem` is built on `android.net.Uri` and there is no
+    // Robolectric here. Two branches each, and both are the same decision seen at two layers: is
+    // there cover art (`song.coverArtId?.let` in the repository, `artworkUri?.toUri()` in the
+    // mapping). Real branches, so this floor is not vacuous -- but two of them over a
+    // seventeen-line field-by-field mapping is a thin gate on its own, which is what the LINE rule
+    // below is for.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.MediaItems", "app.muplay.media.QueueRepository"),
+      requiresInstrumentedData = true,
+    ),
+    // 17/17 and 10/10 = 1.0000 LINE, instrumented. Both classes ride here *as well as* carrying
+    // the BRANCH rule above -- the same shape `NavidromeLoadErrorHandlingPolicy` already has in
+    // this table, and for a sharper reason: `MediaItems.of` is one builder chain, so a whole
+    // mapped field can be deleted without moving its BRANCH counter by one. LINE is the counter
+    // that notices.
+    //
+    // `QueueRepository$Companion` (`ARTWORK_SIZE_PX`) and `QueueRepository$mediaItems$1` (the
+    // suspend continuation) carry zero branches *and* zero lines, so `warnUngatedClasses` skips
+    // them and no rule can gate them -- the same standing exception this module already records
+    // for two other `$Companion`s above.
+    //
+    // Watched failing with the connected run's `.ec` -- the execution data these two classes'
+    // only tests produce -- moved aside: "Rule violated for class app.muplay.media.MediaItems:
+    // lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, alongside the same
+    // for `QueueRepository` and for both classes' BRANCH rule.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.MediaItems", "app.muplay.media.QueueRepository"),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 3 Task 8a: the resume policy. 1/1 = 1.0000 LINE each for `NeverResume` and
+    // `ResumeTarget`, from **JVM data alone** (`ResumePolicyTest`, nine tests, no emulator) --
+    // which is the whole reason `ResumePolicy` takes media ids and an index rather than
+    // `MediaItem`s: the one thing in this application allowed to choose a playback position is
+    // gated by the fast tier.
+    //
+    // LINE and not BRANCH, and that is a measurement rather than a preference: both classes have
+    // **zero BRANCH counters** (`NeverResume.resolve` is one unconditional expression, and JaCoCo's
+    // Kotlin data-class filter removes `ResumeTarget`'s generated equals/hashCode/copy entirely, so
+    // it reports a single line and no branches at all). A BRANCH rule over them was written and
+    // run before this one: `warnVacuousFloors` reported it as enforcing nothing -- "all 2 classes
+    // it matches have zero BRANCH counters ... JaCoCo reports no violation for it and never will,
+    // at this or any other minimum" -- which is exactly the vacuous shape this table's own doc
+    // describes. Same argument as `MediaModule` above, reached from a different direction.
+    //
+    // Watched failing, with `ResumePolicyTest` moved aside: both classes drop to 0/1 and the build
+    // fails naming the ratio -- "Rule violated for class app.muplay.media.NeverResume: lines
+    // covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class. That is
+    // the only way to watch a floor already measuring 1.0000 fail, and it is worth writing down
+    // why: raising `minimum` above the measured ratio, which is how every fractional floor in this
+    // table was falsified, is not available here. JaCoCo validates the minimum before it compares
+    // anything, so `BigDecimal("1.01")` fails with "given minimum ratio is 1.01, but must be
+    // between 0.0 and 1.0" -- a configuration error that would have gone red against *any* code,
+    // including code with no coverage at all, and therefore proves nothing about this floor.
+    //
+    // `ResumePolicy` itself is deliberately not listed: an interface with a single abstract method
+    // compiles to zero counters of either kind, so `warnUngatedClasses` skips it and no rule could
+    // gate it anyway -- the same reason the two `$Companion` classes noted above are absent.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
+    ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
     // 2/2 = 1.0000 BRANCH, instrumented. BRANCH and not LINE because this class is *all* branch:
     // its single line is `dataSpec.key ?: throw MissingCacheKeyException(...)`, and the two sides
     // of that elvis are the whole task. A LINE floor over it would be satisfied by covering
     // either one, which is the difference between "the cache key comes from the track id" and
-    // "the missing-key fallback Tempo ships is gone". Counter chosen by reading the merged
-    // report, not from the non-UI default: `warnVacuousFloors` would have said nothing either
-    // way, since this class has both counters.
+    // "the missing-key fallback Tempo ships is gone". Counter picked by reading the merged report
+    // rather than from the non-UI default -- this class is one of the few in the module that
+    // genuinely carries both.
     //
-    // Watched failing: `TrackIdCacheKeyFactory` measures exactly 1.0000, so raising the minimum
-    // above it proves nothing -- JaCoCo rejects a minimum > 1.0 before it compares anything, with
-    // the same message it would give against zero coverage. Falsified by moving the covering
-    // tests aside instead: with `MediaCacheTest` excluded from the run this floor fires at its
-    // real minimum, "branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    // Falsified by moving `MediaCacheTest` aside, not by raising the minimum, for exactly the
+    // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
+    // ratio is a configuration error JaCoCo rejects before it compares anything. Watched failing
+    // at its real minimum: "Rule violated for class app.muplay.media.TrackIdCacheKeyFactory:
+    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -914,25 +1038,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
       requiresInstrumentedData = true,
     ),
-    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three classes carries a single
-    // BRANCH counter -- confirmed in the merged report, not assumed -- so LINE is the only counter
-    // that can gate them at all; a BRANCH rule here would score NaN and pass at every minimum,
-    // which is the vacuous shape this table's own doc describes.
+    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
+    // counter -- read off the merged report, not assumed -- so LINE is the only counter that can
+    // gate them at all; a BRANCH rule here would score NaN and pass at every minimum, the vacuous
+    // shape this table's own doc describes and `warnVacuousFloors` reports.
     //
-    // They are instrumented-only for one reason each, and all three reduce to "needs a real
-    // device": `MediaCache` builds a `SimpleCache` over `context.cacheDir` and a
-    // `StandaloneDatabaseProvider` (real SQLite); `MediaCacheModule` calls it; and
-    // `MissingCacheKeyException`'s message is only constructed from a `DataSpec`, which holds an
-    // `android.net.Uri`. This project has no Robolectric, so there is no JVM path to any of them.
+    // Instrumented-only, and all three reduce to "needs a real device": `MediaCache` builds a
+    // `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite);
+    // `MediaCacheModule` calls it; and `MissingCacheKeyException`'s message is only ever
+    // constructed from a `DataSpec`, which holds an `android.net.Uri`. No Robolectric here, so
+    // there is no JVM path to any of them.
     //
-    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: it is a `@Qualifier`
-    // annotation class and carries no counter of either kind, so `warnUngatedClasses` skips it
-    // and no rule could gate it -- the same reason the two `$Companion` classes are absent.
+    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: a `@Qualifier` annotation
+    // class carries no counter of either kind, so `warnUngatedClasses` skips it and no rule could
+    // gate it -- the same standing exception this module already records for its `$Companion`s.
     //
-    // Watched failing, the same way and for the same reason as the rule above: all three measure
-    // 1.0000, so the covering tests were moved aside instead of the minimum raised. "lines
-    // covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, naming
-    // `app.muplay.media.MediaCache`.
+    // Watched failing the same way, with `MediaCacheTest` moved aside: "Rule violated for class
+    // app.muplay.media.MediaCache: lines covered ratio is 0.00, but expected minimum is 0.90",
+    // BUILD FAILED, once per class.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",

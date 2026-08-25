@@ -44,6 +44,22 @@ It takes an exclusive kernel lock, so runs queue instead of overlapping, and it
 tells you who holds the device while you wait. Exit **75** means the wait ran
 out and *nothing was measured* — never report that as a test failure.
 
+**Build outside the lock.** Compiling needs no device, so wrapping the whole
+Gradle invocation holds the emulator hostage through a build every other agent
+then waits on. Assemble first, unlocked, and lock only the install-and-run:
+
+    ./gradlew :core:media:assembleDebugAndroidTest :core:media:assembleDebug
+    ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest
+
+The second command finds its build up to date, so the critical section shrinks
+to install plus execution. While iterating, narrow it further to the class you
+are working on:
+
+    ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.class=app.muplay.media.MediaCacheTest
+
+Run the module's full connected suite once, at the end, before you report.
+
 The lock is held on an open file descriptor, so a killed agent releases it. Do
 not replace it with a PID file, and do not add a liveness check that parses one.
 
@@ -78,6 +94,33 @@ Two watchers have failed in this exact way: a `pgrep -f mutation-probes` that
 matched its own command line and so could never report "finished", and a PID
 file containing the literal text `PID=12345` rather than the bare number, which
 made every liveness check structurally incapable of reporting "alive".
+
+**Bound the tool's timeout, not just the shell's.** A `timeout 900 ...` inside a
+harness call that itself caps at two minutes is killed by the harness, and a
+killed mutation run's `finally` never reverts — leaving a stray mutation the
+next run's dirty-tree guard blames on whoever comes along. Two agents hit this
+on the same afternoon. Run one mutation per bounded command, and check
+`git status` immediately after.
+
+## A subagent's `.output` file mtime is not a liveness signal
+
+The per-agent transcript under the session's `tasks/` directory is flushed at
+its own cadence, not on every tool round. Measured here: five lanes showed
+`.output` untouched for ~36 minutes while every one of them had written source
+files 21-88 seconds earlier, and one had committed 8 seconds earlier. A
+controller watching those mtimes concluded twice that healthy agents had
+stalled.
+
+Use signals the work itself produces: `git -C <worktree> log -1 --format=%ct`,
+and the newest source-file mtime in the worktree. Those move when the agent
+moves.
+
+This is the third liveness check in this repository that could not report
+"alive" — after a `pgrep` that matched its own command line and a PID file
+holding `PID=12345` instead of a bare number. The pattern is always the same:
+the check returns a falsey value for both "dead" and "I cannot tell", and the
+reader takes it for "dead". Prefer a check that fails loudly when it cannot
+observe its subject.
 
 ## `ci/mutation-probes.sh` is a regression list, not a rule
 
@@ -114,8 +157,13 @@ cold in CI and warm on the long-lived shared container. A test pinned to one
 bitrate passes on the first run here and fails on the second.
 `LiveNavidromeTest.coldTranscode` searches for an unused bitrate instead.
 
-Two more measured facts from the same investigation: the cache is keyed on the
-bitrate **as requested**, not as encoded (24, 25 and 26 produce identical bytes
-and occupy three cache entries), and `format=mp3` on an `mp3` source with a cap
-at or above the file's own bitrate returns the source file untouched — so
-`StreamFormat.Mp3(192)` is not always a transcode.
+Two more measured facts from the same investigation. First, **below the source
+bitrate** the cache is keyed on the bitrate *as requested*, not as encoded (24,
+25 and 26 produce identical bytes and occupy three cache entries) — that is the
+regime `coldTranscode` searches in, and only that regime. **At or above the
+source bitrate** the rule does not hold: Navidrome selects "no cap" and every
+such request shares one entry (a `maxBitRate=63` request on the 32 kbps
+audiobook was served from the entry an earlier `maxBitRate=320` request
+created). Second, `format=mp3` on an `mp3` source with a cap at or above the
+file's own bitrate returns the source file untouched — so `StreamFormat.Mp3(192)`
+is not always a transcode.
