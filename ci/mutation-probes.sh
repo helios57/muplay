@@ -69,6 +69,19 @@
 # would pay a full recompilation on every one of the probes in this list, which is not a trade this
 # script makes.
 #
+# THE SAME MECHANISM MAKES THE MISSING-RESULTS GUARD FIRE ON A FALSE ALARM, and that is worth
+# expecting rather than debugging. The guard is right and should stay; the trigger is broader than
+# androidTest. A *filtered* run mutates one module, so every OTHER module's test task has an
+# unchanged cache key -- `run_suite()` deletes its result directory, Gradle restores the task
+# FROM-CACHE without repopulating that directory, and the guard correctly refuses to count the
+# empty directory as a pass. Measured: `./ci/mutation-probes.sh player/` reported
+# `no test results were written for ['core/cast']` while `./gradlew :core:cast:test` was green with
+# 16 result files a minute later.
+#
+# So on a filtered run, read that message as "this module was not exercised", not as "this module
+# is broken". Confirm with the module's own test task before believing anything is wrong. On a
+# full, unfiltered run the message means what it says.
+#
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
 # :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test
@@ -1450,8 +1463,8 @@ PROBES = [
     # the thumb springs back every 250ms and the bar cannot be used -- and invisible in a
     # screenshot, which is exactly the kind of defect a probe list is for.
     ("player/scrub-position-ignored", PLAYER_STATE,
-     "displayPositionMs = scrubPositionMs ?: playback.positionMs,",
-     "displayPositionMs = playback.positionMs,",
+     "displayPositionMs = displayPosition(scrubPositionMs ?: playback.positionMs, playback.durationMs),",
+     "displayPositionMs = displayPosition(playback.positionMs, playback.durationMs),",
      "the displayed position is the scrub position while scrubbing", 5),
     # ...and the flag that goes with it, which the screen reads to decide whether a drag is in
     # progress at all.
