@@ -218,6 +218,42 @@ class AlbumViewModelTest {
   }
 
   @Test
+  fun `switching to another album shows Loading, never the previous album under the new id`() =
+    runTest(dispatcher) {
+      // The other half of N-3(b): `load()` resets the album row to Pending *before* it changes the
+      // id, so `flatMapLatest`'s new inner flow cannot combine the new album's songs with the
+      // previous album's still-Done row. Deleting that one line leaves the end state correct and
+      // every other test in this class green -- it is only visible here, in the frame between the
+      // switch and the answer, which on a device is the frame the user actually sees.
+      val fake = FakeAlbumSource()
+      fake.albumsById["a1"] = album("a1", "First Album", 1)
+      fake.albumsById["a2"] = album("a2", "Second Album", 1)
+      fake.setSongs("a1", listOf(song("s1", "First Track", "a1", 1)))
+      fake.setSongs("a2", listOf(song("s2", "Second Track", "a2", 1)))
+
+      val vm = warm(fake)
+      vm.load("a1")
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat((vm.uiState.value as AlbumUiState.Content).album.name).isEqualTo("First Album")
+
+      val gate = CompletableDeferred<Unit>()
+      fake.albumGate = gate
+      vm.load("a2")
+      dispatcher.scheduler.advanceUntilIdle()
+
+      // Not Content("First Album", Second Track) -- the previous album's row wearing the new
+      // album's tracks is the exact frame this line exists to forbid.
+      assertThat(vm.uiState.value).isEqualTo(AlbumUiState.Loading)
+
+      gate.complete(Unit)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      val content = vm.uiState.value as AlbumUiState.Content
+      assertThat(content.album.name).isEqualTo("Second Album")
+      assertThat(content.songs.map { it.title }).containsExactly("Second Track")
+    }
+
+  @Test
   fun `loading the same album twice never fetches it a second time, and keeps what is on screen`() =
     runTest(dispatcher) {
       // The early return in load(). Untested until review round 1 (N-3a): the class measured 1/2
