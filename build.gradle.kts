@@ -334,7 +334,8 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   only through Hilt's DI graph at 0/8 and 0/4 LINE). All of them are named, by measured ratio,
  *   in `warnUngatedClasses`'s output on every run.
  *
- * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
+ * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **61/63 = 0.9683**, up from
+ *   20/21 = 0.9524 before Task 10 added the Tier 2 journeys), the one
  *   aggregate rule in this table, and the one place where that is the right shape rather than a
  *   compromise — with one cost, stated here rather than only in a report: `matchesFloor` below
  *   returns `true` unconditionally for a `"BUNDLE"`-element floor, so **no class in `:app` can
@@ -945,7 +946,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // has one. What it still catches is the thing worth catching -- if `AsyncImage` and the
     // `produceState` lookup stopped executing, this class drops to about 10/23 = 0.43.
     //
-    // The day a fixture album with genuinely no cover art exists, this floor goes to 0.90 and the
+    // **This floor is permanent, not provisional.** An earlier draft said it returns to 0.90 "the
+    // day a fixture album with genuinely no cover art exists" -- but this task's own live check
+    // against `ci-navidrome-1` found Navidrome **synthesises a `coverArt` id for every album**,
+    // including both artwork-free seeded ones. So that day cannot arrive from a fixture, and the
+    // route back to 0.90 is a placeholder branch reached only by a server that does not behave
+    // like Navidrome. Raising it would need a hand-built response, not a corpus change. The
     // five lines above come with it. Recorded here so that is a decision somebody can act on
     // rather than a number nobody can explain.
     CoverageFloor(
@@ -1021,7 +1027,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
+  // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
+  // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
   // why there is no BRANCH entry.
   // `requiresInstrumentedData`: every line here is Compose/DI wiring the emulator journey runs;
