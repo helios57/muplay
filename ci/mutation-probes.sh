@@ -52,7 +52,8 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test :feature:setup:test :feature:library:test` -- five plain
+# :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test`
+# -- six plain
 # JVM invocations (a third module, `:feature:setup`, joined in Task 8's review round 1:
 # `SetupViewModel` is a plain ViewModel with hand-written fakes for its two Android-backed
 # collaborators, so its own logic needs no device either; a fourth, `:feature:library`, joined in
@@ -60,7 +61,11 @@
 # hand-written fakes for their own Room/network-backed collaborators) -- and `failures()` globs
 # both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
 # `*/build/test-results/testDebugUnitTest/` (`:core:database`, `:feature:setup`,
-# `:feature:library` -- every Android module's JVM-tier results directory).
+# `:feature:library`, `:core:media` -- every Android module's JVM-tier results directory).
+# `:core:media` joined in Plan 3 Task 2: `StreamRetryPolicy` (the 429 decision) and `MediaModule`
+# (the streaming client's timeouts) are deliberately free of every Android and Media3 type so this
+# runner can reach them; the Media3 adapter and the data source around them cannot be probed here
+# and are recorded in task-2-report.md instead, the same way `LiveNavidromeTest`'s are.
 # `:core:database` genuinely does carry JVM test source (`KeystoreCipherTest`, six tests -- its
 # cryptographic contract needs no device) and `run_suite()` now runs it; an earlier version of
 # this comment said `:core:database` "has no JVM test source at all", which was false and was
@@ -126,6 +131,8 @@ LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewMode
 ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
 LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiState.kt"
 STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
+RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
+MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -575,6 +582,66 @@ PROBES = [
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(192) else Raw",
      "the transcode bitrate is the one the caller passed", 1),
+
+    # ---- Plan 3 Task 2: the 429 policy, which is mostly branches nobody exercises -------------
+    # A retry policy tested only on its happy path is untested: what matters is each status class,
+    # each attempt count, each bound, and the give-up path as well as the retry path. The five
+    # below drive one arm each, and each one is a value that a single constant could satisfy if
+    # only one observation of it existed.
+    #
+    # Note what is NOT here, and cannot be: the Media3 adapter
+    # (`NavidromeLoadErrorHandlingPolicy`) and the data source live on the instrumented tier --
+    # every input type in their signatures is a Media3 or Android type -- so mutations of those
+    # are recorded in task-2-report.md, the same way `LiveNavidromeTest`'s are. That split is
+    # exactly why `StreamRetryPolicy` is a separate type with no Media3 or Android type in its
+    # own signature: it puts the decision where this runner can reach it.
+    ("retry/not-my-business", RETRY_POLICY,
+     "    if (responseCode != TOO_MANY_REQUESTS) return null\n",
+     "",
+     # Every other test in the file sends 429, so only the one that sends 404/416/500/200 moves.
+     "a status that is not 429 is not this policy's business", 1),
+    ("retry/backoff-flat", RETRY_POLICY,
+     "    return BASE_BACKOFF_MS shl doublings",
+     "    return BASE_BACKOFF_MS",
+     # 3: the exponential test, the ceiling test and the unparseable-header test all read the
+     # backoff at an attempt count above 1.
+     "a 429 with no retry-after backs off exponentially from the base delay", 3),
+    ("retry/no-ceiling", RETRY_POLICY,
+     "    return delay.coerceIn(0L, MAX_BACKOFF_MS)",
+     "    return delay",
+     # Exactly 1, and that is the point: the `Retry-After` path is clamped *before* the multiply
+     # (see `retry/overflow-to-immediate` below), so "an oversized retry-after is clamped" stays
+     # green here. Only the backoff's own ceiling moves.
+     "the backoff is capped rather than doubling forever", 1),
+    ("retry/zero-is-absent", RETRY_POLICY,
+     "?.takeIf { it >= 0 }", "?.takeIf { it > 0 }",
+     # `Retry-After: 0` is a legal "now" and is not the same as no header at all. A negative value
+     # still falls through to the backoff under both forms, so the negative test cannot catch this.
+     "a retry-after of zero means retry now and is not mistaken for absent", 1),
+    # Found by this task's own audit, not by the plan: `seconds * 1000L` overflows `Long` above
+    # ~9.2e15 and the product is negative, which the trailing `coerceIn(0L, MAX)` reads as 0 -- an
+    # immediate retry, produced by the branch whose whole purpose is to slow down.
+    ("retry/overflow-to-immediate", RETRY_POLICY,
+     "      ?.coerceAtMost(MAX_BACKOFF_MS / 1000L)\n", "",
+     "a retry-after large enough to overflow milliseconds is still clamped, not immediate", 1),
+
+    # ---- Plan 3 Task 2: the media client's timeouts were three comments and no assertion ------
+    # The absence of a `callTimeout` is a decision -- a streaming body is legitimately open for the
+    # length of a track -- and "we did not set it" and "we thought about it and must not set it"
+    # are different facts, only one of which survives a refactor.
+    ("media/call-timeout", MEDIA_MODULE,
+     "      .build()", "      .callTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)\n      .build()",
+     "there is no call timeout, because a streaming body is legitimately open for a whole track", 1),
+    ("media/read-timeout-copied", MEDIA_MODULE,
+     "      .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)",
+     "      .readTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)",
+     "the connect and read timeouts are the two the media layer chose, and they are not each other", 1),
+    # The first of the two stated reasons for choosing OkHttp over `DefaultHttpDataSource` at all:
+    # a Navidrome behind a reverse proxy redirects http to https, and a client that refuses that
+    # presents as a dead track. The default is right; the probe is that nobody can quietly change it.
+    ("media/no-cross-protocol-redirects", MEDIA_MODULE,
+     "      .build()", "      .followSslRedirects(false)\n      .build()",
+     "redirects are followed, including across protocols", 1),
 ]
 
 
@@ -616,7 +683,7 @@ def apply(path, old, new):
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
         check=True,
     )
 
@@ -643,6 +710,10 @@ JVM_TEST_RESULT_DIRS = {
     "core/database": "testDebugUnitTest",
     "feature/setup": "testDebugUnitTest",
     "feature/library": "testDebugUnitTest",
+    # `:core:media` joined in Plan 3 Task 2. Android module, so `testDebugUnitTest` -- and its JVM
+    # tier is the whole point of the module's shape: `StreamRetryPolicy` and `MediaModule` carry no
+    # Android or Media3 type in their signatures precisely so this runner can reach them.
+    "core/media": "testDebugUnitTest",
 }
 
 
@@ -698,7 +769,8 @@ def run_suite():
     # LibraryViewModel/AlbumViewModel are plain ViewModels with hand-written fakes for their own
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
-                    ":core:database:test", ":feature:setup:test", ":feature:library:test"],
+                    ":core:database:test", ":feature:setup:test", ":feature:library:test",
+                    ":core:media:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
