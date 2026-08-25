@@ -85,6 +85,15 @@
 # The tree must be clean: every probe reverts with `git checkout --`, which cannot tell a probe
 # from uncommitted work. Committing before mutating is a standing rule on this project because
 # that exact revert destroyed real work twice during Plan 2 Task 3.
+#
+# EXERCISED FOR REAL, not just written defensively: during this project's round-2 re-review of
+# this exact file (task-8-round-1-rereview.md and its follow-up), the re-reviewer's own tooling
+# was killed mid-mutation by an external timeout, leaving a stray uncommitted mutation in the
+# tree. The re-reviewer disclosed that a flawed `&&`-based "is the tree clean" check of its own
+# would have silently proceeded past that stray mutation; the `if [ -n "$(git status
+# --porcelain)" ]` check below did not, and caught it before it could contaminate a probe result.
+# A guard nobody has seen fire is one people eventually delete -- this one has fired, for a real
+# incident, not a hypothetical one.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -399,8 +408,20 @@ def run_suite():
     #
     # Delete every result directory first, so a module whose task genuinely never runs this
     # invocation has nothing old lying around for `failures()` to find.
+    #
+    # N3-1 (round 2 re-review, second pass): catches only FileNotFoundError -- "there was nothing
+    # to delete yet" -- not every error. `ignore_errors=True` was tried first and swallowed *any*
+    # deletion failure, which is the same defect this whole function exists to close, one layer
+    # down: the reviewer forced a directory read-only (`chmod 555`) with a stale failing result
+    # already inside it, and the silently-ignored rmtree failure left that stale file in place for
+    # `failures()` to glob -- a genuinely-passing probe came back MISSED with a fabricated extra
+    # failure, the exact bug this function was written to close. A permission error (or anything
+    # else unexpected) has to stop the run here, loudly, rather than be swallowed the same way.
     for module, result_dir in JVM_TEST_RESULT_DIRS.items():
-        shutil.rmtree(f"{module}/build/test-results/{result_dir}", ignore_errors=True)
+        try:
+            shutil.rmtree(f"{module}/build/test-results/{result_dir}")
+        except FileNotFoundError:
+            pass
     # --continue: keep scheduling every other requested task after one fails, rather than
     # aborting the whole invocation on the first failure. The four modules here share no
     # compile-time dependency that would make one module's task genuinely unable to run after
