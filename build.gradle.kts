@@ -1316,6 +1316,95 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
+    // ---- Plan 3 Task 8b: the seam that applies the decision, and the writer -------------------
+    // `MuPlayer` 11/11 = 1.0000 LINE, instrumented. LINE and not BRANCH because the class has
+    // **zero BRANCH counters**: six overrides and one funnel, not a conditional among them, which
+    // is the point of it -- a seam with a branch in it is a seam with a way past it. A BRANCH rule
+    // here would be the vacuous shape this table's own doc describes and `warnVacuousFloors` would
+    // say so on every run, exactly as it did for `NeverResume` one entry above.
+    //
+    // Eleven lines is small, and every one of them is load-bearing in the way this project keeps
+    // finding: an overload that is not overridden does not fail to compile, does not fail at
+    // runtime, and does not fail any test of the policy -- it just lets a `MediaController` in a
+    // car set whatever position it likes. What actually gates that is `MuPlayerTest`'s
+    // `everyOverloadIndividuallyLandsThePolicysAnswerAndNotTheCallers`, and all six deletions were
+    // applied by hand against a device run rather than trusted; see task-8b-report.md for the
+    // transcript. This floor is the backstop that notices an untested line being *added*.
+    //
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data this class has
+    // -- exactly as the `ContentTypeSwitcher` entry below was: "Rule violated for class
+    // app.muplay.media.MuPlayer: lines covered ratio is 0.00, but expected minimum is 0.90",
+    // BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.MuPlayer"),
+      requiresInstrumentedData = true,
+    ),
+    // `ProgressWriter` 16/16 and its `write` body 12/12 = 1.0000 BRANCH, instrumented.
+    //
+    // BRANCH is the counter that matters for this class and LINE could not replace it: the whole
+    // read-modify-write is three elvis operators and one `||`, and covering either side of any of
+    // them satisfies a LINE floor. `existing?.speed ?: DEFAULT_SPEED` with only the `existing ==
+    // null` arm driven is a writer that has never been shown a row it must not clobber, which is
+    // the data-loss defect the class documentation is about; `isFinished = finished ||
+    // (existing?.isFinished ?: false)` with only one arm driven is a writer that un-finishes a
+    // book. Both are lines that run.
+    //
+    // The 16 are `ProgressWriter`'s own -- the silence-skip reason check, the two `?: return`s, the
+    // `!isPlaying` guard, `STATE_IDLE || STATE_ENDED`, the `finished =` expression and
+    // `ticker?.cancel()` -- and the 12 are `write$2`, the `withContext(Dispatchers.IO)` body where
+    // the elvis defaults compile to. `*`, not a literal `$`: this table's own doc, gotcha 3.
+    //
+    // It measured 17/22 before three uncoverable arms were **deleted rather than excused**, the
+    // same treatment `ContentTypeSwitcher` and `PlaybackConnection`'s ticker got: `x?.mediaId ?:
+    // return` emits a second null check on `mediaId`, which is non-null on every `MediaItem` and so
+    // can never take its other arm. Rewritten as one null check on the item, the two arms that were
+    // left are both real and both driven (`aPlayerWithNothingLoadedWritesNothingAndDoesNotThrow`
+    // and `aDiscontinuityOutOfNothingWritesNothing`).
+    //
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
+    // have: "Rule violated for class app.muplay.media.ProgressWriter: branches covered ratio is
+    // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for
+    // `app.muplay.media.ProgressWriter.write.2`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ProgressWriter*"),
+      requiresInstrumentedData = true,
+    ),
+    // The same family's LINE, instrumented, and it gates what the BRANCH rule above cannot reach:
+    // `ProgressWriter` 34/35 = 0.9714, `ProgressWriter$write$2` 14/14, `ProgressWriter$start$1` 3/3
+    // (the ticker body) and `$captureCurrent$1` / `$flushBlocking$1` / `$onPositionDiscontinuity$1`
+    // 1/1 each -- the three launched writes, which carry no branch of their own and are exactly the
+    // lines a persistence point loses when its `scope.launch` is deleted.
+    //
+    // The one uncovered line in `ProgressWriter` stays in the denominator honestly: it is the
+    // closing brace of `write`, i.e. the implicit-return bookkeeping the Kotlin compiler emits for
+    // a `suspend fun` whose body always suspends into `withContext`. It cannot be reached and it is
+    // not excused away. 0.90 leaves that line and two more of room; the real gate on this class is
+    // the by-hand mutation set in task-8b-report.md, which reddens a named test for every one of
+    // the seven persistence points individually.
+    //
+    // `ProgressWriter$Companion` is matched and carries **zero counters of either kind** (three
+    // `const val`s, which the compiler inlines), so JaCoCo evaluates nothing for it and
+    // `warnUngatedClasses` skips it -- the same standing exception this module records for its
+    // other `$Companion`s. It is inside the pattern rather than excluded so that a reader does not
+    // have to wonder whether it was forgotten.
+    //
+    // Falsified with the same `.ec` moved aside, and watched rather than predicted: "lines covered
+    // ratio is 0.00, but expected minimum is 0.90" for `ProgressWriter`, `ProgressWriter.write.2`,
+    // `ProgressWriter.start.1`, `ProgressWriter.captureCurrent.1`, `ProgressWriter.flushBlocking.1`
+    // and `ProgressWriter.onPositionDiscontinuity.1` -- six classes, one line each, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ProgressWriter*"),
+      requiresInstrumentedData = true,
+    ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
     // 11/12 = 0.9167 BRANCH, instrumented. BRANCH and not LINE because the part of this class that
     // matters is *all* branch: `dataSpec.key ?: throw MissingCacheKeyException(..)`, whose two

@@ -83,13 +83,17 @@ class MuPlayDataSourceFactoryTest {
       context = context,
       dataSourceFactory = MuPlayDataSourceFactory(markerCallFactory(), cache),
       loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+        // This suite's subject is an `ExoPlayer` behaviour, so it takes the raw player from
+        // `createExoPlayer()`. The policy is still required to construct the factory; the seam it
+        // feeds is `MuPlayerTest`'s subject, not this file's.
+        resumePolicy = NeverResume,
     )
     // Built inside runOnMainSync: ExoPlayer.Builder captures the calling thread's Looper, and the
     // instrumentation thread has none. A violation throws
     // "Player is accessed on the wrong thread" -- clear, but only at the first access, which is
     // far from here.
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(playerFactory.create())
+      harness = PlayerHarness(playerFactory.createExoPlayer())
     }
   }
 

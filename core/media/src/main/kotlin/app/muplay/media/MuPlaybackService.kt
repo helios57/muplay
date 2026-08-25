@@ -4,15 +4,23 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
+import app.muplay.database.dao.MediaProgressDao
 import dagger.hilt.android.AndroidEntryPoint
+import java.time.Clock
+import java.util.concurrent.Executor
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 
 /**
  * The service that owns playback.
@@ -58,7 +66,29 @@ class MuPlaybackService : MediaLibraryService() {
 
   @Inject lateinit var playerFactory: MuPlayerFactory
 
+  @Inject lateinit var mediaProgressDao: MediaProgressDao
+
+  /**
+   * The project's first injected clock, and the only wall-clock read behind every
+   * `media_progress.lastPlayedAtEpochMs` this app writes.
+   */
+  @Inject lateinit var clock: Clock
+
   private var session: MediaLibrarySession? = null
+
+  /**
+   * Main-thread-confined, and built from a `Handler` rather than from `Dispatchers.Main`.
+   *
+   * [ProgressWriter]'s ticker reads the player, and a `Player` may only be read from the thread it
+   * was built on. `Dispatchers.Main` would supply that too, but it lives in
+   * `kotlinx-coroutines-android`, which this module deliberately does not declare -- the same
+   * construction, for the same stated reason, as [PlaybackConnection] and [PlaybackLauncher].
+   */
+  private val mainExecutor = Executor { command -> Handler(Looper.getMainLooper()).post(command) }
+  private val serviceScope =
+    CoroutineScope(SupervisorJob() + mainExecutor.asCoroutineDispatcher())
+
+  private var progressWriter: ProgressWriter? = null
 
   override fun onCreate() {
     super.onCreate()
@@ -66,7 +96,16 @@ class MuPlaybackService : MediaLibraryService() {
     // Built here, on the main thread, because an ExoPlayer binds to its creating thread's Looper --
     // and built through the factory, which is the only construction site in this project that
     // attaches the 429 retry policy. See `MuPlayerFactory` for why forgetting that is silent.
-    val player: ExoPlayer = playerFactory.create()
+    //
+    // A `MuPlayer`, not the raw `ExoPlayer`: this is the object the session hands every controller,
+    // so it is the one place that can make "no code path sets a playback position" true of all of
+    // them. See that class.
+    val player: MuPlayer = playerFactory.create()
+
+    // Installed on the seam rather than on the raw player, so a position the writer records is the
+    // position the session actually reports -- and so Plan 6 has exactly one writer to repoint.
+    progressWriter =
+      ProgressWriter(player, mediaProgressDao, clock, serviceScope).also { it.start() }
 
     // Media3 posts its own notification through this provider; what this call changes is its
     // *identity*. Without it the notification lands on Media3's default channel under Media3's
@@ -112,7 +151,20 @@ class MuPlaybackService : MediaLibraryService() {
     if (TaskRemovalPolicy.stopsService(player?.playWhenReady, player?.mediaItemCount)) stopSelf()
   }
 
+  /**
+   * Persistence point 7, and the order in it is load-bearing.
+   *
+   * [ProgressWriter.flushBlocking] blocks on purpose: a coroutine launched into [serviceScope]
+   * would be cancelled two lines later and write nothing at all, and this is the last chance to
+   * record where the listener was. It runs *before* the scope is cancelled and *before* the player
+   * is released -- a released player reports no current item, so a flush after it would be a
+   * silent no-op rather than a failure.
+   */
   override fun onDestroy() {
+    progressWriter?.flushBlocking()
+    progressWriter?.stop()
+    progressWriter = null
+    serviceScope.cancel()
     session?.run {
       player.release()
       release()

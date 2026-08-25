@@ -775,6 +775,40 @@ PROBES = [
      # is the order-sensitivity probe for this file: `mediaIds` is an ordered list and
      # `requestedIndex` indexes into the order the caller passed, not into any other view of it.
      "neither the queue's contents nor its order changes the answer", 4),
+
+    # ---- Plan 3 Task 8b: the two bindings the seam and the writer are actually built from -------
+    # `MuPlayer` and `ProgressWriter` themselves have NO probe here and cannot have one, and the
+    # reason is the measured limit this file's header describes: both are production classes whose
+    # only tests are instrumented (`MuPlayerTest`, `ProgressWriterTest`). A mutation to either
+    # recompiles `:core:media:testDebugUnitTest` -- they are `src/main` files, so the cache key does
+    # move -- and then no JVM test covers them, so this runner reports MISSED with **zero**
+    # failures. That reads like a broken test rather than an unrunnable probe, which is exactly the
+    # trap Task 7b fell into and removed a probe over. Every one of those mutations was instead
+    # applied BY HAND against a device run, and the transcripts are in task-8b-report.md: all six
+    # `setMediaItem(s)` overrides deleted one at a time, the caller's position passed through
+    # instead of the policy's, the read-modify-write replaced by a fresh entity, `clock.millis()`
+    # replaced by a literal, the silence-skip guard removed, and the ticker removed.
+    #
+    # What CAN be probed from here is the pair of module bindings this task adds, because
+    # `MediaModule` deliberately names no Android and no Media3 type -- the same property that put
+    # its timeout decisions in reach above. Both are one-line bindings that are silent when wrong: a
+    # frozen clock stamps every row with one instant and `recentlyPlayed`'s ORDER BY becomes
+    # arbitrary, and a resume policy that answers a position undoes spec section 3's guarantee at
+    # the only point in the graph where it is chosen.
+    ("progress/clock-frozen", MEDIA_MODULE,
+     "  fun provideClock(): Clock = Clock.systemUTC()",
+     "  fun provideClock(): Clock =\n    Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC)",
+     # A `Clock.fixed` left behind by a test edit compiles, injects, and writes a row every five
+     # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
+     "the injected clock is a real clock and not a frozen one", 1),
+    ("progress/policy-resumes", MEDIA_MODULE,
+     "  fun provideResumePolicy(): ResumePolicy = NeverResume",
+     "  fun provideResumePolicy(): ResumePolicy =\n"
+     "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
+     # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
+     # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
+     # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
+     "the bound resume policy is the one that resumes nothing", 1),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone
@@ -1251,10 +1285,23 @@ PROBES = [
     # It caught a real one within hours of being written: Task 3's `MediaCacheTest` hand-built two
     # players, so two of the three instrumented playback suites were driving a player that is not
     # the one that ships.
+    #
+    # Realigned by Plan 3 Task 8b, which changed the line it searched for: the session is now handed
+    # a `MuPlayer` rather than the raw `ExoPlayer`. The mutation is the same defect in the same
+    # place, spelled to still compile -- `ExoPlayer` is no longer imported in this file, so the
+    # builder is named in full, and the scan `PlayerConstructionTest` runs matches the substring
+    # either way. (Realigned rather than left stale: the note at the foot of this file records two
+    # occasions when a rewritten line silently took a whole probe family out of service.)
     ("media/second-player-construction", PLAYBACK_SERVICE,
-     "    val player: ExoPlayer = playerFactory.create()",
-     "    val player: ExoPlayer = ExoPlayer.Builder(this).build()",
-     "an ExoPlayer is constructed in exactly one place", 1),
+     "    val player: MuPlayer = playerFactory.create()",
+     "    val player: MuPlayer =\n"
+     "      MuPlayer(androidx.media3.exoplayer.ExoPlayer.Builder(this).build(), NeverResume)",
+     # The named test is `production code constructs an ExoPlayer in exactly one place`, and it was
+     # recorded here under an older name until Task 8b re-ran this probe: `PlayerConstructionTest`
+     # split into a production half and a test-sources half during Task 3's fix round and this line
+     # was not moved with it. The probe therefore reported MISSED while its subject was working
+     # perfectly -- the second-worst outcome for a regression list, after silently passing.
+     "production code constructs an ExoPlayer in exactly one place", 1),
     # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
     # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
     # a policy that lost either one is silently wrong on a device nobody is watching.
