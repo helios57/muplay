@@ -142,6 +142,8 @@ CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
+BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
+INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -934,6 +936,81 @@ PROBES = [
      # for exactly the server ids that contain a separator. Navidrome ids are hex today, and "the
      # ids are hex" is the class of assumption spec section 4 is a catalogue of.
      "the payload survives every character a server id could contain", 1),
+    # ---- Plan 7 Task 1: :integrations:core -----------------------------------------------------
+    # Written as this task's own audit rather than from shipped defects, with one exception:
+    # `baseurl/scheme-check-too-narrow` is the task brief's own bug, reintroduced -- it specified a
+    # prefix check for http/https placed *before* HttpUrl, which answers "ftp://host" with
+    # MissingScheme while the same brief's test and KDoc both call it Malformed.
+    #
+    # The rest are the two requirements this type exists for -- a credential must never survive into
+    # the stored URL, and the cleartext policy must be unbypassable -- plus the three defect classes
+    # this project has a recorded history of: a hardcoded value where an argument was passed, an
+    # argument accepted and dropped, and a collection asserted without its order.
+    #
+    # Several counts are above 1 because `IntegrationBaseUrlTest` deliberately observes the
+    # secret-stripping twice: once per component, and once with userinfo, query and fragment on a
+    # single URL, so no single-component edit can survive by varying only what one test looks at.
+    ("baseurl/query-not-stripped", BASE_URL,
+     '        .query(null)\n        .fragment(null)\n',
+     '        .fragment(null)\n',
+     "a query string is discarded, including one carrying an api key", 2),
+    ("baseurl/fragment-not-stripped", BASE_URL,
+     '        .query(null)\n        .fragment(null)\n',
+     '        .query(null)\n',
+     "a fragment is discarded", 2),
+    ("baseurl/userinfo-not-stripped", BASE_URL,
+     '        .username("")\n        .password("")\n',
+     '',
+     "userinfo is discarded", 2),
+    # The Retrofit invariant. Without the trailing slash, `baseUrl("https://host/lidarr")` resolved
+    # against "api/v1/system/status" gives `https://host/api/v1/system/status` -- the urlBase
+    # silently dropped, which is a 404 nobody reads backwards to this line.
+    ("baseurl/trailing-slash", BASE_URL,
+     'return if (stripped.endsWith("/")) stripped else "$stripped/"',
+     'return stripped',
+     "a url base path is preserved and terminated with a slash", 4),
+    # Argument accepted and dropped, on the one argument that decides a security question.
+    ("baseurl/cleartext-policy-ignored", BASE_URL,
+     'private fun permitsCleartext(policy: CleartextPolicy): Boolean = when (policy) {\n'
+     '      CleartextPolicy.Allowed -> true\n'
+     '      CleartextPolicy.Forbidden -> false\n'
+     '    }',
+     'private fun permitsCleartext(policy: CleartextPolicy): Boolean = true',
+     "http is refused when the policy forbids cleartext, and the host is reported", 3),
+    # The hardcoded-value class, on the host the refusal message has to name.
+    ("baseurl/cleartext-host-hardcoded", BASE_URL,
+     'return BaseUrlResult.CleartextForbidden(parsed.host)',
+     'return BaseUrlResult.CleartextForbidden("192.168.1.20")',
+     "http is refused when the policy forbids cleartext, and the host is reported", 3),
+    # The specific error collapsed into the general one: "that is not an address MuPlay can reach
+    # Lidarr at", printed at someone who typed 192.168.1.20:8686.
+    ("baseurl/missing-scheme-collapsed", BASE_URL,
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.MissingScheme',
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.Malformed',
+     "a url with no scheme is MissingScheme, not Malformed", 1),
+    ("baseurl/scheme-check-too-narrow", BASE_URL,
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.MissingScheme',
+     'if (!trimmed.lowercase().startsWith("http://") && !trimmed.lowercase().startsWith("https://")) return BaseUrlResult.MissingScheme',
+     "a non-http scheme is Malformed", 1),
+    # `message(service)` accepting a service and then naming one.
+    ("baseurl/message-service-hardcoded", BASE_URL,
+     '    "Start the ${service.displayName} address with https:// \u2014 for example " +\n'
+     '      "https://${service.displayName.lowercase()}.example.com."',
+     '    "Start the Lidarr address with https:// \u2014 for example " +\n'
+     '      "https://lidarr.example.com."',
+     "every message varies with the service it is asked about", 2),
+    # Equality by type rather than by value: every base URL equal to every other one, which makes
+    # this type useless as a map key and two configured integrations indistinguishable.
+    ("baseurl/equals-ignores-value", BASE_URL,
+     'this === other || (other is IntegrationBaseUrl && value == other.value)',
+     'this === other || (other is IntegrationBaseUrl)',
+     "two urls with the same value are equal and hash alike", 2),
+    # The recorded wrong-collection-order class. `IntegrationService.entries` is rendered in
+    # declaration order by every screen in this plan, so the order is the contract.
+    ("baseurl/service-order", INTEGRATION_SERVICE,
+     '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
+     '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
+     "the service display names are the ones a user reads", 1),
 ]
 
 
@@ -987,6 +1064,8 @@ def apply(path, old, new):
 LATER_PROBE_FILES = [
     RESUME_POLICY,
     BROWSE_ID,
+    BASE_URL,
+    INTEGRATION_SERVICE,
 ]
 
 
@@ -1047,6 +1126,12 @@ JVM_TEST_RESULT_DIRS = {
     # nothing and "missed" for nothing, and the only way to tell which you have is to make it fail
     # once deliberately.
     "core/cast": "test",
+    # `:integrations:core` joined in Plan 7 Task 1. An Android library (`muplay.android.library` +
+    # `muplay.android.hilt`), so `testDebugUnitTest` -- but its whole JVM tier is reachable here by
+    # construction: `IntegrationBaseUrl` is pure Kotlin over OkHttp's URL parser and names no
+    # Android type, which is exactly why the cleartext decision and the secret-stripping live in
+    # this module rather than inside either service client.
+    "integrations/core": "testDebugUnitTest",
 }
 
 
@@ -1103,7 +1188,8 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test", ":core:testing:test", ":core:cast:test"],
+                    ":core:media:test", ":core:testing:test", ":core:cast:test",
+                    ":integrations:core:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
