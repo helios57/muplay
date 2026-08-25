@@ -7,52 +7,44 @@ media cache, a player UI and proven gapless playback.
 
 ## Where the plans stand
 
-Master `f0cb47f`, green, pushed. Playback core's last blocking piece (`MuPlayer`
-+ `ProgressWriter`) is in.
+Master `639f878`, green under `--no-build-cache`, pushed. **Zero `COVERAGE:`
+warnings across all 12 modules** — every class in the repo is gated by a floor.
+253 mutation probes.
 
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 10 of 12 | 11 (ReplayGain) in flight; **12 deferred — needs the fixture window** |
-| 6 — Sonos/DLNA casting | 4 of 12 + SOAP hardening | proxy in flight |
+| 3 — playback core | 11 of 12 | **12 deferred — needs the fixture window** |
+| 6 — Sonos/DLNA casting | 5 of 12 + SOAP hardening | next: T5 `UpnpRenderer`, T7 `CastRouter` |
 | 5 — Auto/Wear | 3 of 11 | T4 in flight |
-| 7 — integrations | 3 of 11 | credential store and request store in |
-| 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** — see below |
+| 7 — integrations | 3 of 11 | next: T4 `:integrations:lidarr` |
+| 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** |
 
 ## Lanes live now
 
 | Worktree | Task | Holds |
 | --- | --- | --- |
-| `p3t10` | P3 T10 the gates (Tier 2 journey) | `ConventionTest.kt`, `app/androidTest/`, `app/build.gradle.kts`, `e2e.yml` |
-| `p6t6` | P6 T6 the media proxy | `core/cast/proxy/`, `pr.yml` |
 | `p5t4` | P5 T4 `BrowseItems` + `MuPlayLibraryCallback` | `browse/`, `MuPlaybackService.kt` |
-| `p3t11` | P3 T11 ReplayGain | `MediaItems.kt`, `MuPlayerFactory.kt`, `SubsonicClient.kt`, `MuPlayDatabase` v4→5 |
 | `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
 
-**`MediaItems.of` arity is a live hazard.** Two lanes each added a fourth
-parameter to it today and collided; `p3t11` is adding a sixth. It was briefed to
-say so explicitly in its report.
+## Ready to dispatch when a lane frees
 
-**Plan 3 Task 12 is deliberately not dispatched.** It adds an Opus file to the
-fixture corpus and edits `ci/seed-fixtures.sh` / `ci/fixtures.md5` /
-`ci/configure-libraries.sh` — the same files the held `p4t1` branch owns. Both
-change the library's scanned-item count, so they land together, in one window,
-or they fight.
+- **Plan 6 Task 5 `UpnpRenderer`** — SOAP and DIDL are both hardened and merged;
+  pass `DidlLite.render(item)` **raw**, `render` escapes.
+- **Plan 6 Task 7 `CastRouter`** — the proxy is in.
+- **Plan 7 Task 4 `:integrations:lidarr`** — credential store and request store in.
+- **Plan 5 Task 5** — after T4.
 
-## Merge routine that this session settled on
+## Two known product limitations, measured and written down
 
-1. `git merge --no-edit <branch>` — expect conflicts in `build.gradle.kts` and
-   `ci/mutation-probes.sh`; both are append-shaped, so keep **both** sides.
-   `revert()`'s file list and the JVM suite list are the two places where taking
-   one side silently loses a module.
-2. Verify floors did not migrate: a clean auto-merge has reattached
-   `CoverageFloor` entries to the **wrong module key** with `check` still green.
-   Compare per-module floor counts, then read the `COVERAGE:` notice — it must
-   say "evaluated **all** N of its coverage floors".
-3. `./gradlew check verifyNoMockFrameworks`
-4. **`./gradlew compileDebugAndroidTestKotlin`** for the modules involved —
-   `check` does NOT compile androidTest, and master silently carried a broken
-   device tier for hours because of it.
-5. Re-run the merged lane's probe family on master.
+- **A newly-started item plays its first ~700 ms at the previous item's gain.**
+  Real and audible; bounded by a test and recorded in spec section 4. Fixing it
+  needs the gain adopted at the pipeline's own period boundary — a design, not a
+  tweak.
+- **ReplayGain steps 1 and 9 are blocked, not done.** No tagged fixture (held
+  branch) and no `ReplayGainJourneyTest`. Navidrome *does* emit `replayGain`
+  (measured live, `{}` for all four untagged files); what is unproven is that it
+  populates `trackGain` from a file tag. Validated against the OpenAPI oracle
+  instead. Both land with the fixture window.
 
 ## Open decisions, deliberately not made
 
