@@ -6,6 +6,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import app.muplay.media.di.MediaHttpClient
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.Call
@@ -32,7 +33,7 @@ import okhttp3.Call
 @Singleton
 @OptIn(UnstableApi::class)
 class MuPlayDataSourceFactory @Inject constructor(
-  private val callFactory: Call.Factory,
+  @MediaHttpClient private val callFactory: Call.Factory,
   private val cache: Cache,
 ) {
 

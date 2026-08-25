@@ -2,6 +2,7 @@ package app.muplay.media
 
 import android.content.Context
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
@@ -107,6 +108,41 @@ class MediaCacheTest {
     assertThatExceptionOfType(MissingCacheKeyException::class.java)
       .isThrownBy { TrackIdCacheKeyFactory.buildCacheKey(noKey) }
       .withMessageContaining("setCustomCacheKey")
+  }
+
+  /**
+   * The same defence, **through a real player**, which is the layer where Tempo's bug lives.
+   *
+   * This exists because the brief's own falsification plan was wrong about this and the mutation
+   * run proved it: swapping `TrackIdCacheKeyFactory` for `CacheKeyFactory.DEFAULT` changes
+   * *nothing* as long as every `MediaItem` sets a custom cache key -- `DEFAULT` returns
+   * `dataSpec.key` first and only falls back to the URI when it is null. So the defect cannot be
+   * reproduced by mutating the factory; it is reproduced by **omitting the key on the item**,
+   * which is exactly the omission Tempo makes.
+   *
+   * With Media3's default factory that omission is silent: the URI becomes the key, this client's
+   * URLs carry a fresh salt every call, and the cache fills with entries nothing will ever read
+   * again. Here it is a playback error naming its own cause, on the first run.
+   *
+   * `cache.keys` is asserted empty as well as the error, and that is the assertion that actually
+   * discriminates: a fallback that cached under the URL and *also* somehow errored would still
+   * leave a key behind.
+   */
+  @Test
+  fun aMediaItemWithNoCustomCacheKeyFailsLoudlyInsteadOfCachingUnderItsUrl() {
+    server.enqueue(audioResponse(audio))
+
+    val error = playExpectingFailure(server.url("/stream?id=track-1&t=aaa&s=111").toString())
+
+    val chain = generateSequence(error as Throwable) { if (it.cause === it) null else it.cause }
+      .toList()
+    assertThat(chain.filterIsInstance<MissingCacheKeyException>())
+      // The whole chain in the message: this assertion's job is to stop "the cache key was
+      // missing" and "the network was unreachable" looking alike, and a failure that did not name
+      // what it found would put them back together.
+      .describedAs("MissingCacheKeyException in %s", chain.map { "${'$'}{it.javaClass.name}: ${'$'}{it.message}" })
+      .isNotEmpty()
+    assertThat(cache.keys).isEmpty()
   }
 
   /**
@@ -230,6 +266,37 @@ class MediaCacheTest {
       .addHeader("Accept-Ranges", "bytes")
       .body(Buffer().write(bytes))
       .build()
+
+  /**
+   * Plays an item carrying **no** custom cache key and returns the error the player reports.
+   *
+   * Deliberately not a flag on [playToEnd]: that method treats a playback error as a broken
+   * premise and abandons its wait, which is right everywhere else in this file and exactly wrong
+   * here, where the error *is* the assertion. Same split, and the same reason, as
+   * `PlayerHarness.awaitPlaybackError` versus `PlayerHarness.await`.
+   */
+  private fun playExpectingFailure(uri: String): PlaybackException {
+    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    lateinit var harness: PlayerHarness
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      harness = PlayerHarness(
+        ExoPlayer.Builder(context)
+          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
+          .build(),
+      )
+    }
+    try {
+      harness.onMain {
+        // `MediaItem.fromUri`, i.e. no `setCustomCacheKey` -- the omission under test.
+        harness.player.setMediaItem(MediaItem.fromUri(uri))
+        harness.player.prepare()
+        harness.player.play()
+      }
+      return harness.awaitPlaybackError()
+    } finally {
+      harness.release()
+    }
+  }
 
   /** Builds a fresh player over the shared cache, plays one item to the end, and releases it. */
   private fun playToEnd(uri: String, cacheKey: String) {

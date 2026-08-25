@@ -34,6 +34,10 @@ object MediaModule {
 
   @Provides
   @Singleton
+  // Qualified, so "this is not `:core:network`'s client" is enforced rather than argued -- see
+  // [MediaHttpClient]. An unqualified `Call.Factory` injection point now fails to compile instead
+  // of quietly receiving the streaming client's four-minute-friendly timeouts.
+  @MediaHttpClient
   fun provideMediaCallFactory(): Call.Factory =
     OkHttpClient.Builder()
       .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)

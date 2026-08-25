@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import okhttp3.Call
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okio.Buffer
@@ -67,7 +68,7 @@ class MuPlayDataSourceFactoryTest {
     // something other than what it claims to.
     cacheDir = File(context.cacheDir, "datasource-test-${System.nanoTime()}")
     cache = MediaCache.create(context, cacheDir)
-    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    val factory = MuPlayDataSourceFactory(markerCallFactory(), cache)
     // Built inside runOnMainSync: ExoPlayer.Builder captures the calling thread's Looper, and the
     // instrumentation thread has none. A violation throws
     // "Player is accessed on the wrong thread" -- clear, but only at the first access, which is
@@ -177,6 +178,33 @@ class MuPlayDataSourceFactoryTest {
     assertThat(server.requestCount).isEqualTo(StreamRetryPolicy.MAX_RETRIES + 1)
   }
 
+  /**
+   * The **injected** `Call.Factory` is the one that issues the request.
+   *
+   * Task 2's review found this uncovered, and the finding is worth restating because the shape
+   * recurs: `create()` took a `Call.Factory` and handed it to `OkHttpDataSource.Factory`, and
+   * mutating that to `OkHttpDataSource.Factory(OkHttpClient())` -- ignoring the argument outright
+   * -- left all 13 JVM and all 9 instrumented tests green, because the only test that built the
+   * type passed a bare `OkHttpClient()` as well. Argument passthrough on a delegating method,
+   * observed at neither end. Production would have silently dropped `MediaModule`'s client
+   * (connect 15s / read 30s / no call timeout) for OkHttp's defaults (10s/10s), and every one of
+   * `MediaModuleTest`'s assertions would have been gating a client that never reached the wire.
+   *
+   * A marker header on an interceptor is what makes the argument observable: an OkHttp client
+   * that was never passed in cannot stamp it. And it now travels through Task 3's
+   * `CacheDataSource` wrapper as well, so this doubles as the proof that wrapping the upstream
+   * factory in a cache preserved the injected client rather than quietly building its own.
+   */
+  @Test
+  fun theRequestIsIssuedByTheInjectedCallFactoryAndNotOneBuiltInside() {
+    server.enqueue(audioResponse())
+
+    play(server.url("/stream").toString(), cacheKey = "datasource-test-injected-factory")
+    harness.awaitPositionAtLeast(500L)
+
+    assertThat(nextRequest().headers[MARKER_HEADER]).isEqualTo(MARKER_VALUE)
+  }
+
   @Test
   fun theUserAgentThisClientSendsIsOnTheWire() {
     server.enqueue(audioResponse())
@@ -229,11 +257,30 @@ class MuPlayDataSourceFactoryTest {
       "the player sent no request within $REQUEST_TIMEOUT_SECONDS s"
     }
 
+  /**
+   * An OkHttp client that signs every request it issues.
+   *
+   * The whole class runs on this rather than a bare `OkHttpClient()`, so the marker is on the wire
+   * for `theRequestIsIssuedByTheInjectedCallFactoryAndNotOneBuiltInside` to read and every other
+   * request here goes through the same object -- a second, unmarked client anywhere in the chain
+   * would show up as a missing header rather than as nothing at all.
+   */
+  private fun markerCallFactory(): Call.Factory =
+    OkHttpClient.Builder()
+      .addInterceptor { chain ->
+        chain.proceed(chain.request().newBuilder().header(MARKER_HEADER, MARKER_VALUE).build())
+      }
+      .build()
+
   private fun causeChain(throwable: Throwable): List<Throwable> =
     generateSequence(throwable) { if (it.cause === it) null else it.cause }.toList()
 
   private companion object {
     const val REQUEST_TIMEOUT_SECONDS = 10L
+
+    /** Stamped by [markerCallFactory] and by nothing else -- see the test that reads it. */
+    const val MARKER_HEADER = "X-Test-Factory"
+    const val MARKER_VALUE = "1"
 
     /**
      * Enough refusals that the server never runs out while the budget does.
