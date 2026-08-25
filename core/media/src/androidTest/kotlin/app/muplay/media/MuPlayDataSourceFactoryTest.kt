@@ -4,21 +4,19 @@ import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import app.muplay.model.StreamFormat
-import app.muplay.model.SubsonicCredentials
-import app.muplay.network.SubsonicClient
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.Headers
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okio.Buffer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -47,10 +45,12 @@ class MuPlayDataSourceFactoryTest {
   private lateinit var server: MockWebServer
   private lateinit var harness: PlayerHarness
   private lateinit var audio: ByteArray
+  private lateinit var cacheDir: File
+  private lateinit var cache: Cache
 
   @Before
   fun setUp() {
-    audio = runBlocking { fetchRealTrackBytes() }
+    audio = runBlocking { RealTrackBytes.oneMp3Track() }
     // Not vacuous: a zero-length body would make every playback assertion below fail in a way
     // that looks like a decoder problem. Fail here instead, where the message is true.
     assertThat(audio.size).isGreaterThan(1000)
@@ -59,7 +59,15 @@ class MuPlayDataSourceFactoryTest {
     server.start()
 
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val factory = MuPlayDataSourceFactory(OkHttpClient())
+    // This test's own cache directory, per test method. Two reasons, and the second is the one
+    // worth reading: `SimpleCache` refuses a second live instance on a folder another instance
+    // holds, so sharing `MediaCacheTest`'s would throw outright; and a cache shared *between the
+    // methods below* would let an earlier test's bytes satisfy a later test's request, so
+    // `server.requestCount` -- the assertion three of these tests turn on -- would count
+    // something other than what it claims to.
+    cacheDir = File(context.cacheDir, "datasource-test-${System.nanoTime()}")
+    cache = MediaCache.create(context, cacheDir)
+    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
     // Built inside runOnMainSync: ExoPlayer.Builder captures the calling thread's Looper, and the
     // instrumentation thread has none. A violation throws
     // "Player is accessed on the wrong thread" -- clear, but only at the first access, which is
@@ -86,6 +94,11 @@ class MuPlayDataSourceFactoryTest {
   @After
   fun tearDown() {
     if (::harness.isInitialized) harness.release()
+    // Released before the directory is deleted, and always: an unreleased `SimpleCache` keeps its
+    // folder locked for the life of the process, so a leak here would fail every later test in
+    // this class with a message about a folder rather than about playback.
+    if (::cache.isInitialized) cache.release()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
     if (::server.isInitialized) server.close()
   }
 
@@ -93,7 +106,7 @@ class MuPlayDataSourceFactoryTest {
   fun realAudioPlaysAndThePositionAdvances() {
     server.enqueue(audioResponse())
 
-    play(server.url("/stream").toString())
+    play(server.url("/stream").toString(), cacheKey = "datasource-test-plays")
 
     // The whole point. `play()` returning proves nothing; a position past one second of a
     // five-second track proves the bytes were fetched, the container was parsed, the decoder
@@ -111,7 +124,7 @@ class MuPlayDataSourceFactoryTest {
     server.enqueue(refusal())
     server.enqueue(audioResponse())
 
-    play(server.url("/stream").toString())
+    play(server.url("/stream").toString(), cacheKey = "datasource-test-two-refusals")
 
     harness.awaitPositionAtLeast(1_000L)
     harness.assertNoPlaybackError()
@@ -140,7 +153,7 @@ class MuPlayDataSourceFactoryTest {
     //    thread its ordinary work cycle in between and makes the count deterministic.
     repeat(REFUSALS_ENQUEUED) { server.enqueue(refusal(retryAfterSeconds = 1)) }
 
-    play(server.url("/stream").toString())
+    play(server.url("/stream").toString(), cacheKey = "datasource-test-budget-exhausted")
 
     // The give-up path, asserted as itself rather than as "a wait that timed out". A timeout is
     // what a player stuck retrying forever produces too, and the two must not look alike.
@@ -168,14 +181,25 @@ class MuPlayDataSourceFactoryTest {
   fun theUserAgentThisClientSendsIsOnTheWire() {
     server.enqueue(audioResponse())
 
-    play(server.url("/stream").toString())
+    play(server.url("/stream").toString(), cacheKey = "datasource-test-user-agent")
     harness.awaitPositionAtLeast(500L)
 
     assertThat(nextRequest().headers["User-Agent"]).isEqualTo(MuPlayDataSourceFactory.USER_AGENT)
   }
 
-  private fun play(url: String) = harness.onMain {
-    harness.player.setMediaItem(MediaItem.fromUri(url))
+  /**
+   * [cacheKey] is not decoration. Every byte now travels through a `CacheDataSource`, and
+   * `TrackIdCacheKeyFactory` throws outright on a `MediaItem` with no custom cache key -- so
+   * `MediaItem.fromUri` alone no longer plays anything here, by design. Distinct keys per test on
+   * top of the per-test directory: the directory is what actually isolates these methods today,
+   * and the keys keep them isolated if anyone ever hoists the cache to a `@BeforeClass`. This is
+   * the first place in this plan where a cache silently satisfying a request would make a test
+   * lie, and it will not be the last.
+   */
+  private fun play(url: String, cacheKey: String) = harness.onMain {
+    harness.player.setMediaItem(
+      MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build(),
+    )
     harness.player.prepare()
     harness.player.play()
   }
@@ -208,21 +232,7 @@ class MuPlayDataSourceFactoryTest {
   private fun causeChain(throwable: Throwable): List<Throwable> =
     generateSequence(throwable) { if (it.cause === it) null else it.cause }.toList()
 
-  /** One real track's bytes, off the real container, through the real stream URL. */
-  private suspend fun fetchRealTrackBytes(): ByteArray {
-    val client = SubsonicClient(
-      SubsonicCredentials(baseUrl = NAVIDROME_URL, username = "admin", password = "testpass"),
-    )
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
-      .first { it.suffix?.lowercase() == "mp3" }
-    val request = Request.Builder().url(client.streamUrl(song.id, StreamFormat.Raw)).build()
-    return OkHttpClient().newCall(request).execute().use { checkNotNull(it.body).bytes() }
-  }
-
   private companion object {
-    /** Reached from inside the emulator via `adb reverse tcp:4533 tcp:4533` -- ci/prepare-emulator.sh. */
-    const val NAVIDROME_URL = "http://localhost:4533"
-    const val MUSIC_LIBRARY_ID = 1
     const val REQUEST_TIMEOUT_SECONDS = 10L
 
     /**

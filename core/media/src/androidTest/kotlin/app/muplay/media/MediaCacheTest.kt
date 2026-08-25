@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.media.di.MediaModule
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
@@ -189,16 +190,19 @@ class MediaCacheTest {
   }
 
   /**
-   * The directory the production overload writes to, named and located.
+   * The directory the production cache writes to, named and located — reached through the
+   * **binding the graph actually uses**, not through [MediaCache] directly.
    *
-   * `MediaCache.create(context)` is the overload Hilt calls, and every test above deliberately
-   * uses the other one. Without this, `DIRECTORY_NAME` and the choice of `cacheDir` over
-   * `filesDir` are two constants nothing observes: a cache written to `filesDir` would survive
-   * every assertion in this file and quietly stop the OS being able to reclaim it.
+   * Going via `MediaModule.provideMediaCache` is the point rather than a detour. Every other test
+   * in this file passes its own directory, so nothing else in the project observes which
+   * directory production ends up with; a provider that called the two-argument overload with
+   * `filesDir`, or with a name of its own, would satisfy every assertion in this file if this test
+   * called [MediaCache] itself. Where a decision is *applied* and where it is *declared* are
+   * different layers, and this project tracks tests that verify only the second.
    */
   @Test
   fun theProductionCacheLivesInAKnownDirectoryUnderCacheDir() {
-    val production = MediaCache.create(context)
+    val production = MediaModule.provideMediaCache(context)
     try {
       val expected = File(context.cacheDir, MediaCache.DIRECTORY_NAME)
       // Discriminating in both directions: a `create` that used `filesDir`, or that derived a
