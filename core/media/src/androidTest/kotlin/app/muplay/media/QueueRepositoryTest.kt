@@ -1,10 +1,16 @@
 package app.muplay.media
 
+import androidx.media3.common.MediaMetadata
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.database.LibraryRepository
+import app.muplay.database.MuPlayDatabase
+import app.muplay.database.entity.LibraryEntity
 import app.muplay.model.Album
 import app.muplay.model.AlbumListType
 import app.muplay.model.AlbumWithSongs
+import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
@@ -13,9 +19,11 @@ import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.network.SubsonicSource
 import java.io.File
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -76,6 +84,37 @@ class QueueRepositoryTest {
   )
 
   private lateinit var storeFile: File
+  private lateinit var db: MuPlayDatabase
+
+  /**
+   * A **real** `LibraryRepository` over a real in-memory Room database, seeded the way the setup
+   * flow seeds it — library 1 tagged `MUSIC`, library 2 tagged `AUDIOBOOKS`.
+   *
+   * Real rather than faked, and that is not ceremony: `idsWithRole` is a SQL `WHERE role = :role`,
+   * and the defect this fixture has to be able to catch is a repository that asks for the wrong
+   * role (or does not ask at all). A hand-written `LibraryDao` would answer whatever this file told
+   * it to, which is the same shape as asserting that a query was configured.
+   */
+  @Before
+  fun setUp() {
+    db = Room.inMemoryDatabaseBuilder(
+      ApplicationProvider.getApplicationContext(),
+      MuPlayDatabase::class.java,
+    ).build()
+    runBlocking {
+      db.libraryDao().mergeFromServer(
+        listOf(
+          LibraryEntity(musicFolderId = 1, name = "Music", role = LibraryRole.UNASSIGNED),
+          LibraryEntity(musicFolderId = 2, name = "Audiobooks", role = LibraryRole.UNASSIGNED),
+        ),
+      )
+      // Through `setRole`, not through the entity above: `mergeFromServer` deliberately never
+      // writes the role column (a re-sync must not reset the user's tag), so seeding it in the
+      // entity would leave both libraries UNASSIGNED and this whole fixture testing nothing.
+      db.libraryDao().setRole(1, LibraryRole.MUSIC)
+      db.libraryDao().setRole(2, LibraryRole.AUDIOBOOKS)
+    }
+  }
 
   private fun repository(source: SubsonicSource): QueueRepository {
     val (provider, file) = fixedSubsonicSourceProvider(
@@ -83,12 +122,13 @@ class QueueRepositoryTest {
       source,
     )
     storeFile = file
-    return QueueRepository(provider)
+    return QueueRepository(provider, LibraryRepository(db.libraryDao(), provider))
   }
 
   @After
   fun tearDown() {
     if (::storeFile.isInitialized) storeFile.delete()
+    db.close()
   }
 
   /**
@@ -262,5 +302,66 @@ class QueueRepositoryTest {
     // The requests, not just the results: this is the observation that a single hoisted
     // `coverArtUrl` call fails on, and it fails on the *count* rather than on a value.
     assertThat(source.coverArtCalls).containsExactly("art-b" to 512, "art-a" to 512)
+  }
+
+  /**
+   * **One queue, two answers**, from the user's own `LibraryRole` assignment.
+   *
+   * The shape is the same one every other per-song decision in this file is asserted with, and for
+   * the same reason: a repository that read the role once for the whole queue — from the first
+   * song, or from a constant — passes any single-song test and fails this. It is also the only
+   * assertion in the project that the *join* happens at all: `MediaItemsTest` proves the mapper
+   * places whichever answer it is handed, which is a different claim from the repository choosing
+   * the right one per song.
+   */
+  @Test
+  fun aSongFromAnAudiobookLibraryIsMarkedAsAnAudiobookChapter() = runTest {
+    val source = RecordingSource()
+
+    // libraryId 1 is Music, libraryId 2 is Audiobooks -- seeded in @Before through the real DAO.
+    val items = repository(source).mediaItems(
+      PlaybackQueue.of(
+        listOf(
+          song("a", "mp3", null).copy(libraryId = 1),
+          song("b", "mp3", null).copy(libraryId = 2),
+        ),
+      ),
+    )
+
+    assertThat(items.map { it.mediaMetadata.mediaType }).containsExactly(
+      MediaMetadata.MEDIA_TYPE_MUSIC,
+      MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER,
+    )
+  }
+
+  /**
+   * A library the user tagged **Music** is music, and so is one they have not tagged at all.
+   *
+   * The control for the test above. `idsWithRole(MUSIC)` and `idsWithRole(UNASSIGNED)` are one
+   * character apart from `idsWithRole(AUDIOBOOKS)` at the call site, and every one of them returns
+   * a non-empty list over this fixture — so a repository asking for the wrong role still marks
+   * *something* as a book, and only an assertion that names which songs are not books can see it.
+   * Library 3 exists nowhere in the mirror, which is the state a song is in between a server-side
+   * library being added and the next sync.
+   */
+  @Test
+  fun aSongFromAMusicLibraryOrFromNoKnownLibraryAtAllIsNotAnAudiobook() = runTest {
+    val source = RecordingSource()
+
+    val items = repository(source).mediaItems(
+      PlaybackQueue.of(
+        listOf(
+          song("a", "mp3", null).copy(libraryId = 1),
+          song("b", "mp3", null).copy(libraryId = 3),
+          song("c", "mp3", null).copy(libraryId = 2),
+        ),
+      ),
+    )
+
+    assertThat(items.map { it.mediaMetadata.mediaType }).containsExactly(
+      MediaMetadata.MEDIA_TYPE_MUSIC,
+      MediaMetadata.MEDIA_TYPE_MUSIC,
+      MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER,
+    )
   }
 }

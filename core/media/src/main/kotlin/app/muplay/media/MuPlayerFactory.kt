@@ -2,6 +2,8 @@ package app.muplay.media
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -61,6 +63,24 @@ import javax.inject.Inject
  * test needs to reach *inside* the player rather than to configure it -- Task 7's PCM capture is
  * the first -- the answer is a parameter on [create] with a production default, for the same
  * reason: see that function's own note.
+ *
+ * ### The three lines that are silent in the other direction
+ *
+ * `setAudioAttributes(.., handleAudioFocus = true)`, `setHandleAudioBecomingNoisy(true)` and
+ * `setWakeMode(C.WAKE_MODE_NETWORK)` are one builder call each, and dropping any of them is silent
+ * in exactly the way the retry policy is: the app still plays, every unit test stays green, and the
+ * defect only appears on a device that has something else happening on it -- a phone call played
+ * over, an audiobook coming out of the phone's speaker the moment the headphones come out, or a
+ * track that stalls once the screen has been off long enough for doze and WiFi power-save to bite.
+ *
+ * The third is the one a bench test can never reproduce, because the device under test is awake and
+ * plugged in. `AudioFocusTest` therefore observes it the only way that is not a flag assertion: the
+ * **power manager's own wake-lock registry**, read back through `dumpsys`, showing this process
+ * holding `ExoPlayer:WakeLockManager` while it plays and giving it up when it pauses.
+ *
+ * The first is observed as *playback that stopped*, never as a flag that was set. The second cannot
+ * be observed as a pause on any emulator this project has -- see that test's own note for the
+ * measured reason -- and is observed as `ActivityManagerService`'s receiver registry instead.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is an
 // `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at all -- Android
@@ -115,5 +135,19 @@ class MuPlayerFactory @Inject constructor(
         DefaultMediaSourceFactory(dataSourceFactory.create())
           .setLoadErrorHandlingPolicy(loadErrorPolicy),
       )
+      // Music until the first item transition says otherwise -- [ContentTypeSwitcher] below keeps
+      // it honest from then on. `handleAudioFocus = true` is what makes Media3 request focus, duck
+      // for a navigation prompt and pause for a call, all of it without a line of focus code here.
+      .setAudioAttributes(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC), true)
+      // Headphones unplugged, Bluetooth disconnected. Without this, yanking headphones plays an
+      // audiobook out loud on a train.
+      .setHandleAudioBecomingNoisy(true)
+      // A partial wake lock **and** a WiFi lock, held only while actually playing. `WAKE_MODE_NETWORK`
+      // rather than `WAKE_MODE_LOCAL` because every byte this app plays arrives over the network:
+      // without the WiFi half, WiFi power-save with the screen off starves the loader and playback
+      // stalls mid-track. Both are released the moment playback stops, by Media3, so this is not a
+      // battery decision made once for the process.
+      .setWakeMode(C.WAKE_MODE_NETWORK)
       .build()
+      .also { player -> player.addListener(ContentTypeSwitcher(player)) }
 }

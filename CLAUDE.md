@@ -182,6 +182,25 @@ The assertion message names the offending path — read it before assuming your
 own change caused it. Nothing to fix in the product; it clears when the worktree
 goes away.
 
+## Five-second fixtures let time pass a test that its own defect should fail
+
+Three device tests in Plan 3 were green against the very mutation they existed to
+catch, all for one reason: the fixtures are 5 s long, and any assertion that
+*waits* for a state can be satisfied by playback simply reaching that state on its
+own.
+
+The sharpest case: a `startIndex` test awaited `state.mediaId` after starting a
+queue at index 1. With `setMediaItems(items, 0, 0L)` — the defect — the queue
+started at track 0 and **played into track 1 inside the wait**. Green. The fix was
+to read the index back with **no wait at all** (`MediaController` masks
+`setMediaItems` synchronously), then re-read after a second of real audio.
+
+So: on this fixture set, prefer an observation that is true *immediately* over one
+you wait for. If you must wait, make the waited-for state one that playback cannot
+reach by itself within the fixture's duration. A longer seeded track would kill
+this whole class of defect, and is worth considering when the fixtures are next
+regenerated.
+
 ## Navidrome caches transcodes, so a fixed-bitrate transcode assertion is flaky
 
 `/rest/stream` with `format=mp3` behaves two different ways for the same URL.
@@ -225,3 +244,27 @@ including the pure-JVM ones that have nothing to do with the SDK — because
 `:core:database`'s configuration failure aborts the whole invocation before any
 task runs. It reads like the probe list is broken. Run the script's own gradle
 line by hand and the real message is the first thing printed.
+
+## A lane's report describes master as it was at that lane's last sync
+
+Plan 6 Task 4 reported, correctly and usefully, that *"the brief's claim that
+`isAudiobook` was already a fourth parameter is wrong about master"*. It was
+right when that lane last merged master up, and wrong by the time it reported:
+Plan 3 Task 6 had landed `isAudiobook` in between.
+
+Both lanes were green alone. Both added a **fourth parameter to
+`MediaItems.of`** at the same source line, so git conflicted and the collision
+was visible. It was luck that they collided textually — had one added its
+parameter a few lines away, `ort` would have merged both signatures cleanly into
+a five-argument function while leaving every call site passing four, and the
+break would have surfaced as a Kotlin error attributed to neither lane.
+
+Two things follow, and both cost time here:
+
+- **Re-verify any claim a lane makes about master before acting on it.** The
+  claim is a measurement with a timestamp, not a fact. Check what the lane's
+  last merge commit actually was (`git log --oneline master..<branch>`).
+- **When two lanes extend the same function, the resolution is usually "both".**
+  `isAudiobook` decides `mediaType`, `format` decides `mimeType`; neither is
+  derivable from the other. Reading the merged body first is what shows this —
+  it already called *both* new parameters while the signature declared one.

@@ -160,9 +160,52 @@ class ConventionTest {
     .replace(Regex("""(?s)/\*.*?\*/"""), "")
     .replace(Regex("""(?s)<!--.*?-->"""), "")
 
-  /** [text] reduced to the lines a Kotlin compiler would act on: no block comments, no `//`, no blanks. */
+  /**
+   * [text] with every **trailing** `//` comment removed, quote-aware.
+   *
+   * [significantLines] drops a line that *starts* with `//` and nothing else, which left every
+   * `contains`/`doesNotContain` rule below still answerable by prose — the exact defect
+   * [withoutBlockComments] exists for, one comment style down. Measured shape of the hole:
+   *
+   * ```
+   * import app.muplay.integrations.CleartextPolicy as CP
+   * fun provideCleartextPolicy(): CP = CP.Allowed  // not CleartextPolicy.Forbidden
+   * ```
+   *
+   * satisfies `contains("CleartextPolicy.Forbidden")` from the comment and dodges
+   * `doesNotContain("CleartextPolicy.Allowed")` through the import alias. The alias half is not
+   * fixable by text scanning and is left to the compile-and-run gates; the comment half is, and
+   * this is it.
+   *
+   * A line containing `"""` is returned untouched: a raw string can carry a `//` that is code, and
+   * truncating one would hide a real occurrence from a `doesNotContain` — a hole, which is the
+   * wrong direction for a security rule to fail in. Within an ordinary line, a `//` inside a
+   * double-quoted string (`"https://host"`, every URL literal in this repository) is not a comment
+   * and is skipped by tracking quote state.
+   */
+  private fun withoutTrailingLineComments(text: String): String =
+    text.lineSequence().joinToString("\n") { line ->
+      if (line.contains("\"\"\"")) return@joinToString line
+      var inString = false
+      var escaped = false
+      var index = 0
+      while (index < line.length) {
+        val c = line[index]
+        when {
+          escaped -> escaped = false
+          inString && c == '\\' -> escaped = true
+          c == '"' -> inString = !inString
+          !inString && c == '/' && index + 1 < line.length && line[index + 1] == '/' ->
+            return@joinToString line.substring(0, index)
+        }
+        index++
+      }
+      line
+    }
+
+  /** [text] reduced to the lines a Kotlin compiler would act on: no comments of any kind, no blanks. */
   private fun kotlinCode(text: String): String =
-    significantLines(withoutBlockComments(text)).joinToString("\n")
+    significantLines(withoutTrailingLineComments(withoutBlockComments(text))).joinToString("\n")
 
   /**
    * The character ranges of every `name { ... }` block in [text], braces included, outermost only
@@ -697,8 +740,13 @@ class ConventionTest {
         val path = file.parentFile.relativeTo(root).invariantSeparatorsPath
         !path.startsWith("integrations/") && path !in permitted
       }
+    // A regex, not `contains("project(\":integrations:")`: Gradle accepts the named form
+    // `project(path = ":integrations:core")` just as happily, and the literal missed it entirely.
+    // Named once so the rule and its own control assertion below cannot grep for different
+    // things and agree anyway.
+    val dependencyOnAnIntegration = Regex("""project\(\s*(path\s*=\s*)?":integrations:""")
     val offenders = scanned
-      .filter { it.readText().contains("project(\":integrations:") }
+      .filter { dependencyOnAnIntegration.containsMatchIn(it.readText()) }
       .map { it.relativeTo(root).invariantSeparatorsPath }
 
     // Vacuity, from both ends. A permit-list that happened to exclude every build file would leave
@@ -706,9 +754,9 @@ class ConventionTest {
     assertThat(scanned).describedAs("build files outside integrations/ and the permit-list").isNotEmpty()
     // ...and so would a rule grepping for a literal no build file in this repo actually writes.
     // The one permitted edge that exists today is the proof that this literal is the right one.
-    assertThat(File(root, "app/build.gradle.kts").readText())
+    assertThat(dependencyOnAnIntegration.containsMatchIn(File(root, "app/build.gradle.kts").readText()))
       .describedAs("the :app -> :integrations:core edge this rule greps for")
-      .contains("project(\":integrations:core\")")
+      .isTrue()
 
     assertThat(offenders)
       .describedAs(
@@ -767,6 +815,270 @@ class ConventionTest {
     assertThat(withoutBlockComments(File(root, "app/src/main/AndroidManifest.xml").readText()))
       .describedAs("cleartext must be declared in no manifest but the debug overlay")
       .doesNotContain("usesCleartextTraffic")
+  }
+
+  /**
+   * A Hilt `@EntryPoint` is a way to pull a binding out of the graph without injecting it, and all
+   * four of the ones in this repository exist for `:app`'s instrumented tests. In a `src/main/`
+   * source set each is *public API of its module*, so any consumer can reach the binding rather
+   * than declare a dependency on it -- which is the pattern constructor injection exists to remove.
+   *
+   * The reason all four sat in `src/main/` is a true premise with a false conclusion, recorded here
+   * because it is a natural mistake to repeat: Hilt aggregates `@InstallIn` from a variant's **main
+   * compilation**, so declaring one in `:app`'s `androidTest` source set genuinely does not work
+   * (it throws `ClassCastException: Cannot cast ...SingletonCImpl to ...EntryPoint`). But a
+   * build-type source set *is* part of that compilation -- `app/src/debug/kotlin/.../
+   * CleartextPolicyModule.kt` and its `src/release` twin are this repo's own proof -- and the
+   * instrumented tests run the debug variant. `src/debug/` costs nothing and keeps all four out of
+   * both the release graph and every module's published API.
+   *
+   * Written as "none in `src/main/`" rather than "all in `src/debug/`" on purpose. A production
+   * `@EntryPoint` is a legitimate thing to need one day (a framework component Hilt cannot inject);
+   * this rule makes that a decision someone has to come here and record, rather than a file that
+   * lands in `src/main/` because that is where the neighbouring one was.
+   */
+  @Test
+  fun `every Hilt entry point is declared in a debug source set`() {
+    val root = repoRoot()
+    val marker = "@EntryPoint"
+    val declarations = repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { kotlinCode(it.readText()).contains(marker) }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+      .toList()
+
+    // The premise. A scan that matched nothing -- a renamed annotation, a moved repo root -- would
+    // satisfy the assertion below forever, which is the vacuity failure every rule here guards
+    // against. Read from the code with comments stripped, so a KDoc mentioning `@EntryPoint`
+    // (several of them do, including this rule's own subjects) is not counted as a declaration.
+    assertThat(declarations).describedAs("files declaring $marker").isNotEmpty()
+
+    assertThat(declarations.filter { it.contains("/src/main/") })
+      .describedAs(
+        "a Hilt @EntryPoint in src/main/ is public API of its module: any consumer can pull the " +
+          "binding out of the graph instead of injecting it. All of this repository's entry " +
+          "points exist for :app's instrumented tests, and belong in src/debug/ -- which is part " +
+          "of the debug variant's main compilation, so Hilt still aggregates them.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * Nothing in `integrations/` may write to a log.
+   *
+   * This is the one rule in this class that guards a *value* rather than a build setting, and it
+   * exists because of what that value is: a Lidarr or Bindery API key is **instance-wide and
+   * carries admin authority** over the user's download client or library, with no scoped or
+   * read-only form to fall back on. `IntegrationCredentials.Lidarr.toString()` redacts it, and
+   * `IntegrationCredentialsTest` plus `ci/mutation-probes.sh`'s `integrations/credentials-redaction`
+   * keep that redaction honest — but a redacted `toString()` protects nothing against
+   * `Log.d(TAG, "key=$apiKey")`, which names the field directly.
+   *
+   * "No integration code logs" was true when this plan's second task shipped and was checked by
+   * *reading*, which is exactly the kind of claim this project has repeatedly watched decay. A
+   * scan is what makes it stay true through Tasks 3-11, when clients, interceptors and error
+   * handling arrive and logging is the obvious thing to reach for while debugging one against a
+   * real instance.
+   *
+   * Test sources are excluded: an assertion is allowed to print, and none of them holds a real
+   * user's key. `android.util.Log` and `System.out`/`err` are matched by name; bare `println(` is
+   * matched too, since that is what actually gets typed at 1am and it goes to logcat on Android.
+   */
+  @Test
+  fun `nothing in integrations writes to a log`() {
+    val root = repoRoot()
+    val sources = File(root, "integrations").walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { it.invariantSeparatorsPath.contains("/src/main/") }
+      .toList()
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(sources).describedAs("Kotlin sources under integrations/*/src/main").isNotEmpty()
+
+    // `android.util.Log` catches the import and the fully-qualified use; a bare `Log.` catches the
+    // imported form. Comments are stripped first, so this file's own prose about logging -- and
+    // every KDoc in `integrations/` that explains why a secret must not be logged -- does not
+    // trip it. That is not hypothetical here: `IntegrationCredentialStore`'s class doc contains
+    // the words "never logged", and `IntegrationCredentials` explains what a log line would leak.
+    val loggers = listOf("android.util.Log", "Log.d(", "Log.e(", "Log.i(", "Log.v(", "Log.w(",
+                         "Timber.", "println(", "System.out", "System.err")
+    val offenders = sources
+      .mapNotNull { file ->
+        val code = kotlinCode(file.readText())
+        val found = loggers.filter { code.contains(it) }
+        if (found.isEmpty()) null else "${file.relativeTo(root).invariantSeparatorsPath} -> $found"
+      }
+
+    assertThat(offenders)
+      .describedAs(
+        "An integration API key is instance-wide and carries admin authority; there is no scoped " +
+          "form of it. Redacting toString() protects nothing against a log line that names the " +
+          "field. If a diagnostic is genuinely needed here, surface it as a typed result the UI " +
+          "can render -- never as a log line that a bug report attaches wholesale.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * `:core:media` builds every `MediaItem` this app plays, and each one's URI is an authenticated
+   * Subsonic stream URL carrying `u`, `s=salt` and `t=md5(password+salt)` -- a credential that does
+   * not expire.
+   *
+   * Today that URL reaches the platform `MediaSession` through nothing at all:
+   * `LegacyConversions` writes `METADATA_KEY_MEDIA_URI` from `MediaItem.requestMetadata.mediaUri`,
+   * and `MediaItems.of` never sets it. That is one line away from being false. "So the session
+   * knows the URI" is a plausible thing for a future task to write, it compiles, it changes no
+   * test's outcome, and it puts a replayable credential on the platform session -- readable by
+   * every app the user has granted notification-listener access.
+   *
+   * The artwork URI is a separate matter and is deliberately *not* banned here: it carries the same
+   * credential, an image loader genuinely needs it, and removing it means carrying a coverArt id
+   * instead (Plan 5's `BrowseNode` already does). This rule is about the one value that has no
+   * reason to cross at all.
+   */
+  @Test
+  fun `nothing in the media module puts a stream URI on the platform session`() {
+    val sourceRoot = File(repoRoot(), "core/media/src/main/kotlin")
+    val sources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${sourceRoot.path}").isNotEmpty()
+
+    // Both spellings, because either one alone is defeatable: `setRequestMetadata` is the builder
+    // call, `setMediaUri` is the only thing worth putting inside one. Matched against code with
+    // comments stripped, so this rule's own subject can be named in a KDoc -- `MediaItems.of`'s
+    // documentation should be free to say why it does not do this.
+    val banned = listOf("setRequestMetadata", "setMediaUri")
+    val offenders = sources
+      .flatMap { file -> banned.filter { kotlinCode(file.readText()).contains(it) }.map { file.name to it } }
+
+    assertThat(offenders)
+      .describedAs(
+        "a MediaItem's requestMetadata.mediaUri becomes METADATA_KEY_MEDIA_URI on the platform " +
+          "session, where every notification listener reads it -- and this app's stream URLs are " +
+          "non-expiring credentials. If a future task genuinely needs a request URI, it must be " +
+          "one that carries no authentication, and that is a decision to record here.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * `MuPlaybackService`'s KDoc makes "nothing here logs" an explicit invariant, and a media service
+   * is the easiest place in an app to break it: every `MediaItem` it holds carries a stream URL
+   * complete with an auth token and salt, and the reflex when a track will not play is to log the
+   * item.
+   *
+   * Same move as `only the cast module's proxy package may reach for OkHttp`, for the same reason:
+   * this repository has an invariant stated in prose, and prose is not a check.
+   *
+   * **What this does not claim.** It is a rule about *this project's* code, not about the process.
+   * Media3's own `MediaSessionLegacyStub` logs a warning naming the artwork `Uri` when the session
+   * bitmap loader fails, and `DefaultHttpDataSource` embeds the request URL in the message of the
+   * exception it throws on a cross-protocol redirect. Neither is reachable from here, and the
+   * service's KDoc says so rather than implying this rule closes them.
+   */
+  @Test
+  fun `nothing in the media module logs`() {
+    val sourceRoot = File(repoRoot(), "core/media/src/main/kotlin")
+    val sources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${sourceRoot.path}").isNotEmpty()
+
+    // `android.util.Log` catches the import and the fully-qualified call; `Log.` catches a use
+    // through a plain import. `println(` catches the other reflex. Over comment-stripped code, so
+    // the service's own KDoc can keep explaining what this rule is for.
+    val loggers = listOf(Regex("""android\.util\.Log"""), Regex("""(^|[^\w.])Log\s*\."""), Regex("""(^|[^\w.])println\s*\("""))
+    val offenders = sources
+      .filter { file -> loggers.any { it.containsMatchIn(kotlinCode(file.readText())) } }
+      .map { it.name }
+
+    assertThat(offenders)
+      .describedAs(
+        "no source under core/media/src/main may log: every MediaItem in this module carries a " +
+          "stream URL with a non-expiring auth token, and the artwork URI carries the same one.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * Every Kotlin source a release build compiles, except the two files that are allowed to name it.
+   *
+   * `CleartextPolicy`'s own KDoc used to claim that *"no code compiled into the release variant
+   * names [Allowed]"*. That was false when it was written: `IntegrationBaseUrl.permitsCleartext`
+   * has always contained `CleartextPolicy.Allowed -> true`, in a module `:app` depends on with
+   * `implementation` (not `debugImplementation`), so it is compiled into release. The rule above
+   * could not see it — it opens three hardcoded paths and walks nothing — so a screen that passed
+   * `CleartextPolicy.Allowed` from `app/src/main` would have left every gate in this build green.
+   *
+   * The property was holding by luck. This is the scan that makes it hold by construction, and it
+   * is written as a walk rather than as more hardcoded paths for exactly the reason the old rule
+   * failed: a rule that names the files it checks cannot see a file that did not exist when it was
+   * written.
+   *
+   * **Two carve-outs, both matched by canonical path and both checked rather than trusted.**
+   * `app/src/debug/.../CleartextPolicyModule.kt` is the variant source set that provides `Allowed`,
+   * and no release build compiles it. `IntegrationBaseUrl.kt` is the one place the value is
+   * *consumed* — `permitsCleartext`'s exhaustive `when`, which is what makes the policy
+   * unbypassable in the first place and which cannot be written without naming both members. That
+   * carve-out is narrowed to a single occurrence on a single expected line, so widening it to a
+   * second use inside the same file fails this test.
+   *
+   * Test sources are excluded: they are compiled into no release build, and both tiers legitimately
+   * pass `Allowed` to `parse` to exercise the arm a release build must never reach.
+   */
+  @Test
+  fun `nothing a release build compiles names CleartextPolicy Allowed`() {
+    val root = repoRoot()
+    val debugPolicy =
+      File(root, "app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt").canonicalFile
+    val urlParser =
+      File(root, "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt")
+        .canonicalFile
+    val literal = "CleartextPolicy.Allowed"
+
+    val scanned = root.walkTopDown()
+      // The same three skips `moduleBuildFiles` makes, and `.claude` for the same measured reason:
+      // it holds git worktrees, so walking into it finds a second copy of every source file in the
+      // repository and this rule would fail on a file no agent in this session wrote.
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filterNot { it.invariantSeparatorsPath.contains("/src/test/") }
+      .filterNot { it.invariantSeparatorsPath.contains("/src/androidTest/") }
+      .toList()
+
+    // Vacuity, from both ends. A walk that found nothing, or a literal no file in this repository
+    // actually writes, would leave this rule green forever.
+    assertThat(scanned).describedAs("release-compiled Kotlin sources").isNotEmpty()
+    assertThat(scanned.map { it.canonicalFile })
+      .describedAs("the release variant's own policy module must be inside the scanned set")
+      .contains(File(root, "app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt").canonicalFile)
+    assertThat(scanned.filter { kotlinCode(it.readText()).contains(literal) }.map { it.canonicalFile })
+      .describedAs("the carve-outs must actually match, or this rule greps for nothing")
+      .containsExactlyInAnyOrder(debugPolicy, urlParser)
+
+    val offenders = scanned
+      .filterNot { it.canonicalFile == debugPolicy || it.canonicalFile == urlParser }
+      .filter { kotlinCode(it.readText()).contains(literal) }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+
+    assertThat(offenders)
+      .describedAs(
+        "CleartextPolicy.Allowed permits an http:// integration URL, and a release build's " +
+          "manifest forbids cleartext traffic outright -- so naming it outside the debug variant " +
+          "source set produces an app that accepts a URL it can then never connect to. Provide " +
+          "the policy through Hilt from a variant source set instead.",
+      )
+      .isEmpty()
+
+    // The consuming carve-out, narrowed: one occurrence, on the line that makes the `when`
+    // exhaustive. A second use anywhere in this file -- a default argument, a shortcut in a
+    // companion -- is a release-compiled `Allowed` this rule would otherwise wave through.
+    val parserCode = kotlinCode(urlParser.readText())
+    assertThat(parserCode.split(literal).size - 1)
+      .describedAs("${urlParser.name} may name $literal exactly once, in permitsCleartext's `when`")
+      .isEqualTo(1)
+    assertThat(parserCode.lines().map { it.trim() })
+      .describedAs("the one permitted use is permitsCleartext's own `when` arm")
+      .contains("$literal -> true")
   }
 
 }

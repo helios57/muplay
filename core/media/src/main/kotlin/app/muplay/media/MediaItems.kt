@@ -5,7 +5,9 @@ import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
+import app.muplay.cast.didl.ServedMedia
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 
 /**
  * Turns one mirrored [Song] into the `MediaItem` Media3 plays.
@@ -18,10 +20,18 @@ import app.muplay.model.Song
  * - **`customCacheKey = song.id`.** Spec section 4: the cache key must derive from the track id
  *   alone. This client's stream URLs carry a fresh auth salt per call, so Media3's default
  *   URL-derived key produces a cache that is written and never read — the defect Tempo ships.
- * - **`mediaType = MEDIA_TYPE_MUSIC`, always.** Not this app agreeing that an audiobook is music:
- *   Navidrome hardcodes `child.Type = "music"` for every media file, so the protocol offers no
- *   other answer, and the library id is what actually distinguishes a book. Do not "fix" this by
- *   inferring a book from a file suffix.
+ * - **`mediaType`, from [isAudiobook] and from nothing else.** Navidrome hardcodes
+ *   `child.Type = "music"` for every media file -- the seeded `Test Book.m4b` comes back as
+ *   `"type": "music"` -- and the OpenSubsonic `mediaType` enum describes the object *kind*
+ *   (`song|album|artist`), not the content, so the protocol cannot answer this question at all.
+ *   The user's own `LibraryRole` assignment joined to `Song.libraryId` is the only mechanism there
+ *   is (spec section 4), and [QueueRepository] is where that join happens. Do not "fix" this by
+ *   inferring a book from a file suffix: `.m4b` is a container, an audiobook library holds plain
+ *   `.mp3` chapters, and a music library holds `.m4b` DJ sets.
+ *
+ *   It is `MediaMetadata.mediaType` rather than a custom `extras` key for two reasons: it is the
+ *   field that means this, and Plan 5's car and watch surfaces render from it. One field, no
+ *   parallel truth. `PlaybackAudioAttributes` reads it back to decide speech vs music.
  * - **`durationMs = song.durationSeconds * 1000`.** The one value here that is *recoverable from
  *   nowhere else*, and the reason it has to be set is a chain this repository has already
  *   measured end to end. `StreamFormat.forSuffix` sends `opus`/`ogg`/`oga` as `format=mp3`, which
@@ -57,11 +67,41 @@ import app.muplay.model.Song
 @OptIn(UnstableApi::class)
 object MediaItems {
 
-  fun of(song: Song, streamUri: String, artworkUri: String?): MediaItem =
+  /**
+   * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
+   *   inferable from anything the server sends -- see this object's own note above for why the
+   *   library id plus the user's own `LibraryRole` is the only mechanism there is.
+   * @param format the [StreamFormat] [streamUri] was built with. Needed because the **served**
+   *   MIME type is not the source file's: a forced transcode (spec section 4's "Never Opus")
+   *   delivers MP3 whatever the source was, and Sonos infers the MIME type from the URL's
+   *   extension rather than from `Content-Type`. See `ServedMedia`.
+   *
+   *   Taken as a parameter rather than recomputed from `song.suffix` here, and that is the point of
+   *   the parameter existing: [QueueRepository] already calls `StreamFormat.forSuffix` to build
+   *   [streamUri], so recomputing it would be a second decision about one fact, free to drift from
+   *   the URL the moment either rule changed. One call, two consumers.
+   *
+   * The two are independent and both are required, which a merge of two lanes established the
+   * hard way: [isAudiobook] decides `mediaType` (speech vs music, and Plan 5's surfaces), [format]
+   * decides `mimeType` (what the bytes on the wire actually are). Neither is derivable from the
+   * other -- a book is served as MP3 as readily as a song is.
+   */
+  fun of(
+    song: Song,
+    streamUri: String,
+    artworkUri: String?,
+    isAudiobook: Boolean,
+    format: StreamFormat,
+  ): MediaItem =
     MediaItem.Builder()
       .setMediaId(song.id)
       .setUri(streamUri)
       .setCustomCacheKey(song.id)
+      // The one statement of what these bytes are, read by the local extractor as a hint and by
+      // the cast layer as the truth it tells a renderer. See `ServedMedia`'s KDoc for why three
+      // parties must agree and why they all read this one value, and `MimeAgreement` for the check
+      // that makes their agreement observable rather than merely intended.
+      .setMimeType(ServedMedia.of(song.suffix, format).mimeType)
       .setMediaMetadata(
         MediaMetadata.Builder()
           .setTitle(song.title)
@@ -83,7 +123,10 @@ object MediaItems {
           // Android Auto (Plan 5) renders its browse tree from these flags; an item marked
           // browsable becomes a folder that opens onto nothing.
           .setIsBrowsable(false)
-          .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+          .setMediaType(
+            if (isAudiobook) MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER
+            else MediaMetadata.MEDIA_TYPE_MUSIC,
+          )
           .build(),
       )
       .build()

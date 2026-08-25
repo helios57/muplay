@@ -1,36 +1,41 @@
-# Handoff — MuPlay, end of the 2026-08-25 fleet session
+# Handoff — MuPlay, the 2026-08-25 fleet session
 
-Master is `e5a4d79`, green (`check verifyNoMockFrameworks`), pushed, androidTest
-compiles. **30 merges landed this session.** The app went from "cannot play
-audio" to playing in the background with a session, notification, lock-screen
-controls, a media cache, a player UI and proven gapless playback.
+Master is `6c7d4b1`, green (`check verifyNoMockFrameworks`), pushed, release
+Kotlin and androidTest both compile. The app went from "cannot play audio" to
+playing in the background with a session, notification, lock-screen controls, a
+media cache, a player UI and proven gapless playback.
 
 ## Where the plans stand
 
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 10 of 12 | 8b blocked on 6 + the keystone fix; 11 and 12 blocked on 8b |
-| 6 — Sonos/DLNA casting | 3 of 12 | codec, SSDP, SOAP in; DIDL-Lite in flight |
-| 5 — Auto/Wear | 2 of 11 | `BrowseId`, browse tree in; surfaces in flight |
-| 7 — integrations | 1 of 11 | `:integrations:core` in; credential store in flight |
-| 4 — audiobooks | 0 of 10 | fixtures in flight |
+| 3 — playback core | 11 of 12 | keystone fix in; 8b in flight, 11 and 12 behind it |
+| 6 — Sonos/DLNA casting | 4 of 12 | codec, SSDP, SOAP, DIDL-Lite in; SOAP hardening + proxy in flight |
+| 5 — Auto/Wear | 3 of 11 | `BrowseId`, browse tree, browse surfaces in; T4 queued behind 8b for `MuPlaybackService.kt` |
+| 7 — integrations | 2 of 11 | `:integrations:core` + credential store in; request store in flight |
+| 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** — see below |
 
-## Eight lanes were live when the session ended
-
-All have **committed work in their worktrees** under `.claude/worktrees/`, all
-had merged master, none had written its report yet. Resume by sending each agent
-a message, or read the worktree and finish it directly.
+## Lanes live now
 
 | Worktree | Task | State |
 | --- | --- | --- |
-| `p3t6` | P3 T6 audio focus, `startIndex`, wake lock | 8 commits, clean — closest to done |
-| `p3t5fix` | Keystone security: `onConnect`, controller race, entry points → `src/debug/`, `build-logic` test source set | 7 commits |
-| `p3t10` | P3 T10 the gates (Tier 2 journey) | 3 commits |
-| `p6t4` | P6 T4 DIDL-Lite, three-way MIME invariant | 5 commits |
-| `p6t2fix` | SSDP security: DNS-in-read-loop, XXE 4 KiB blind spot, depth cap | 3 commits |
-| `p5t3` | P5 T3 `BrowseSurfaces` / `SurfaceResolver` | 2 commits |
-| `p4t1` | P4 T1 audiobook fixtures | 2 commits |
-| `p7t2` | P7 T2 `KeystoreKeys`, integration credential store | 1 commit |
+| `p3t10` | P3 T10 the gates (Tier 2 journey) | in flight; **holds `ConventionTest.kt`, `app/androidTest/`** |
+| `p3t8b` | P3 T8b `MuPlayer` + `ProgressWriter` | dispatched; **holds `MuPlaybackService.kt`, `MediaModule.kt`** |
+| `p6t3fix` | SOAP hardening: escape argument values, make the "strict" fake actually strict | dispatched |
+| `p6t6` | P6 T6 the media proxy — range serving, the token that is not a track id | dispatched |
+| `p7t3` | P7 T3 the request store | dispatched |
+| `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
+
+**Landed from the keystone lane:** `onConnect` is now gated on
+`isTrusted || packageName == LEGACY_CONTROLLER` — Media3's own platform-computed
+predicate, not a package allow-list. Every Hilt entry point moved from `src/main`
+to `src/debug`, enforced by a new `ConventionTest` rule. `PlaybackConnection`'s
+race is fixed, and **`controller()` now throws `CancellationException` if
+`release()` races it** — Task 8b and anything else holding a controller should
+know. `:core:media` is at 24 floors.
+
+**Queued behind `p3t8b`:** Plan 5 Task 4 (`BrowseItems` + `MuPlayLibraryCallback`)
+needs the same `MuPlaybackService.kt`. Dispatch it when 8b lands.
 
 ## Merge routine that this session settled on
 
@@ -97,9 +102,11 @@ this until they are fixed.**
   (~56 KB, inside the 1 MiB cap) overflows a default JVM stack; depth **3000**
   overflows at `-Xss512k` ≈ an Android worker thread. `SoapClient`'s KDoc tells
   later tasks that `catch (IOException)` is complete — `StackOverflowError` is an
-  `Error`. **Routed to the SSDP fix lane**, which is already fixing the identical
+  `Error`. **FIXED and on master** (`MAX_FAULT_DEPTH`); it was the identical
   shape in `DeviceDescription.parseDevice`.
-- **HIGH — `render` inserts argument *values* verbatim.** The KDoc claims `render`
+- **HIGH — `render` inserts argument *values* verbatim. ROUTED to `p6t3fix`,
+  option A: `render` escapes, `DidlLite.renderEscaped` is deleted.** The Plan 6
+  Task 4 lane reproduced this independently and recommended the same fix. The KDoc claims `render`
   is "total: well-formed XML or throws". It is not. A Navidrome stream URL
   (`?u=…&t=…&s=…`) produces `The reference to entity "t" must end with ';'` — not
   well-formed. And `"x</CurrentURI><Speed>99</Speed><CurrentURI>y"` silently
@@ -107,7 +114,7 @@ this until they are fixed.**
   documents why; SOAP, the layer that owns framing, does not. Fix: escape values
   in `render` and have `DidlLite` hand over unescaped, or split the type
   (`text(...)` vs `preEscaped(...)`).
-- **HIGH — the "strict" fake parses request bodies with a regex**
+- **HIGH — the "strict" fake parses request bodies with a regex. ROUTED to `p6t3fix`.**
   (`FakeRenderer.kt:51-56`), so it cannot see malformed XML at all. That is
   *why* 266 green tests could not see the HIGH above. Fix: parse with
   `DocumentBuilder`, answer 500 when it does not parse, keep `headBytes` raw.
@@ -134,7 +141,7 @@ and it is pinned at a value.
   so the release-side cleartext refusal was verified exactly once, by hand. Added a
   `Compile the gates check does not` step to `pr.yml` covering release Kotlin **and**
   androidTest (the gap that let master carry a broken device tier earlier today).
-- **HIGH-2 — open, routed to Plan 7 Task 2's lane.** `CleartextPolicy`'s KDoc claims
+- **HIGH-2 — FIXED by Plan 7 Task 2's lane, falsified with `--rerun-tasks`.** `CleartextPolicy`'s KDoc claims
   no release-compiled code names `Allowed`. False: `IntegrationBaseUrl.kt:84` is
   `CleartextPolicy.Allowed -> true`, in the same module, compiled into release
   (`:app` uses `implementation`, not `debugImplementation`). And the cited
@@ -159,3 +166,44 @@ and it is pinned at a value.
   prose-satisfiable via an import alias; the severability grep misses
   `project(path = ":integrations:core")`; and the "three assertions were prose-
   satisfiable" comment overstates its own measurement 3:1 — exactly one was.
+
+## HELD MERGE — Plan 4 Task 1 (audiobook fixtures), branch `p4t1-branch`
+
+**Complete on the JVM tier, deliberately not merged.** `check` green,
+`:core:testing` 35/35, `BookFixtures` 18/18 BRANCH + 46/46 LINE, `books/` probes
+3/3, all four compile gates green.
+
+**Why it is held:** merging makes master's **live suite red** until the fixtures
+are deployed and Navidrome rescans. The container mounts the main repo's
+`ci/fixtures/`, the library goes 4 → 9 scanned items, and
+`ci/configure-libraries.sh` then waits for 9. That rescan changes what every
+other lane's live tests see, so it needs a window when no live suite is running.
+
+**To land it:** merge `p4t1-branch`, then deploy the fixtures into the main
+repo's `ci/fixtures/` and let Navidrome rescan, then re-run `LiveNavidromeTest`
+and the Tier 2 journeys. Expect `getScanStatus.count` 4 → 9.
+
+**Fold the Ogg/Opus fixture into the SAME window.** The lane priced it: two
+`-bitexact libopus` runs, identical md5, ~30 min, zero risk to existing
+checksums — and it closes the one decision in this project that is still argued
+rather than measured (`StreamFormat`'s "never Opus"). One real gotcha it found:
+**Ogg puts its tags on the *stream*, not `format.tags`**, so `probe-chapters.sh`
+would silently record blank titles (~3 lines to fix). Name it `.ogg`/`.oga`, not
+`.opus` — Navidrome's extension table carries the first two, not the third.
+It moves `scannedCount` 9 → 10, so doing it separately means rescanning twice.
+
+**Two things it measured that are worth keeping:**
+- The mp3 fixtures are **4049/6034/5042 ms**, not the round 4000/6000/5000 the
+  brief assumed — libmp3lame pads to a whole 1152-sample frame and both ffprobe
+  and Media3's `Mp3Extractor` report the untrimmed span. The m4b books *are*
+  exact (21000/15000/12000).
+- The chapter oracle is **independently checked**, which was the thing I most
+  wanted: `books.tsv` is derived by `ffprobe`, no project source produces any
+  value in it, and three separate checks guard it (`probe-chapters.sh --check`
+  re-derives and diffs, `md5sum -c` guards the bytes the derivation reads, and
+  the tests assert literals written from the brief rather than copied from
+  script output). Falsified, not argued.
+
+**Known gap it named:** `Tail Book`'s non-faststart layout has no automated
+guard — ffprobe reads chapters identically from either layout, so nothing would
+notice if someone added `+faststart`. Belongs with Plan 4 Task 3.

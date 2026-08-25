@@ -5,7 +5,10 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.StatusBarNotification
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -16,6 +19,7 @@ import androidx.test.rule.GrantPermissionRule
 import app.muplay.database.CredentialStoreEntryPoint
 import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackEntryPoint
+import app.muplay.media.PlaybackLauncher
 import app.muplay.media.PlaybackNotification
 import app.muplay.media.MuPlaybackService
 import app.muplay.media.PlaybackQueue
@@ -24,7 +28,15 @@ import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import dagger.hilt.android.EntryPointAccessors
+import java.util.concurrent.Executor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
 import org.junit.Before
@@ -238,8 +250,9 @@ class MuPlaybackServiceTest {
     assertThat(artworkEndpoint(state.artworkUri))
       .isEqualTo(artworkEndpoint(items[0].mediaMetadata.artworkUri?.toString()))
     assertThat(state.positionMs).isGreaterThan(0L)
-    // Duration comes from the extractor, not from the mirror: proving it is a real number is
-    // proving the container was actually parsed.
+    // A real number, which is all this assertion can claim: on this fixture the extractor and the
+    // mirror agree to within a few milliseconds, so it does not say *which* source supplied it.
+    // [theDurationTheUiRendersIsTheExtractorsAndNotTheMetadatas] is the one that does.
     assertThat(state.durationMs).isGreaterThan(0L)
     // Two items, positioned at the first: the only arrangement in which these two disagree.
     assertThat(state.hasNext).isTrue
@@ -281,6 +294,99 @@ class MuPlaybackServiceTest {
     assertThat(state.mediaId).isEqualTo(songs[1].id)
     assertThat(state.hasNext).isFalse
     assertThat(state.hasPrevious).isTrue
+  }
+
+  /**
+   * **A queue starts at the track its `startIndex` names, and the whole queue is still there.**
+   *
+   * The one defect in this plan that no JVM test can see, and it was live until this test existed:
+   * `QueueRepository.mediaItems` returns the whole queue by contract, `startIndex` is an argument
+   * to `setMediaItems(items, startIndex, positionMs)`, and until `PlaybackConnection.play` existed
+   * nothing joined the two. Every queue silently started at track 1 — "play track 7 of this album"
+   * played track 1, for every album, with a green repository suite. That is this project's recorded
+   * "verified at a different layer than applied" class, and the layer that applies it is a real
+   * player behind a real session, which is why this lives here and not in `:core:media`.
+   *
+   * ### The index is asserted before anything is waited for, and that is the whole test
+   *
+   * Written as *await until `state.mediaId == songs[1].id`*, this test was **green with
+   * `setMediaItems(items, 0, 0L)`** — measured, not feared. The fixture tracks are five seconds
+   * long and the wait allows thirty, so a queue that started at track 1 simply *played into* track
+   * 2 and satisfied the assertion; the second half, at `startIndex = 2`, was satisfied ten seconds
+   * in for the same reason. A wait is exactly the wrong instrument for an assertion about where
+   * playback *began*.
+   *
+   * `setMediaItems` applies the index synchronously through `MediaController`'s own masking, so the
+   * index is read back with no wait at all — drift cannot manufacture it — and only then is a
+   * second of real audio awaited, after which the index must **still** be the one that was named.
+   * That pair is what separates "started there" from "arrived there".
+   *
+   * **Two indices, so a hardcoded one satisfies neither.** Both mutations were measured, in
+   * `PlaybackLauncher.play`: `setMediaItems(items, 0, 0L)` fails on the first index read
+   * (`expected:<1> but was:<0>`), and
+   * `mediaItems()` returning `queue.songs.drop(queue.startIndex)` — the exact misreading
+   * `QueueRepositoryTest` warns about — lands on index 1 of a two-item queue and fails on the id
+   * there (`expected:<"lVRD…"> but was:<"nMjR…">`), with `mediaItemCount` a second, independent
+   * observation behind it.
+   */
+  @Test
+  fun aQueueStartsPlayingAtTheTrackItsStartIndexNames() {
+    check(songs.size >= 3) { "this test needs three seeded tracks, found ${songs.size}" }
+    // Three distinct server ids, or an index assertion could coincide with the wrong item.
+    assertThat(setOf(songs[0].id, songs[1].id, songs[2].id)).hasSize(3)
+
+    setQueueAndPlay(songs.take(3), startIndex = 1)
+
+    // No wait: this is where playback *began*.
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(1)
+    assertThat(onMain { controller.currentMediaItem?.mediaId }).isEqualTo(songs[1].id)
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+
+    // ...and a second of real audio later it is still that item, now genuinely rendering.
+    awaitPositionAtLeast(1_000L)
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(1)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isTrue
+
+    // The second observation, at the far end of the same queue. `hasNext` flips, which is what
+    // proves the player is genuinely positioned there rather than reporting a remembered index.
+    setQueueAndPlay(songs.take(3), startIndex = 2)
+
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(2)
+    assertThat(onMain { controller.currentMediaItem?.mediaId }).isEqualTo(songs[2].id)
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+
+    awaitPositionAtLeast(1_000L)
+    assertThat(onMain { controller.currentMediaItemIndex }).isEqualTo(2)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[2].id)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isFalse
+  }
+
+  /**
+   * Asking to play **nothing** leaves what is already playing alone.
+   *
+   * `launchQueue`'s empty arm, driven where it is applied. `PlaybackLauncherTest` (JVM) pins the
+   * decision — an empty list yields `null` rather than `PlaybackQueue`'s own
+   * `IllegalArgumentException`, because "play this album" against songs the mirror has not
+   * delivered yet is an ordinary race and not a programming error — but the decision and its
+   * consequence are two different claims, and this is the one a user feels: the tap does nothing
+   * instead of stopping the music that was playing. Nothing else in the project reaches that arm
+   * with a real session behind it, which is why `PlaybackLauncher` measured 1/2 BRANCH until this.
+   */
+  @Test
+  fun askingToPlayNoSongsAtAllLeavesTheCurrentQueueAlone() {
+    setQueueAndPlay(songs.take(1))
+    awaitPositionAtLeast(500L)
+
+    runBlocking { PlaybackLauncher(queueRepository(), connection).play(emptyList(), 0) }
+
+    // Both halves matter: a launcher that called `setMediaItems(emptyList(), ..)` would report 0
+    // here, and one that threw would never reach either assertion.
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(1)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[0].id)
+    assertThat(onMain { controller.isPlaying }).isTrue
   }
 
   /**
@@ -333,15 +439,14 @@ class MuPlaybackServiceTest {
       controller.stop()
       controller.clearMediaItems()
       connection.release()
-      // The **application's** own connection too, and without this line the rest of this test is
-      // theatre. `MuPlayApp` renders `MiniPlayer` in every screen's `bottomBar`, so any journey
-      // that ran before this one in the same process left a `PlayerViewModel`'s `MediaController`
-      // bound to the service -- and a service with a bound client is precisely what `stopService`
-      // does not destroy. Measured on `muplay37`: this class alone covers `MuPlaybackService`
-      // 27/31 LINE; with `BrowseJourneyTest` ahead of it, 20/31, and the seven lines lost are
-      // `onDestroy`'s. The test stayed green throughout, because a service that was never
-      // destroyed still answers a fresh controller.
-      playbackConnection().release()
+      // The application's **own** singleton connection, not this test's. `:feature:player`'s
+      // `PlayerViewModel` binds it behind the mini player and never releases it, so from the first
+      // journey that composes a screen it holds a `MediaController` bound to this service for the
+      // rest of the process -- and a bound service cannot be destroyed, which makes `stopService`
+      // below a no-op and this test's premise false. Measured: with `BrowseJourneyTest` ahead of it
+      // in the same run, `onDestroy` was never reached and `MuPlaybackService` LINE fell from 29/31
+      // to 22/31, failing its floor, while this test stayed green.
+      appPlaybackConnection().release()
     }
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
@@ -357,18 +462,187 @@ class MuPlaybackServiceTest {
     assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
   }
 
-  private fun setQueueAndPlay(items: List<Song>): List<MediaItem> {
-    val mediaItems = runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items)) }
+  /**
+   * Two callers asking for the controller **at the same time** get the same one.
+   *
+   * [askingTheConnectionForItsControllerTwiceReturnsTheSameOne] asks twice in sequence, and that is
+   * structurally unable to see this: `connect()` suspends, which releases the main thread, so the
+   * defect only exists in the window between one caller starting a connection and that connection
+   * completing. `PlaybackConnection` is a `@Singleton`, and a mini-player and a now-playing screen
+   * starting together is the ordinary case that opens it.
+   *
+   * What went wrong before the fix was not "two objects are returned". It was that the second one
+   * overwrote the field, so the first stayed bound for the life of the process: the service could
+   * not stop, the orphan's `Player.Listener` kept publishing into the same `StateFlow`, and
+   * `release()` could only ever release one of them.
+   *
+   * **The interleaving is forced, not hoped for.** Both coroutines are started from the main thread
+   * with `CoroutineStart.UNDISPATCHED`, so each runs up to its first suspension immediately -- which
+   * is `controller()`'s own `withContext(mainDispatcher)` posting to the main looper. The two bodies
+   * are therefore queued in order, and the second runs while the first is suspended inside
+   * `MediaController.Builder.buildAsync()`, which needs a real service bind and cannot complete
+   * within one main-loop task.
+   */
+  @Test
+  fun twoConcurrentCallersShareOneController() {
+    val fresh = newConnection()
+    try {
+      lateinit var first: Deferred<MediaController>
+      lateinit var second: Deferred<MediaController>
+      InstrumentationRegistry.getInstrumentation().runOnMainSync {
+        first = mainScope.async(start = CoroutineStart.UNDISPATCHED) { fresh.controller() }
+        second = mainScope.async(start = CoroutineStart.UNDISPATCHED) { fresh.controller() }
+      }
+
+      val (a, b) = runBlocking { withTimeout(TIMEOUT_MS) { first.await() to second.await() } }
+      // By identity. Two `MediaController`s over the same session are equal by nothing this
+      // assertion could use, and the defect is precisely that there are two objects.
+      assertThat(a).isSameAs(b)
+    } finally {
+      InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh.release() }
+    }
+  }
+
+  /**
+   * Releasing while a connection is still being built leaves nothing behind that a later caller can
+   * be handed.
+   *
+   * The same root cause as the test above, on the other side of the suspension point: a
+   * `controller()` suspended inside `connect()` when `release()` runs used to resume afterwards,
+   * assign the field, and start a fresh ticker -- on a `MediaController` that `release()` had
+   * already handed to `MediaController.releaseFuture`. The visible result is the assertion here: the
+   * *next* caller gets that dead controller, because the field had been re-populated behind the
+   * release.
+   *
+   * The ordering is forced the same way the test above forces its own. After `runOnMainSync` has
+   * started the connect, a second, empty `runOnMainSync` cannot run until the connect's body has run
+   * and suspended, so the `release()` in the third one is guaranteed to land mid-connection.
+   */
+  @Test
+  fun releasingDuringAnInFlightConnectLeavesNoDeadControllerBehind() {
+    val fresh = newConnection()
+    try {
+      lateinit var pending: Deferred<MediaController>
+      InstrumentationRegistry.getInstrumentation().runOnMainSync {
+        pending = mainScope.async(start = CoroutineStart.UNDISPATCHED) { fresh.controller() }
+      }
+      // Runs after the coroutine's own posted body, which is where `buildAsync()` is called.
+      InstrumentationRegistry.getInstrumentation().runOnMainSync { }
+      InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh.release() }
+
+      // Let the released attempt settle whichever way it settles: cancelled (correct) or completed
+      // with a controller (the defect). `runCatching`, because the correct answer is a thrown
+      // `CancellationException` and this is not the assertion.
+      runCatching { runBlocking { withTimeout(TIMEOUT_MS) { pending.await() } } }
+
+      val after = runBlocking { withTimeout(TIMEOUT_MS) { fresh.controller() } }
+      assertThat(onMain { after.isConnected })
+        .describedAs("a connection asked for after a release must hand back a live controller")
+        .isTrue
+    } finally {
+      InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh.release() }
+    }
+  }
+
+  /**
+   * The duration the UI renders is the **player's**, not the mirror's, when the two disagree.
+   *
+   * `PlaybackState.durationMsOf` takes `playerDurationMs` and `metadataDurationMs` -- two `Long?`s,
+   * so swapping them at the call site in `PlaybackConnection.publish` compiles, and
+   * `PlaybackStateTest` cannot see it: it drives the function, not the call. Every other assertion
+   * in this suite is blind to it too, because on this fixture the extractor and the mirror agree to
+   * within a few milliseconds and both are "greater than zero".
+   *
+   * So the fixture is made to disagree. The item is rebuilt with a metadata duration no five-second
+   * track could have, and the state has to carry the extractor's answer instead. With the two
+   * arguments swapped this reports [WRONG_METADATA_DURATION_MS].
+   *
+   * Both premises are asserted rather than assumed: that the tampered value really did reach the
+   * controller's combined metadata, and that the extractor really did produce a duration of its own
+   * (if it had not, `player.duration` would be `C.TIME_UNSET`, the metadata would legitimately win,
+   * and this test would be discriminating nothing).
+   */
+  @Test
+  fun theDurationTheUiRendersIsTheExtractorsAndNotTheMetadatas() {
+    val real = runBlocking { queueRepository().mediaItems(PlaybackQueue.of(listOf(songs[0]))) }
+    val tampered = real[0].buildUpon()
+      .setMediaMetadata(
+        real[0].mediaMetadata.buildUpon().setDurationMs(WRONG_METADATA_DURATION_MS).build(),
+      )
+      .build()
+
+    // The one place in this file that still drives the controller by hand rather than through
+    // [setQueueAndPlay], and it has to: the whole test is about an item whose metadata does not
+    // match what `QueueRepository` would build, so it cannot come from the production path that
+    // builds items. Nothing about `startIndex` is being exercised here -- that is
+    // [setQueueAndPlay]'s subject and its own tests'.
     onMain {
-      controller.setMediaItems(mediaItems, 0, 0L)
+      controller.setMediaItems(listOf(tampered), 0, 0L)
       controller.prepare()
       controller.play()
     }
-    return mediaItems
+    awaitPositionAtLeast(1_000L)
+
+    // Premise 1: the tamper took. `Player.getMediaMetadata()` is the *combined* metadata, and the
+    // item's own values win over the stream's -- so if this were not the case the test below would
+    // be comparing the extractor's answer with itself.
+    assertThat(onMain { controller.mediaMetadata.durationMs })
+      .describedAs("the tampered metadata duration must be what the session reports")
+      .isEqualTo(WRONG_METADATA_DURATION_MS)
+
+    // Premise 2: the extractor has an answer at all.
+    val playerDuration = onMain { controller.duration }
+    assertThat(playerDuration)
+      .describedAs("without an extractor duration the metadata legitimately wins and this proves nothing")
+      .isNotEqualTo(C.TIME_UNSET)
+      .isGreaterThan(0L)
+
+    assertThat(connection.state.value.durationMs)
+      .describedAs("the player measured what is playing; the metadata is what the server said")
+      .isEqualTo(playerDuration)
+  }
+
+  /**
+   * Starts [items] through **`PlaybackLauncher`, the production entry point**, and hands back the
+   * `MediaItem`s built for them.
+   *
+   * Not a hand-rolled `setMediaItems(items, 0, 0L); prepare(); play()` -- which is what stood here
+   * until Plan 3 Task 6, and is precisely how `startIndex` came to be applied nowhere: a helper
+   * that passes a literal `0` is a second copy of the production sequence that agrees with it on
+   * the only case it ever exercises, so no assertion in this file could see the real one being
+   * wrong. `PlaybackLauncher` is documented as *"the one way anything in this app starts playing
+   * something"*, and this is the only suite in the project that can run it: every line of it needs
+   * a `MediaController` bound to a real `MuPlaybackService`, which only an `@HiltAndroidApp`
+   * application can start.
+   *
+   * Constructed over **this test's own** [connection] rather than reached through Hilt, for the
+   * reason the connection itself is built by hand here: the singleton is shared with the running
+   * app and cannot be released between tests.
+   *
+   * The items are re-derived rather than captured from inside `play`, which costs one more
+   * `mediaItems` call and keeps the launcher's signature free of a test-shaped return value. Both
+   * derivations produce the same ids and the same endpoints; only the auth salt differs, and
+   * nothing here asserts on one.
+   */
+  private fun setQueueAndPlay(items: List<Song>, startIndex: Int = 0): List<MediaItem> {
+    runBlocking { PlaybackLauncher(queueRepository(), connection).play(items, startIndex) }
+    return runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items, startIndex)) }
   }
 
   /** The scheme, host and path of a cover-art URL, with the authenticated query string removed. */
   private fun artworkEndpoint(uri: String?): String? = uri?.substringBefore("?")
+
+  /**
+   * A `PlaybackConnection` of its own, built on the main thread because it captures a `Looper`.
+   *
+   * The three tests above cannot use [connection]: it is already connected by [setUp], and every one
+   * of them is about what happens *while* a connection is being made.
+   */
+  private fun newConnection(): PlaybackConnection {
+    lateinit var fresh: PlaybackConnection
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh = PlaybackConnection(context) }
+    return fresh
+  }
 
   private fun <T> onMain(block: () -> T): T {
     var result: Any? = null
@@ -449,16 +723,19 @@ class MuPlaybackServiceTest {
    *
    * `MuPlayApplication` is `@HiltAndroidApp`, so `EntryPointAccessors.fromApplication` hands back
    * the real object the service and the UI use. The entry point interfaces are declared in their
-   * own modules' `main` source sets, not here: Hilt aggregates `@InstallIn` from a variant's main
-   * compilation only, so an `@EntryPoint` declared in this source set is not part of the running
-   * application's generated `SingletonComponent` at all. Same reasoning as `SyncWatermarkEntryPoint`
-   * and `LibraryRepositoryEntryPoint`, which this suite's neighbours already use.
+   * own modules' **`src/debug/`** source sets, not here: Hilt aggregates `@InstallIn` from a
+   * variant's main *compilation*, so an `@EntryPoint` declared in this `androidTest` source set is
+   * not part of the running application's generated `SingletonComponent` at all -- but a build-type
+   * source set is part of that compilation, and the instrumented tests run the debug variant. Same
+   * placement as `SyncWatermarkEntryPoint` and `LibraryRepositoryEntryPoint`, which this suite's
+   * neighbours use, and as `app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt`.
+   * `ConventionTest`'s `every Hilt entry point is declared in a debug source set` keeps all four
+   * out of `src/main/`, where each was public API of its own module.
    */
   private fun queueRepository() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).queueRepository()
 
-  /** The application's own `@Singleton` connection -- see [PlaybackEntryPoint.playbackConnection]. */
-  private fun playbackConnection() =
+  private fun appPlaybackConnection() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).playbackConnection()
 
   private fun credentialStore() =
@@ -473,5 +750,28 @@ class MuPlaybackServiceTest {
     const val MUSIC_LIBRARY_ID = 1
     const val TIMEOUT_MS = 30_000L
     const val POLL_MS = 50L
+
+    /**
+     * Sixteen and a half minutes, on a five-second fixture track.
+     *
+     * Far enough from any real duration that a failure reads as "the metadata won" rather than as a
+     * rounding difference, and it is the value
+     * [theDurationTheUiRendersIsTheExtractorsAndNotTheMetadatas] would report if
+     * `PlaybackConnection.publish` passed `durationMsOf`'s two arguments the wrong way round.
+     */
+    const val WRONG_METADATA_DURATION_MS = 999_000L
   }
+
+  /**
+   * A scope on the main `Looper`, for the two tests that have to start a coroutine *from* the main
+   * thread so that its first suspension lands on the main queue in a known order.
+   *
+   * Built from a `Handler` rather than from `Dispatchers.Main` for the reason `PlaybackConnection`
+   * itself gives: `Dispatchers.Main` lives in `kotlinx-coroutines-android`, which nothing in this
+   * build declares.
+   */
+  private val mainScope = CoroutineScope(
+    SupervisorJob() +
+      Executor { command -> Handler(Looper.getMainLooper()).post(command) }.asCoroutineDispatcher(),
+  )
 }
