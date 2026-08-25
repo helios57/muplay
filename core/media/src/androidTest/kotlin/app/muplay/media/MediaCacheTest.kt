@@ -19,6 +19,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.media.di.MediaCacheModule
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -228,7 +229,9 @@ class MediaCacheTest {
     // every call, so the URI is exactly the thing that must not become the key.
     val streamUri = server.url("/rest/stream?id=song-1&t=aaa&s=111").toString()
 
-    playItemToEnd(MediaItems.of(song, streamUri, artworkUri = null))
+    // `isAudiobook = false`: this test's subject is the cache key, and the media type is neither
+    // read nor asserted here. `MediaItemsTest` and `QueueRepositoryTest` observe it at both values.
+    playItemToEnd(MediaItems.of(song, streamUri, artworkUri = null, isAudiobook = false, format = StreamFormat.Raw))
 
     assertThat(cache.keys).containsExactly(song.id)
     assertThat(cache.getCachedBytes(song.id, 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())

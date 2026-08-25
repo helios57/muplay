@@ -529,6 +529,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.browse.BrowseText",
         "app.muplay.model.browse.BrowseSurface",
         "app.muplay.model.browse.BrowseSurface*",
+        // Plan 5 Task 3. Named in full even though the `BrowseSurface*` rider one line up already
+        // matches it (`wildcardToRegex` turns that into `\QBrowseSurface\E.*`, and `BrowseSurfaces`
+        // matches) -- because that rider was added in Task 2 to catch `BrowseSurface$Companion`,
+        // a class carrying no counters at all, and a floor whose only reason for reaching a class
+        // is a glob aimed at something else is one narrowing away from silently letting go. This
+        // is the first entry in this list that the rider was gating by accident, and it is the
+        // only class in the browse package whose branches are a *decision* rather than a guard.
+        //
+        // Measured today: `BrowseSurfaces` BRANCH **12/12**, LINE 19/19, and all 12 of those
+        // branches are `of`'s (measured per method: `of` BRANCH 12/12 LINE 10/10; the other 9
+        // lines are `<clinit>` and the two set getters). Verified fireable by withholding tests
+        // rather than by raising the minimum, and the near-misses are the point: withholding `the
+        // media3 predicate wins...` alone leaves 12/12 = 1.0000 (`each of the four arguments...`
+        // still varies `isCarController` on its own), withholding both leaves 11/12 = 0.9167 and
+        // still passes, and it takes a third -- `a hint is honoured from our own package and
+        // refused from any other`, the only test that reaches the `HINT_CAR` arm from our own
+        // package -- to reach 10/12 = 0.8333 and fail. Raising the minimum instead would have been
+        // vacuous: JaCoCo validates it before comparing, so anything above 1.0 fails with "given
+        // minimum ratio is 1.01, but must be between 0.0 and 1.0" against any code at all.
+        //
+        // Deliberately NOT given a LINE floor of its own, unlike `BrowseTree` and `BrowseText`
+        // below: every one of `of`'s 10 lines sits under a branch this rule already gates, and the
+        // remaining 9 are the two `setOf(...)` initialisers in `<clinit>`, which execute the moment
+        // any test in the module touches the object at all. That is the unfireable-declaration
+        // case the ride-along paragraph above describes, not the `BrowseTree` case.
+        "app.muplay.model.browse.BrowseSurfaces",
         "app.muplay.model.browse.BrowseNode",
         "app.muplay.model.browse.BrowseCompletion",
         "app.muplay.model.browse.BrowseCompletionStatus",
@@ -1603,6 +1629,95 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackLauncherKt"),
     ),
+    // ---- Plan 3 Task 6: audio focus, becoming-noisy, wake mode, and the content-type switch ----
+    // `PlaybackAudioAttributes` 2/2 = 1.0000 BRANCH from **JVM data alone**
+    // (`PlaybackAudioAttributesTest`, six tests, no emulator). That split is the entire reason this
+    // object exists apart from the builder call it feeds: `contentTypeFor` takes an `Int` and
+    // returns an `Int`, so spec section 5's one-line switch is gated by the fast tier while the
+    // `AudioAttributes` construction around it is not. Same argument as `StreamRetryPolicy` behind
+    // the Media3 error adapter and `ResumePolicy` behind the player.
+    //
+    // Two branches, and they are the whole decision: is this media type one of the two audiobook
+    // types, or anything else. A wrong answer is **invisible at runtime** -- focus still works, the
+    // app still pauses for a call -- and shows up only where nobody looks: a navigation prompt
+    // ducking music but interrupting speech, and a car mixing a notification differently over each.
+    //
+    // Confirmed JVM-measurable by deleting both connected runs' `.ec` and running
+    // `jacocoJvmCoverageVerification` alone: green, and this rule among the ones it evaluated.
+    // Falsified by withholding the covering test rather than by raising the minimum (at a measured
+    // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing --
+    // see the Task 8a entry above): with `PlaybackAudioAttributesTest` moved aside, "Rule violated
+    // for class app.muplay.media.PlaybackAudioAttributes: branches covered ratio is 0.00, but
+    // expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+    ),
+    // The same class's 8/8 = 1.0000 LINE, JVM, and it gates something the BRANCH rule above cannot:
+    // `of` is a branchless builder chain (`setUsage`, `setContentType`), and `USAGE_MEDIA` is what
+    // puts this app on the *media* volume stream rather than the notification or assistant stream.
+    // Per this table's own doc a LINE floor can only be moved by an added untested line, never by a
+    // deleted covered one -- so what this really gates is the class drifting into an untested
+    // block; the deleted-call case is `PlaybackAudioAttributesTest.the usage is always media`.
+    // Falsified the same way, same run: lines covered ratio 0.00 against a minimum of 0.90.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+    ),
+    // `ContentTypeSwitcher` 4/4 and `PlaybackLauncher` 2/2 = 1.0000 BRANCH, instrumented.
+    //
+    // `ContentTypeSwitcher`'s four are two real decisions with both arms driven: the transition to
+    // a null `mediaItem` (a cleared queue) and a null `MediaMetadata.mediaType` (any item built
+    // without metadata -- `MediaItem.fromUri`, which is most of this module's own device fixtures).
+    // It measured 5/6 as `mediaItem?.mediaMetadata?.mediaType ?: return`, where the middle safe call
+    // on a *platform* type emitted a null check nothing can reach; that arm was deleted rather than
+    // excused, which is the same treatment `PlaybackConnection`'s ticker got in Task 5.
+    //
+    // `PlaybackLauncher`'s two are `launchQueue(..) ?: return` -- Task 9 measured them 1/2 and
+    // recorded the class as deliberately ungated, because every line of it needs a `MediaController`
+    // bound to a real `MuPlaybackService`. That is still true, and it is exactly what
+    // `MuPlaybackServiceTest` now does: this task pointed its `setQueueAndPlay` helper at the
+    // production launcher instead of a hand-rolled `setMediaItems(items, 0, 0L)` (which is how
+    // `startIndex` came to be applied nowhere), and added the empty-queue case, so both arms are
+    // driven where they are applied.
+    //
+    // Falsified by moving both connected runs' `.ec` aside -- the only execution data either class
+    // has: "Rule violated for class app.muplay.media.ContentTypeSwitcher: branches covered ratio is
+    // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for `PlaybackLauncher`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ContentTypeSwitcher",
+        "app.muplay.media.PlaybackLauncher",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // 6/6, 12/12 and 6/6 = 1.0000 LINE, instrumented: the same two classes plus
+    // `PlaybackLauncher$play$2`, the compiled body of the `withContext(mainDispatcher)` block, which
+    // is where the three controller calls actually live (`setMediaItems`, `prepare`, `play`) and
+    // carries no BRANCH counter of its own. `*play*2`, not `$play$2`: a literal `$` in a pattern
+    // never matches (this table's own doc, gotcha 3). `PlaybackLauncher$play$1` -- the suspend
+    // continuation -- measures zero counters of either kind, so `warnUngatedClasses` skips it and no
+    // rule could gate it, the same standing exception this module records for its `$Companion`s.
+    //
+    // Falsified with the same `.ec` files moved aside: lines covered ratio 0.00 for all three.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ContentTypeSwitcher",
+        "app.muplay.media.PlaybackLauncher",
+        "app.muplay.media.PlaybackLauncher*play*2",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
@@ -2234,6 +2349,96 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.cast.soap.XmlText",
         "app.muplay.cast.soap.SoapClient*",
+      ),
+    ),
+    // Plan 6 Task 4, `app.muplay.cast.didl`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator anywhere. Which class goes on which rule is a measurement and not a preference,
+    // because a CLASS-element rule over a class carrying no counter of that kind is a `0/0`
+    // COVEREDRATIO, which is `NaN`, which JaCoCo reports as no violation at every minimum:
+    //
+    //   `MimeAgreement`          BRANCH 48/48 -- the missing `<res>`, the DOCTYPE refusal and the
+    //                            unparseable document; a `protocolInfo` with too few fields and
+    //                            one with an empty MIME field; a URL with no extension, one whose
+    //                            extension this client does not serve, one `URI` will not parse
+    //                            and an opaque `mailto:`; an absent and a blank `Content-Type`;
+    //                            and the disagreement check itself, at one distinct value and at
+    //                            more than one.
+    //   `DidlLite`               BRANCH 6/6 -- each of the three optional fields present and
+    //                            absent. All six are author-written; there is no codegen here.
+    //   `ServedMedia$Companion`  BRANCH 8/8 -- `of`'s `Mp3` and `Raw` arms, the `RAW_TYPES` hit
+    //                            and miss, the null suffix, and `forExtension`'s hit and miss.
+    //
+    // `ServedMedia` itself is on the LINE rule below rather than here, for exactly the reason
+    // `XmlText` is: it carries **no BRANCH counter at all**. `protocolInfo` and `fileName` are
+    // string building with no conditional anywhere in them, so a BRANCH rule over this class would
+    // be the silent `NaN` pass -- over the type this whole task exists to make single-valued.
+    // LINE 16/16.
+    //
+    // Falsified per class, and the first attempt is recorded because it FAILED to fire, which is
+    // the interesting half:
+    //
+    //   * withholding `DidlLiteTest`'s `an absent optional field is omitted rather than rendered
+    //     empty` **alone leaves `DidlLite` at 6/6 = 1.0000 and this floor green**. The three
+    //     optional fields' absent arms are also driven by `MimeAgreementTest`'s
+    //     `every format this client serves agrees with itself on all three legs`, which renders an
+    //     item with all three null. Withholding that sweep as well drops `DidlLite` to
+    //     **3/6 = 0.50** and the rule fires -- *"Rule violated for class
+    //     app.muplay.cast.didl.DidlLite: branches covered ratio is 0.50, but expected minimum is
+    //     0.90"*. One withheld test is not always enough, and a near-miss is worth recording
+    //     rather than re-deriving.
+    //   * `MimeAgreement`: withholding `a document with no res element, or an unreadable one, is
+    //     reported` alone drops it to **43/48 = 0.8958** and the rule fires. Note how thin that
+    //     is -- five branches of forty-eight is the whole margin -- which is the honest state of a
+    //     class this size at a 0.90 floor, not a reason to raise the minimum.
+    //   * `ServedMedia$Companion`: withholding `ServedMediaTest`'s `a transcode is served as mp3,
+    //     whatever the source file was` together with `opus never reaches a renderer, by
+    //     construction` leaves `of`'s `is StreamFormat.Mp3 ->` arm unexecuted, at
+    //     **7/8 = 0.8750**, and the rule fires naming `ServedMedia.Companion`. That arm is the one
+    //     the whole task turns on: it is what stops an Opus source being announced as `audio/ogg`
+    //     while MP3 bytes are served.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.didl.DidlLite",
+        "app.muplay.cast.didl.MimeAgreement",
+        "app.muplay.cast.didl.ServedMedia*Companion",
+      ),
+    ),
+    // The one class in this package with real code and no branches, and the two declaration-only
+    // types beside it -- LINE, the same shape and the same argument as `XmlText` above.
+    //
+    //   `ServedMedia`                 LINE 16/16. `protocolInfo`, `fileName`, and the data class.
+    //   `CastItem`                    LINE 10/10, declaration only (JaCoCo's Kotlin filters remove
+    //                                 a data class's generated members, so what is left is the
+    //                                 constructor and the `copy` the tests use).
+    //   `MimeDisagreementException`   LINE 1/1, declaration only.
+    //
+    // `MimeDisagreementException` is NOT a ride-along here, unlike the zero-counter passengers on
+    // the rules above: its one line is the exception's construction, reached only when a refusal
+    // actually happens. Falsified as such -- withholding `MimeAgreementTest`'s `require refuses a
+    // disagreement as an IOException naming every leg` **alone** takes it to **0/1 = 0.0000** and
+    // this floor fires: *"Rule violated for class app.muplay.cast.didl.MimeDisagreementException:
+    // lines covered ratio is 0.00, but expected minimum is 0.90"*. So the one class in this
+    // package that exists to say no is gated on whether anything ever makes it say no.
+    //
+    // `ServedMedia` itself takes considerably more to move, and the number is recorded so nobody
+    // repeats the search: its two behavioural lines are `protocolInfo` and `fileName`, and both
+    // have several callers, so withholding `ServedMediaTest`'s three `protocolInfo`/`opus` tests,
+    // `MimeAgreementTest`'s three tests that mint a URL through `fileName`, and the seven
+    // `DidlLiteTest` tests that render -- thirteen in all -- is what leaves it at
+    // **14/16 = 0.8750** and fires the rule. That is the shape of a value with many readers: no
+    // single test is load-bearing for it, which is the reason it is worth gating at all.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.didl.ServedMedia",
+        "app.muplay.cast.didl.CastItem",
+        "app.muplay.cast.didl.MimeDisagreementException",
       ),
     ),
   ),

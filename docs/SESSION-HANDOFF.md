@@ -159,3 +159,44 @@ and it is pinned at a value.
   prose-satisfiable via an import alias; the severability grep misses
   `project(path = ":integrations:core")`; and the "three assertions were prose-
   satisfiable" comment overstates its own measurement 3:1 — exactly one was.
+
+## HELD MERGE — Plan 4 Task 1 (audiobook fixtures), branch `p4t1-branch`
+
+**Complete on the JVM tier, deliberately not merged.** `check` green,
+`:core:testing` 35/35, `BookFixtures` 18/18 BRANCH + 46/46 LINE, `books/` probes
+3/3, all four compile gates green.
+
+**Why it is held:** merging makes master's **live suite red** until the fixtures
+are deployed and Navidrome rescans. The container mounts the main repo's
+`ci/fixtures/`, the library goes 4 → 9 scanned items, and
+`ci/configure-libraries.sh` then waits for 9. That rescan changes what every
+other lane's live tests see, so it needs a window when no live suite is running.
+
+**To land it:** merge `p4t1-branch`, then deploy the fixtures into the main
+repo's `ci/fixtures/` and let Navidrome rescan, then re-run `LiveNavidromeTest`
+and the Tier 2 journeys. Expect `getScanStatus.count` 4 → 9.
+
+**Fold the Ogg/Opus fixture into the SAME window.** The lane priced it: two
+`-bitexact libopus` runs, identical md5, ~30 min, zero risk to existing
+checksums — and it closes the one decision in this project that is still argued
+rather than measured (`StreamFormat`'s "never Opus"). One real gotcha it found:
+**Ogg puts its tags on the *stream*, not `format.tags`**, so `probe-chapters.sh`
+would silently record blank titles (~3 lines to fix). Name it `.ogg`/`.oga`, not
+`.opus` — Navidrome's extension table carries the first two, not the third.
+It moves `scannedCount` 9 → 10, so doing it separately means rescanning twice.
+
+**Two things it measured that are worth keeping:**
+- The mp3 fixtures are **4049/6034/5042 ms**, not the round 4000/6000/5000 the
+  brief assumed — libmp3lame pads to a whole 1152-sample frame and both ffprobe
+  and Media3's `Mp3Extractor` report the untrimmed span. The m4b books *are*
+  exact (21000/15000/12000).
+- The chapter oracle is **independently checked**, which was the thing I most
+  wanted: `books.tsv` is derived by `ffprobe`, no project source produces any
+  value in it, and three separate checks guard it (`probe-chapters.sh --check`
+  re-derives and diffs, `md5sum -c` guards the bytes the derivation reads, and
+  the tests assert literals written from the brief rather than copied from
+  script output). Falsified, not argued.
+
+**Known gap it named:** `Tail Book`'s non-faststart layout has no automated
+guard — ffprobe reads chapters identically from either layout, so nothing would
+notice if someone added `+faststart`. Belongs with Plan 4 Task 3.
