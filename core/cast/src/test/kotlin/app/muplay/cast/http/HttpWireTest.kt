@@ -18,6 +18,10 @@ class HttpWireTest {
   private fun request(raw: String) = HttpWire.readRequestHead(ByteArrayInputStream(raw.toByteArray()))
   private fun response(raw: String) = HttpWire.readResponseHead(ByteArrayInputStream(raw.toByteArray()))
 
+  /** A body read the way a socket would deliver it, with an explicit cap named at every call. */
+  private fun body(raw: String, headers: HttpHeaders, maxBytes: Int = 1024) =
+    HttpWire.readBody(ByteArrayInputStream(raw.toByteArray(Charsets.US_ASCII)), headers, maxBytes)
+
   @Test
   fun `a request line is split into its three parts, and each one is the one that was sent`() {
     // Three fields, two observations each, so no single constant satisfies any of them.
@@ -308,5 +312,241 @@ class HttpWireTest {
     assertThat(reparsed.code).isEqualTo(404)
     assertThat(reparsed.reason).isEqualTo("Not Found")
     assertThat(reparsed.headers.names).containsExactly("Content-Length", "Connection")
+  }
+
+  @Test
+  fun `a line of exactly the maximum length is accepted whichever terminator the peer chose`() {
+    // MAX_LINE_BYTES used to count the CR of a CRLF: 8192 bytes plus a bare LF were accepted and
+    // the same 8192 bytes plus CRLF were rejected, one byte of a peer's line-ending deciding
+    // which. Fail-closed, so never a hole -- and invisible, because nothing observed the limit
+    // from the ACCEPTING side at all. `MAX_HEADERS` is guarded from both sides; this now is too.
+    val value = "a".repeat(HttpWire.MAX_LINE_BYTES - "X: ".length)
+
+    val withCrlf = response("HTTP/1.1 200 OK\r\nX: $value\r\n\r\n")
+    val withBareLf = response("HTTP/1.1 200 OK\nX: $value\n\n")
+
+    assertThat(withCrlf.headers["X"]).isEqualTo(value)
+    assertThat(withBareLf.headers["X"]).isEqualTo(value)
+  }
+
+  @Test
+  fun `a line one byte past the maximum is rejected whichever terminator the peer chose`() {
+    // The refusing side of the same boundary, in both spellings, so the limit cannot drift by a
+    // byte in either direction without one of these two tests going red.
+    val value = "a".repeat(HttpWire.MAX_LINE_BYTES - "X: ".length + 1)
+
+    listOf("\r\n", "\n").forEach { terminator ->
+      assertThatExceptionOfType(MalformedHttpException::class.java)
+        .describedAs(if (terminator == "\r\n") "CRLF" else "bare LF")
+        .isThrownBy { response("HTTP/1.1 200 OK${terminator}X: $value$terminator$terminator") }
+        .withMessageContaining("${HttpWire.MAX_LINE_BYTES}")
+    }
+  }
+
+  @Test
+  fun `a rendered response head refuses CR, LF and NUL wherever a peer-supplied value lands`() {
+    // The mirror of the request side's rule, on the object that owns it. Task 6's proxy renders
+    // response heads whose values it did not choose (a `Content-Type` that came from Navidrome
+    // metadata, a `Content-Range` computed from a `Range` an unknown peer sent), and a value that
+    // ends its own line writes a header of the peer's choosing into MuPlay's response.
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy {
+        HttpWire.renderResponseHead(200, "OK", HttpHeaders.of("X-A" to "1\r\nX-Injected: 1"))
+      }
+      .withMessageContaining("X-A")
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { HttpWire.renderResponseHead(200, "OK", HttpHeaders.of("X-A" to "1\u0000")) }
+      .withMessageContaining("NUL")
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { HttpWire.renderResponseHead(200, "OK", HttpHeaders.of("X A" to "1")) }
+      .withMessageContaining("header name")
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { HttpWire.renderResponseHead(200, "OK", HttpHeaders.of("" to "1")) }
+      .withMessageContaining("empty")
+    // The reason phrase is on the status line, and a CRLF there splits the message just as well.
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { HttpWire.renderResponseHead(200, "OK\r\nX-Injected: 1", HttpHeaders.EMPTY) }
+      .withMessageContaining("reason phrase")
+  }
+
+  @Test
+  fun `a status code that is not one is refused, and the two that are boundaries still render`() {
+    listOf(0, 99, 600, 1000, -200).forEach { code ->
+      assertThatExceptionOfType(IllegalArgumentException::class.java)
+        .describedAs("$code")
+        .isThrownBy { HttpWire.renderResponseHead(code, "OK", HttpHeaders.EMPTY) }
+    }
+
+    // Both ends of the accepted range, so a refusal cannot widen into "everything is refused".
+    assertThat(String(HttpWire.renderResponseHead(100, "Continue", HttpHeaders.EMPTY)))
+      .startsWith("HTTP/1.1 100 Continue")
+    assertThat(String(HttpWire.renderResponseHead(599, "Odd", HttpHeaders.EMPTY)))
+      .startsWith("HTTP/1.1 599 Odd")
+  }
+
+  @Test
+  fun `a chunked body is decoded, its extensions ignored and its trailer discarded`() {
+    // The framing an unconditional `readBytes()` mis-read: it returned the chunk sizes as part of
+    // the body, which the layer above reports as an XML parse failure blaming the renderer.
+    val decoded = body(
+      "4;name=value\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: t\r\n\r\n",
+      HttpHeaders.of("Transfer-Encoding" to "chunked"),
+    )
+
+    assertThat(String(decoded, Charsets.US_ASCII)).isEqualTo("Wikipedia")
+  }
+
+  @Test
+  fun `a chunked body whose trailer section never arrives is still the body that did`() {
+    // The peer closing right after the last-chunk marker is the same "a packet is the whole
+    // message" tolerance `parseHeaderBlock` has, applied to a trailer nothing here reads anyway.
+    assertThat(String(body("3\r\nabc\r\n0\r\n", HttpHeaders.of("Transfer-Encoding" to "chunked"))))
+      .isEqualTo("abc")
+  }
+
+  @Test
+  fun `every way a chunked body can be malformed is a refusal rather than a partial body`() {
+    val chunked = HttpHeaders.of("Transfer-Encoding" to "chunked")
+    // Each of these returned *something* under a reader that trusted the framing, and something
+    // is worse than nothing here: a half-decoded SOAP envelope parses as a different fault.
+    mapOf(
+      "a chunk size that is not hexadecimal" to "zz\r\nabc\r\n0\r\n\r\n",
+      "a negative chunk size" to "-1\r\nabc\r\n0\r\n\r\n",
+      "a chunk shorter than it declared" to "10\r\nabc",
+      "a chunk not terminated by CRLF" to "3\r\nabcXX\r\n0\r\n\r\n",
+      "a chunk with nothing at all after it" to "3\r\nabc",
+      "a stream that ends where a chunk size belongs" to "",
+    ).forEach { (what, raw) ->
+      assertThatExceptionOfType(MalformedHttpException::class.java)
+        .describedAs(what)
+        .isThrownBy { body(raw, chunked) }
+    }
+  }
+
+  @Test
+  fun `a chunked body is held to the same cap as any other`() {
+    // Chunked framing is an attacker's way around a `Content-Length` check: the length is never
+    // declared, so a cap that only read `Content-Length` would not bound this at all.
+    val chunked = HttpHeaders.of("Transfer-Encoding" to "chunked")
+
+    // Exactly the cap, accepted: the permitting half, so the refusal below cannot be "always".
+    assertThat(String(body("8\r\nAAAAAAAA\r\n0\r\n\r\n", chunked, maxBytes = 8))).isEqualTo("AAAAAAAA")
+
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { body("8\r\nAAAAAAAA\r\n1\r\nB\r\n0\r\n\r\n", chunked, maxBytes = 8) }
+      .withMessageContaining("8")
+  }
+
+  @Test
+  fun `a message carrying both transfer-encoding and content-length is refused`() {
+    // RFC 9112 section 6.3. The two headers frame the message differently, and a codec that picks
+    // one has just chosen a side in a request-smuggling attack. Refusing is the only honest move.
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy {
+        body(
+          "3\r\nabc\r\n0\r\n\r\n",
+          HttpHeaders.of("Transfer-Encoding" to "chunked", "Content-Length" to "3"),
+        )
+      }
+      .withMessageContaining("Content-Length")
+  }
+
+  @Test
+  fun `a transfer-coding this codec does not implement is refused rather than guessed at`() {
+    // Both shapes: a coding on its own, and a list ending in `chunked` that this codec would have
+    // to un-gzip after un-chunking. A wrong body is worse than a clean refusal.
+    listOf("gzip", "gzip, chunked", "chunked, gzip").forEach { coding ->
+      assertThatExceptionOfType(MalformedHttpException::class.java)
+        .describedAs(coding)
+        .isThrownBy { body("abc", HttpHeaders.of("Transfer-Encoding" to coding)) }
+        .withMessageContaining("Transfer-Encoding")
+    }
+  }
+
+  @Test
+  fun `a body with a content length is exactly that many bytes, up to and including the cap`() {
+    // The accepting side of the cap, at the boundary: `> maxBytes` and `>= maxBytes` differ by
+    // exactly this observation, and the second would refuse a body that fits.
+    assertThat(String(body("abcdefghij", HttpHeaders.of("Content-Length" to "3"), maxBytes = 1024)))
+      .isEqualTo("abc")
+    assertThat(String(body("abcdefgh", HttpHeaders.of("Content-Length" to "8"), maxBytes = 8)))
+      .isEqualTo("abcdefgh")
+  }
+
+  @Test
+  fun `a declared content length past the cap is refused before a single byte is allocated`() {
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { body("abcdefghij", HttpHeaders.of("Content-Length" to "9"), maxBytes = 8) }
+      .withMessageContaining("9")
+  }
+
+  @Test
+  fun `a body with no framing at all is read to the end of the stream, and no further than the cap`() {
+    // `Connection: close` framing, which several embedded renderers use -- and the arm with no
+    // stopping condition of its own, which is why the cap is what stops it.
+    assertThat(String(body("<root/>", HttpHeaders.EMPTY, maxBytes = 1024))).isEqualTo("<root/>")
+
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { body("a".repeat(2048), HttpHeaders.EMPTY, maxBytes = 1024) }
+      .withMessageContaining("1024")
+  }
+
+  @Test
+  fun `a transfer-encoding header with no value at all is treated as absent, not as a coding`() {
+    // UPnP devices send valueless headers routinely (`EXT:` is in the spec), and a `""` coding is
+    // not an unimplemented transfer-coding -- refusing it would turn a working renderer into an
+    // unreachable one on a header that says nothing.
+    val decoded = body(
+      "abc",
+      HttpHeaders.of("Transfer-Encoding" to "", "Content-Length" to "3"),
+    )
+
+    assertThat(String(decoded)).isEqualTo("abc")
+  }
+
+  @Test
+  fun `every class of token character is accepted in a header name, and a method is a token too`() {
+    // `isTokenChar` is four ranges and a punctuation set; without an observation from each, three
+    // of the four could be deleted and every other test in this class would stay green.
+    assertThat(HttpWire.headerLine("X-Trial9._~", "v")).isEqualTo("X-Trial9._~: v\r\n")
+    assertThat(HttpWire.headerLine("x", "v")).isEqualTo("x: v\r\n")
+    HttpWire.requireToken("method", "M-SEARCH")
+    HttpWire.requireToken("method", "X9")
+
+    // ...and one refused character from each side of each range, so the ranges cannot widen.
+    listOf("X-A@b", "X-A[b", "X-A{b", "X-A/b", "X-A(b").forEach { name ->
+      assertThatExceptionOfType(IllegalArgumentException::class.java)
+        .describedAs(name)
+        .isThrownBy { HttpWire.headerLine(name, "v") }
+    }
+  }
+
+  @Test
+  fun `a tab is legal inside a header value and reaches the wire as one`() {
+    // RFC 9110's `field-value` admits HTAB between visible characters, and this is the one
+    // character a "printable ASCII only" check gets wrong in the refusing direction. A refusal
+    // message quotes it rather than echoing it, so a control character never lands in a log line.
+    assertThat(HttpWire.headerLine("X-A", "one\ttwo")).isEqualTo("X-A: one\ttwo\r\n")
+
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { HttpWire.headerLine("X-A", "one\ttwo\rX-Injected: 1") }
+      .withMessageContaining("\\u0009")
+  }
+
+  @Test
+  fun `a bare CR that is not part of a CRLF is content, wherever in the line it falls`() {
+    // Reading is tolerant, writing is strict: this codec accepts a stray CR from a device it did
+    // not write (`headerLine` refuses to write one back out). Both positions matter, because the
+    // CR is now held back rather than buffered as it arrives -- a held CR that turns out not to
+    // precede an LF has to be put back, and these are the two places it can be put back from.
+    assertThat(HttpWire.parseHeaderBlock("A: 1\r2\r\n")["A"]).isEqualTo("1\r2")
+    assertThat(HttpWire.parseHeaderBlock("A: 1\r2")["A"]).isEqualTo("1\r2")
+
+    // ...and a "line" that is nothing but a held-back CR is still a line, and a malformed one. It
+    // is the observation that tells a CR put back at end of input from one silently dropped: drop
+    // it and this block ends cleanly with one header instead of being refused.
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { HttpWire.parseHeaderBlock("A: 1\r\n\r") }
+      .withMessageContaining("malformed header line")
   }
 }
