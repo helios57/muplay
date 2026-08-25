@@ -27,6 +27,12 @@ class FakeSsdpResponder(private val responders: List<Responder>) : Closeable {
     /** Every `ST` this device answers. A Sonos answers both `MediaRenderer:1` and `ZonePlayer:1`. */
     val searchTargets: List<String>,
     val server: String = "Linux UPnP/1.0 MuPlayFake/1.0",
+    /**
+     * Sent verbatim instead of the generated reply, for a test that has to control the datagram
+     * down to its length -- a receive buffer's truncation point falls at a byte offset, not at a
+     * header.
+     */
+    val rawReply: String? = null,
   )
 
   private val socket = DatagramSocket(0, InetAddress.getLoopbackAddress())
@@ -53,13 +59,15 @@ class FakeSsdpResponder(private val responders: List<Responder>) : Closeable {
         responders.forEach { responder ->
           responder.searchTargets.filter { it == requested }.forEach { target ->
             val reply = (
-              "HTTP/1.1 200 OK\r\n" +
-                "CACHE-CONTROL: max-age=1800\r\n" +
-                "EXT:\r\n" +
-                "LOCATION: ${responder.location}\r\n" +
-                "SERVER: ${responder.server}\r\n" +
-                "ST: $target\r\n" +
-                "USN: ${responder.udn}::$target\r\n\r\n"
+              responder.rawReply ?: (
+                "HTTP/1.1 200 OK\r\n" +
+                  "CACHE-CONTROL: max-age=1800\r\n" +
+                  "EXT:\r\n" +
+                  "LOCATION: ${responder.location}\r\n" +
+                  "SERVER: ${responder.server}\r\n" +
+                  "ST: $target\r\n" +
+                  "USN: ${responder.udn}::$target\r\n\r\n"
+                )
               ).toByteArray(Charsets.US_ASCII)
             runCatching { socket.send(DatagramPacket(reply, reply.size, packet.socketAddress)) }
           }

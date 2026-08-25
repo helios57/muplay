@@ -87,25 +87,29 @@ class DatagramSsdpTransportTest {
    *
    * `recvfrom` truncates without a flag, an exception or a short-read signal, and the header
    * parser is deliberately tolerant of a block that ends without its blank line -- so a `LOCATION`
-   * clipped at the buffer boundary would parse as a real, shorter URL and this app would fetch a
-   * device description from somewhere else, with nothing logged anywhere.
+   * clipped at the buffer boundary parses as a **real, shorter URL**, and this app then fetches a
+   * device description from somewhere else with nothing logged anywhere.
    *
-   * Both sides of the boundary are observed here, because "drop everything oversized" and "drop
-   * everything" are the same test otherwise: the padded reply is dropped, and a reply padded to
-   * just under the buffer from the same responder list comes back intact.
+   * The reply is built byte by byte here rather than by padding a header, because the defect
+   * lives at a byte offset: the cut has to land *inside* the `LOCATION` value, with `ST` and `USN`
+   * already read, or the reply is discarded for a different reason and the test proves nothing.
+   * (It was: the first version of this test padded `SERVER`, the cut landed before `ST`, and
+   * removing the guard left it green.)
+   *
+   * Both sides of the boundary are observed, because "drop the oversized" and "drop everything
+   * big" are the same test otherwise.
    */
   @Test
   fun `a reply too big for the receive buffer is dropped rather than parsed as a short one`() = runTest {
     val ssdp = start(
-      // ~5 KiB of SERVER header: over the 4 KiB receive buffer, so the kernel truncates it.
       FakeSsdpResponder.Responder(
-        "http://127.0.0.1:1400/huge.xml", "uuid:huge",
-        listOf(SsdpSearch.TARGET_MEDIA_RENDERER), server = "X".repeat(5_000),
+        "unused", "uuid:clipped", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
+        rawReply = reply(udn = "uuid:clipped", totalBytes = 4_097),
       ),
-      // ~3 KiB: unpleasant, under the buffer, and still a perfectly good answer.
+      // One byte under the buffer: the same shape, not truncated, and it must still come back.
       FakeSsdpResponder.Responder(
-        "http://127.0.0.1:1401/big.xml", "uuid:big",
-        listOf(SsdpSearch.TARGET_MEDIA_RENDERER), server = "Y".repeat(3_000),
+        "unused", "uuid:large", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
+        rawReply = reply(udn = "uuid:large", totalBytes = 4_095),
       ),
       FakeSsdpResponder.Responder(
         "http://127.0.0.1:1402/small.xml", "uuid:small", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
@@ -114,11 +118,25 @@ class DatagramSsdpTransportTest {
 
     val responses = transport.search(ssdp.endpoint, RendererDirectory.SEARCH_TARGETS, null, WINDOW_MS)
 
-    assertThat(responses.map { it.udn }).containsExactlyInAnyOrder("uuid:big", "uuid:small")
-    // Not merely absent from the udn list: a truncated reply must not reach the parser at all,
-    // because what it would produce is a *plausible* location rather than a rejected one.
-    assertThat(responses.map { it.location.toString() })
-      .containsExactlyInAnyOrder("http://127.0.0.1:1401/big.xml", "http://127.0.0.1:1402/small.xml")
+    assertThat(responses.map { it.udn }).containsExactlyInAnyOrder("uuid:large", "uuid:small")
+    // Not merely absent from the udn list. Without the guard the clipped reply parses, and what
+    // it produces is a *plausible* location -- `http://127.0.0.1:1400/xml` rather than
+    // `.../xml/device_description.xml` -- which is why this asserts the exact URLs that survived.
+    assertThat(responses.map { it.location.toString() }).containsExactlyInAnyOrder(
+      "http://127.0.0.1:1400/xml/device_description.xml",
+      "http://127.0.0.1:1402/small.xml",
+    )
+  }
+
+  /**
+   * A reply of exactly [totalBytes], with `LOCATION` last and long enough that a cut at 4096
+   * bytes lands in the middle of its path rather than before `ST` or `USN`.
+   */
+  private fun reply(udn: String, totalBytes: Int): String {
+    val head = "HTTP/1.1 200 OK\r\nEXT:\r\nST: ${SsdpSearch.TARGET_MEDIA_RENDERER}\r\n" +
+      "USN: $udn::${SsdpSearch.TARGET_MEDIA_RENDERER}\r\nX-Pad: "
+    val tail = "\r\nLOCATION: http://127.0.0.1:1400/xml/device_description.xml\r\n\r\n"
+    return head + "P".repeat(totalBytes - head.length - tail.length) + tail
   }
 
   @Test
