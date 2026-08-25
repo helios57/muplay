@@ -1,5 +1,6 @@
 package app.muplay.database
 
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.database.di.DataModule
@@ -9,6 +10,8 @@ import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.LibraryRole
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
+import app.muplay.network.SubsonicSourceFactory
+import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
@@ -127,5 +130,43 @@ class DataModuleTest {
     // double -- `DefaultSubsonicSourceFactory` is a one-line object, and a test that only checked
     // "an instance came back" would pass just as well if that line built the wrong type.
     assertThat(source).isInstanceOf(SubsonicClient::class.java)
+  }
+
+  /**
+   * Task 6 added `provideSyncWatermarkDao` and `provideSyncEngine`; neither was called by
+   * anything else, the same "obviously fine, exercised by nothing" gap the two tests above close
+   * for `provideLibraryDao`/`provideBrowseDao`.
+   */
+  @Test
+  fun theProvidedSyncWatermarkDaoWorks() = runTest {
+    val dao = DataModule.provideSyncWatermarkDao(database)
+
+    dao.store("s1")
+
+    assertThat(dao.read()).isEqualTo("s1")
+  }
+
+  @Test
+  fun theProvidedSyncEngineIsWiredToTheRealCollaborators() = runTest {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val file = File(context.filesDir, "data-module-test-sync-engine.preferences_pb")
+    file.delete()
+    val credentialStore = CredentialStore(PreferenceDataStoreFactory.create { file })
+    val sourceProvider = SubsonicSourceProvider(credentialStore, SubsonicSourceFactory { FakeSubsonicSource() })
+    val libraryRepository = LibraryRepository(DataModule.provideLibraryDao(database), sourceProvider)
+
+    val engine = DataModule.provideSyncEngine(
+      libraryRepository = libraryRepository,
+      browseDao = DataModule.provideBrowseDao(database),
+      watermarkDao = DataModule.provideSyncWatermarkDao(database),
+      sourceProvider = sourceProvider,
+    )
+
+    // No credentials saved -> Failed, but that is still real evidence: the engine wired through
+    // the real production provider actually runs and reaches a real SubsonicSourceProvider,
+    // rather than merely type-checking the constructor call.
+    assertThat(engine.syncIfStale()).isInstanceOf(SyncState.Failed::class.java)
+    credentialStore.clear()
+    file.delete()
   }
 }

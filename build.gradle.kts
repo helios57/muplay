@@ -516,6 +516,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.database.MirrorMapper*"),
     ),
+    // `SyncDecision` is Task 6's own JVM-measurable class: a sealed interface with a pure
+    // `companion object` rule and no collaborators, so `SyncDecisionTest` (a plain JVM test)
+    // reaches its branches with no emulator -- 6/6, confirmed with the instrumented `.ec` file
+    // physically absent (same check `MirrorMapper*` above and task-5-report.md used). `*` because
+    // the `when` lives in `SyncDecision$Companion`, not the bare interface name, which carries no
+    // branches of its own and would leave `SyncDecision.Companion` unmatched by a literal include.
+    // The sealed subtypes (`UpToDate`, `ScanInProgress`, `Reconcile`) ride along at zero branches
+    // each (JaCoCo's isNaN pass), the same way `MirrorMapper`'s own nested lambda class does.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.SyncDecision*"),
+    ),
     // The three mirror row entities -- unlike `LibraryEntity`/`MediaProgressEntity` below, these
     // have no branches of their own (plain `data class`es) but *are* JVM-measurable: `MirrorMapper`
     // constructs all three directly (`albumEntity`, `songEntity`, `artistEntities`), and
@@ -599,6 +613,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.database.dao.BrowseDao"),
       requiresInstrumentedData = true,
     ),
+    // `SyncEngine`'s own author-written conditionals: the `SyncDecision` `when`, the null check on
+    // an absent watermark, and `fetchAllAlbums`'s paging loop (the short-page early return and the
+    // `MAX_PAGES` bound). Room and SQLite make this instrumented-only. Measured 12/12 --
+    // `aServerWithNoLastScanReconcilesButStoresNoWatermark` (the null-watermark branch, previously
+    // uncovered: `watermark?.let { watermarkDao.store(it) }` collapsed to
+    // `watermarkDao.store(watermark!!)` passed every other test in this file) and
+    // `aServerThatNeverSendsAShortPageFailsAtTheBoundRatherThanHanging` (the `MAX_PAGES` exit,
+    // genuinely reached with `SyncEngine.MAX_PAGES` fake in-memory calls, not asserted on the
+    // constant) are what closed the last two branches. `SyncEngine*` (not the bare name): the four
+    // suspend-body continuation classes it compiles to carry zero counters of any kind here (not
+    // the partial 0.50-0.67 the `Flow.map`/suspend families below measure), so they ride along for
+    // free rather than needing their own lower-floor rule.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.SyncEngine*"),
+      requiresInstrumentedData = true,
+    ),
     // Everything whose value is "did this line run at all": the Room database class, the Hilt
     // providers, the entities that need an emulator to be reached at all (LibraryEntity,
     // MediaProgressEntity -- unlike the three mirror entities above, nothing JVM-side ever
@@ -610,6 +643,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // LibraryDao/LibraryEntity/MediaProgressEntity/MirrorReplacement -- they contain no
     // author-written conditional, so a BRANCH rule would match only zero-total counters and pass
     // silently at every minimum through JaCoCo's isNaN branch.
+    //
+    // Task 6 adds four more, all instrumented-only for the same reason (Room/SQLite): `SyncEngine`
+    // itself (dual-listed for LINE alongside its own BRANCH rule above, 42/44 measured -- the two
+    // misses are both inside the `catch (e: CancellationException) { throw e }` clause, never
+    // exercised because nothing in this suite cancels the engine's own coroutine; a `BRANCH` rule
+    // does not see this gap at all, since a `catch` clause is an exception-table entry rather than
+    // a conditional jump -- it costs nothing to leave two genuinely-uncovered LINEs here rather
+    // than manufacture a cancellation test only to move a number);
+    // `SyncWatermarkEntity` (5/5, a plain `data class` like the three mirror entities, but reached
+    // only through `SyncWatermarkDao.store` -- nothing JVM-side constructs it, confirmed with the
+    // instrumented `.ec` physically absent); `SyncWatermarkDao` (2/2, its own `store` is the only
+    // author-written line, `read`/`clear`/`upsert` are Room-generated); and `SyncState*` (the
+    // wildcard for `Synced`/`Failed`, both 1/1 -- `UpToDate`/`ScanInProgress` are zero-counter
+    // `data object`s that ride along the same way `SyncDecision`'s own sealed subtypes do above).
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -621,13 +668,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.di.DataModule",
         "app.muplay.database.entity.MediaProgressEntity",
         "app.muplay.database.entity.LibraryEntity",
+        "app.muplay.database.entity.SyncWatermarkEntity",
         "app.muplay.database.dao.LibraryDao",
         "app.muplay.database.dao.BrowseDao",
         "app.muplay.database.dao.MirrorReplacement",
+        "app.muplay.database.dao.SyncWatermarkDao",
         "app.muplay.database.LibraryRepository",
         "app.muplay.database.SubsonicSourceProvider",
         "app.muplay.database.BrowseRepository",
         "app.muplay.database.NotConfiguredException",
+        "app.muplay.database.SyncEngine*",
+        "app.muplay.database.SyncState*",
       ),
       requiresInstrumentedData = true,
     ),

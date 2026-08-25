@@ -190,6 +190,43 @@ class SyncEngineTest {
     assertThat(db.syncWatermarkDao().read()).isEqualTo("s1")
   }
 
+  /**
+   * `SyncDecision.Reconcile(null)` -- the "plain Subsonic server" case -- is only ever exercised
+   * at the pure-decision level by `SyncDecisionTest`. Every other test in this file leaves
+   * `scanStatus.lastScan` non-null, so `reconcile`'s `watermark?.let { watermarkDao.store(it) }`
+   * had its null branch entirely unexercised at the engine level: a mutation collapsing it to an
+   * unconditional `watermarkDao.store(watermark!!)` passed every other test in this file.
+   */
+  @Test
+  fun aServerWithNoLastScanReconcilesButStoresNoWatermark() = runTest {
+    source.scanStatus = ScanStatus(isScanning = false, scannedCount = 3, lastScan = null)
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Synced::class.java)
+    assertThat(db.browseDao().observeAlbums(1).first()).hasSize(2)
+    assertThat(db.syncWatermarkDao().read()).isNull()
+  }
+
+  /**
+   * `fetchAllAlbums`'s `MAX_PAGES` bound: a server that never sends a short page would otherwise
+   * spin forever. Exercising this for real means genuinely reaching the bound, not asserting on
+   * the constant -- `FakeSubsonicSource` makes that cheap (`SyncEngine.MAX_PAGES` fake in-memory
+   * calls, no real I/O).
+   */
+  @Test
+  fun aServerThatNeverSendsAShortPageFailsAtTheBoundRatherThanHanging() = runTest {
+    source.albumsByLibrary = source.albumsByLibrary +
+      (1 to List(SyncEngine.MAX_PAGES) { i -> album("many-$i", "Album $i", 1) })
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Failed::class.java)
+    assertThat((state as SyncState.Failed).cause).hasMessageContaining("did not terminate")
+    // The bound was hit reconciling library 1; library 2 was never reached, and nothing committed.
+    assertThat(db.syncWatermarkDao().read()).isNull()
+  }
+
   @Test
   fun aScanInProgressReconcilesNothingAndStoresNothing() = runTest {
     source.scanStatus = ScanStatus(isScanning = true, scannedCount = 1, lastScan = "s2")
