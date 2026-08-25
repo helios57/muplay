@@ -590,8 +590,12 @@ AUTH_PROBE = ("auth/empty-authParams", AUTH,
               # was vacuously green (`doesNotContainKey` + `noneMatch`, both true of an empty map)
               # and this exact mutation did NOT redden it. Pinning it here makes "that test is no
               # longer vacuous" a permanent check rather than a one-off fix.
-              # 15 as of 7f27d4a. See the note on `expected failures` above before changing this.
-              "the password never appears in the parameters", 15)
+              # 15 as of 7f27d4a; 19 once Plan 3 Task 1's `StreamUrlTest` added four more tests that
+              # read a parameter `authParams()` is the sole source of (`f`, `c`/`v`, the token, and
+              # the salt-freshness pair). The named test failed exactly as intended both times --
+              # this is the stale-count case the note on `expected failures` above describes, not a
+              # code regression. See that note before changing this.
+              "the password never appears in the parameters", 19)
 
 # Every probe that lives outside the PROBES table, because it needs more than one text
 # substitution (AUTH_PROBE takes two edits, not one) and so does not fit that table's shape. A list,
