@@ -2,6 +2,7 @@ package app.muplay.media
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -56,6 +57,16 @@ import javax.inject.Inject
  * A future collaborator -- a resume policy, an audio-focus configuration, a cache -- arrives as
  * another constructor parameter here, applied inside [create]. It must not arrive as a second
  * construction site somewhere else; that is exactly what `PlayerConstructionTest` refuses.
+ *
+ * ### The two lines that are silent in the other direction
+ *
+ * `setAudioAttributes(.., handleAudioFocus = true)` and `setHandleAudioBecomingNoisy(true)` are one
+ * builder call each, and dropping either is silent in exactly the way the retry policy is: the app
+ * still plays, every unit test stays green, and the defect is audible only on a device that has
+ * something else happening on it -- a phone call played over, or an audiobook coming out of the
+ * phone's speaker on a train the moment the headphones come out. `AudioFocusTest` observes both as
+ * *playback that stopped*, never as a flag that was set, because a flag assertion is satisfied by a
+ * player that ignores the flag.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is an
 // `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at all -- Android
@@ -77,5 +88,13 @@ class MuPlayerFactory @Inject constructor(
         DefaultMediaSourceFactory(dataSourceFactory.create())
           .setLoadErrorHandlingPolicy(loadErrorPolicy),
       )
+      // Music until the first item transition says otherwise -- [ContentTypeSwitcher] below keeps
+      // it honest from then on. `handleAudioFocus = true` is what makes Media3 request focus, duck
+      // for a navigation prompt and pause for a call, all of it without a line of focus code here.
+      .setAudioAttributes(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC), true)
+      // Headphones unplugged, Bluetooth disconnected. Without this, yanking headphones plays an
+      // audiobook out loud on a train.
+      .setHandleAudioBecomingNoisy(true)
       .build()
+      .also { player -> player.addListener(ContentTypeSwitcher(player)) }
 }

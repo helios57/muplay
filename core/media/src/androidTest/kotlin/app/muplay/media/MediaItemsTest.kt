@@ -52,8 +52,10 @@ class MediaItemsTest {
     coverArtId = "art-2",
   )
 
-  private val firstItem = MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1")
-  private val secondItem = MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2")
+  private val firstItem =
+    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1", isAudiobook = false)
+  private val secondItem =
+    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", isAudiobook = false)
 
   private fun <T> pair(select: (MediaItem) -> T): List<T> = listOf(select(firstItem), select(secondItem))
 
@@ -132,7 +134,12 @@ class MediaItemsTest {
 
   @Test
   fun aSongWithNoArtworkGetsNoArtworkUriRatherThanAPlaceholder() {
-    val item = MediaItems.of(first.copy(coverArtId = null), "https://host/stream", artworkUri = null)
+    val item = MediaItems.of(
+      first.copy(coverArtId = null),
+      "https://host/stream",
+      artworkUri = null,
+      isAudiobook = false,
+    )
 
     assertThat(item.mediaMetadata.artworkUri).isNull()
     // ...and the rest of the mapping is unaffected, so "no artwork" is not silently "no metadata".
@@ -143,7 +150,12 @@ class MediaItemsTest {
   fun absentTrackAndDiscNumbersStayAbsent() {
     // Navidrome omits these for a single-file audiobook. Mapping a missing number to 0 would put
     // "0" on a lock screen and sort a book above every real track.
-    val item = MediaItems.of(first.copy(trackNumber = null, discNumber = null), "https://host/s", null)
+    val item = MediaItems.of(
+      first.copy(trackNumber = null, discNumber = null),
+      "https://host/s",
+      null,
+      isAudiobook = false,
+    )
 
     assertThat(item.mediaMetadata.trackNumber).isNull()
     assertThat(item.mediaMetadata.discNumber).isNull()
@@ -156,20 +168,48 @@ class MediaItemsTest {
     // an item marked browsable shows up as a folder that opens onto nothing.
     assertThat(pair { it.mediaMetadata.isPlayable }).containsExactly(true, true)
     assertThat(pair { it.mediaMetadata.isBrowsable }).containsExactly(false, false)
-    assertThat(pair { it.mediaMetadata.mediaType })
-      .containsExactly(MediaMetadata.MEDIA_TYPE_MUSIC, MediaMetadata.MEDIA_TYPE_MUSIC)
+    // `mediaType` used to be asserted here too, at one value, because it was a constant. It is not
+    // one any more, and both fixtures above are built `isAudiobook = false` -- so an assertion here
+    // would observe the music arm twice and prove nothing about the switch. The two tests below
+    // observe it at both values instead.
   }
 
   /**
+   * The one fact the protocol cannot supply, and the one this app is allowed to decide.
+   *
    * Navidrome hardcodes `child.Type = "music"` for every media file — the seeded `Test Book.m4b`
-   * comes back as `"type": "music"` — so `MEDIA_TYPE_MUSIC` above is not this app agreeing that a
-   * book is music; it is the only value the protocol supports, and the library id is what actually
-   * distinguishes them. Recorded here so nobody later "fixes" it by inferring a book from a
-   * suffix.
+   * comes back as `"type": "music"` — so the user's own `LibraryRole` assignment, joined to
+   * `Song.libraryId` by [QueueRepository], is the only mechanism there is. Two observations, so a
+   * constant satisfies neither: this field was a hardcoded `MEDIA_TYPE_MUSIC` until this task, and
+   * it is what `PlaybackAudioAttributes` reads to decide speech versus music.
    */
   @Test
-  fun theMediaTypeIsNotAnAudiobookInferenceAndTheSuffixDoesNotChangeIt() {
-    assertThat(MediaItems.of(second, "https://host/s", null).mediaMetadata.mediaType)
-      .isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+  fun theMediaTypeFollowsTheUsersOwnLibraryRoleAndNothingElse() {
+    assertThat(
+      MediaItems.of(first, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType,
+    ).isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+    assertThat(
+      MediaItems.of(second, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType,
+    ).isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
+  }
+
+  /**
+   * The suffix is not the signal, in **both** directions.
+   *
+   * `second` has suffix `m4b` — the shape that tempts an inference — and is still music unless the
+   * user's `LibraryRole` says otherwise; `first` has suffix `mp3` and is a book when the user said
+   * its library is one. Both are real: an audiobook library holds plain mp3 chapters, and a music
+   * library holds m4b DJ sets. A suffix inference passes the test above and fails this one.
+   */
+  @Test
+  fun theFileSuffixNeverDecidesWhetherSomethingIsAnAudiobook() {
+    assertThat(second.suffix).isEqualTo("m4b")
+    assertThat(first.suffix).isEqualTo("mp3")
+    assertThat(
+      MediaItems.of(second, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType,
+    ).isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+    assertThat(
+      MediaItems.of(first, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType,
+    ).isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
   }
 }

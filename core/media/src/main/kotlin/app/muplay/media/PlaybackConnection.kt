@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.google.common.util.concurrent.ListenableFuture
@@ -78,7 +79,10 @@ import kotlinx.coroutines.withContext
  * because an image loader needs it, and it is subject to the same rule about not being logged.
  */
 @Singleton
-class PlaybackConnection @Inject constructor(@ApplicationContext private val context: Context) {
+class PlaybackConnection @Inject constructor(
+  @ApplicationContext private val context: Context,
+  private val queueRepository: QueueRepository,
+) {
 
   private val mainHandler = Handler(Looper.getMainLooper())
   private val mainExecutor = Executor { command -> mainHandler.post(command) }
@@ -107,6 +111,37 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
       connected.addListener(listener)
       publish(connected)
       startTicker(connected)
+    }
+  }
+
+  /**
+   * Loads [queue] into the session and starts it **at the item `queue.startIndex` names**.
+   *
+   * This is the one place in the application where a [PlaybackQueue] meets a `Player`, and the
+   * reason it exists here rather than in a caller is that `startIndex` is otherwise applied
+   * nowhere. [QueueRepository.mediaItems] deliberately returns the whole queue — the index is an
+   * argument to `setMediaItems(items, startIndex, positionMs)`, not a slice of the list — so a
+   * caller that assembled its own `setMediaItems(items, 0, 0L)` would start every album at track 1,
+   * silently, with every repository-level test still green. That is this project's recorded
+   * "verified at a different layer than applied" defect, and the only layer that can observe it is
+   * the one with a real player in it: `MuPlaybackServiceTest.aQueueStartsPlayingAtTheTrackItsStartIndexNames`.
+   *
+   * The `0L` position is documented intent and nothing more. Task 8's `MuPlayer` seam discards the
+   * position argument of every `setMediaItems` overload and asks its `ResumePolicy` instead, which
+   * is what makes an audiobook resume where it was left rather than at the start of its chapter.
+   *
+   * `suspend`, and callable from any thread: [QueueRepository.mediaItems] reads credentials off
+   * DataStore, and the controller must be touched on the main thread. Both are handled here rather
+   * than made the caller's problem, for the same reason [controller] does it.
+   */
+  suspend fun play(queue: PlaybackQueue) {
+    // Off the main thread deliberately: this reads DataStore and the database.
+    val items: List<MediaItem> = queueRepository.mediaItems(queue)
+    withContext(mainDispatcher) {
+      val controller = controller()
+      controller.setMediaItems(items, queue.startIndex, 0L)
+      controller.prepare()
+      controller.play()
     }
   }
 

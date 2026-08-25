@@ -89,6 +89,12 @@ dependencies {
   // the test classpath has to name it here. Test-scope only: no production code in this module
   // touches DataStore.
   androidTestImplementation(libs.datastore.preferences)
+  // Plan 3 Task 6. `QueueRepositoryTest` builds a **real** `LibraryRepository` over a real
+  // in-memory Room database, because `idsWithRole` is a SQL `WHERE role = :role` and the defect it
+  // has to be able to catch is the repository asking for the wrong role. `:core:database` declares
+  // `room-runtime` as `implementation`, which is not transitive, so the test classpath has to name
+  // it here. Test-scope only: no production code in this module touches Room.
+  androidTestImplementation(libs.room.runtime)
 
   // Plan 3 Task 5. `PlaybackConnection` is the first production class in this module that imports
   // `kotlinx.coroutines` at all -- `MutableStateFlow`, `CoroutineScope`, `launch`, `delay`,

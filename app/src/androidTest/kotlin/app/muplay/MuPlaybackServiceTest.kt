@@ -111,7 +111,7 @@ class MuPlaybackServiceTest {
     }
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context)
+      connection = PlaybackConnection(context, queueRepository())
     }
     controller = runBlocking { connection.controller() }
   }
@@ -284,6 +284,51 @@ class MuPlaybackServiceTest {
   }
 
   /**
+   * **A queue starts at the track its `startIndex` names, and the whole queue is still there.**
+   *
+   * The one defect in this plan that no JVM test can see, and it was live until this test existed:
+   * `QueueRepository.mediaItems` returns the whole queue by contract, `startIndex` is an argument
+   * to `setMediaItems(items, startIndex, positionMs)`, and until `PlaybackConnection.play` existed
+   * nothing joined the two. Every queue silently started at track 1 — "play track 7 of this album"
+   * played track 1, for every album, with a green repository suite. That is this project's recorded
+   * "verified at a different layer than applied" class, and the layer that applies it is a real
+   * player behind a real session, which is why this lives here and not in `:core:media`.
+   *
+   * **Two indices, so a hardcoded one satisfies neither**, and both ends of the queue are asserted
+   * at each: a `mediaItems().drop(startIndex)` "fix" — the exact misreading `QueueRepositoryTest`
+   * warns about — starts on the right *track* and fails on `mediaItemCount` and on `hasPrevious`.
+   *
+   * `songs` is sorted by title in [setUp], so `songs[1]` is genuinely the second track and the
+   * mediaIds are three different server ids; a queue that ignored the index would have to coincide
+   * with one of them to pass.
+   */
+  @Test
+  fun aQueueStartsPlayingAtTheTrackItsStartIndexNames() {
+    check(songs.size >= 3) { "this test needs three seeded tracks, found ${songs.size}" }
+
+    setQueueAndPlay(songs.take(3), startIndex = 1)
+    awaitState("mediaId == ${songs[1].id}") { connection.state.value.mediaId == songs[1].id }
+    // Not merely the right id: a position past a second of real audio is what says the item the
+    // index named is the one actually rendering.
+    awaitPositionAtLeast(1_000L)
+
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isTrue
+
+    // The second observation, at the far end of the same queue. `hasNext` flips, which is what
+    // proves the player is genuinely positioned there rather than reporting a remembered index.
+    setQueueAndPlay(songs.take(3), startIndex = 2)
+    awaitState("mediaId == ${songs[2].id}") { connection.state.value.mediaId == songs[2].id }
+    awaitPositionAtLeast(1_000L)
+
+    assertThat(onMain { controller.mediaItemCount }).isEqualTo(3)
+    assertThat(connection.state.value.hasPrevious).isTrue
+    assertThat(connection.state.value.hasNext).isFalse
+    assertThat(setOf(songs[0].id, songs[1].id, songs[2].id)).hasSize(3)
+  }
+
+  /**
    * One controller per connection, however many times it is asked for.
    *
    * Not a triviality: `controller()` is what every screen in `:feature:player` will call, and a
@@ -309,7 +354,7 @@ class MuPlaybackServiceTest {
   fun releasingAConnectionThatNeverConnectedIsSafeAndLeavesNothingPlaying() {
     var fresh: PlaybackConnection? = null
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      fresh = PlaybackConnection(context).also { it.release() }
+      fresh = PlaybackConnection(context, queueRepository()).also { it.release() }
     }
 
     assertThat(checkNotNull(fresh).state.value).isEqualTo(PlaybackState.NOTHING_PLAYING)
@@ -337,7 +382,7 @@ class MuPlaybackServiceTest {
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context)
+      connection = PlaybackConnection(context, queueRepository())
     }
     controller = runBlocking { connection.controller() }
     setQueueAndPlay(listOf(songs[1]))
@@ -348,14 +393,20 @@ class MuPlaybackServiceTest {
     assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
   }
 
-  private fun setQueueAndPlay(items: List<Song>): List<MediaItem> {
-    val mediaItems = runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items)) }
-    onMain {
-      controller.setMediaItems(mediaItems, 0, 0L)
-      controller.prepare()
-      controller.play()
-    }
-    return mediaItems
+  /**
+   * Starts [items] through the **production** path and hands back the `MediaItem`s built for them.
+   *
+   * `connection.play(queue)`, not a hand-rolled
+   * `setMediaItems(items, 0, 0L); prepare(); play()` -- which is what stood here until Plan 3 Task
+   * 6 and is precisely how `startIndex` came to be applied nowhere: a helper that passes a literal
+   * `0` is a second copy of the production sequence that agrees with it on the only case it ever
+   * exercises. The items are re-derived rather than captured from inside `play`, which costs one
+   * more `mediaItems` call and keeps the connection's signature free of a test-shaped return value.
+   */
+  private fun setQueueAndPlay(items: List<Song>, startIndex: Int = 0): List<MediaItem> {
+    val queue = PlaybackQueue.of(items, startIndex)
+    runBlocking { connection.play(queue) }
+    return runBlocking { queueRepository().mediaItems(queue) }
   }
 
   /** The scheme, host and path of a cover-art URL, with the authenticated query string removed. */
