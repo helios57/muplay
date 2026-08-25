@@ -1,6 +1,8 @@
 package app.muplay.media
 
+import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -46,6 +48,19 @@ import javax.inject.Singleton
  * player the media layer builds.
  */
 @Singleton
+// `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is a *Java* annotation
+// marked with `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at
+// all -- Android Lint's `UnsafeOptInUsageError` does, and `check` runs lint, so this file compiled
+// cleanly and failed the build one task later. Opting in here rather than marking this class
+// `@UnstableApi` itself: that would propagate the requirement to every consumer, and the point of
+// this module is that `androidx.media3.exoplayer` stops at its boundary.
+//
+// What is being opted into is real and worth stating: `DefaultLoadErrorHandlingPolicy`,
+// `LoadErrorInfo` and `InvalidResponseCodeException` are all Media3 APIs that can change shape in
+// a minor release. The mitigation is the module's own split -- `StreamRetryPolicy` holds the
+// decision and names no Media3 type, so a signature change here is a repair to an adapter rather
+// than to the 429 policy.
+@OptIn(UnstableApi::class)
 class NavidromeLoadErrorHandlingPolicy @Inject constructor() :
   DefaultLoadErrorHandlingPolicy(StreamRetryPolicy.MAX_RETRIES) {
 
