@@ -22,6 +22,16 @@ jobs:
     runs-on: ubuntu-latest
     # An emulator boot plus a full debug + androidTest assembly is the bulk of this; 45 minutes is
     # slack over the measured local run, not a target.
+    #
+    # Left at 45 when `:core:media` joined the script below (Plan 3 Task 2), and the measurement
+    # behind that: on the same 24-core/47 GB machine Plan 2 Task 10 measured, that suite adds
+    # **1 min 16 s** with every task forced to re-run (`--rerun-tasks`, i.e. a fresh assembly,
+    # install and run of its debug + androidTest APKs) and **30 s** warm; its nine tests are
+    # 15.8 s of that. What a local figure cannot cover is still what it could not cover then --
+    # the ~2 GB system-image pull, the emulator boot, and a cold assembly on a 4-core runner -- so
+    # this remains evidence that the *test* half is nowhere near the budget rather than a
+    # measurement of the job. Nothing measurable here justifies moving the limit; the first real
+    # CI run is what should be read before anyone does.
     timeout-minutes: 45
     # The AVD coordinates, written once. Every step below reads them from here, and
     # `ConventionTest`'s "the emulator coordinates cannot drift" asserts they equal
@@ -186,9 +196,17 @@ jobs:
           # that distinguishes an emulator the host killed from an app that crashed: both surface
           # as the same `INSTRUMENTATION_ABORTED: System has crashed` this project has already
           # chased once (see `ci/prepare-emulator.sh`).
+          #
+          # `:core:media` joined in Plan 3 Task 2 and is the only suite here that plays audio: it
+          # pulls one real MP3 off the container through a real stream URL, serves it back through
+          # a `MockWebServer` (the one thing faked is the ability to answer 429 on demand) and
+          # asserts that a real `ExoPlayer`'s own position advanced past a second of it. It is also
+          # the only place the 429 retry budget is exercised against a real `Loader`. Its four
+          # `MuPlayDataSourceFactoryTest` cases are the slow ones at ~14 s of the suite's 15.8 s;
+          # `NavidromeLoadErrorHandlingPolicyTest`'s five are 16 ms together.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :core:database:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
@@ -206,12 +224,19 @@ jobs:
         if: always()
         run: docker compose -f ci/navidrome.compose.yml down -v
 
+      # `**/build/reports/androidTests/**`, not `app/build/...`: this step listed only `:app`'s
+      # report while the `script:` above has been running `:core:database`'s suite since Plan 2
+      # Task 10 -- so a failure in any module but `:app` uploaded a logcat and no test report at
+      # all. `:core:media` joining in Plan 3 Task 2 is what made that visible; the glob fixes it
+      # for every module at once rather than adding a third hardcoded path. The comment lives out
+      # here rather than inside the `path: |` block on purpose: that is a literal block scalar, and
+      # a `#` line inside it is a path pattern, not a comment.
       - name: Upload reports
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-reports
           path: |
-            app/build/reports/androidTests/**
+            **/build/reports/androidTests/**
             **/build/reports/jacoco/**
             emulator-logcat.txt
