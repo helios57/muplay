@@ -453,13 +453,19 @@ PROBES = [
     ("album/songs-id-swapped", ALBUM_VM,
      "combine(album, source.songs(id)) { fetch, songs ->",
      'combine(album, source.songs("wrong-id")) { fetch, songs ->',
+     # 4 -> 6 in Task 9's review round 1: two AlbumViewModelTest tests were added that also load a
+     # real id and read the resulting Content, so they redden here too. See the note on
+     # `expected failures` above -- a count above 1 is a measurement, and it goes stale when tests
+     # are added.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 4),
+     "knows", 6),
     ("album/load-album-id-hardcoded", ALBUM_VM,
      "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
      'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
+     # 4 -> 7, same cause as the probe above; this one additionally reddens the album-call-count
+     # assertion in `an album still being fetched is Loading...`.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 4),
+     "knows", 7),
 
     # ---- Task 9 / review round 1 (task-9-review.md): the values no test observed ---------------
     # N-2, N-3 and N-5. Every one of these mutations left all 34 of this module's tests green when
@@ -495,7 +501,9 @@ PROBES = [
      "screen", 1),
     ("album/loading-reads-as-notfound", ALBUM_VM,
      "Fetch.Pending -> AlbumUiState.Loading", "Fetch.Pending -> AlbumUiState.NotFound",
-     "an album still being fetched is Loading, not the deleted-album message", 1),
+     # 2: `switching to another album shows Loading...` observes the same Pending state at the
+     # other place it is reachable (across an id change), so it reddens too.
+     "an album still being fetched is Loading, not the deleted-album message", 2),
     ("album/load-keeps-previous-album", ALBUM_VM,
      "    album.value = Fetch.Pending\n    this.albumId.value = albumId",
      "    this.albumId.value = albumId",
