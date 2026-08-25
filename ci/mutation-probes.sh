@@ -52,8 +52,9 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test`
-# -- six plain
+# :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test
+# :core:cast:test`
+# -- seven plain
 # JVM invocations (a third module, `:feature:setup`, joined in Task 8's review round 1:
 # `SetupViewModel` is a plain ViewModel with hand-written fakes for its two Android-backed
 # collaborators, so its own logic needs no device either; a fourth, `:feature:library`, joined in
@@ -136,6 +137,11 @@ MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
 PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
+CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
+CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
+CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
+CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
+BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -843,6 +849,91 @@ PROBES = [
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
      "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.reversed(), startIndex)",
      "a queue holds the songs it was given in the order it was given them", 2),
+    # ---- Plan 6 Task 1: the cast module's own codec and its local-network rule ----------------
+    # Every count below was measured by applying the mutation by hand and reading the result XML;
+    # see task-1-report.md for the transcripts. Counts above 1 are the probe reddening more than
+    # its named test, which for these is the point rather than an accident -- a header lookup that
+    # became case-sensitive should break every consumer that reads a header, not just one.
+    ("cast/headers-case-sensitive", CAST_HEADERS,
+     "entries.filter { it.first.equals(name, ignoreCase = true) }.map { it.second }",
+     "entries.filter { it.first == name }.map { it.second }",
+     # The defect that makes a Sonos invisible: it sends CONTENT-TYPE, an SSDP reply sends
+     # LOCATION, and a null LOCATION is a device that never appears with nothing reported anywhere.
+     "a header is found whatever case the peer used", 7),
+    ("cast/render-bare-lf", CAST_WIRE,
+     "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(CRLF)",
+     "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(\"\\n\")",
+     # Caught only because the render assertion is on the string. A round-trip test could not see
+     # this at all: `readLine` deliberately tolerates a bare LF on receipt.
+     "a rendered response head is byte-exact and always uses CRLF", 2),
+    ("cast/cgnat-dropped", CAST_NET,
+     "    return first == 100 && second in 64..127", "    return false",
+     # RFC 6598, 100.64.0.0/10 -- what Tailscale hands out, and what isSiteLocalAddress() says
+     # false for. Dropping it makes the spec's "Remote + VPN" row fail as "the speaker is not
+     # there".
+     "carrier-grade nat is local, and the addresses either side of the block are not", 1),
+    ("cast/always-local", CAST_NET,
+     "  private fun isLocalIpv4(address: Inet4Address): Boolean {\n    if (",
+     "  private fun isLocalIpv4(address: Inet4Address): Boolean {\n    return true\n"
+     "    @Suppress(\"UNREACHABLE_CODE\")\n    if (",
+     # The same guard from the other side. Without this probe, `cast/cgnat-dropped` above would be
+     # satisfied by a rule that permitted everything.
+     "a public address is not local", 6),
+    ("cast/no-local-guard", CAST_CLIENT,
+     "    LocalNetworkOnly.require(host, address)\n", "",
+     # The mutation that matters most in this module: without that one line MuPlay becomes an app
+     # that will send plaintext anywhere it is pointed, and every other test stays green.
+     "a public address is refused before a socket is opened", 1),
+    ("cast/host-without-port", CAST_CLIENT,
+     "      append(\"Host: \").append(hostHeader).append(HttpWire.CRLF)",
+     "      append(\"Host: \").append(host).append(HttpWire.CRLF)",
+     # A Sonos control endpoint lives on 1400 and answers 400 to a Host with no port.
+     "a get request is framed with the request line, the host header and a blank line", 4),
+    ("cast/tolerant-truncated-head", CAST_WIRE,
+     "        if (endOfInputEndsBlock) return HttpHeaders(entries)\n"
+     "        throw MalformedHttpException(\"connection closed inside a header block\")",
+     "        return HttpHeaders(entries)",
+     # A datagram ends where the packet ends; a socket that ends mid-head is a truncated read. The
+     # two must not share an exit, or the proxy routes a request whose Range was still in flight.
+     "a stream that ends inside the header block is rejected, not returned half-parsed", 1),
+    ("cast/timeouts-swapped", CAST_CLIENT,
+     "      socket.soTimeout = readTimeoutMs\n"
+     "      socket.connect(InetSocketAddress(address, port), connectTimeoutMs)",
+     "      socket.soTimeout = connectTimeoutMs\n"
+     "      socket.connect(InetSocketAddress(address, port), readTimeoutMs)",
+     # Two Ints of the same type, adjacent in one constructor -- this repo's recorded
+     # wrong-argument shape, the same one `media/read-timeout-copied` records one module over.
+     "the read timeout is the one the caller gave, and is not the connect timeout", 1),
+
+    # ---- Plan 5 Task 1: BrowseId, the mediaId wire format --------------------------------------
+    # `mediaId` is the only handle Android Auto, Wear OS and the Assistant keep for a node, and Auto
+    # *persists* it across a reinstall -- so this encoding is a contract with software this project
+    # does not own, and every one of these three mutations is a way it can change while every
+    # round-trip assertion in the file stays green.
+    ("browse/book-encode-drops-payload", BROWSE_ID,
+     'override fun encode(): String = "$PREFIX$KIND_BOOK$SEPARATOR$bookId"',
+     'override fun encode(): String = "$PREFIX$KIND_BOOK"',
+     # 5, and deliberately broad: an encode that ignores its payload is the defect a per-member
+     # round-trip test cannot see, so several independent assertions are meant to catch it. The one
+     # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
+     # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
+     # property, and it is the property no round trip implies.
+     "every id encodes to its exact documented string", 5),
+    ("browse/library-id-non-canonical", BROWSE_ID,
+     "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
+     "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
+     # The spec section 4 probe. `toIntOrNull` alone accepts "+1", "01" and "-0", so three
+     # different strings would name library 1, 1 and 0 -- second spellings of a node in Auto's
+     # persisted recents, which is exactly how a "shuffle my music" tap comes back pointing
+     # somewhere else. Exactly 1: no other test in the repository reads a library id from a string.
+     "a library id that is not canonically numeric is rejected rather than widened", 1),
+    ("browse/decode-splits-payload", BROWSE_ID,
+     '      val payload = if (hasPayload) body.substring(kind.length + SEPARATOR.length) else ""',
+     '      val payload = body.split(SEPARATOR).getOrElse(1) { "" }',
+     # A `split` without a limit turns "muplay/book/a/b/c" into a Book whose id is "a" -- silently,
+     # for exactly the server ids that contain a separator. Navidrome ids are hex today, and "the
+     # ids are hex" is the class of assumption spec section 4 is a catalogue of.
+     "the payload survives every character a server id could contain", 1),
 ]
 
 
@@ -895,6 +986,7 @@ def apply(path, old, new):
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
     RESUME_POLICY,
+    BROWSE_ID,
 ]
 
 
@@ -902,7 +994,11 @@ def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
          LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
-         PCM_ANALYSIS, PLAYBACK_QUEUE],
+         PCM_ANALYSIS, PLAYBACK_QUEUE,
+         # The whole directory, not the four files the cast probes name today: Plan 6 adds five
+         # more source files to this module across Tasks 2-11, and a probe on one of them that
+         # this list had not been extended for would revert to nothing at all.
+         "core/cast"],
         check=True,
     )
     subprocess.run(["git", "checkout", "--", *LATER_PROBE_FILES], check=True)
@@ -941,6 +1037,16 @@ JVM_TEST_RESULT_DIRS = {
     # asymmetry is the whole point of splitting the analyser out: a `longestZeroRunFrames` that
     # returned 0 would leave `GaplessTest` green and only these probes red.
     "core/testing": "test",
+    # `:core:cast` joined in Plan 6 Task 1. A plain `muplay.jvm.library`, so `test` -- and the
+    # entire module is reachable here by construction: it carries no Android type at all, which is
+    # what puts the casting protocol surface, the proxy and the routing decision in Tier 1.
+    # Verified by breaking it on purpose: with the cast probes added and this entry (and the
+    # invocation below) still absent, `./ci/mutation-probes.sh cast` reported 0/8 caught, every one
+    # of them "got 0" failures. That is the same argument this file's header makes about the probe
+    # list, applied to the runner -- a runner that runs no tests for a module reports "caught" for
+    # nothing and "missed" for nothing, and the only way to tell which you have is to make it fail
+    # once deliberately.
+    "core/cast": "test",
 }
 
 
@@ -997,7 +1103,7 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test", ":core:testing:test"],
+                    ":core:media:test", ":core:testing:test", ":core:cast:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

@@ -129,6 +129,14 @@ must stay derived — a hardcoded total has gone stale twice. It refuses to run 
 a dirty tree, and that guard has caught a real stray mutation left behind by a
 killed run.
 
+## A fresh worktree has no `local.properties`
+
+Every Android Gradle task in it dies with **"SDK location not found"** until you
+write `sdk.dir=/home/helios/Android/Sdk` into `<worktree>/local.properties`
+(git-ignored). Two agents lost time to this on the same afternoon, and one of
+them saw it as a probe runner reporting no results for six modules rather than
+as a missing SDK path — the failure does not name itself clearly.
+
 ## A worktree inside the repo reddens `:app`'s mock-framework guard
 
 `ConventionTest`'s `no mock framework is declared in any build file or
@@ -167,3 +175,22 @@ audiobook was served from the entry an earlier `maxBitRate=320` request
 created). Second, `format=mp3` on an `mp3` source with a cap at or above the
 file's own bitrate returns the source file untouched — so `StreamFormat.Mp3(192)`
 is not always a transcode.
+
+## A fresh worktree has no `local.properties`, and the failure names the wrong thing
+
+`local.properties` is gitignored, so `git worktree add` does not bring it. Every
+pure-JVM task still works (`:core:model:test` is green), and then the first
+Android-module task fails with *"SDK location not found"* naming the worktree's
+own missing file.
+
+Create it before running anything wider than one JVM module:
+
+    printf 'sdk.dir=/home/helios/Android/Sdk\n' > local.properties
+
+The reason this is worth a note is what it looks like through
+`ci/mutation-probes.sh`. That script only reports `run_suite(): no test results
+were written for ['core/network', 'core/model', ...]` — every module at once,
+including the pure-JVM ones that have nothing to do with the SDK — because
+`:core:database`'s configuration failure aborts the whole invocation before any
+task runs. It reads like the probe list is broken. Run the script's own gradle
+line by hand and the real message is the first thing printed.
