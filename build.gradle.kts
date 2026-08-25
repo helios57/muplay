@@ -291,6 +291,29 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   — that would need JaCoCo's METHOD-element scoping, materially riskier machinery for a slice
  *   already fully covered.
  *
+ * - **`:feature:library`** (Plan 2 Task 9) — one `"CLASS"`-element BRANCH rule at `1.00`, covering
+ *   `LibraryUiStateKt` (`libraryContent`, measured **18/18**) and the zero-branch `LibraryUiState`
+ *   sealed interface riding along, per the same reasoning `SetupUiState` rides along in
+ *   `:feature:setup`'s own rule above.
+ *
+ *   **The task's own brief expected a second JVM-measurable floor here, over `CoverArtKt`, and it
+ *   does not hold up under measurement — recorded here, not silently dropped.** `coverArtCacheKey`
+ *   and the `@Composable CoverArtImage` are both top-level declarations in the same file, so they
+ *   compile into the one class `CoverArtKt`, and — per this table's own doc on why `"CLASS"` is the
+ *   only element that actually filters — there is no way to gate one without the other.
+ *   `coverArtCacheKey` alone measures 3/4 = 0.75 BRANCH (`CoverArtTest`'s four cases); the never
+ *   composed `CoverArtImage` measures 0/52 BRANCH and 0/23 LINE; JaCoCo reports both against
+ *   `CoverArtKt` as one class, 3/57 = 0.053 BRANCH and 1/24 = 0.042 LINE. That is the same
+ *   Composable-dominates-the-ratio shape as `LibraryScreenKt`/`AlbumScreenKt` below, so `CoverArtKt`
+ *   joins them (alongside `LibraryViewModel`'s own BRANCH floor, unmeasurable this task for a
+ *   different reason — several of its lambda-body nested classes sit well under any floor a
+ *   wildcard could hold from `LibraryViewModelTest` alone, e.g. `LibraryViewModel$shuffle$1` at
+ *   6/12 = 0.50, and the `@Inject` constructor's real-repository `LibrarySource` adapter,
+ *   `LibraryViewModel$1`, is reachable only through Hilt's DI graph and measures 0/8 LINE) as
+ *   Task 10 work, once `BrowseJourneyTest`/`ScopedShuffleJourneyTest` exist to compose and exercise
+ *   them for real. `AlbumViewModel`'s equivalent floor is deferred the same way, for the same
+ *   reason.
+ *
  * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
  *   aggregate rule in this table, and the one place where that is the right shape rather than a
  *   compromise — with one cost, stated here rather than only in a report: `matchesFloor` below
@@ -779,6 +802,51 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       // MuPlayTheme is composed only by the emulator journey; from the JVM alone ThemeKt measures
       // 0.65 and TypeKt 0.00.
       requiresInstrumentedData = true,
+    ),
+  ),
+  // Plan 2 Task 9 (:feature:library). One floor this task's own JVM tests can measure --
+  // LibraryUiStateKt -- gated now; everything else in the module is deferred to Task 10.
+  //
+  // **The brief for this task expected a second JVM-measurable floor here, over `CoverArtKt`
+  // (`coverArtCacheKey`), and it does not hold up under measurement.** Every top-level
+  // declaration in one Kotlin file compiles into the same file-class, so `coverArtCacheKey` and
+  // the `@Composable CoverArtImage` share one class, `CoverArtKt` -- and this table's own doc
+  // above already establishes that a `"CLASS"`-element rule (the only kind proven to filter at
+  // all; `"BUNDLE"` does not) can only include or exclude by class name, never by method.
+  // `coverArtCacheKey` alone measures 3/4 = 0.75 BRANCH (`CoverArtTest`'s four cases), but
+  // `CoverArtImage` -- never composed from a JVM test -- measures 0/52 BRANCH and 0/23 LINE, and
+  // JaCoCo reports both against the one class: `CoverArtKt` as a whole is 3/57 = 0.053 BRANCH,
+  // 1/24 = 0.042 LINE. That is exactly the situation this table's own doc calls out for
+  // `LibraryScreenKt`/`AlbumScreenKt` -- a Composable's synthetic branches dominating a class's
+  // own ratio -- so `CoverArtKt` joins those two as Task 10 work, once
+  // `BrowseJourneyTest`/`ScopedShuffleJourneyTest` exist to compose and exercise it for real.
+  //
+  // `LibraryViewModel`'s own BRANCH floor is similarly unmeasurable from this task's JVM tests
+  // alone, for a different reason: several of its per-lambda nested classes sit well under any
+  // floor a `"LibraryViewModel*"` wildcard could hold today -- `LibraryViewModel$shuffle$1`
+  // measures 6/12 = 0.50, and `LibraryViewModel$1`, the anonymous `LibrarySource` the `@Inject`
+  // secondary constructor wires to the real repositories, measures 0/8 LINE and is reachable only
+  // through Hilt's real DI graph, never through `LibraryViewModelTest`'s primary-constructor seam.
+  // Left for Task 10 alongside `AlbumViewModel`'s equivalent floor.
+  ":feature:library" to listOf(
+    // 18/18 -- libraryContent's own branches: the empty-libraries early return, the
+    // firstOrNull-elvis-firstOrNull selection repair, and the searching ? searchAlbums : albums
+    // branch -- all covered by LibraryUiStateTest's seven cases.
+    //
+    // LibraryUiState* rides along for the same reason SetupUiState did in :feature:setup's own
+    // rule above: Content/Loading/NoLibraries carry 0 branches of their own (a sealed interface
+    // and data classes with no body), so they can never move this ratio, and including them is
+    // what keeps warnUngatedClasses from flagging their own fully-covered lines as an ungated
+    // class.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.LibraryUiStateKt",
+        "app.muplay.library.LibraryUiState",
+        "app.muplay.library.LibraryUiState*",
+      ),
     ),
   ),
   // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see
