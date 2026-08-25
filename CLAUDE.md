@@ -230,6 +230,30 @@ created). Second, `format=mp3` on an `mp3` source with a cap at or above the
 file's own bitrate returns the source file untouched — so `StreamFormat.Mp3(192)`
 is not always a transcode.
 
+**A `HEAD` warms that cache, and there is therefore no safe way to search for a
+cold entry.** Measured in Plan 6 Task 6: `HEAD` on an uncached transcode answers
+`Accept-Ranges: none` with no `Content-Length` — it reports "cold" correctly —
+and starts a background transcode that has populated the cache about a second
+later. Two `HEAD`s back to back both say cold; the same URL a few hundred
+milliseconds afterwards is warm. So a probe that finds a cold entry has warmed
+the entry it found, and the assertion after it races the transcoder: a live suite
+built that way passed once and then failed three runs running with `expected: 502
+but was: 200`.
+
+Searching *through the thing under test*, so the search's own response is the
+observation, is correct and is worse: a run that finds nothing has requested
+**every** bitrate below the source and cached all of them. Those entries are a
+shared, exhaustible resource — one such sweep left one of `coldTranscode`'s three
+candidate tracks with no cold bitrate at all, which is a flake handed to whoever
+runs `:core:network:liveNavidromeTest` next. Recreating the container is the only
+repair, and it is not something one agent may do to a shared container.
+
+So: prefer a live assertion that needs no cold entry. `:core:cast`'s
+`LiveNavidromeProxyTest` gets a real `Content-Range`-less response out of
+Navidrome by stripping the credentials from a stream URL instead (200,
+`Content-Type: application/json`, a real `Content-Length`, no `Content-Range`),
+which is stable, costs nothing, and is a sharper assertion besides.
+
 ## A fresh worktree has no `local.properties`, and the failure names the wrong thing
 
 `local.properties` is gitignored, so `git worktree add` does not bring it. Every
