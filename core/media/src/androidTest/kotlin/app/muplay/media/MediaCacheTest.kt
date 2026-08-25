@@ -11,7 +11,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import app.muplay.media.di.MediaModule
+import app.muplay.media.di.MediaCacheModule
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
@@ -272,7 +272,7 @@ class MediaCacheTest {
    * The directory the production cache writes to, named and located — reached through the
    * **binding the graph actually uses**, not through [MediaCache] directly.
    *
-   * Going via `MediaModule.provideMediaCache` is the point rather than a detour. Every other test
+   * Going via `MediaCacheModule.provideMediaCache` is the point rather than a detour. Every other test
    * in this file passes its own directory, so nothing else in the project observes which
    * directory production ends up with; a provider that called the two-argument overload with
    * `filesDir`, or with a name of its own, would satisfy every assertion in this file if this test
@@ -281,7 +281,7 @@ class MediaCacheTest {
    */
   @Test
   fun theProductionCacheLivesInAKnownDirectoryUnderCacheDir() {
-    val production = MediaModule.provideMediaCache(context)
+    val production = MediaCacheModule.provideMediaCache(context)
     try {
       val expected = File(context.cacheDir, MediaCache.DIRECTORY_NAME)
       // Discriminating in both directions: a `create` that used `filesDir`, or that derived a
