@@ -202,6 +202,86 @@ class CastHttpClientTest {
   }
 
   @Test
+  fun `a url with no path at all asks for the root`() {
+    // `URI("http://host:port")` has a rawPath of `""`, not `"/"` -- measured. A request line whose
+    // target is empty (`GET  HTTP/1.1`) is malformed, and this codec's own parser would reject it.
+    val running = start(okResponse)
+
+    CastHttpClient().exchange(URI("http://127.0.0.1:${running.port}"), "GET")
+
+    assertThat(running.headText()).startsWith("GET / HTTP/1.1\r\n")
+  }
+
+  @Test
+  fun `a url with no host is refused`() {
+    // `http:///x` parses, resolves to a null host, and would otherwise reach `InetAddress
+    // .getByName(null)` -- which returns *loopback*, quietly turning a malformed URL into a
+    // request against this phone.
+    assertThatExceptionOfType(IllegalArgumentException::class.java)
+      .isThrownBy { CastHttpClient().exchange(URI("http:///x"), "GET") }
+      .withMessageContaining("no host")
+  }
+
+  @Test
+  fun `the host header carries the port unless it is the default, and both spellings are exact`() {
+    // The one branch of the head that a socket test cannot reach: port 80 cannot be bound
+    // unprivileged. Both spellings are asserted whole rather than as a `contains`, and the two
+    // observations are what stop `Host` being either "always bare" or "always suffixed".
+    val onDefaultPort = CastHttpClient().renderRequestHead(
+      method = "GET",
+      url = URI("http://192.168.1.50/xml/device_description.xml"),
+      host = "192.168.1.50",
+      port = 80,
+      headers = HttpHeaders.EMPTY,
+      body = null,
+    )
+    val onSonosPort = CastHttpClient().renderRequestHead(
+      method = "GET",
+      url = URI("http://192.168.1.50:1400/xml/device_description.xml"),
+      host = "192.168.1.50",
+      port = 1400,
+      headers = HttpHeaders.EMPTY,
+      body = null,
+    )
+
+    assertThat(String(onDefaultPort, Charsets.US_ASCII)).isEqualTo(
+      "GET /xml/device_description.xml HTTP/1.1\r\n" +
+        "Host: 192.168.1.50\r\n" +
+        "Connection: close\r\n" +
+        "\r\n",
+    )
+    assertThat(String(onSonosPort, Charsets.US_ASCII)).isEqualTo(
+      "GET /xml/device_description.xml HTTP/1.1\r\n" +
+        "Host: 192.168.1.50:1400\r\n" +
+        "Connection: close\r\n" +
+        "\r\n",
+    )
+  }
+
+  @Test
+  fun `two responses are equal when their bodies are, and a data class alone cannot say that`() {
+    // `CastHttpResponse` holds a `ByteArray`, and a `data class`'s generated `equals` compares
+    // that by identity -- so two responses carrying the same bytes would be unequal, and a Task 3
+    // assertion comparing an expected response to an actual one would fail for no reason. The
+    // hand-written override is the fix; these are the observations that stop it being deleted as
+    // boilerplate.
+    val head = HttpResponseHead("HTTP/1.1", 200, "OK", HttpHeaders.of("A" to "b"))
+    val response = CastHttpResponse(head, "<root/>".toByteArray())
+    val sameBytes = CastHttpResponse(head, "<root/>".toByteArray())
+    val otherBytes = CastHttpResponse(head, "<other/>".toByteArray())
+    val otherHead = CastHttpResponse(HttpResponseHead("HTTP/1.1", 500, "OK", HttpHeaders.of("A" to "b")), "<root/>".toByteArray())
+
+    assertThat(response).isEqualTo(response)
+    assertThat(response).isEqualTo(sameBytes)
+    assertThat(response.hashCode()).isEqualTo(sameBytes.hashCode())
+    // Three ways of being different, each observed: the bytes, the head, and the type.
+    assertThat(response).isNotEqualTo(otherBytes)
+    assertThat(response).isNotEqualTo(otherHead)
+    assertThat(response).isNotEqualTo(head)
+    assertThat(response.hashCode()).isNotEqualTo(otherBytes.hashCode())
+  }
+
+  @Test
   fun `the read timeout is the one the caller gave, and is not the connect timeout`() {
     // Two timeouts of the same type, adjacent in one constructor, is this project's recorded
     // "wrong argument" shape (see `media/read-timeout-copied` in ci/mutation-probes.sh). The two

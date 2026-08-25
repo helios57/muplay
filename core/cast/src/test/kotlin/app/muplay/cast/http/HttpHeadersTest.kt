@@ -78,6 +78,15 @@ class HttpHeadersTest {
   }
 
   @Test
+  fun `toString names every header, so a log line shows the block and not an identity hash`() {
+    // A default `toString` on this class prints `HttpHeaders@1b6d3586`, which is what a failed
+    // device description would leave in a bug report. Asserted whole, so the separator and the
+    // colon are pinned rather than merely "contains the name".
+    assertThat(HttpHeaders.of("A" to "1", "B" to "2").toString()).isEqualTo("A: 1, B: 2")
+    assertThat(HttpHeaders.EMPTY.toString()).isEmpty()
+  }
+
+  @Test
   fun `the empty headers really are empty`() {
     // Rule 3: `EMPTY.names` being empty is what makes every `allMatch`-shaped assertion elsewhere
     // in this module suspect, so the emptiness itself is pinned here where it is the subject.

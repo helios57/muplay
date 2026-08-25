@@ -49,10 +49,17 @@ class HttpWireTest {
   @Test
   fun `a status line with no reason phrase is legal and parses`() {
     // RFC 7230: the reason phrase may be empty. Sonos does not do this; some embedded renderers do.
+    // Both spellings, because they take different paths through the split: with the trailing space
+    // the line has three parts and the third is empty, without it the line has only two and there
+    // is no third to read. A parser that handled one and indexed past the end on the other would
+    // pass whichever of the two happened to be the fixture.
     val terse = response("HTTP/1.1 500 \r\nContent-Length: 0\r\n\r\n")
+    val terser = response("HTTP/1.1 500\r\nContent-Length: 0\r\n\r\n")
 
     assertThat(terse.code).isEqualTo(500)
     assertThat(terse.reason).isEmpty()
+    assertThat(terser.code).isEqualTo(500)
+    assertThat(terser.reason).isEmpty()
   }
 
   @Test
@@ -156,6 +163,17 @@ class HttpWireTest {
   }
 
   @Test
+  fun `an empty stream is rejected rather than parsed as an empty response`() {
+    // The status-line half of the rule the request-line test above pins, and it needs its own
+    // observation: `readResponseHead` has its own end-of-stream check, and a message naming the
+    // request line would send a debugger of a failed SOAP call to the proxy.
+    assertThatExceptionOfType(MalformedHttpException::class.java)
+      .isThrownBy { response("") }
+      .withMessageContaining("closed")
+      .withMessageContaining("status line")
+  }
+
+  @Test
   fun `a stream that ends inside the header block is rejected, not returned half-parsed`() {
     // The counterpart of `a bare header block from a udp datagram parses without a start line`
     // below, and the reason the two cannot share one code path. On a *socket* a head that never
@@ -232,6 +250,19 @@ class HttpWireTest {
 
     assertThat(headers.names).containsExactly("LOCATION", "USN")
     assertThat(headers["location"]).isEqualTo("http://10.0.0.9:2869/desc.xml")
+  }
+
+  @Test
+  fun `a datagram whose last header has no line terminator at all still yields that header`() {
+    // A datagram is sized by the packet, not by a terminator, and a renderer that omits the final
+    // CRLF has still sent the header. Dropping the bytes buffered at end of input would lose the
+    // last header of the block -- and `USN` being last in an M-SEARCH reply is ordinary.
+    val headers = HttpWire.parseHeaderBlock(
+      "LOCATION: http://10.0.0.9:2869/desc.xml\r\nUSN: uuid:abc::urn:x",
+    )
+
+    assertThat(headers.names).containsExactly("LOCATION", "USN")
+    assertThat(headers["usn"]).isEqualTo("uuid:abc::urn:x")
   }
 
   @Test

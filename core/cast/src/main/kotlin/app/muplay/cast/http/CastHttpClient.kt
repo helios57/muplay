@@ -80,8 +80,15 @@ class CastHttpClient(
    * the body is empty -- `Content-Length: 0` on a POST is what tells a server not to wait for one.
    * Caller headers go in between, in the order given, because Task 3 asserts a whole SOAP head
    * byte-for-byte and that is only writable against a deterministic order.
+   *
+   * `internal` rather than `private` for one reason, and it is a test-visibility reason stated
+   * rather than hidden: the `Host`-without-a-port branch fires only for port 80, and a test cannot
+   * bind port 80 unprivileged, so that one branch is observed here instead of on a socket. Every
+   * other byte of this head is asserted end-to-end against a real `ServerSocket` in
+   * `CastHttpClientTest`, which is also what pins that [exchange] writes exactly what this
+   * returns -- so the port-80 observation is one layer in, not one layer adrift.
    */
-  private fun renderRequestHead(
+  internal fun renderRequestHead(
     method: String,
     url: URI,
     host: String,
@@ -90,7 +97,11 @@ class CastHttpClient(
     body: ByteArray?,
   ): ByteArray {
     val target = buildString {
-      append(url.rawPath?.ifEmpty { "/" } ?: "/")
+      // `rawPath` cannot be null here: `exchange` has already required a non-null `host`, and a
+      // URI with an authority is hierarchical, so its path is `""` at worst -- measured, for
+      // `http://127.0.0.1:8080` and for `http://127.0.0.1:8080?x=1` alike. An `?: "/"` in front of
+      // this would be a branch no test could ever reach, which is its own kind of dishonesty.
+      append(url.rawPath.ifEmpty { "/" })
       url.rawQuery?.let { append('?').append(it) }
     }
     val hostHeader = if (port == DEFAULT_HTTP_PORT) host else "$host:$port"
