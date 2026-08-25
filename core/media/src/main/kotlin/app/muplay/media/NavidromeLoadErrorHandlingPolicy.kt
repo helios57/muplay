@@ -40,7 +40,8 @@ import javax.inject.Singleton
  *
  * **The one test that goes red when it is not attached is
  * `MuPlayDataSourceFactoryTest.aRefusalBudgetThatRunsOutSurfacesAsAPlayerError`**, because it
- * counts requests -- six, where an unattached policy makes four. Do **not** reach for
+ * counts requests, and the six it asserts (`MAX_RETRIES + 1`) is a number Media3's own
+ * three-retry budget cannot reach at all. Do **not** reach for
  * `twoRefusalsWithHttp429DoNotKillThePlayback`, which is what this paragraph named until Task 2's
  * review measured it: it enqueues two refusals carrying `Retry-After: 0` and asserts three
  * requests, and Media3's *own* policy retries an `InvalidResponseCodeException` after
@@ -95,10 +96,10 @@ class NavidromeLoadErrorHandlingPolicy @Inject constructor() :
    * stops a 404: Media3 gives up early only on `ParserException`, `FileNotFoundException`,
    * `CleartextNotPermittedException`, `Loader.UnexpectedLoaderException` and
    * `DataSourceException.reason == 2008` (bytecode again), and an `InvalidResponseCodeException`
-   * is none of them. Unchecked, a dead track costs 0 + 1 + 2 + 3 + 4 = 10 s over six requests
-   * where an unmodified `DefaultLoadErrorHandlingPolicy` takes 3 s over four. Giving up once
-   * `errorCount` passes `DEFAULT_MIN_LOADABLE_RETRY_COUNT` reproduces those two numbers exactly,
-   * which is why the threshold is Media3's own constant and not a literal `3`.
+   * is none of them. Unchecked, a dead track costs 0 + 1 + 2 + 3 + 4 = 10 s across an attempt
+   * budget of six, where an unmodified `DefaultLoadErrorHandlingPolicy` takes 3 s across four.
+   * Giving up once `errorCount` passes `DEFAULT_MIN_LOADABLE_RETRY_COUNT` reproduces both of those
+   * numbers exactly, which is why the threshold is Media3's own constant and not a literal `3`.
    *
    * That give-up is deliberately narrow -- an `InvalidResponseCodeException` [StreamRetryPolicy]
    * declined, and nothing else. A server that answered with a status will answer with the same

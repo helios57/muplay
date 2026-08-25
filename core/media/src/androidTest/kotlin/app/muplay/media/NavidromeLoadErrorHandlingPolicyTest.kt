@@ -164,7 +164,7 @@ class NavidromeLoadErrorHandlingPolicyTest {
     // `ParserException`, `FileNotFoundException`, `CleartextNotPermittedException`,
     // `Loader$UnexpectedLoaderException` and `DataSourceException.reason == 2008`, and an
     // `InvalidResponseCodeException` is none of them. Unchecked, a dead track costs 0+1+2+3+4 =
-    // 10 s over six requests where Media3 alone takes 3 s over four.
+    // 10 s across an attempt budget of six, where Media3 alone takes 3 s across four.
     //
     // Below the threshold, agreement with Media3 -- deliberately, and it is the only place in this
     // file that asserts agreement. Media3's own `min((errorCount - 1) * 1000, 5000)`, unchanged.
@@ -174,9 +174,9 @@ class NavidromeLoadErrorHandlingPolicyTest {
     assertThat(policy.getRetryDelayMsFor(loadError(404, errorCount = 3))).isEqualTo(2_000L)
 
     // Past it, `C.TIME_UNSET`, which `ProgressiveMediaPeriod.onLoadError` turns into
-    // `Loader.DONT_RETRY_FATAL` -- four requests in total, which is Media3's own budget handed
-    // back. Two statuses, because one of them could be a special case somewhere upstream and both
-    // being 404 would not show it.
+    // `Loader.DONT_RETRY_FATAL` -- an attempt budget of four, which is Media3's own handed back.
+    // Two statuses, because one of them could be a special case somewhere upstream and both being
+    // 404 would not show it.
     assertThat(policy.getRetryDelayMsFor(loadError(404, errorCount = 4))).isEqualTo(C.TIME_UNSET)
     assertThat(policy.getRetryDelayMsFor(loadError(500, errorCount = 4))).isEqualTo(C.TIME_UNSET)
 
