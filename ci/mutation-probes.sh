@@ -133,6 +133,10 @@ LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiSta
 STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
+CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
+CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
+CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
+CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -642,6 +646,62 @@ PROBES = [
     ("media/no-cross-protocol-redirects", MEDIA_MODULE,
      "      .build()", "      .followSslRedirects(false)\n      .build()",
      "redirects are followed, including across protocols", 1),
+
+    # ---- Plan 6 Task 1: the cast module's own codec and its local-network rule ----------------
+    # Every count below was measured by applying the mutation by hand and reading the result XML;
+    # see task-1-report.md for the transcripts. Counts above 1 are the probe reddening more than
+    # its named test, which for these is the point rather than an accident -- a header lookup that
+    # became case-sensitive should break every consumer that reads a header, not just one.
+    ("cast/headers-case-sensitive", CAST_HEADERS,
+     "entries.filter { it.first.equals(name, ignoreCase = true) }.map { it.second }",
+     "entries.filter { it.first == name }.map { it.second }",
+     # The defect that makes a Sonos invisible: it sends CONTENT-TYPE, an SSDP reply sends
+     # LOCATION, and a null LOCATION is a device that never appears with nothing reported anywhere.
+     "a header is found whatever case the peer used", 7),
+    ("cast/render-bare-lf", CAST_WIRE,
+     "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(CRLF)",
+     "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(\"\\n\")",
+     # Caught only because the render assertion is on the string. A round-trip test could not see
+     # this at all: `readLine` deliberately tolerates a bare LF on receipt.
+     "a rendered response head is byte-exact and always uses CRLF", 2),
+    ("cast/cgnat-dropped", CAST_NET,
+     "    return first == 100 && second in 64..127", "    return false",
+     # RFC 6598, 100.64.0.0/10 -- what Tailscale hands out, and what isSiteLocalAddress() says
+     # false for. Dropping it makes the spec's "Remote + VPN" row fail as "the speaker is not
+     # there".
+     "carrier-grade nat is local, and the addresses either side of the block are not", 1),
+    ("cast/always-local", CAST_NET,
+     "  private fun isLocalIpv4(address: Inet4Address): Boolean {\n    if (",
+     "  private fun isLocalIpv4(address: Inet4Address): Boolean {\n    return true\n"
+     "    @Suppress(\"UNREACHABLE_CODE\")\n    if (",
+     # The same guard from the other side. Without this probe, `cast/cgnat-dropped` above would be
+     # satisfied by a rule that permitted everything.
+     "a public address is not local", 6),
+    ("cast/no-local-guard", CAST_CLIENT,
+     "    LocalNetworkOnly.require(host, address)\n", "",
+     # The mutation that matters most in this module: without that one line MuPlay becomes an app
+     # that will send plaintext anywhere it is pointed, and every other test stays green.
+     "a public address is refused before a socket is opened", 1),
+    ("cast/host-without-port", CAST_CLIENT,
+     "      append(\"Host: \").append(hostHeader).append(HttpWire.CRLF)",
+     "      append(\"Host: \").append(host).append(HttpWire.CRLF)",
+     # A Sonos control endpoint lives on 1400 and answers 400 to a Host with no port.
+     "a get request is framed with the request line, the host header and a blank line", 4),
+    ("cast/tolerant-truncated-head", CAST_WIRE,
+     "        if (endOfInputEndsBlock) return HttpHeaders(entries)\n"
+     "        throw MalformedHttpException(\"connection closed inside a header block\")",
+     "        return HttpHeaders(entries)",
+     # A datagram ends where the packet ends; a socket that ends mid-head is a truncated read. The
+     # two must not share an exit, or the proxy routes a request whose Range was still in flight.
+     "a stream that ends inside the header block is rejected, not returned half-parsed", 1),
+    ("cast/timeouts-swapped", CAST_CLIENT,
+     "      socket.soTimeout = readTimeoutMs\n"
+     "      socket.connect(InetSocketAddress(address, port), connectTimeoutMs)",
+     "      socket.soTimeout = connectTimeoutMs\n"
+     "      socket.connect(InetSocketAddress(address, port), readTimeoutMs)",
+     # Two Ints of the same type, adjacent in one constructor -- this repo's recorded
+     # wrong-argument shape, the same one `media/read-timeout-copied` records one module over.
+     "the read timeout is the one the caller gave, and is not the connect timeout", 1),
 ]
 
 
@@ -683,7 +743,11 @@ def apply(path, old, new):
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
+         # The whole directory, not the four files the cast probes name today: Plan 6 adds five
+         # more source files to this module across Tasks 2-11, and a probe on one of them that
+         # this list had not been extended for would revert to nothing at all.
+         "core/cast"],
         check=True,
     )
 
