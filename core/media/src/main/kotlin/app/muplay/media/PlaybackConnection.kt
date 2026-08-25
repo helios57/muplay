@@ -167,9 +167,13 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
       albumTitle = metadata.albumTitle?.toString(),
       artworkUri = metadata.artworkUri?.toString(),
       positionMs = player.currentPosition.coerceAtLeast(0L),
-      // C.TIME_UNSET until the extractor has read the container; 0 is a better answer for a UI
-      // than a large negative sentinel it would render as a duration.
-      durationMs = player.duration.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L,
+      // `C.TIME_UNSET` until the extractor has read the container -- and for a stream the server
+      // transcodes on the fly, forever. Recognising that sentinel is this adapter's job; what to do
+      // about it is `PlaybackState.durationMsOf`'s, where the fast tier can gate it.
+      durationMs = PlaybackState.durationMsOf(
+        playerDurationMs = player.duration.takeIf { it != C.TIME_UNSET },
+        metadataDurationMs = metadata.durationMs,
+      ),
       hasNext = player.hasNextMediaItem(),
       hasPrevious = player.hasPreviousMediaItem(),
     )

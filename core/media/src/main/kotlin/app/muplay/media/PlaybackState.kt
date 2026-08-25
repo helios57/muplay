@@ -54,5 +54,29 @@ data class PlaybackState(
       hasNext = false,
       hasPrevious = false,
     )
+
+    /**
+     * The duration a UI should render, from the two sources that can supply one.
+     *
+     * A plain function over two nullable `Long`s, with no Media3 type in its signature, so the fast
+     * tier can hold this decision to a floor -- the same split `StreamRetryPolicy` gets from
+     * `NavidromeLoadErrorHandlingPolicy`, for the same reason. Recognising `C.TIME_UNSET` is the
+     * adapter's job and stays in [PlaybackConnection]; deciding what to do with the answer is this.
+     *
+     * **Why there are two sources at all.** The player's own duration comes from the extractor, and
+     * for a stream the server transcodes on the fly there is no `Content-Length` and no duration to
+     * extract -- `player.duration` is `C.TIME_UNSET` for the whole track. That is not hypothetical:
+     * it is what Navidrome does for an Ogg/Opus source, which is the one format this app always
+     * transcodes. The mirrored `Song` knows the length, so `MediaItem`'s own metadata can carry it
+     * and is the answer when the extractor has none.
+     *
+     * The player wins when it has an answer, because it measured the media that is actually
+     * playing; the metadata is what the server said about it, which can be stale or wrong.
+     *
+     * Zero is the floor, and it is what "unknown" collapses to. A seek bar rendering a negative
+     * sentinel as a length is worse than one rendering nothing.
+     */
+    fun durationMsOf(playerDurationMs: Long?, metadataDurationMs: Long?): Long =
+      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)
   }
 }

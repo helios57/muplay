@@ -56,4 +56,33 @@ class PlaybackStateTest {
     assertThat(PlaybackState.NOTHING_PLAYING.hasNext).isFalse()
     assertThat(PlaybackState.NOTHING_PLAYING.hasPrevious).isFalse()
   }
+
+  @Test
+  fun `the player's own duration wins, because it measured what is playing`() {
+    // Both sources present and disagreeing is the only arrangement in which "which one wins" is a
+    // question at all. 3000 and 5000, not 3000 and 3000.
+    assertThat(PlaybackState.durationMsOf(playerDurationMs = 3_000L, metadataDurationMs = 5_000L))
+      .isEqualTo(3_000L)
+  }
+
+  @Test
+  fun `the metadata's duration is used when the extractor had none`() {
+    // The Opus case: the server transcodes on the fly, there is no Content-Length, and the player
+    // reports `C.TIME_UNSET` for the whole track -- which reaches here as null. Without this, a
+    // whole format renders as an unknown-length track on the lock screen and collapses Plan 3's
+    // seek bar.
+    assertThat(PlaybackState.durationMsOf(playerDurationMs = null, metadataDurationMs = 5_000L))
+      .isEqualTo(5_000L)
+  }
+
+  @Test
+  fun `an unknown duration is zero, never a negative sentinel`() {
+    assertThat(PlaybackState.durationMsOf(playerDurationMs = null, metadataDurationMs = null))
+      .isZero()
+    // A negative from either source is a sentinel that leaked, not a length. A UI that renders it
+    // shows a seek bar running backwards; `coerceAtLeast` is what stops that, and this is the case
+    // that fails when it is removed.
+    assertThat(PlaybackState.durationMsOf(playerDurationMs = -1L, metadataDurationMs = 5_000L))
+      .isZero()
+  }
 }

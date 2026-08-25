@@ -3,6 +3,7 @@ package app.muplay
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.service.notification.StatusBarNotification
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -58,6 +59,18 @@ class MuPlaybackServiceTest {
    * silently not posted and `getActiveNotifications()` returns an empty array -- a green-looking
    * nothing. Granted by a rule rather than by an `adb` step so it cannot be reordered away from
    * the test that needs it.
+   *
+   * **This rule cannot be shown to fire on the path CI uses, and saying so is the point.** Deleting
+   * it and re-running left all seven tests green; measured on `muplay37`, AGP's own installer passes
+   * `-g` (a plain `adb install -r` of the same APK leaves the permission `granted=false`, `-g`
+   * leaves it `granted=true`), so every runtime permission in the merged manifest is already held by
+   * the time the suite starts. The rule earns its line for the *other* way this suite gets run -- a
+   * hand `adb install` plus `am instrument`, which is how it gets debugged -- and for the day AGP
+   * stops doing that.
+   *
+   * What actually keeps a missing grant from reading as a product defect is [awaitNotification],
+   * which asserts the permission is held before it waits, so the failure names the grant instead of
+   * the service.
    */
   @get:Rule
   val notificationPermission: GrantPermissionRule =
@@ -314,6 +327,13 @@ class MuPlaybackServiceTest {
   }
 
   private fun awaitNotification(): StatusBarNotification {
+    // Checked, not assumed, and it can fail: a plain `adb install -r` of this APK leaves
+    // POST_NOTIFICATIONS denied (measured), and every notification assertion below would then be
+    // waiting on an array the system keeps empty for a reason that has nothing to do with this
+    // service. Assert the precondition where it is cheap to name.
+    assertThat(context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS))
+      .describedAs("POST_NOTIFICATIONS must be held or activeNotifications is empty regardless")
+      .isEqualTo(PackageManager.PERMISSION_GRANTED)
     val manager = context.getSystemService(NotificationManager::class.java)
     val deadline = System.currentTimeMillis() + TIMEOUT_MS
     while (System.currentTimeMillis() < deadline) {
