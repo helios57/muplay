@@ -1248,6 +1248,67 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
   ),
+  // `:core:cast` (Plan 6 Task 1). A pure-JVM module with no Compose and no Android, so every floor
+  // here is BRANCH except one and every one of them is enforceable in Tier 1 --
+  // `requiresInstrumentedData` appears nowhere in this entry, deliberately. The include list grows
+  // one task at a time and is completed in Task 11.
+  //
+  // MEASURED, per class, from `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` at this
+  // commit -- per class and not as a module blend, because a BRANCH floor over a class with no
+  // BRANCH counters enforces nothing at any minimum (JaCoCo's NaN path; see `warnVacuousFloors`
+  // below) and a blended number hides which of these is which:
+  //
+  //   HttpHeaders       BRANCH  8/8  = 1.0000     HttpWire        BRANCH 40/40 = 1.0000
+  //   CastHttpClient    BRANCH 26/26 = 1.0000     CastHttpResponse BRANCH 8/8  = 1.0000
+  //   LocalNetworkOnly  BRANCH 27/28 = 0.9643     LocalAddress    LINE    6/6  = 1.0000
+  //
+  // LocalNetworkOnly's one missing branch is unreachable rather than untested: `isLocal`'s `when`
+  // has an `else -> false` arm that no `InetAddress` can select, because `Inet4Address` and
+  // `Inet6Address` are the only two subclasses the platform has.
+  //
+  // RIDE-ALONGS, carrying zero BRANCH counters and therefore unable to move any ratio (a
+  // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation for
+  // NaN): `HttpHeaders$Companion` and `CastHttpClient$Companion` via the `*` patterns, and the
+  // four declaration-only types `HttpRequestHead`, `HttpResponseHead`, `MalformedHttpException`
+  // and `NonLocalAddressException`. They are listed only so `warnUngatedClasses` has nothing to
+  // say about them on every run. The floor is not thereby vacuous: 109 of its 110 BRANCH counters
+  // come from the six classes above.
+  ":core:cast" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.http.HttpHeaders",
+        "app.muplay.cast.http.HttpHeaders*",
+        "app.muplay.cast.http.HttpWire",
+        "app.muplay.cast.http.CastHttpClient",
+        "app.muplay.cast.http.CastHttpClient*",
+        "app.muplay.cast.http.CastHttpResponse",
+        "app.muplay.cast.http.HttpRequestHead",
+        "app.muplay.cast.http.HttpResponseHead",
+        "app.muplay.cast.http.MalformedHttpException",
+        "app.muplay.cast.net.LocalNetworkOnly",
+        "app.muplay.cast.net.NonLocalAddressException",
+      ),
+    ),
+    // `LocalAddress` is gated on LINE and not on BRANCH, which is a measurement rather than a
+    // preference. Its four branches are `takeUnless { it.isAnyLocalAddress }` and `runCatching`'s
+    // own failure arm: the kernel answering the route probe with the wildcard, and the kernel
+    // refusing the probe outright. Neither can be forced from a hermetic JVM test -- both depend
+    // on the host's routing table -- so a BRANCH floor here would have to be set at 0.50 to pass,
+    // and lowering a floor to fit a number is the thing this table refuses to do. LINE 6/6 gates
+    // what can honestly be gated: that the probe runs and returns a real address. `LocalAddressTest`
+    // asserts the answer for loopback unconditionally and, on any host with a real interface, that
+    // routing to that interface's own address selects that same address -- the observation a
+    // `towards` returning a constant would fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.cast.net.LocalAddress"),
+    ),
+  ),
 )
 
 /**
