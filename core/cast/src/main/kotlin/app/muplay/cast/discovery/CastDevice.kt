@@ -31,6 +31,13 @@ data class CastDevice(
     private const val SONOS_UDN_PREFIX = "uuid:RINCON_"
 
     fun from(root: UpnpDevice, descriptionUrl: URI): CastDevice? {
+      // A device with no <UDN> has no identity, and identity is what everything downstream keys
+      // on: `RendererDirectory` deduplicates the picker by it, so two anonymous devices on one
+      // network collapse into one entry, and `RememberedRenderers` stores it, so whichever of them
+      // wins is also what the fallback re-fetches next time. An empty string is not an identity a
+      // user could ever have chosen between -- refuse it here rather than hand one out.
+      if (root.udn.isEmpty()) return null
+
       // The renderer may be the root (a generic DLNA device) or nested inside it (Sonos). Search
       // the flattened tree for the first device that carries an AVTransport, whatever its type:
       // a handful of devices advertise AVTransport on a deviceType that is not MediaRenderer:1,
