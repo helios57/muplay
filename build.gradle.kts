@@ -1364,9 +1364,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // left are both real and both driven (`aPlayerWithNothingLoadedWritesNothingAndDoesNotThrow`
     // and `aDiscontinuityOutOfNothingWritesNothing`).
     //
-    // Falsified by moving the connected run's `.ec` aside: "Rule violated for class
-    // app.muplay.media.ProgressWriter: branches covered ratio is 0.00, but expected minimum is
-    // 0.90", BUILD FAILED, and the same for `ProgressWriter$write$2`.
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
+    // have: "Rule violated for class app.muplay.media.ProgressWriter: branches covered ratio is
+    // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for
+    // `app.muplay.media.ProgressWriter.write.2`.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -1375,7 +1376,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
     // The same family's LINE, instrumented, and it gates what the BRANCH rule above cannot reach:
-    // `ProgressWriter` 33/34 = 0.9706, `ProgressWriter$write$2` 14/14, `ProgressWriter$start$1` 3/3
+    // `ProgressWriter` 34/35 = 0.9714, `ProgressWriter$write$2` 14/14, `ProgressWriter$start$1` 3/3
     // (the ticker body) and `$captureCurrent$1` / `$flushBlocking$1` / `$onPositionDiscontinuity$1`
     // 1/1 each -- the three launched writes, which carry no branch of their own and are exactly the
     // lines a persistence point loses when its `scope.launch` is deleted.
@@ -1393,7 +1394,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // other `$Companion`s. It is inside the pattern rather than excluded so that a reader does not
     // have to wonder whether it was forgotten.
     //
-    // Falsified with the same `.ec` moved aside: lines covered ratio 0.00 for all six.
+    // Falsified with the same `.ec` moved aside, and watched rather than predicted: "lines covered
+    // ratio is 0.00, but expected minimum is 0.90" for `ProgressWriter`, `ProgressWriter.write.2`,
+    // `ProgressWriter.start.1`, `ProgressWriter.captureCurrent.1`, `ProgressWriter.flushBlocking.1`
+    // and `ProgressWriter.onPositionDiscontinuity.1` -- six classes, one line each, BUILD FAILED.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
