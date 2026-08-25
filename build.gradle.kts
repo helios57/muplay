@@ -12,6 +12,14 @@ import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
 import org.gradle.testing.jacoco.tasks.JacocoReport
 import org.w3c.dom.Element
 
+// The root project has no `check` task of its own without this, and the `build-logic` tests wired
+// in at the bottom of this file need one to hang from -- every other `check` in this build belongs
+// to a subproject, and `build-logic` is not one. `base` and nothing more: no module applies its
+// plugins here (see below), and this adds `check`/`assemble`/`build`/`clean` lifecycle tasks only.
+plugins {
+  base
+}
+
 // Every module applies its plugins through a build-logic convention plugin (`muplay.*`, defined
 // in build-logic/convention), which applies the underlying AGP/Kotlin/KSP/Hilt plugins itself
 // with an explicit, catalogue-pinned version — so nothing needs declaring here beyond the two
@@ -1448,14 +1456,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackState", "app.muplay.media.TaskRemovalPolicy"),
     ),
-    // 23/24 = 0.9583 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
+    // 22/22 = 1.0000 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
     // in `:app` (see that suite's own doc for why it cannot live in this module, and `Jacoco.kt`'s
     // `mergedExecutionData` for why its `.ec` still lands here).
     //
-    // The one missed branch is the compiler's own: `suspendCoroutine` emits a `COROUTINE_SUSPENDED`
-    // check whose other arm is a synchronous resume that a real IPC connection never takes. 0.90
-    // leaves that single synthetic branch of room and no more -- one genuinely-uncovered branch
-    // takes this to 22/24 = 0.9166, two takes it to 0.875 and fails.
+    // It was 23/24 = 0.9583 until Task 5's fix round, and the two branches that went are the same
+    // kind that went before them: `suspendCoroutine`'s `COROUTINE_SUSPENDED` check, whose other arm
+    // is a synchronous resume a real IPC connection never takes, moved into
+    // `PlaybackConnection$connect$1` -- a continuation class carrying no counters at all -- when the
+    // install-after-connect code moved inside `connect()`. Nothing was excused; the arithmetic
+    // changed because the code did.
     //
     // Three branches that used to sit here are gone rather than excused, and that is worth
     // recording because the fix improved the code: `release()`'s null-safe calls stayed uncovered
@@ -1465,21 +1475,79 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // a loop that exits only by cancellation cannot take its condition's false arm, and a field
     // that is cleared only after the coroutine is cancelled cannot be null inside it. Two branches
     // that can never take their other arm are not safety; they are two uncoverable branches.
+    //
+    // **`PlaybackConnection$controller$2` is deliberately NOT here any more, and that is the honest
+    // reading rather than a retreat.** The lambda measures 5/6 = 0.8333 BRANCH since the fix round,
+    // and the sixth is the false arm of `connection === attempt` inside `invokeOnCompletion`. That
+    // check is load-bearing -- without it, an attempt cancelled by `release()` completing *after* a
+    // caller has already started its replacement would null out the replacement, and the next
+    // `controller()` would build a third controller while the second stayed bound, which is exactly
+    // the leak this round fixed. But its false arm needs the cancelled attempt to complete after the
+    // replacement was assigned, and cancellation resumes through the main dispatcher: `release()`
+    // posts the resume before any later caller can post its own `withContext` body, so on this
+    // project's dispatcher the queue is always [resume, replacement]. No test this project can write
+    // forces the other order. The lambda keeps its LINE rule below (7/7), so
+    // `warnUngatedClasses` is satisfied -- a class matched by any rule is gated -- and this
+    // paragraph is where the missing branch is recorded instead of being hidden under a 0.80 floor
+    // that would permit a real one.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf(
-        "app.muplay.media.PlaybackConnection",
-        "app.muplay.media.PlaybackConnection*controller*2",
-      ),
+      includes = listOf("app.muplay.media.PlaybackConnection"),
       requiresInstrumentedData = true,
     ),
-    // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 45/45
-    // and its four compiled lambdas (`controller$2` 7/7, `listener$1` 2/2, `connect$2$1` 2/2,
-    // `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's two nested types
-    // (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 1/1 -- the "not supported" browse
-    // answer Plan 5 will fill in).
+    // Plan 3 Task 5's fix round: the connection gate. 4/4 = 1.0000 BRANCH from **JVM data alone**
+    // (`ControllerAccessPolicyTest`, five tests, no emulator), and the reason
+    // `ControllerAccessPolicy` is a separate object rather than an `if` inside
+    // `MediaLibrarySession.Callback.onConnect`: the decision about who may read this app's session
+    // metadata -- which carries a non-expiring Subsonic credential -- is gated by the fast tier.
+    //
+    // The four branches are the rule: `isTrustedForMediaControl`, and the exact-name comparison
+    // that lets the platform's own unattributable legacy caller through. Both arms of both are
+    // driven, and both fail in opposite, visible directions -- accepting an untrusted controller
+    // hands any local app a replayable credential, refusing the legacy caller kills hardware media
+    // buttons on API 26 and 27.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum, for the reason
+    // the Task 8a entry above spells out (JaCoCo rejects a minimum over 1.0 before it compares
+    // anything, which proves nothing): with `ControllerAccessPolicyTest` moved aside, "Rule
+    // violated for class app.muplay.media.ControllerAccessPolicy: branches covered ratio is 0.00,
+    // but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ControllerAccessPolicy"),
+    ),
+    // The adapter half of the same decision: `MuPlaybackService$LibraryCallback` 2/2 = 1.0000
+    // BRANCH, instrumented, driven by `ControllerAccessGateTest` -- which calls the real
+    // `onConnect` with a real `ControllerInfo` for a package that is not this one, because
+    // `ControllerInfo` is Android-backed and there is no Robolectric here.
+    //
+    // It rides on the LINE rule below as well (6/6), and it needs this one too rather than only
+    // that one: the class is one `if`, so its two branches ARE the gate, and a LINE floor over a
+    // six-line class is satisfied by an `onConnect` that accepts everything.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.MuPlaybackService*LibraryCallback"),
+      requiresInstrumentedData = true,
+    ),
+    // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 51/51
+    // and its compiled lambdas (`controller$2` 7/7, `controller$2$1` 1/1, `listener$1` 2/2,
+    // `connect$connected$1$1` 2/2, `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's
+    // two nested types (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 6/6 -- the connection
+    // gate, plus the "not supported" browse answer Plan 5 will fill in).
+    //
+    // **Two of those lambda names changed in Task 5's fix round, and the patterns had to move with
+    // them.** `connect$2$1` became `connect$connected$1$1` when the `suspendCoroutine` result was
+    // bound to a local so the install-after-connect code could follow it, and `controller$2$1` is
+    // new -- the `async { connect() }` body. A JaCoCo `includes` pattern that stops matching does
+    // not fail; it silently gates nothing, which is why `warnUngatedClasses` names every class no
+    // rule matches on every run. It is what caught both of these, by name, with their measured
+    // ratios. Read its output after any change that moves a lambda.
     //
     // `MuPlayerFactory` has **zero BRANCH counters**, so LINE is the only counter that can gate it
     // at all -- the vacuous-floor shape this table's own doc describes, checked rather than assumed.
@@ -1520,8 +1588,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.PlaybackConnection",
         "app.muplay.media.PlaybackConnection*controller*2",
+        "app.muplay.media.PlaybackConnection*controller*2*1",
         "app.muplay.media.PlaybackConnection*listener*1",
-        "app.muplay.media.PlaybackConnection*connect*2*1",
+        // Deliberately `*connect*` and not `*connect*connected*1*1`: the suspend function's own
+        // continuation class (`PlaybackConnection$connect$1`) carries zero counters of either kind,
+        // so it can never move this ratio, and a pattern pinned to the lambda's exact spelling is
+        // the thing that just went stale once. This one survives the body being rearranged again.
+        "app.muplay.media.PlaybackConnection*connect*",
         "app.muplay.media.PlaybackConnection*startTicker*1",
         "app.muplay.media.MuPlayerFactory",
         "app.muplay.media.MuPlaybackService*Companion",
@@ -2234,14 +2307,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // JaCoCo reports as no violation at every minimum:
     //
     //   `SoapEnvelope`   34/34 -- `render`'s three validations, `parseResponse`'s "no Body", "no
-    //                    response element" and "a response for a different action" arms,
+    //                    response element" and "a response for a different action" arms (all
+    //                    three now answering `null` rather than an empty map -- Task 3's fix
+    //                    round, the review's MEDIUM: "the device answered nothing" and "the device
+    //                    answered no out arguments" are different facts, and `SoapClient.invoke`
+    //                    turns only the first into a `SoapTransportException`),
     //                    `parseFault`'s four (not a fault / no `UPnPError` detail / an
     //                    `errorCode` that is not a number / no `errorCode` at all), the DOCTYPE
     //                    refusal, the unparseable-XML arm, and (Task 2's fix round) `descendant`'s
     //                    depth bound refusing and permitting -- the same StackOverflowError this
     //                    module's `DeviceDescription.parseDevice` carried, in the walker
     //                    `SoapClient.invoke` reaches on **every** response, outside its
-    //                    `try`/`catch`. Was 32/32.
+    //                    `try`/`catch`. Was 32/32. `render`'s escaping of argument values (the
+    //                    same fix round, the review's HIGH 1) adds no branch: it is a call.
     //   `SoapNames`      20/20 -- each of the four `require`s refusing and accepting, the two
     //                    control-URL arms, and `quoteSafely`'s printable/non-printable split.
     //   `UpnpTime`       16/16 -- `parseClock`'s empty, `NOT_IMPLEMENTED` and no-match arms and
@@ -2255,17 +2333,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // included so `warnUngatedClasses` stays quiet, gating nothing. The floor is not vacuous
     // regardless: 72 of its BRANCH counters come from the five classes above.
     //
-    // Falsified rather than assumed, and the first two attempts are recorded because they are the
-    // interesting part: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and the other unusable
-    // values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and this floor still
-    // passes (the `NOT_IMPLEMENTED` arm is also driven by `FakeRendererStrictnessTest`'s
-    // seek-target rejection), and withholding `SoapEnvelopeTest`'s `a fault this client cannot
-    // read a code out of is still a fault` alone leaves it at **29/32 = 0.9062**, still passing.
-    // What does fire it: withholding that test together with `a body that is not xml at all, or
-    // has no Body element, is empty rather than an exception` and `a fault carrying a DOCTYPE is
-    // refused rather than parsed` drops `SoapEnvelope` to **27/32 = 0.84** and this floor fails --
-    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.84,
+    // Falsified rather than assumed, and RE-MEASURED in Task 3's fix round -- which is the part
+    // worth reading, because the previously recorded falsification had gone stale and would have
+    // been believed. It said that withholding `SoapEnvelopeTest`'s `a fault this client cannot
+    // read a code out of is still a fault`, `a body that is not xml at all, or has no Body
+    // element, ...` and `a fault carrying a DOCTYPE is refused rather than parsed` together drops
+    // `SoapEnvelope` to 27/32 = 0.84 and fires this floor. Withholding exactly those three today
+    // leaves it at **32/34 = 0.9412 and this floor GREEN**: the fix round gave three of those arms
+    // second drivers (`SoapClientTest`'s `a 200 with no response element is a transport failure`
+    // reaches the "no Body" arm, and `FakeRendererStrictnessTest`'s `a body carrying a DOCTYPE is
+    // refused rather than parsed` reaches `declaresDoctype`, which the fake now shares rather than
+    // copies). Withholding those three **plus** `a doctype hidden behind a five kilobyte comment
+    // is still seen by the guard`, `a response for a different action is not accepted as this one`
+    // and the fake's own DOCTYPE test drops it to **30/34 = 0.8824** and this floor fails --
+    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.88,
     // but expected minimum is 0.90"*.
+    //
+    // The other recorded near-miss still stands: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and
+    // the other unusable values are null, not zero` leaves `UpnpTime` at **15/16 = 0.9375** and
+    // this floor still passes, the `NOT_IMPLEMENTED` arm being also driven by
+    // `FakeRendererStrictnessTest`'s seek-target rejection.
     //
     // The measurement is 1.0000 and the floor is 0.90 on purpose -- raising a minimum above a
     // measured 1.0000 is not a way to watch a gate fire, because JaCoCo validates the minimum is
@@ -2295,16 +2382,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                     over the one class in this package whose ordering defect this task
     //                     exists to prevent. LINE 12/12.
     //   `SoapClient*`     `SoapClient` itself is LINE 3/3 with no branches; the real body is the
-    //                     `invoke$2` continuation, LINE 18/18 and BRANCH **5/6** -- the missing
+    //                     `invoke$2` continuation, LINE 19/19 and BRANCH **7/8** -- the missing
     //                     arm being the coroutine `label` check whose other arm is unreachable by
     //                     construction, exactly as recorded for `RendererDirectory$describe$xml$1`
     //                     above. Lowering a BRANCH floor to fit that is what this table refuses to
-    //                     do, so LINE gates what can honestly be gated.
+    //                     do, so LINE gates what can honestly be gated. Was LINE 18/18 and BRANCH
+    //                     5/6; Task 3's fix round added the elvis that turns an unreadable 200
+    //                     into a `SoapTransportException`, which is one line and two branches.
     //
-    // Falsified: withholding `XmlTextTest`'s two `unescape` tests drops `XmlText` to LINE
-    // **6/12 = 0.50** and this floor fails -- *"Rule violated for class app.muplay.cast.soap.XmlText:
-    // lines covered ratio is 0.50, but expected minimum is 0.90"*. Nothing else in this module
-    // calls `unescape`; Task 4's DIDL round trip will be the second caller.
+    // Falsified, and RE-MEASURED in that fix round because the note here had gone stale in the way
+    // it predicted itself: it said withholding `XmlTextTest`'s two `unescape` tests drops `XmlText`
+    // to LINE 6/12 = 0.50, and added *"Task 4's DIDL round trip will be the second caller"*. Task 4
+    // landed. Withholding those two alone now leaves `XmlText` at **12/12 = 1.0000 and this floor
+    // GREEN**. What fires it is those two together with `DidlLiteTest`'s two decoding tests --
+    // `didl survives being embedded in a soap envelope and read back out` and `the metadata
+    // argument carries the document escaped exactly once` -- which drops `XmlText` to
+    // **6/12 = 0.50**: *"Rule violated for class app.muplay.cast.soap.XmlText: lines covered ratio
+    // is 0.50, but expected minimum is 0.90"*.
+    //
+    // The `SoapClient*` half of this floor is the honest weak one, and the measurement is recorded
+    // rather than hidden: withholding all four of `SoapClientTest`'s failure-path tests (`a
+    // renderer that has gone away`, `a refused action throws with the device's own error code`, `a
+    // status this client cannot read`, `a 200 with no response element is a transport failure`)
+    // leaves `invoke$2` at LINE **18/19 = 0.9474** -- still green -- while its BRANCH falls to
+    // 5/8 = 0.6250. That is what a LINE floor over a class whose every line has several callers
+    // buys, and it is why the four mutation probes on `SoapClient` in `ci/mutation-probes.sh`, not
+    // this floor, are what actually holds that class.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -3796,4 +3899,23 @@ subprojects {
     }
     tasks.named("check") { dependsOn(guard) }
   }
+}
+
+/**
+ * `build-logic`'s own JVM tests, wired into the root build's `check`.
+ *
+ * `build-logic` is a **separate Gradle build** (`pluginManagement { includeBuild("build-logic") }`
+ * in settings.gradle.kts), so its tasks are invisible to `./gradlew check` and to every CI job:
+ * nothing in `.github/workflows/` names them, and nothing would. That is not a detail -- until
+ * Plan 3 Task 5's review round, `build-logic` had no test source set at all, and the two security
+ * gates it contains (`VerifyMergedManifestTask`, `VerifyNoDestructiveMigrationTask`) had their
+ * *behaviour* verified nowhere. Adding a test that nothing runs would have been the same defect
+ * with a longer changelog.
+ *
+ * `gradle.includedBuild(..).task(..)` is the supported way to depend across that boundary. Named
+ * from the root's own `check` rather than added to a CI step, for the reason every other gate in
+ * this file is: a check that has to be remembered is a check that stops running.
+ */
+tasks.named("check") {
+  dependsOn(gradle.includedBuild("build-logic").task(":convention:test"))
 }

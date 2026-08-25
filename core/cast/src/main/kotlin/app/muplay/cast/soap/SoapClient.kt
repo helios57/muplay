@@ -41,8 +41,9 @@ class SoapClient(private val http: CastHttpClient = CastHttpClient()) {
    * @throws MalformedSoapRequestException for a control URL, service type or action name this
    *   client will not put on the wire -- checked before anything is rendered, resolved or opened.
    * @throws UpnpErrorException when the renderer answered a SOAP fault.
-   * @throws SoapTransportException when the renderer could not be reached, or answered a status
-   *   this client cannot read as either success or a fault.
+   * @throws SoapTransportException when the renderer could not be reached, answered a status this
+   *   client cannot read as either success or a fault, or answered `200` with a body carrying no
+   *   response for [action] -- an unreadable answer is not an empty one.
    */
   suspend fun invoke(
     controlUrl: URI,
@@ -82,7 +83,13 @@ class SoapClient(private val http: CastHttpClient = CastHttpClient()) {
     if (response.code != HttpURLConnection.HTTP_OK) {
       throw SoapTransportException(action, response.code)
     }
+    // A 200 whose body carries no response for this action is not a result. It is the third thing
+    // this method's KDoc has always named -- "answered something unreadable" -- and reporting it
+    // as an empty success would hand Task 5 a position of zero for a body it never read. An action
+    // with genuinely no out arguments still answers `<u:PlayResponse/>`, which parses to an empty
+    // map and is a success; only the absence of the element itself lands here.
     SoapEnvelope.parseResponse(action, response.bodyText())
+      ?: throw SoapTransportException(action, response.code)
   }
 
   private companion object {

@@ -5619,13 +5619,24 @@ git commit -m "feat(cast): SOAP envelopes, UPnP faults, and a renderer strict en
     `companion object { fun of(suffix: String?, format: StreamFormat): ServedMedia; const val DLNA_FLAGS; const val FALLBACK_MIME; const val FALLBACK_EXTENSION }`
   - `data class CastItem(val mediaId, val title, val artist, val albumTitle, val artworkUri, val durationMs, val upnpClass, val resourceUrl, val served)`
   - `object DidlLite` with `fun render(item: CastItem): String`,
-    `fun renderEscaped(item: CastItem): String`,
+    `fun renderEscaped(item: CastItem): String`,  <!-- SUPERSEDED: see the note below -->
     `const val CLASS_MUSIC_TRACK`, `const val CLASS_AUDIO_BOOK`
 - **Modifies Plan 3's `MediaItems.of`**, adding a fifth parameter. See "The three-way invariant".
 - **Plan 4 interaction:** `upnpClass` is chosen from `MediaMetadata.mediaType`, which **Plan 3
   Task 6** sets from the user's `LibraryRole` assignment. Plan 4 does not own it. If Plan 4 changes
   how a book is identified, this task reads whatever `MediaMetadata.mediaType` then carries and
   needs no change of its own.
+
+> **CORRECTION, landed after this plan was written.** `DidlLite.renderEscaped` **no longer exists**.
+> The SOAP review found that `SoapEnvelope.render` inserted argument *values* verbatim, so a
+> Navidrome stream URL's `&` produced a document that was not well-formed and a `</CurrentURI>` in a
+> value injected a third argument. The fix put escaping where framing belongs -- **`render` now
+> escapes every argument value** -- which makes a pre-escaped DIDL document the defect rather than
+> the contract. Callers pass `DidlLite.render(item)` raw. `SoapEnvelope.parseResponse` also became
+> **nullable**: `null` means "no response for this action", an empty map means "an action with no
+> out-arguments", and `SoapClient.invoke` turns `null` into a `SoapTransportException` so the
+> one-`catch (IOException)` promise still holds. Everything below in this task that names
+> `renderEscaped` is history; read it as `render`.
 
 ### The three-way invariant, and why one field has to move into `MediaItem`
 
@@ -6997,9 +7008,10 @@ class UpnpRenderer(
       listOf(
         SoapArgument("InstanceID", INSTANCE_ID),
         SoapArgument("CurrentURI", item.resourceUrl),
-        // Escaped exactly once, by `renderEscaped`. Escaping it again here is the
-        // `&amp;lt;DIDL-Lite` defect; not escaping it breaks the envelope.
-        SoapArgument("CurrentURIMetaData", DidlLite.renderEscaped(item)),
+        // Handed over RAW. `SoapEnvelope.render` escapes every argument value, because
+        // escaping is framing and framing belongs to the layer that owns the envelope.
+        // Escaping it here as well is the `&amp;lt;DIDL-Lite` defect.
+        SoapArgument("CurrentURIMetaData", DidlLite.render(item)),
       ),
     )
   }
@@ -7017,7 +7029,7 @@ class UpnpRenderer(
       listOf(
         SoapArgument("InstanceID", INSTANCE_ID),
         SoapArgument("NextURI", item?.resourceUrl.orEmpty()),
-        SoapArgument("NextURIMetaData", item?.let { DidlLite.renderEscaped(it) }.orEmpty()),
+        SoapArgument("NextURIMetaData", item?.let { DidlLite.render(it) }.orEmpty()),
       ),
     )
   }

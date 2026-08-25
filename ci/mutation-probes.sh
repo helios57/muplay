@@ -192,6 +192,10 @@ PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackServic
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
 AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
+
+# Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
+# exported playback session at all.
+CONTROLLER_ACCESS = "core/media/src/main/kotlin/app/muplay/media/ControllerAccessPolicy.kt"
 DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
 DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
 DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
@@ -1600,7 +1604,10 @@ PROBES = [
      '    .replace("\\"", "&quot;")\n'
      '    .replace("\'", "&apos;")\n'
      '    .replace("&", "&amp;")',
-     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 5),
+     # 22 as of Task 3's fix round, up from 5: `SoapEnvelope.render` escapes argument values now,
+     # so this ordering defect reaches every test that reads a rendered envelope or sends one to
+     # the fake -- which is the point of moving escaping to one layer, seen from the probe side.
+     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 22),
 
     # The quotes are part of the SOAPACTION header VALUE. Sent unquoted, some renderers accept it
     # and Sonos answers 401 -- the worst possible distribution, because it works on the developer's
@@ -1609,7 +1616,8 @@ PROBES = [
     ("soap/soapaction-unquoted", SOAP_ENVELOPE,
      '    "\\"${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}\\""',
      '    "${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}"',
-     "the soapaction header value is quoted", 25),
+     # 28, up from 25: Task 3's fix round added three tests that send a quoted SOAPACTION.
+     "the soapaction header value is quoted", 28),
 
     # UPnP argument lists are ORDERED by the service description and implementations parse
     # positionally. Sorting them is the mutation because it is the plausible one: a `Map` a caller
@@ -1617,7 +1625,8 @@ PROBES = [
     ("soap/arguments-sorted", SOAP_ENVELOPE,
      "      arguments.forEach { (name, value) ->",
      "      arguments.sortedBy { it.name }.forEach { (name, value) ->",
-     "arguments appear in the order they were given, and reordering them changes the bytes", 15),
+     # 18, up from 15, for the same reason.
+     "arguments appear in the order they were given, and reordering them changes the bytes", 18),
 
     # A UPnP error is HTTP 500 WITH A BODY. Checking the status first turns "Sonos said 714, illegal
     # MIME type" into "HTTP 500" and loses the only thing the caller can act on. Two reds, which is
@@ -1670,6 +1679,8 @@ PROBES = [
      "  data class Strictness(\n"
      "    /** SOAP 1.1 quotes the `SOAPACTION` value. Sonos enforces it. Violation: 401. */\n"
      "    val requireQuotedSoapAction: Boolean = true,\n"
+     "    /** A control body is XML and a device parses it. See [RecordedSoap.arguments]. Violation: 401. */\n"
+     "    val requireWellFormedBody: Boolean = true,\n"
      "    /** UPnP argument lists are ordered by the service description. Violation: 402. */\n"
      "    val requireArgumentOrder: Boolean = true,\n"
      '    /** Spec section 6: *"DIDL-Lite mandatory"*. Violation: 714. */\n'
@@ -1685,6 +1696,7 @@ PROBES = [
      "  )",
      "  data class Strictness(\n"
      "    val requireQuotedSoapAction: Boolean = false,\n"
+     "    val requireWellFormedBody: Boolean = false,\n"
      "    val requireArgumentOrder: Boolean = false,\n"
      "    val requireNonEmptyMetadata: Boolean = false,\n"
      "    val requireUrlExtension: Boolean = false,\n"
@@ -1692,7 +1704,56 @@ PROBES = [
      '    val supportedSeekModes: List<String> = listOf("REL_TIME", "ABS_TIME"),\n'
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
-     "an unquoted soapaction is rejected with 401", 10),
+     # 12, up from 10: an eighth knob (`requireWellFormedBody`) and the two tests that drive it.
+     "an unquoted soapaction is rejected with 401", 12),
+
+    # ---- Plan 6 Task 3, fix round: the two HIGH findings of its security review --------------
+    #
+    # THE FIRST ONE, AND THE REASON THE SECOND ONE MATTERS. `render` validated the service type,
+    # the action and every argument NAME and then interpolated argument VALUES with no escaping at
+    # all, while its KDoc called itself "total: well-formed XML or throws". A Navidrome stream URL
+    # -- `/rest/stream?u=x&t=y&s=z`, the URL this app builds for every single track -- produced a
+    # document that fails at *"The reference to entity `t` must end with ';'"*, so `parseResponse`
+    # could not read back what `render` had just written and no device could read it either.
+    ("soap/argument-value-unescaped", SOAP_ENVELOPE,
+     "        append(XmlText.escape(value))",
+     "        append(value)",
+     # 17, MEASURED. High, and honestly so: unescaped values break every rendered envelope in the
+     # module at once, which is exactly the blast radius the finding described.
+     "a navidrome stream url reaches the device intact, ampersands and all", 17),
+
+    # THE MIRROR IMAGE, re-pointed here from `didl/metadata-escaped-twice` when
+    # `DidlLite.renderEscaped` was deleted. Escaping is framing and framing now happens in exactly
+    # one place, so this is where doing it twice has to be caught: `&amp;lt;DIDL-Lite` inside
+    # `CurrentURIMetaData` is a device that shows the track as unknown with no error anywhere, and
+    # `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it.
+    ("soap/argument-escaped-twice", SOAP_ENVELOPE,
+     "        append(XmlText.escape(value))",
+     "        append(XmlText.escape(XmlText.escape(value)))",
+     # 16, MEASURED, for the mirror-image reason.
+     "the metadata argument carries the document escaped exactly once", 16),
+
+    # THE SECOND HIGH FINDING, AND THE ONE THAT MADE THE FIRST INVISIBLE. `RecordedSoap.arguments`
+    # parsed request bodies with `<(\w+)>(.*?)</\1>`, and a regex cannot tell well-formed XML from
+    # malformed XML -- so a fake advertised as "strict by default", with its own strictness test
+    # class and its own probe, accepted a document no real renderer could have read, and 311 green
+    # tests said nothing. It is a real parser now; this probe is the memory of what happens when
+    # what it could not read is treated as a request anyway.
+    ("soap/fake-accepts-unparseable-body", SOAP_FAKE,
+     "    val arguments = recorded.arguments\n"
+     "      ?: if (strictness.requireWellFormedBody) return fault(UpnpError.INVALID_ACTION) else emptyList()",
+     "    val arguments = recorded.arguments ?: emptyList()",
+     "a body that is not well-formed xml is rejected with 401", 2),
+
+    # THE MEDIUM FROM THE SAME REVIEW. `parseResponse` answered `emptyMap()` both for "this action
+    # has no out arguments" and for "there is no answer to this action in this body". Task 5 reads
+    # `RelTime` out of a `GetPositionInfo`; given the second dressed up as the first it reads
+    # nothing and reports a position of zero for a device that never answered.
+    ("soap/unreadable-response-is-empty", SOAP_CLIENT,
+     "    SoapEnvelope.parseResponse(action, response.bodyText())\n"
+     "      ?: throw SoapTransportException(action, response.code)",
+     "    SoapEnvelope.parseResponse(action, response.bodyText()).orEmpty()",
+     "a 200 with no response element is a transport failure, while an empty response is a success", 1),
 
     # ---- Plan 5 Task 3: which browse tree a connected controller gets ------------------------
     #
@@ -1925,14 +1986,12 @@ PROBES = [
      "    append(item.resourceUrl)",
      "every text field is escaped, including in the res url", 2),
 
-    # The mirror image, and the one that gets applied twice as often as it gets forgotten:
-    # `&amp;lt;DIDL-Lite` inside `CurrentURIMetaData` is a device that shows the track as unknown
-    # with no error reported anywhere. `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it,
-    # so Task 5's suite reddens on this too.
-    ("didl/metadata-escaped-twice", DIDL_LITE,
-     "  fun renderEscaped(item: CastItem): String = XmlText.escape(render(item))",
-     "  fun renderEscaped(item: CastItem): String = XmlText.escape(XmlText.escape(render(item)))",
-     "renderEscaped is render escaped exactly once", 2),
+    # `didl/metadata-escaped-twice` used to live here, mutating `DidlLite.renderEscaped`. That
+    # function is gone -- escaping moved to `SoapEnvelope.render`, the one layer that owns the
+    # envelope, so that no caller has to remember which of two `DidlLite` functions this argument
+    # wanted. The probe was RE-POINTED rather than deleted: it is `soap/argument-escaped-twice`
+    # above, on the single site that can now make the mistake. Left stale it would have aborted
+    # this whole list at the all-probes preflight.
 
     # THE INVARIANT PROBE. `> 2` instead of `> 1` is the off-by-one that makes the check report a
     # disagreement only when all three legs differ -- i.e. it goes quiet on exactly the case the
@@ -1976,6 +2035,34 @@ PROBES = [
      'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=<redacted>)"',
      'override fun toString(): String = "Lidarr(baseUrl=$baseUrl, apiKey=$apiKey)"',
      "toString does not leak the api key", 1),
+
+    # ---- Plan 3 Task 5, review round: who may connect to the exported media session ----------
+    # The service is exported -- it has to be, or Android Auto, Wear, Assistant and the system
+    # media controls cannot find it -- with no `android:permission`, and Media3's default callback
+    # accepts every connection unconditionally. A connected controller gets
+    # `DEFAULT_UNTRUSTED_PLAYER_COMMANDS`, which withholds transport control and grants metadata
+    # reads: i.e. the artwork URI, which carries `u`, `s=salt` and `t=md5(password+salt)` and does
+    # not expire.
+    #
+    # The first probe is the gate failing OPEN, which is the shape that ships silently: the app's
+    # own controller still connects, every playback test on every tier stays green, and any local
+    # app can read the credential. Nothing in this project noticed it for a whole task.
+    ("media/controller-gate-accepts-everyone", CONTROLLER_ACCESS,
+     "isTrustedForMediaControl || controllerPackageName == PLATFORM_LEGACY_CONTROLLER_PACKAGE",
+     "controllerPackageName.isNotEmpty() || isTrustedForMediaControl",
+     # 3, measured: it also reddens `this app's own controller connects, and does so on the trusted
+     # arm` (whose second half pins that the decision is the trust flag and not the package name)
+     # and `the legacy carve-out is one exact name, not a family of them`.
+     "an app the platform does not trust with media control cannot connect", 3),
+    # The other direction, and it breaks a real user rather than a real secret: dropping the legacy
+    # carve-out refuses the platform's own unattributable caller, which below API 28 is every
+    # headset button and Bluetooth AVRCP command that reaches the session (minSdk is 26). Neither
+    # this project's emulator nor any device test it can run reproduces that API level -- which is
+    # the whole reason this rule is a plain function the JVM tier holds.
+    ("media/controller-gate-drops-legacy-carve-out", CONTROLLER_ACCESS,
+     "isTrustedForMediaControl || controllerPackageName == PLATFORM_LEGACY_CONTROLLER_PACKAGE",
+     "isTrustedForMediaControl",
+     "the platform's own unattributable legacy caller connects", 1),
 
     # ---- Plan 7 Task 3: the request store's JVM-reachable half ---------------------------------
     # ONLY the JVM-reachable half, and that is a limit worth reading before adding to this family.
@@ -2093,6 +2180,11 @@ LATER_PROBE_FILES = [
     PLAYBACK_LAUNCHER,
     # Plan 3 Task 6.
     AUDIO_ATTRIBUTES,
+
+    # Plan 3 Task 5's review round, added in the same edit as its two probes above -- which is what
+    # this list's own comment asks for, and the reason it asks: a mutated file no `git checkout`
+    # names is left in the tree when the run ends.
+    CONTROLLER_ACCESS,
 ]
 
 

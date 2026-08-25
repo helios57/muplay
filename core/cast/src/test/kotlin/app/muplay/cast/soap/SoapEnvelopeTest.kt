@@ -1,6 +1,7 @@
 package app.muplay.cast.soap
 
 import app.muplay.cast.discovery.DeviceDescription
+import javax.xml.parsers.DocumentBuilderFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.assertj.core.api.Assertions.entry
@@ -70,7 +71,7 @@ class SoapEnvelopeTest {
       listOf(
         SoapArgument("InstanceID", "0"),
         SoapArgument("CurrentURI", "http://10.0.0.2:8080/media/a.mp3"),
-        SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite/&gt;"),
+        SoapArgument("CurrentURIMetaData", "<DIDL-Lite/>"),
       ),
     )
     val reordered = SoapEnvelope.render(
@@ -78,7 +79,7 @@ class SoapEnvelopeTest {
       "SetAVTransportURI",
       listOf(
         SoapArgument("InstanceID", "0"),
-        SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite/&gt;"),
+        SoapArgument("CurrentURIMetaData", "<DIDL-Lite/>"),
         SoapArgument("CurrentURI", "http://10.0.0.2:8080/media/a.mp3"),
       ),
     )
@@ -94,18 +95,92 @@ class SoapEnvelopeTest {
     assertThat(reordered).isNotEqualTo(correct)
   }
 
+  /**
+   * **An argument value is text, and text in an XML element is escaped -- here, exactly once.**
+   *
+   * `render` used to insert values verbatim and its KDoc called that deliberate, on the grounds
+   * that `CurrentURIMetaData` arrives pre-escaped. The three values below are each a value MuPlay
+   * itself produces, and each one falsifies that: the first is the URL of every track this app can
+   * play, the second is what a caller who pre-escaped hands over, and the third is what a value
+   * carrying markup does to the shape of the document.
+   */
   @Test
-  fun `an argument value is inserted verbatim, because escaping is the caller's decision`() {
-    // Deliberate: `CurrentURIMetaData` arrives ALREADY escaped from `DidlLite` (Task 4), and
-    // escaping it again here is the `&amp;lt;DIDL-Lite` defect. The envelope's job is framing.
+  fun `an argument value is escaped, so a stream url and a didl document are both just text`() {
+    val streamUrl = "http://10.0.0.2:8080/rest/stream?u=muplay&t=9f2a&s=abc&id=tr-7"
+
     val xml = SoapEnvelope.render(
       avTransport,
       "SetAVTransportURI",
-      listOf(SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite&gt;")),
+      listOf(
+        SoapArgument("CurrentURI", streamUrl),
+        SoapArgument("CurrentURIMetaData", "<DIDL-Lite><item id=\"a&b\"/></DIDL-Lite>"),
+      ),
     )
 
-    assertThat(xml).contains("<CurrentURIMetaData>&lt;DIDL-Lite&gt;</CurrentURIMetaData>")
+    assertThat(xml).contains(
+      "<CurrentURI>http://10.0.0.2:8080/rest/stream?u=muplay&amp;t=9f2a&amp;s=abc&amp;id=tr-7</CurrentURI>",
+    )
+    assertThat(xml).contains(
+      "<CurrentURIMetaData>" +
+        "&lt;DIDL-Lite&gt;&lt;item id=&quot;a&amp;b&quot;/&gt;&lt;/DIDL-Lite&gt;" +
+        "</CurrentURIMetaData>",
+    )
+    // Escaped ONCE. `&amp;lt;DIDL-Lite` is the mirror-image defect and it must not be here.
     assertThat(xml).doesNotContain("&amp;lt;")
+  }
+
+  /**
+   * **The property the whole change exists for: `render`'s output is always a document.**
+   *
+   * The KDoc claimed `render` was *"total: well-formed XML or throws"* while it was not, and the
+   * assertion that could have said so was never written -- nothing in this file parsed what
+   * `render` produced. So this one parses it, over the two values that used to break it: a real
+   * Navidrome stream URL, and a value that closes the element it is inside and opens two more.
+   */
+  @Test
+  fun `render's output parses, and a value cannot inject an argument of its own`() {
+    val injecting = "x</CurrentURI><Speed>99</Speed><CurrentURI>y"
+    val xml = SoapEnvelope.render(
+      avTransport,
+      "SetAVTransportURI",
+      listOf(
+        SoapArgument("InstanceID", "0"),
+        SoapArgument("CurrentURI", injecting),
+        SoapArgument("CurrentURIMetaData", "http://h/s?u=a&t=b&s=c"),
+      ),
+    )
+
+    val document = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+      .newDocumentBuilder().parse(xml.byteInputStream())
+    val action = document.documentElement.firstChild.firstChild
+
+    // Three arguments went in and three came out -- not four, and not a `Speed` the caller never
+    // asked for. `getElementsByTagName` would find the injected one wherever it landed.
+    assertThat(document.getElementsByTagName("Speed").length).isZero()
+    assertThat((0 until action.childNodes.length).map { action.childNodes.item(it).nodeName })
+      .containsExactly("InstanceID", "CurrentURI", "CurrentURIMetaData")
+    // ...and each value survived as its own text, which is the other half: an escape that mangled
+    // the value would satisfy the count above.
+    assertThat(document.getElementsByTagName("CurrentURI").item(0).textContent).isEqualTo(injecting)
+    assertThat(document.getElementsByTagName("CurrentURIMetaData").item(0).textContent)
+      .isEqualTo("http://h/s?u=a&t=b&s=c")
+  }
+
+  /**
+   * And [SoapEnvelope] can read back what [SoapEnvelope] wrote -- which was false before this fix
+   * for any argument carrying an `&`, and is the cheapest statement of the whole defect.
+   */
+  @Test
+  fun `parseResponse reads back the values render wrote`() {
+    val url = "http://10.0.0.2:8080/rest/stream?u=muplay&t=9f2a&s=abc"
+    val envelope = SoapEnvelope.render(
+      avTransport,
+      "GetPositionInfoResponse",
+      listOf(SoapArgument("TrackURI", url), SoapArgument("TrackMetaData", "<DIDL-Lite/>")),
+    )
+
+    assertThat(SoapEnvelope.parseResponse("GetPositionInfo", envelope))
+      .containsExactly(entry("TrackURI", url), entry("TrackMetaData", "<DIDL-Lite/>"))
   }
 
   @Test
@@ -183,7 +258,9 @@ class SoapEnvelopeTest {
       </s:Envelope>
     """.trimIndent()
 
-    val out = SoapEnvelope.parseResponse("GetPositionInfo", response)
+    // `!!`, and it is an assertion rather than a shortcut: `parseResponse` answers `null` for a
+    // body carrying no response for this action, and this body carries one.
+    val out = SoapEnvelope.parseResponse("GetPositionInfo", response)!!
 
     // The exact key set, in document order, and then the values. `containsKey("RelTime")` alone
     // would pass with every other field silently dropped.
@@ -207,22 +284,45 @@ class SoapEnvelopeTest {
       "<u:GetVolumeResponse xmlns:u=\"x\"><CurrentVolume>30</CurrentVolume></u:GetVolumeResponse>" +
       "</s:Body></s:Envelope>"
 
-    assertThat(SoapEnvelope.parseResponse("GetPositionInfo", wrong)).isEmpty()
-    // The same document read as the action it really carries, so "empty" above is a decision about
-    // the action rather than a parser that returns empty for everything.
+    // `null`, not an empty map: "there is no GetPositionInfoResponse in here" is a different fact
+    // from "GetPositionInfo answered with no out arguments", and `SoapClient` turns only the first
+    // into a transport failure.
+    assertThat(SoapEnvelope.parseResponse("GetPositionInfo", wrong)).isNull()
+    // The same document read as the action it really carries, so `null` above is a decision about
+    // the action rather than a parser that returns nothing for everything.
     assertThat(SoapEnvelope.parseResponse("GetVolume", wrong)).containsExactly(entry("CurrentVolume", "30"))
   }
 
   @Test
-  fun `a body that is not xml at all, or has no Body element, is empty rather than an exception`() {
+  fun `a body that is not xml at all, or has no Body element, is null rather than an exception`() {
     // A renderer answering an HTML error page is a device this client keeps talking to, not a
     // crash. Both parsers are total.
-    assertThat(SoapEnvelope.parseResponse("Play", "<html><body>go away")).isEmpty()
+    assertThat(SoapEnvelope.parseResponse("Play", "<html><body>go away")).isNull()
     assertThat(SoapEnvelope.parseFault("<html><body>go away")).isNull()
-    assertThat(SoapEnvelope.parseResponse("Play", "")).isEmpty()
+    assertThat(SoapEnvelope.parseResponse("Play", "")).isNull()
     assertThat(
       SoapEnvelope.parseResponse("Play", "<s:Envelope xmlns:s=\"x\"><s:Header/></s:Envelope>"),
-    ).isEmpty()
+    ).isNull()
+  }
+
+  /**
+   * **The one shape that really is an empty success**, stated next to the nulls above so the two
+   * cannot be confused by anybody reading this file.
+   *
+   * `Play`, `Stop`, `Pause` and `SetAVTransportURI` all answer a response element with no children.
+   * That is a result -- the device did the thing -- and it must not be reported as unreadable, or
+   * every void action in Tasks 5, 8 and 9 would throw.
+   */
+  @Test
+  fun `an action with no out arguments answers an empty map, not null`() {
+    assertThat(
+      SoapEnvelope.parseResponse(
+        "Play",
+        "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body>" +
+          "<u:PlayResponse xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/>" +
+          "</s:Body></s:Envelope>",
+      ),
+    ).isNotNull().isEmpty()
   }
 
   @Test
@@ -315,7 +415,7 @@ class SoapEnvelopeTest {
         "<!DOCTYPE s:Envelope><s:Envelope xmlns:s=\"x\"><s:Body><u:PlayResponse xmlns:u=\"x\">" +
           "<Ok>1</Ok></u:PlayResponse></s:Body></s:Envelope>",
       ),
-    ).isEmpty()
+    ).isNull()
   }
 
   /**

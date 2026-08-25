@@ -14,6 +14,16 @@ import app.muplay.cast.soap.XmlText
  * [app.muplay.cast.soap.SoapEnvelope] is: this plan asserts the document byte for byte, and a
  * serialiser's choices about self-closing tags and attribute order are not this project's to
  * assert. Escaping is [XmlText]'s, applied per field.
+ *
+ * ### There is one render, and it returns the document
+ *
+ * There used to be a second, `renderEscaped`, which returned the document escaped once and ready
+ * to be the text content of `CurrentURIMetaData`. It is gone, and its absence is the fix rather
+ * than a tidy-up: two functions meant every caller of
+ * [app.muplay.cast.soap.SoapEnvelope.render] had to remember which one this argument wanted, and a
+ * rule a caller must remember is a rule that gets broken. The envelope escapes every value it
+ * writes now, so **pass [render]'s output straight into a `SoapArgument`**. Escaping it first is
+ * the `&amp;lt;DIDL-Lite` defect, and `FakeRenderer` answers 714 to it.
  */
 object DidlLite {
 
@@ -49,13 +59,4 @@ object DidlLite {
     append("</item>")
     append("</DIDL-Lite>")
   }
-
-  /**
-   * The document, escaped **once**, ready to be the text content of `CurrentURIMetaData`.
-   *
-   * A separate function rather than a caller's responsibility, because "escape it before you send
-   * it" is a rule that gets applied twice as often as it gets forgotten, and `&amp;lt;DIDL-Lite`
-   * is a device that shows the track as unknown with no error anywhere.
-   */
-  fun renderEscaped(item: CastItem): String = XmlText.escape(render(item))
 }

@@ -761,6 +761,53 @@ class ConventionTest {
   }
 
   /**
+   * A Hilt `@EntryPoint` is a way to pull a binding out of the graph without injecting it, and all
+   * four of the ones in this repository exist for `:app`'s instrumented tests. In a `src/main/`
+   * source set each is *public API of its module*, so any consumer can reach the binding rather
+   * than declare a dependency on it -- which is the pattern constructor injection exists to remove.
+   *
+   * The reason all four sat in `src/main/` is a true premise with a false conclusion, recorded here
+   * because it is a natural mistake to repeat: Hilt aggregates `@InstallIn` from a variant's **main
+   * compilation**, so declaring one in `:app`'s `androidTest` source set genuinely does not work
+   * (it throws `ClassCastException: Cannot cast ...SingletonCImpl to ...EntryPoint`). But a
+   * build-type source set *is* part of that compilation -- `app/src/debug/kotlin/.../
+   * CleartextPolicyModule.kt` and its `src/release` twin are this repo's own proof -- and the
+   * instrumented tests run the debug variant. `src/debug/` costs nothing and keeps all four out of
+   * both the release graph and every module's published API.
+   *
+   * Written as "none in `src/main/`" rather than "all in `src/debug/`" on purpose. A production
+   * `@EntryPoint` is a legitimate thing to need one day (a framework component Hilt cannot inject);
+   * this rule makes that a decision someone has to come here and record, rather than a file that
+   * lands in `src/main/` because that is where the neighbouring one was.
+   */
+  @Test
+  fun `every Hilt entry point is declared in a debug source set`() {
+    val root = repoRoot()
+    val marker = "@EntryPoint"
+    val declarations = repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { kotlinCode(it.readText()).contains(marker) }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+      .toList()
+
+    // The premise. A scan that matched nothing -- a renamed annotation, a moved repo root -- would
+    // satisfy the assertion below forever, which is the vacuity failure every rule here guards
+    // against. Read from the code with comments stripped, so a KDoc mentioning `@EntryPoint`
+    // (several of them do, including this rule's own subjects) is not counted as a declaration.
+    assertThat(declarations).describedAs("files declaring $marker").isNotEmpty()
+
+    assertThat(declarations.filter { it.contains("/src/main/") })
+      .describedAs(
+        "a Hilt @EntryPoint in src/main/ is public API of its module: any consumer can pull the " +
+          "binding out of the graph instead of injecting it. All of this repository's entry " +
+          "points exist for :app's instrumented tests, and belong in src/debug/ -- which is part " +
+          "of the debug variant's main compilation, so Hilt still aggregates them.",
+      )
+      .isEmpty()
+  }
+
+  /**
    * Nothing in `integrations/` may write to a log.
    *
    * This is the one rule in this class that guards a *value* rather than a build setting, and it
@@ -813,6 +860,84 @@ class ConventionTest {
           "form of it. Redacting toString() protects nothing against a log line that names the " +
           "field. If a diagnostic is genuinely needed here, surface it as a typed result the UI " +
           "can render -- never as a log line that a bug report attaches wholesale.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * `:core:media` builds every `MediaItem` this app plays, and each one's URI is an authenticated
+   * Subsonic stream URL carrying `u`, `s=salt` and `t=md5(password+salt)` -- a credential that does
+   * not expire.
+   *
+   * Today that URL reaches the platform `MediaSession` through nothing at all:
+   * `LegacyConversions` writes `METADATA_KEY_MEDIA_URI` from `MediaItem.requestMetadata.mediaUri`,
+   * and `MediaItems.of` never sets it. That is one line away from being false. "So the session
+   * knows the URI" is a plausible thing for a future task to write, it compiles, it changes no
+   * test's outcome, and it puts a replayable credential on the platform session -- readable by
+   * every app the user has granted notification-listener access.
+   *
+   * The artwork URI is a separate matter and is deliberately *not* banned here: it carries the same
+   * credential, an image loader genuinely needs it, and removing it means carrying a coverArt id
+   * instead (Plan 5's `BrowseNode` already does). This rule is about the one value that has no
+   * reason to cross at all.
+   */
+  @Test
+  fun `nothing in the media module puts a stream URI on the platform session`() {
+    val sourceRoot = File(repoRoot(), "core/media/src/main/kotlin")
+    val sources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${sourceRoot.path}").isNotEmpty()
+
+    // Both spellings, because either one alone is defeatable: `setRequestMetadata` is the builder
+    // call, `setMediaUri` is the only thing worth putting inside one. Matched against code with
+    // comments stripped, so this rule's own subject can be named in a KDoc -- `MediaItems.of`'s
+    // documentation should be free to say why it does not do this.
+    val banned = listOf("setRequestMetadata", "setMediaUri")
+    val offenders = sources
+      .flatMap { file -> banned.filter { kotlinCode(file.readText()).contains(it) }.map { file.name to it } }
+
+    assertThat(offenders)
+      .describedAs(
+        "a MediaItem's requestMetadata.mediaUri becomes METADATA_KEY_MEDIA_URI on the platform " +
+          "session, where every notification listener reads it -- and this app's stream URLs are " +
+          "non-expiring credentials. If a future task genuinely needs a request URI, it must be " +
+          "one that carries no authentication, and that is a decision to record here.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * `MuPlaybackService`'s KDoc makes "nothing here logs" an explicit invariant, and a media service
+   * is the easiest place in an app to break it: every `MediaItem` it holds carries a stream URL
+   * complete with an auth token and salt, and the reflex when a track will not play is to log the
+   * item.
+   *
+   * Same move as `only the cast module's proxy package may reach for OkHttp`, for the same reason:
+   * this repository has an invariant stated in prose, and prose is not a check.
+   *
+   * **What this does not claim.** It is a rule about *this project's* code, not about the process.
+   * Media3's own `MediaSessionLegacyStub` logs a warning naming the artwork `Uri` when the session
+   * bitmap loader fails, and `DefaultHttpDataSource` embeds the request URL in the message of the
+   * exception it throws on a cross-protocol redirect. Neither is reachable from here, and the
+   * service's KDoc says so rather than implying this rule closes them.
+   */
+  @Test
+  fun `nothing in the media module logs`() {
+    val sourceRoot = File(repoRoot(), "core/media/src/main/kotlin")
+    val sources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${sourceRoot.path}").isNotEmpty()
+
+    // `android.util.Log` catches the import and the fully-qualified call; `Log.` catches a use
+    // through a plain import. `println(` catches the other reflex. Over comment-stripped code, so
+    // the service's own KDoc can keep explaining what this rule is for.
+    val loggers = listOf(Regex("""android\.util\.Log"""), Regex("""(^|[^\w.])Log\s*\."""), Regex("""(^|[^\w.])println\s*\("""))
+    val offenders = sources
+      .filter { file -> loggers.any { it.containsMatchIn(kotlinCode(file.readText())) } }
+      .map { it.name }
+
+    assertThat(offenders)
+      .describedAs(
+        "no source under core/media/src/main may log: every MediaItem in this module carries a " +
+          "stream URL with a non-expiring auth token, and the artwork URI carries the same one.",
       )
       .isEmpty()
   }
