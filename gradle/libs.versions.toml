@@ -103,6 +103,13 @@ androidx-test-core     = { module = "androidx.test:core", version.ref = "android
 androidx-test-runner   = { module = "androidx.test:runner", version.ref = "androidxTest" }
 androidx-test-ext      = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
 androidx-test-espresso = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+# `GrantPermissionRule`, and only that. `POST_NOTIFICATIONS` is `dangerous` from API 33: without a
+# runtime grant the media notification is silently not posted and `getActiveNotifications()`
+# returns an empty array, so every notification assertion would pass on nothing. Granting it from
+# a rule keeps that grant beside the test that needs it rather than in an `adb` step someone can
+# reorder away -- the same argument `ci/prepare-emulator.sh` makes for doing `adb reverse` in the
+# same shell as the test run.
+androidx-test-rules    = { module = "androidx.test:rules", version.ref = "androidxTest" }
 openapi-validator      = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
 # Coil 3 publishes under io.coil-kt.coil3, not io.coil-kt.
 coil-compose           = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }

@@ -18,6 +18,14 @@ android {
 dependencies {
   implementation(project(":core:database"))
   implementation(project(":core:designsystem"))
+  // The `:app` -> `:core:media` edge, and the first time anything depends on that module at all.
+  // Two things ride on it that nothing else in the build supplies: the manifest merger pulls
+  // `:core:media`'s service declaration and its three playback permissions into the application's
+  // merged manifest (which `verifyDebugManifest`/`verifyReleaseManifest` then check), and Hilt's
+  // aggregating processor finally sees `MediaModule` inside a real `@HiltAndroidApp` component --
+  // until this line existed, that module's bindings had never been through a Dagger component
+  // compile at all.
+  implementation(project(":core:media"))
   implementation(project(":feature:setup"))
   implementation(project(":feature:library"))
 
@@ -70,4 +78,14 @@ dependencies {
   androidTestImplementation(libs.androidx.test.espresso)
   // ActivityScenario and ApplicationProvider for the journeys.
   androidTestImplementation(libs.androidx.test.core)
+
+  // `MuPlaybackServiceTest`. The service is `@AndroidEntryPoint`, so it can only be started from an
+  // application that is `@HiltAndroidApp` -- which is this module and no other. See that test's own
+  // documentation for why it cannot live in `:core:media`, and `Jacoco.kt`'s `mergedExecutionData`
+  // for why its coverage still lands there.
+  androidTestImplementation(project(":core:media"))
+  // The test lists the seeded tracks off the real container to know what titles to expect.
+  androidTestImplementation(project(":core:network"))
+  androidTestImplementation(libs.androidx.test.rules)
+  androidTestImplementation(libs.assertj)
 }

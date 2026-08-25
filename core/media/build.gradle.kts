@@ -59,4 +59,22 @@ dependencies {
   // the test classpath has to name it here. Test-scope only: no production code in this module
   // touches DataStore.
   androidTestImplementation(libs.datastore.preferences)
+
+  // Plan 3 Task 5. `PlaybackConnection` is the first production class in this module that imports
+  // `kotlinx.coroutines` at all -- `MutableStateFlow`, `CoroutineScope`, `launch`, `delay`,
+  // `withContext` -- so the comment above, which said this module deliberately keeps coroutines off
+  // the production classpath, stopped being true here and this is that dependency declared where it
+  // is now genuinely used.
+  //
+  // `api`, not `implementation`, and for the module's usual reason: `PlaybackConnection.state` is
+  // `StateFlow<PlaybackState>`, so `:feature:player` cannot compile against this module's public
+  // surface without `StateFlow` on its own compile classpath.
+  //
+  // `kotlinx-coroutines-android` is deliberately NOT added alongside it. `PlaybackConnection` needs
+  // a main-thread dispatcher and gets one from `Handler(Looper.getMainLooper())` rather than from
+  // `Dispatchers.Main`, which is the only thing in this file's reach that would have required that
+  // artifact. It is on the runtime classpath transitively today (1.7.3, via Hilt and AndroidX), and
+  // an undeclared-but-used transitive dependency is exactly the audit `plan-2-inherited.md` item 4
+  // asked for -- so this module does not use it.
+  api(libs.coroutines.core)
 }

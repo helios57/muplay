@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- The name a user sees in Settings > Apps > MuPlay > Notifications. Not "MuPlay": the app
+       name is already the heading there, so a channel called "MuPlay" reads as "MuPlay > MuPlay". -->
+  <string name="playback_notification_channel_name">Playback</string>
+</resources>

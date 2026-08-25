@@ -24,13 +24,16 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
         defaultConfig.targetSdk = 36
       }
 
-      configureReleaseManifestVerification()
+      configureMergedManifestVerification()
     }
   }
 }
 
 /**
- * Registers `verifyReleaseManifest` and wires it into `check`: the release variant's merged
+ * Registers `verify<Variant>Manifest` for **every** variant and wires each into `check`.
+ *
+ * Two halves, split across the variants for opposite reasons. The forbidden half is
+ * release-only: the release variant's merged
  * manifest must not contain `usesCleartextTraffic` or `networkSecurityConfig` — the two attributes
  * that can permit cleartext HTTP in a shipped manifest. `usesCleartextTraffic="true"` does it
  * directly; `networkSecurityConfig="@xml/..."` does it indirectly, by pointing at a
@@ -69,16 +72,67 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
  * substring check. If a future change genuinely needs `networkSecurityConfig` in release, that has
  * to be a deliberate, reviewed decision made *here* — narrowing `forbiddenAttributes` or adding a
  * scoped exception — not a manifest edit that slips past this task unnoticed.
+ *
+ * The **required** half runs for every variant, because a missing permission is wrong in both,
+ * and it exists because Spec section 7's permission list has no other enforcement anywhere.
+ * Missing `FOREGROUND_SERVICE_MEDIA_PLAYBACK` does not fail a build, does not fail an install,
+ * and does not fail a foreground test — it throws `SecurityException` from `startForeground`
+ * the first time the app is backgrounded with audio playing, which is precisely the case a quick
+ * manual test does not cover. The same task that already proves an attribute is *absent* now
+ * proves these are *present*, on the same evidence: AGP's own merged manifest.
+ *
+ * `onVariants` with no selector, not a `withBuildType("release")` one: the release-only
+ * expectation moved into `forbiddenAttributes`'s own value rather than staying in the selector,
+ * so the debug variant gets a `verifyDebugManifest` of its own. The release task's name is
+ * unchanged, so `.github/workflows/pr.yml`'s "Release manifest" step still works — it now
+ * names both.
  */
-private fun Project.configureReleaseManifestVerification() {
+private fun Project.configureMergedManifestVerification() {
   val androidComponents = extensions.getByType<ApplicationAndroidComponentsExtension>()
-  androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+  androidComponents.onVariants { variant ->
     val taskName = "verify${variant.name.replaceFirstChar(Char::titlecase)}Manifest"
     val verifyTask = tasks.register<VerifyMergedManifestTask>(taskName) {
       group = "verification"
-      description = "Fails if the ${variant.name} variant's merged manifest enables cleartext HTTP."
+      description = "Checks the ${variant.name} variant's merged manifest."
       mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
-      forbiddenAttributes.set(listOf("usesCleartextTraffic", "networkSecurityConfig"))
+      // Debug legitimately carries `usesCleartextTraffic` -- it talks to a plain-HTTP container on
+      // localhost:4533 (Tier 2's journey) -- and release must never carry it. Same task, different
+      // expectation per variant, which is why the forbidden half is variant-dependent and the
+      // required half below is not.
+      forbiddenAttributes.set(
+        if (variant.buildType == "release") {
+          listOf("usesCleartextTraffic", "networkSecurityConfig")
+        } else {
+          emptyList()
+        },
+      )
+      // Each entry carries its own `android:name="..."` wrapper rather than being a bare name, and
+      // that is load-bearing rather than tidy -- see `VerifyMergedManifestTask.requiredDeclarations`
+      // for the measurement. In short: `android.permission.FOREGROUND_SERVICE` is a prefix of
+      // `android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK`, so the bare form of this list
+      // reports the shorter permission present in a manifest that declares only the longer one.
+      requiredDeclarations.set(
+        listOf(
+          // The stream comes over the network.
+          """android:name="android.permission.INTERNET"""",
+          // `dangerous` from API 33. Without it the media notification is silently not shown.
+          """android:name="android.permission.POST_NOTIFICATIONS"""",
+          // A foreground service needs both: the generic permission, and the typed one that
+          // matches `foregroundServiceType` from API 34. Missing the typed one throws
+          // SecurityException from `startForeground` -- and only once the app is backgrounded
+          // with audio playing, which no quick manual test covers.
+          """android:name="android.permission.FOREGROUND_SERVICE"""",
+          """android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"""",
+          // The service itself, reaching the application from `:core:media`'s own manifest
+          // through the merger. "It is declared in the library" is a claim about source layout;
+          // this is the evidence.
+          """android:name="app.muplay.media.MuPlaybackService"""",
+          // The intent-filter action that makes a MediaSessionService discoverable by Android
+          // Auto, Wear, Assistant and the system media controls.
+          """android:name="androidx.media3.session.MediaSessionService"""",
+          """android:foregroundServiceType="mediaPlayback"""",
+        ),
+      )
     }
     tasks.named("check").configure { dependsOn(verifyTask) }
   }
