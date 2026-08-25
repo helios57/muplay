@@ -1005,11 +1005,27 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.MediaItems", "app.muplay.media.QueueRepository"),
       requiresInstrumentedData = true,
     ),
-    // 17/17 and 10/10 = 1.0000 LINE, instrumented. Both classes ride here *as well as* carrying
+    // 18/18 and 10/10 = 1.0000 LINE, instrumented. Both classes ride here *as well as* carrying
     // the BRANCH rule above -- the same shape `NavidromeLoadErrorHandlingPolicy` already has in
-    // this table, and for a sharper reason: `MediaItems.of` is one builder chain, so a whole
-    // mapped field can be deleted without moving its BRANCH counter by one. LINE is the counter
-    // that notices.
+    // this table.
+    //
+    // **What this rule does NOT do**, corrected from the claim that stood here through one review:
+    // it does not notice a deleted mapped field. The old text said `MediaItems.of` is one builder
+    // chain, so a whole field can be deleted without moving its BRANCH counter -- true -- and then
+    // that "LINE is the counter that notices" -- false. `COVEREDRATIO` is
+    // `covered/(missed+covered)` (this file's own `warnVacuousFloors` says so, and JaCoCo's
+    // `Limit.check` computes it), so deleting `.setTitle(song.title)` takes the *numerator and the
+    // denominator down together*: 18/18 becomes 17/17, still exactly 1.0000, and nothing goes red.
+    // A LINE floor can only ever be moved by an **added, untested** line, never by a deleted
+    // covered one. Even that is coarse at this minimum -- one untested line among these eighteen
+    // scores 18/19 = 0.9474 and passes; it takes three (18/21 = 0.8571) to breach 0.90 -- so what
+    // this rule really gates is a class drifting into a substantially untested block, which is a
+    // real thing to gate and worth keeping. `MediaItems.setDurationMs` was added under exactly
+    // this rule and had to arrive with the test that covers it.
+    //
+    // The thing that actually catches a deleted field is `MediaItemsTest`: one assertion per
+    // mapped field, each observing a pair of dissimilar songs. There is no coverage counter that
+    // substitutes for it, and a reader who believed the old sentence would have thought there was.
     //
     // `QueueRepository$Companion` (`ARTWORK_SIZE_PX`) and `QueueRepository$mediaItems$1` (the
     // suspend continuation) carry zero branches *and* zero lines, so `warnUngatedClasses` skips
