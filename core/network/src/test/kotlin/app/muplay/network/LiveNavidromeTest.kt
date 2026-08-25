@@ -6,6 +6,7 @@ import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.model.SubsonicEnvelope
 import app.muplay.network.model.SubsonicResponseBody
+import app.muplay.testing.BookFixtures
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
@@ -105,7 +106,7 @@ class LiveNavidromeTest {
     // that ignores `musicFolderId` altogether, and "widens the scope" would be unfalsifiable.
     assertThat(albumNames(scopedAlbumList(MUSIC_LIBRARY_ID.toString()))).containsExactly("Test Album")
     assertThat(albumNames(scopedAlbumList(AUDIOBOOKS_LIBRARY_ID.toString())))
-      .containsExactly("Test Book")
+      .containsExactlyInAnyOrderElementsOf(BOOK_ALBUM_NAMES)
   }
 
   @Test
@@ -119,7 +120,7 @@ class LiveNavidromeTest {
       assertThat(body.error).describedAs("error for musicFolderId=%s", ignored).isNull()
       assertThat(albumNames(body))
         .describedAs("albums for musicFolderId=%s", ignored)
-        .containsExactlyInAnyOrder("Test Album", "Test Book")
+        .containsExactlyInAnyOrderElementsOf(BOOK_ALBUM_NAMES + "Test Album")
     }
   }
 
@@ -191,7 +192,9 @@ class LiveNavidromeTest {
     repeat(50) {
       val titles = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).map { it.title }
       assertThat(titles).isNotEmpty
-      assertThat(titles).doesNotContain(AUDIOBOOK_TITLE)
+      // Every audiobook title, not just the one: with a four-book corpus, `doesNotContain` on a
+      // single title is satisfied by a leak that returns the other three.
+      assertThat(titles).doesNotContainAnyElementsOf(AUDIOBOOK_TITLES)
       assertThat(titles).allMatch { it in MUSIC_TITLES }
       distinctDrawOrders += titles
     }
@@ -211,7 +214,7 @@ class LiveNavidromeTest {
     val titles = client("testpass").getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500)
       .map { it.title }
 
-    assertThat(titles).containsExactly(AUDIOBOOK_TITLE)
+    assertThat(titles).containsExactlyInAnyOrderElementsOf(AUDIOBOOK_TITLES)
   }
 
   @Test
@@ -243,7 +246,7 @@ class LiveNavidromeTest {
     listOf("", "abc", "1abc").forEach { malformed ->
       val titles = rawRandomSongTitles(malformed)
 
-      assertThat(titles).describedAs("musicFolderId='%s'", malformed).contains(AUDIOBOOK_TITLE)
+      assertThat(titles).describedAs("musicFolderId='%s'", malformed).containsAll(AUDIOBOOK_TITLES)
       assertThat(titles).describedAs("musicFolderId='%s'", malformed).containsAll(MUSIC_TITLES)
     }
   }
@@ -264,8 +267,12 @@ class LiveNavidromeTest {
 
     assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
       .containsExactly("Test Album")
+    // `containsExactly`, in `ALPHABETICAL_BY_NAME` order, against the oracle's own ordering --
+    // not `contains`. This is the assertion that would have to be weakened if a fixture were
+    // dropped, and weakening it quietly is exactly what must not happen. The control on the line
+    // above is what stops it being equally satisfied by a server that ignores `musicFolderId`.
     assertThat(client.getAlbumList2(AUDIOBOOKS_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
-      .containsExactly("Test Book")
+      .containsExactlyElementsOf(BOOK_ALBUM_NAMES)
     // The paging loop's termination condition, against the real server: past the end is an empty
     // list, not an error.
     assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 99))
@@ -281,6 +288,106 @@ class LiveNavidromeTest {
 
     assertThat(withSongs.songs.map { it.title }).containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
     assertThat(withSongs.songs).allMatch { it.libraryId == MUSIC_LIBRARY_ID }
+  }
+
+  /**
+   * A book that is many files, which is the ordinary shape of a ripped audiobook and the only
+   * fixture that can prove resume came back on the **right file**.
+   *
+   * The durations carry the discrimination, not the titles: a server (or a mapper) that returned
+   * the three files sorted by name would satisfy the titles assertion untouched, because name
+   * order and track order are the same list here. `4 / 6 / 5` is neither sorted nor constant, so
+   * only a mapping that actually reads each file's own duration produces it.
+   */
+  @Test
+  fun `a multi-file book comes back as ordered tracks with the durations the fixture has`() = runTest {
+    val client = client("testpass")
+    val books = client.getAlbumList2(AUDIOBOOKS_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
+    val multiPart = books.single { it.name == BookFixtures.MULTI_PART_BOOK.albumName }
+
+    val album = client.getAlbum(multiPart.id, AUDIOBOOKS_LIBRARY_ID)
+    val inTrackOrder = album.songs.sortedBy { it.trackNumber }
+
+    assertThat(inTrackOrder.map { it.title })
+      .containsExactlyElementsOf(BookFixtures.MULTI_PART_BOOK.tracks.map { it.title })
+    assertThat(inTrackOrder.map { it.trackNumber })
+      .containsExactlyElementsOf(BookFixtures.MULTI_PART_BOOK.tracks.map { it.trackNumber })
+    // Whole seconds is the resolution `Song.durationSeconds` has. ffprobe reads 4049 / 6034 / 5042
+    // ms out of the files (libmp3lame pads to a whole frame — see ci/probe-chapters.sh), and every
+    // one of those truncates and rounds to the same integer, so this comparison is not sitting on
+    // a rounding convention neither reader promises.
+    assertThat(inTrackOrder.map { it.durationSeconds })
+      .containsExactlyElementsOf(BookFixtures.MULTI_PART_BOOK.tracks.map { (it.durationMs / 1000).toInt() })
+    // Three *different* numbers actually came back, which the line above would also satisfy if
+    // ffprobe and Navidrome were both reporting one constant.
+    assertThat(inTrackOrder.map { it.durationSeconds }).doesNotHaveDuplicates()
+  }
+
+  /**
+   * Navidrome's own duration for every file in the corpus, against ffprobe's.
+   *
+   * Two independent readers of the same nine files — taglib inside the server, ffprobe in
+   * `ci/probe-chapters.sh` — agreeing is evidence about the *files*. Neither reader is this
+   * project's code, which is what a golden file recorded from our own mapper would have been.
+   */
+  @Test
+  fun `every seeded file's duration agrees with ffprobe`() = runTest {
+    val client = client("testpass")
+    val expected = (BookFixtures.ALL_BOOKS.flatMap { it.tracks } + BookFixtures.MUSIC_TRACKS)
+      .associate { it.title to (it.durationMs / 1000).toInt() }
+    val observed = listOf(MUSIC_LIBRARY_ID, AUDIOBOOKS_LIBRARY_ID)
+      .flatMap { client.getRandomSongs(musicFolderId = it, size = 500) }
+      .associate { it.title to it.durationSeconds }
+
+    // `containsExactlyInAnyOrderEntriesOf`, not a per-entry loop: a loop over `observed` is
+    // vacuously true when `observed` is empty, and an empty library is exactly the failure this
+    // has to catch.
+    assertThat(observed).containsExactlyInAnyOrderEntriesOf(expected)
+    assertThat(observed).hasSize(SEEDED_TRACK_COUNT)
+  }
+
+  /**
+   * The precondition for chapter extraction, asserted for **every** book file including the
+   * non-faststart one.
+   *
+   * Spike S3 measured Media3's tail-`Range` behaviour against a hand-rolled Python server; whether
+   * Navidrome's `format=raw` path offers the same guarantees for a file whose `moov` trails its
+   * `mdat` is the open question spec §5 and §12 both carry, and `Tail Book` is the fixture that
+   * asks it. This is the server half of the answer — Task 3 owes the Media3 half.
+   *
+   * The tail bytes are compared against the tail of the whole body, not merely counted: a server
+   * that answered 206 with the *start* of the file would satisfy a length check and then hand
+   * Media3 an `ftyp` atom where it asked for a `moov`.
+   */
+  @Test
+  fun `every seeded book streams raw with an accurate content length and honours a tail Range`() = runTest {
+    val client = client("testpass")
+    val books = client.getAlbumList2(AUDIOBOOKS_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
+    val observed = mutableListOf<String>()
+
+    for (book in books) {
+      for (song in client.getAlbum(book.id, AUDIOBOOKS_LIBRARY_ID).songs) {
+        val url = client.streamUrl(song.id, StreamFormat.Raw)
+        val (full, whole) = fetch(url)
+
+        assertThat(full.code).describedAs("status for %s", song.title).isEqualTo(200)
+        assertThat(full.header("Content-Length")?.toLong())
+          .describedAs("Content-Length for %s", song.title).isEqualTo(whole.size.toLong())
+
+        // The last 16 bytes — where a non-faststart file's `moov` header lives, and the exact
+        // shape of request Media3 issues for one.
+        val (tailResponse, tail) = fetch(url, range = "bytes=${whole.size - 16}-${whole.size - 1}")
+
+        assertThat(tailResponse.code).describedAs("tail status for %s", song.title).isEqualTo(206)
+        assertThat(tail).describedAs("tail bytes for %s", song.title)
+          .isEqualTo(whole.copyOfRange(whole.size - 16, whole.size))
+        observed += song.title
+      }
+    }
+
+    // The exact list, not `allMatch` inside the loop: a loop that never ran asserts nothing, and a
+    // broken album lookup is precisely what produces zero iterations.
+    assertThat(observed).containsExactlyInAnyOrderElementsOf(AUDIOBOOK_TITLES)
   }
 
   @Test
@@ -489,7 +596,11 @@ class LiveNavidromeTest {
   @Test
   fun `the audiobook streams raw as an mp4 container`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500).single()
+    // `single { title == AUDIOBOOK_TITLE }`, not `single()`: the Audiobooks library holds six
+    // files since the corpus grew, and three of them are mp3 parts that are not mp4 containers at
+    // all. A bare `single()` would throw before any assertion ran.
+    val song = client.getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500)
+      .single { it.title == AUDIOBOOK_TITLE }
 
     val (response, bytes) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
 
@@ -626,10 +737,30 @@ class LiveNavidromeTest {
     /** The ids `ci/configure-libraries.sh` produces: library 1 is "Music", library 2 "Audiobooks". */
     const val MUSIC_LIBRARY_ID = 1
     const val AUDIOBOOKS_LIBRARY_ID = 2
+    /** The one single-file `.m4b` this class still names individually — the mp4-container test. */
     const val AUDIOBOOK_TITLE = "Test Book"
-    val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
-    /** Three mp3s plus one m4b — ci/seed-fixtures.sh, and the count configure-libraries.sh waits for. */
-    const val SEEDED_TRACK_COUNT = 4
+
+    // Everything below is read out of `BookFixtures`, i.e. out of the ffprobe-derived table
+    // `ci/probe-chapters.sh` writes from the committed audio, rather than transcribed here.
+    //
+    // That is the point, not convenience. The subject of every assertion in this class is *what
+    // Navidrome reports*, and the expectation has to come from somewhere that is not Navidrome:
+    // ffprobe and taglib are two independent readers of the same nine files, and them agreeing is
+    // evidence. A literal `9` copied into this file would instead be a fourth truth -- after the
+    // audio, the table and `ci/configure-libraries.sh` -- with nothing keeping it honest, and this
+    // corpus grew precisely because a corpus that cannot move is a corpus nothing can be measured
+    // against.
+
+    /** Album names in `ALPHABETICAL_BY_NAME` order — the order `BookFixtures.ALL_BOOKS` is in. */
+    val BOOK_ALBUM_NAMES: List<String> = BookFixtures.ALL_BOOKS.map { it.albumName }
+
+    /** Every *song* in the Audiobooks library: three single-file books plus Multi Part Book's three. */
+    val AUDIOBOOK_TITLES: List<String> = BookFixtures.ALL_BOOKS.flatMap { it.tracks }.map { it.title }
+
+    val MUSIC_TITLES: List<String> = BookFixtures.MUSIC_TRACKS.map { it.title }
+
+    /** Nine files across both libraries — and the count `ci/configure-libraries.sh` waits for. */
+    val SEEDED_TRACK_COUNT: Int = BookFixtures.allTrackPaths().size
 
     /**
      * The bitrate `ci/seed-fixtures.sh` encodes the music fixtures at. Requesting `format=mp3` at
