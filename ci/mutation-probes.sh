@@ -141,6 +141,12 @@ CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
 CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
+DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
+DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
+DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
+DISCOVERY_DEVICE = "core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt"
+DISCOVERY_DIR = "core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt"
+DISCOVERY_FETCH = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DescriptionFetcher.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -903,6 +909,83 @@ PROBES = [
      # Two Ints of the same type, adjacent in one constructor -- this repo's recorded
      # wrong-argument shape, the same one `media/read-timeout-copied` records one module over.
      "the read timeout is the one the caller gave, and is not the connect timeout", 1),
+
+    # ---- Plan 6 Task 2: SSDP discovery, the device description, Sonos's embedded renderer -----
+    # Every count below was measured by applying the mutation alone against the committed tree and
+    # reading the result XML; see task-2-report.md for the transcripts. No entry here needs a
+    # LATER_PROBE_FILES line: `revert()` already checks out the whole `core/cast` directory, which
+    # is exactly the case that comment anticipated.
+    #
+    # These six defects share a symptom, and it is the worst one this project has: **the speaker is
+    # simply not in the picker**, with no error, no log line and nothing to chase. Four of them
+    # would have shipped green -- the module was at 100% of its *own* tests before the branch
+    # report was read.
+    ("discovery/man-unquoted", DISCOVERY_SSDP,
+     'append("MAN: \"ssdp:discover\"")', 'append("MAN: ssdp:discover")',
+     # The quotes are in the protocol. A device that receives MAN unquoted is entitled to ignore
+     # the search entirely -- and many answer anyway, so this passes on the tester's network and
+     # fails on the user's. That is why it is asserted as an exact datagram and not with contains().
+     "a multicast search is the exact datagram the protocol specifies", 3),
+    ("discovery/udn-is-whole-usn", DISCOVERY_SSDP,
+     'val udn: String get() = usn.substringBefore("::")', 'val udn: String get() = usn',
+     # A device answers once per matching search target, so one Sonos answers twice with two USNs
+     # and one LOCATION. Without the split it is two picker entries called "Kuche".
+     "the udn is the uuid half of the usn, which is what deduplicates a device", 5),
+    ("discovery/announcement-not-address-checked", DISCOVERY_SSDP,
+     "    if (!LocalNetworkOnly.isLocal(address)) return null\n", "",
+     # SSDP has no authentication of any kind: anything that can send a UDP datagram chooses what
+     # URL this app fetches next. Task 1's rule has to apply to what a device *claims*, not only to
+     # what the app dials.
+     "a reply whose location is not a local address is discarded", 1),
+    ("discovery/truncated-datagram-accepted", DISCOVERY_TRANSPORT,
+     "        if (packet.length == buffer.size) continue\n", "",
+     # recvfrom truncates silently, and the datagram parser is deliberately tolerant of a block
+     # that ends without its blank line -- so a LOCATION clipped at the buffer boundary parses as a
+     # real, shorter URL. The socket readers reject a truncated head; a datagram cannot.
+     "a reply too big for the receive buffer is dropped rather than parsed as a short one", 1),
+    ("discovery/no-devicelist-recursion", DISCOVERY_DESC,
+     '    embedded = childElement(element, "deviceList")\n'
+     "      ?.let { list -> childElements(list, \"device\").map { parseDevice(it, base) } }\n"
+     "      .orEmpty(),\n",
+     "    embedded = emptyList(),\n",
+     # THE Sonos defect. A Sonos root device is a ZonePlayer; the MediaRenderer carrying AVTransport
+     # is nested inside its deviceList beside a MediaServer. A parser that reads
+     # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
+     # requirement is silently absent.
+     "a cast device is built from the sonos root and knows it is a sonos", 8),
+    ("discovery/anything-is-castable", DISCOVERY_DEVICE,
+     "        }\n        ?: return null\n",
+     '        }\n        ?: (root to UpnpService("", "", descriptionUrl, null))\n',
+     # The other direction: a NAS, a router's UPnP IGD and Sonos's own MediaServer all answer SSDP
+     # and none of them can be cast to. Letting one through fails at SetAVTransportURI with UPnP
+     # error 401, long after the user chose it.
+     "a device with no AVTransport anywhere is not a cast device", 13),
+    ("discovery/unsorted-picker", DISCOVERY_DIR,
+     "val devices = (found + recovered).sortedWith(BY_NAME_THEN_UDN)",
+     "val devices = (found + recovered)",
+     # Arrival order is a property of the network, not of the app. A picker whose entries move
+     # between openings is one nobody can build a habit with -- and the four-device test passes by
+     # luck whenever the fake answers in name order, which is why the rename test exists.
+     "the order is by name and not by arrival, proved by renaming one device", 2),
+    ("discovery/no-dedup", DISCOVERY_DIR, "      .distinctBy { it.udn }\n", "",
+     "four devices on the network become two picker entries, in name order", 1),
+    ("discovery/forget-the-missing", DISCOVERY_DIR,
+     "remembered.remember(devices.map { it.remembered() } + stillMissing)",
+     "remembered.remember(devices.map { it.remembered() })",
+     # The store exists so a speaker can be found again when multicast cannot reach it. Writing
+     # back only the devices that answered deletes that fallback on exactly the run it is for.
+     "a remembered device that did not answer is still remembered, so the next run can still name it", 1),
+    ("discovery/unicast-anywhere", DISCOVERY_DIR,
+     "    if (!LocalNetworkOnly.isLocal(address)) return null\n", "",
+     # The remembered URL has been through disk since it was announced. `LocalNetworkOnly` guards
+     # the fetch inside CastHttpClient, but the unicast M-SEARCH is a datagram this class sends on
+     # its own account and nothing else would stop it leaving for the internet.
+     "a remembered url off the local network is never dialled by the unicast fallback", 1),
+    ("discovery/any-status-is-a-description", DISCOVERY_FETCH,
+     "      ?.takeIf { it.code == HTTP_OK }\n", "",
+     # A 404 body parses as "not XML" rather than as "no such device", so the message a user or a
+     # maintainer eventually sees is about XML instead of about a device that has moved.
+     "a 404 is not a description", 1),
 ]
 
 
