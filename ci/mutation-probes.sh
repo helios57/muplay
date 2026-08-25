@@ -1309,10 +1309,12 @@ PROBES = [
      # real, shorter URL. The socket readers reject a truncated head; a datagram cannot.
      "a reply too big for the receive buffer is dropped rather than parsed as a short one", 1),
     ("discovery/no-devicelist-recursion", DISCOVERY_DESC,
-     '    embedded = childElement(element, "deviceList")\n'
-     "      ?.let { list -> childElements(list, \"device\").map { parseDevice(it, base) } }\n"
-     "      .orEmpty(),\n",
-     "    embedded = emptyList(),\n",
+     '      embedded = childElement(element, "deviceList")\n'
+     "        ?.let { list ->\n"
+     "          childElements(list, \"device\").map { parseDevice(it, base, descriptionUrl, depth + 1) }\n"
+     "        }\n"
+     "        .orEmpty(),\n",
+     "      embedded = emptyList(),\n",
      # THE Sonos defect. A Sonos root device is a ZonePlayer; the MediaRenderer carrying AVTransport
      # is nested inside its deviceList beside a MediaServer. A parser that reads
      # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
