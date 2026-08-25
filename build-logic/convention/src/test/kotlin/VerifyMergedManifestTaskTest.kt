@@ -13,10 +13,16 @@ import java.io.File
  *
  * `ConventionTest`'s two manifest rules read `AndroidApplicationConventionPlugin`'s declared
  * `forbiddenAttributes`/`requiredDeclarations` lists -- what the task is *asked* to check. Nothing
- * read what it *does*. Measured, in a throwaway tree, before this file existed: delete the entire
- * `missing` block from [VerifyMergedManifestTask.verify] and `ConventionTest` stays green,
- * `verifyDebugManifest` and `verifyReleaseManifest` both pass (a task that never throws is a task
- * that succeeded), and CI is green. The forbidden half has exactly the same hole.
+ * read what it *does*.
+ *
+ * **Measured, not reasoned about.** With the entire `missing` block deleted from
+ * [VerifyMergedManifestTask.verify] *and*
+ * `android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"` deleted from
+ * `core/media/src/main/AndroidManifest.xml` -- so there was a real, shipped defect to catch --
+ * `./gradlew :app:verifyDebugManifest :app:verifyReleaseManifest :app:testDebugUnitTest
+ * --rerun-tasks --tests '*ConventionTest*'` was **BUILD SUCCESSFUL**, all seventeen `ConventionTest`
+ * rules included. A task that never throws is a task that succeeded. The forbidden half has exactly
+ * the same hole. This file is the only thing in the repository that goes red for either.
  *
  * That is this project's recorded "decision verified at a different layer than applied" defect,
  * aimed at the gate whose whole job is to prove a claim about the shipped manifest -- so the fix is

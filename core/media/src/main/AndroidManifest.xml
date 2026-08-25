@@ -35,14 +35,14 @@
            No android:permission attribute, and that is deliberate rather than an omission: the
            permission that would express "apps the user trusts with media control" is
            MEDIA_CONTENT_CONTROL, which is signature|privileged and cannot be required of a caller
-           by a third-party app. The gate therefore lives where it can be expressed --
-           MuPlaybackService.LibraryCallback.onConnect, over ControllerAccessPolicy.
+           by a third-party app. The gate therefore lives where it can be
+           expressed: MuPlaybackService.LibraryCallback.onConnect, over ControllerAccessPolicy.
 
            That gate is code, not this comment. Media3 gates NOTHING by default: the
            MediaSession.Callback default onConnectAsync in media3-session-1.11.0 is
            `Futures.immediateFuture(new AcceptedResultBuilder(session, controllerInfo).build())`,
            read off the bytecode. An earlier version of this comment said Media3 gated through
-           onConnect while nothing in this module overrode it, which is the worst of both -- see
+           onConnect while nothing in this module overrode it, which is the worst of both. See
            ControllerAccessPolicy for what a connected controller can read. -->
       <intent-filter>
         <action android:name="androidx.media3.session.MediaSessionService" />
