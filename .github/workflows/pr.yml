@@ -61,6 +61,15 @@ jobs:
         # `startForeground` the first time the app is backgrounded with audio playing.
         run: ./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest
 
+      # `check` compiles neither androidTest nor the release variant, so a source
+      # set can break -- or a security control in it can stop compiling -- with
+      # every gate green. `app/src/release/kotlin/.../CleartextPolicyModule.kt` is
+      # the whole release-side cleartext refusal and was verified exactly once, by
+      # hand, when it was written. Same shape as the broken device tier this repo
+      # already carried for hours: two lanes green apart, green together, tier dead.
+      - name: Compile the gates check does not
+        run: ./gradlew :app:compileReleaseKotlin :core:media:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin
+
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a
         # release build (see VerifyNoDestructiveMigrationTask): the first post-release schema bump

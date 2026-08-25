@@ -146,7 +146,7 @@ object SoapEnvelope {
    * `CastHttpClient.maxBodyBytes`.
    */
   private fun bodyOf(xml: String): Element? {
-    if (xml.take(DOCTYPE_SCAN_CHARS).contains("<!DOCTYPE", ignoreCase = true)) return null
+    if (declaresDoctype(xml)) return null
     val document = runCatching {
       DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = false
@@ -184,15 +184,66 @@ object SoapEnvelope {
    */
   private fun trimmedTextOf(element: Element?): String? = element?.let { it.textContent.trim() }
 
-  /** First descendant with this local name, at any depth -- fault details nest inconsistently. */
-  private fun descendant(parent: Element, localName: String): Element? {
+  /**
+   * First descendant with this local name, to a depth of [MAX_FAULT_DEPTH] -- fault details nest
+   * inconsistently, but they do not nest deeply.
+   *
+   * The bound is the whole point of this signature. This walk is recursive, it is reached from
+   * [parseFault], and `SoapClient.invoke` calls **that** on every response, outside its
+   * `try`/`catch` and outside the `runCatching` that guards the parse. So a body of nothing but
+   * nested elements -- measured by the review that found this: depth 8000 at the default stack,
+   * depth 3000 at `-Xss512k`, which is roughly an Android worker thread -- used to answer with a
+   * `StackOverflowError`, from an unauthenticated device on the LAN, at around 56 KB: far inside
+   * `CastHttpClient.maxBodyBytes`, so the size guard did not bound it either.
+   *
+   * That is not a slow parse or a wrong answer. It falsifies this layer's headline contract:
+   * [SoapClient]'s KDoc tells Tasks 5, 8 and 9 that *"one `catch (e: IOException)` around a
+   * `SoapClient` call is complete"*, and a `StackOverflowError` is an `Error`, so every guard
+   * those tasks were told to write misses it and the coroutine dies. It is the same defect, in the
+   * same module, as `DeviceDescription.parseDevice`'s unbounded `deviceList` walk, and it is fixed
+   * the same way.
+   *
+   * Stopping rather than throwing, unlike `DeviceDescription`'s: this function's caller is
+   * documented never to throw, and the degradation is already a meaning this protocol has. A fault
+   * whose `UPnPError` is buried deeper than [MAX_FAULT_DEPTH] is reported as
+   * [UpnpError.ACTION_FAILED] -- "the device refused and did not say why" -- which is exactly what
+   * [parseFault] already answers for a fault whose detail it cannot read.
+   */
+  private fun descendant(parent: Element, localName: String, depth: Int = 0): Element? {
+    if (depth > MAX_FAULT_DEPTH) return null
     childElements(parent).forEach { child ->
       if (child.nodeName.substringAfterLast(':') == localName) return child
-      descendant(child, localName)?.let { return it }
+      descendant(child, localName, depth + 1)?.let { return it }
     }
     return null
   }
 
-  /** The prologue a `DOCTYPE` has to appear in to be one. Same figure as `DeviceDescription`'s. */
-  private const val DOCTYPE_SCAN_CHARS = 4096
+  /**
+   * How deep [descendant] will look. A real fault puts `UPnPError` two elements below `Fault`
+   * (`detail/UPnPError`), so this is sixteen times the shape every device actually sends.
+   */
+  private const val MAX_FAULT_DEPTH = 32
+
+  /**
+   * Whether [xml] declares a `DOCTYPE` anywhere in it. `internal` **so that a test can observe
+   * this decision directly**, and that is not a convenience.
+   *
+   * This used to scan `xml.take(4096)`, on the reasoning that a `DOCTYPE` is only legal in the
+   * prolog. It is, and the prolog has no length limit: a comment is legal `Misc` before the
+   * doctype, so `<!--` + five thousand spaces + `-->` + `<!DOCTYPE ...>` walks straight past a
+   * window of any fixed size. `DeviceDescription.rejectDoctype` carried the identical window and
+   * the identical hole; both are now the whole document, which is free over a body
+   * `CastHttpClient.maxBodyBytes` has already bounded.
+   *
+   * **And the end-to-end assertion cannot see any of that**, which is why this is `internal`
+   * rather than private. [bodyOf] answers `null` for a refused `DOCTYPE` and `null` for a document
+   * the parser would not read -- and on the JVM the `disallow-doctype-decl` feature below refuses
+   * that document itself, so `parseFault(...) == null` is green whether this scan looks at four
+   * kilobytes, at everything, or at nothing at all. The platform where it matters is Android,
+   * where that feature is expected to be refused at `setFeature` (which is the entire reason the
+   * scan exists) and no tier of this project can observe it. So the test asserts this predicate,
+   * exactly as `DeviceDescriptionTest` asserts its sibling's own sentence rather than the word
+   * "DOCTYPE" that SAX also says.
+   */
+  internal fun declaresDoctype(xml: String): Boolean = xml.contains("<!DOCTYPE", ignoreCase = true)
 }
