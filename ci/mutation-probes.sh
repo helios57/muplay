@@ -133,6 +133,9 @@ LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiSta
 STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
+RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
+PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
+PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -552,9 +555,10 @@ PROBES = [
      '      .addPathSegments("rest/stream")',
      'val builder = "http://elsewhere.example:9999/".toHttpUrl().newBuilder()\n'
      '      .addPathSegments("rest/stream")',
-     # 2: the sub-path test observes the same origin from the other side -- a proxy prefix that
-     # this mutation drops.
-     "the host and scheme come from the credentials", 2),
+     # 3: the sub-path test observes the same origin from the other side -- a proxy prefix that
+     # this mutation drops -- and, since the N-2 fix below, so does the scheme test (2 -> 3: this
+     # mutation swaps https for http as part of the origin, which is now observed on its own).
+     "the host and scheme come from the credentials", 3),
     ("stream/no-auth-params", CLIENT,
      '    }\n    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }\n'
      '    return builder.build().toString()\n  }\n',
@@ -569,9 +573,10 @@ PROBES = [
     ("format/always-raw", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Raw",
-     # 4: the opus case, the ogg case, the case-insensitive pair and the caller's-bitrate pair all
-     # observe a transcode that no longer happens.
-     "an opus source is transcoded rather than streamed raw", 4),
+     # 5: the opus case, the ogg case, the case-insensitive pair, the caller's-bitrate pair and
+     # (since the N-1 fix, 4 -> 5) the whole-family case all observe a transcode that no longer
+     # happens.
+     "an opus source is transcoded rather than streamed raw", 5),
     ("format/always-mp3", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Mp3(transcodeBitRateKbps)",
@@ -642,6 +647,202 @@ PROBES = [
     ("media/no-cross-protocol-redirects", MEDIA_MODULE,
      "      .build()", "      .followSslRedirects(false)\n      .build()",
      "redirects are followed, including across protocols", 1),
+
+    # ---- Plan 3 Task 8a: the resume policy -- two numbers, and one of them is the whole seam ----
+    # `NeverResume.resolve` is one expression returning two values, which is precisely the shape
+    # this file's history says goes unobserved: a caller's index and a playback position, either of
+    # which a single constant could satisfy. It is on the JVM tier for the same reason
+    # `StreamRetryPolicy` is -- `resolve(mediaIds, requestedIndex)` names no Media3 or Android type,
+    # deliberately, so the one thing in this application allowed to choose a playback position is
+    # reachable from here.
+    #
+    # Note what is NOT here and cannot be: the *application* of the decision. `MuPlayer`'s six
+    # `setMediaItem(s)` overrides are what carry the answer to the player, they are instrumented
+    # (`ForwardingPlayer`, `MediaItem`, a real `ExoPlayer`), and a policy consulted correctly by
+    # five of six overloads would leave every probe below green. Those mutations belong to Task 8b
+    # and are recorded in its report, the same way `LiveNavidromeTest`'s test-side probes are.
+    # `ProgressTableShapeTest`'s own falsifiability is likewise absent by scope: the only mutation
+    # that would exercise it adds a column to a Room `@Entity`, which changes the exported schema
+    # and reddens `:core:database` wholesale rather than the one guard; it is recorded in
+    # task-8a-report.md as a test-side check instead.
+    #
+    # 5, 4, 4 and 3 rather than 1: "music restarts from 0" is asserted from several angles on
+    # purpose, so breaking it reddens several. The counts are measured, and a count that drifts is
+    # the signal -- see the note on `expected failures` above before changing one.
+    ("resume/position-honoured", RESUME_POLICY,
+     "startPositionMs = 0L)", "startPositionMs = 30_000L)",
+     # The defect spec section 3's whole seam exists to prevent, in its purest form: a policy that
+     # resumes music. Nothing outside `ResumePolicy` may choose a position, so nothing outside it
+     # can be mutated to prove the rule is live.
+     "the plan-3 policy starts every item from zero", 5),
+    ("resume/position-from-queue", RESUME_POLICY,
+     "startPositionMs = 0L)", "startPositionMs = mediaIds.size.toLong())",
+     # The same value read off the queue instead of being zero. The index-varying test cannot see
+     # this -- it asks about one queue -- which is why the queue-varying one exists.
+     "the position is zero whatever queue it is shown", 4),
+    ("resume/index-hardcoded", RESUME_POLICY,
+     "ResumeTarget(startIndex = requestedIndex,", "ResumeTarget(startIndex = 0,",
+     # The index belongs to the CALLER: "play track 3 of this album" is a legitimate request and a
+     # policy that discards it breaks that, silently, for every album.
+     "the caller's chosen item is respected", 3),
+    ("resume/index-from-queue", RESUME_POLICY,
+     "ResumeTarget(startIndex = requestedIndex,",
+     "ResumeTarget(startIndex = mediaIds.lastIndex - requestedIndex,",
+     # An index chosen from a mirrored view of the queue -- the shape a "resume from the end"
+     # attempt reaches for. It names the wrong track for every queue longer than one item, and it
+     # is the order-sensitivity probe for this file: `mediaIds` is an ordered list and
+     # `requestedIndex` indexes into the order the caller passed, not into any other view of it.
+     "neither the queue's contents nor its order changes the answer", 4),
+    # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
+    # Both are the shape this whole file exists for, and neither was caught by any of the seven
+    # task-1 probes above -- which is the point: a probe list records the questions someone
+    # thought to ask, and nobody had asked either of these.
+    #
+    # N-2. Inserting `.scheme("http")` into the stream URL's builder is a silent HTTPS-to-cleartext
+    # downgrade of the one URL in this codebase that carries an authentication token out of this
+    # client's control (Media3 fetches it with its own HTTP stack, no interceptor of ours in the
+    # path). Measured on the committed tree before the fix: the entire JVM tier stayed green, 217
+    # tests 0 failures, and the live tier could not see it either because `ci-navidrome-1` is
+    # plain `http://localhost:4533`. Distinct from `stream/host-and-scheme` above, which replaces
+    # scheme AND host AND port as one unit and is caught by the host: this one changes the scheme
+    # and nothing else, so only an assertion that observes the scheme by itself can catch it.
+    ("stream/scheme-downgrade", CLIENT,
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/stream")',
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .scheme("http")\n'
+     '      .addPathSegments("rest/stream")',
+     "the scheme comes from the credentials and is never downgraded to cleartext", 1),
+    # N-1. `oga` -- the IANA-registered Ogg *audio* extension, which the pinned server's own
+    # audio-extension table carries directly beside `ogg` (read out of `ci-navidrome-1`) -- was
+    # missing from TRANSCODE_ONLY_SUFFIXES, so `forSuffix("oga", ...)` returned Raw and an
+    # Ogg-Opus track would reach the player as Opus mislabelled `audio/ogg`: the exact harm spec
+    # section 4's "never Opus" exists to prevent. It was silent -- StreamFormatTest 9/9 green and
+    # both `format/` probes above CAUGHT -- because every assertion named only suffixes the set
+    # already held. So this probe is an OMISSION, not a wrong answer: the named test carries the
+    # family list independently of the production set, which is the only way a set can be observed
+    # for what is missing from it.
+    ("format/oga-omitted", STREAM_FORMAT,
+     'setOf("opus", "ogg", "oga")', 'setOf("opus", "ogg")',
+     "every suffix the ogg container is indexed under is transcoded, in either case", 1),
+    # ---- Plan 3 Task 7: the gapless oracle -----------------------------------------------------
+    # `PcmAnalysis` is the analyser `GaplessTest` reads its whole claim through, and that claim is
+    # the *absence* of a problem: the emulator test passes when `longestZeroRunFrames` returns a
+    # small number. An analyser that returned a small number unconditionally would leave that test
+    # green having measured nothing at all -- which is exactly why the analyser is pure JVM code in
+    # `:core:testing` rather than a private helper in `:core:media`'s androidTest, and why every
+    # value in it is probed here rather than trusted on the device tier.
+    ("pcm/frame-count-ignores-channels", PCM_ANALYSIS,
+     "return byteCount / (BYTES_PER_SAMPLE * channelCount)",
+     "return byteCount / BYTES_PER_SAMPLE",
+     # 2: the mono/stereo pair pins it directly, and the interleaved-stereo silence test reads
+     # frames through it, so a stereo frame count that is silently doubled reddens both.
+     "frames are bytes divided by two per channel", 2),
+    ("pcm/bytes-per-sample-halved", PCM_ANALYSIS,
+     "private const val BYTES_PER_SAMPLE = 2",
+     "private const val BYTES_PER_SAMPLE = 1",
+     # 7, and broad on purpose: this is the unit every other measurement in the class is expressed
+     # in, so there is no narrow probe for it. The count is what makes that visible.
+     "frames are bytes divided by two per channel", 7),
+    ("pcm/frame-count-unguarded", PCM_ANALYSIS,
+     'require(channelCount > 0) { "channelCount must be positive, was $channelCount" }\n    return byteCount',
+     "return byteCount",
+     # 2, and the second one is the point: `longestZeroRunFrames` deliberately does NOT carry a
+     # second copy of this guard (a sweep proved no test could tell that copy from its absence), so
+     # the silence scan reaches this one instead -- and without it divides by zero, an
+     # ArithmeticException where an IllegalArgumentException naming the argument was promised.
+     "a zero channel count is rejected rather than dividing by zero", 2),
+    ("pcm/zero-run-blind", PCM_ANALYSIS,
+     "    return longest\n  }", "    return 0\n  }",
+     # The defect this whole module exists to make impossible: an oracle that always reports "no
+     # silence". `GaplessTest` would stay green under it; these five go red.
+     "a known run of silence is found and measured exactly", 5),
+    ("pcm/zero-run-closes-late", PCM_ANALYSIS,
+     "        if (current > longest) longest = current\n      } else {\n        current = 0\n      }",
+     "      } else {\n        if (current > longest) longest = current\n        current = 0\n      }",
+     # Closing a run only when a non-zero sample arrives misses a run that reaches the end of the
+     # buffer -- and encoder *padding*, half of what "gapless" trims, lives exactly there.
+     # Exactly 1, measured after predicting 2 and being wrong: the sine test's spliced-in encoder
+     # delay is *followed* by signal, so a late-closing scan still records that run correctly. The
+     # end-of-buffer test is the only one that can see this defect at all, which is the argument
+     # for its existence stated as a number.
+     "a run that ends at the end of the buffer still counts", 1),
+    ("pcm/zero-run-never-resets", PCM_ANALYSIS,
+     "      } else {\n        current = 0\n      }", "      }",
+     # Without the reset this counts total silent frames rather than the longest consecutive run,
+     # which is a larger number and so fails safe on the device tier -- but it is not the
+     # measurement, and it would make a stream of scattered zero-crossings look like a gap.
+     "the longest run is reported and not the first or the last", 2),
+    ("pcm/zero-run-first-channel-only", PCM_ANALYSIS,
+     "for (channel in 0 until channelCount) {", "for (channel in 0 until 1) {",
+     # A frame is silent only when EVERY channel is: one silent channel in a stereo stream is real
+     # signal, not a gap. Exactly 1 -- only the interleaved-stereo test has a second channel to
+     # get wrong.
+     "a frame counts as silent only when every channel is silent", 1),
+    ("pcm/frames-to-ms-hardcoded-rate", PCM_ANALYSIS,
+     "return frames.toLong() * MILLIS_PER_SECOND / sampleRateHz",
+     "return frames.toLong() * MILLIS_PER_SECOND / 44100",
+     # 44100 is the rate every fixture happens to use, so a hardcoded one is the accident that
+     # would never show up on the device tier at all. Exactly 1, measured after predicting 2: every
+     # other test in the class is at 44100 too, so the two-rate test is the sole observation that
+     # can tell a hardcoded rate from a read one -- which is why it asserts at 48000 as well.
+     "frames convert to milliseconds at the sample rate given", 1),
+    ("pcm/frames-to-ms-unit", PCM_ANALYSIS,
+     "private const val MILLIS_PER_SECOND = 1000L",
+     "private const val MILLIS_PER_SECOND = 1L",
+     # The unit the device tier's "< 10" is denominated in. Seconds instead of milliseconds would
+     # make a 25 ms encoder-delay gap measure 0 and pass.
+     "frames convert to milliseconds at the sample rate given", 2),
+    ("pcm/frames-to-ms-negative-unguarded", PCM_ANALYSIS,
+     'require(frames >= 0) { "frames must not be negative, was $frames" }\n', "",
+     # A negative duration satisfies `isLessThan(10L)` as happily as a small positive one, so a
+     # negative frame count must not be expressible as a duration at all.
+     "a negative frame count is rejected rather than reported as a negative duration", 1),
+    ("pcm/frames-to-ms-rate-unguarded", PCM_ANALYSIS,
+     'require(sampleRateHz > 0) { "sampleRateHz must be positive, was $sampleRateHz" }\n', "",
+     "a zero sample rate is rejected rather than dividing by zero", 1),
+    # ---- Plan 3 Task 4: the queue, and the one architectural rule a comment cannot keep --------
+    # `PlaybackQueue` is the only one of this task's three types this JVM-only runner can reach.
+    # `MediaItems` and `QueueRepository` are instrumented -- `MediaItem` is built on
+    # `android.net.Uri`, which throws off-device, and Robolectric is banned -- so their five
+    # mutations are recorded in task-4-report.md instead, the same way task-2-report.md carries
+    # the Media3 adapter's and task-8-report.md carries SetupViewModel's two device-only mutants.
+    #
+    # `queue/position-field` is the important one and it is not a field-mapping probe at all: it
+    # asserts that spec section 3's decision -- *the queue is a list of pointers; progress is a
+    # property of the item* -- is still structurally enforced. A `positionMs` on this type is the
+    # single global "now playing position" every other player has, and it is precisely why a user
+    # cannot listen to music between two audiobook sessions without losing their place.
+    ("queue/position-field", PLAYBACK_QUEUE,
+     "data class PlaybackQueue(val songs: List<Song>, val startIndex: Int) {",
+     "data class PlaybackQueue(val songs: List<Song>, val startIndex: Int, val positionMs: Long = 0) {",
+     "the queue carries no playback position of its own", 1),
+    # Deleting the guard still throws -- the `startIndex` guard catches an empty list next -- so
+    # this probe only discriminates because the test asserts the *message*, not just the type.
+    ("queue/empty-guard", PLAYBACK_QUEUE,
+     '    require(songs.isNotEmpty()) { "a playback queue cannot be empty" }\n', "",
+     "an empty queue is rejected", 1),
+    # 2: with `startIndex` pinned to 0, the out-of-range call no longer throws either.
+    ("queue/startIndex-hardcoded", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, 0)",
+     "a start index outside the queue is rejected", 2),
+    ("queue/songAt-index", PLAYBACK_QUEUE,
+     "  fun songAt(index: Int): Song = songs[index]",
+     "  fun songAt(index: Int): Song = songs[0]",
+     "songAt returns the song at that index", 1),
+    # Found by this task's own audit, not by its brief: the brief's test observed `size` at
+    # exactly one value (3, over a three-song queue), so `get() = 3` passed the whole suite.
+    # Measured both ways -- 0 failures before a second, disjoint observation was added, 1 after.
+    ("queue/size-hardcoded", PLAYBACK_QUEUE,
+     "  val size: Int get() = songs.size", "  val size: Int get() = 3",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # A queue is ordered, and N4-1 (round 5) is this project's record of every list assertion in a
+    # file being order-blind at once. 2: `songAt` reads the reversed list too.
+    ("queue/songs-reversed", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.reversed(), startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 2),
 ]
 
 
@@ -680,12 +881,31 @@ def apply(path, old, new):
     open(path, "w").write(src.replace(old, new))
 
 
+# Every file the probes above mutate that is not named on the `git checkout` line inside
+# `revert()` below. One name per line, and a separate list rather than more names on that line, for
+# a merge reason that is not hypothetical: several branches add a probe file at once, a union merge
+# of two edits to the *same* line produces either a duplicated `],` (a SyntaxError, loud) or a
+# silently wrong argument list, and this project has already had a union merge collapse two
+# `CoverageFloor(...)` calls in the root build script into one broken call. Appending a line to
+# this list conflicts with nothing.
+#
+# Getting an entry wrong here fails in the worst direction rather than the safe one -- a mutated
+# file that no `git checkout` names is left in the tree when the run ends, which is exactly the
+# stray-mutation incident this script's header describes -- so add the file here in the same edit
+# that adds the probe, never after.
+LATER_PROBE_FILES = [
+    RESUME_POLICY,
+]
+
+
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
+         PCM_ANALYSIS, PLAYBACK_QUEUE],
         check=True,
     )
+    subprocess.run(["git", "checkout", "--", *LATER_PROBE_FILES], check=True)
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
@@ -714,6 +934,13 @@ JVM_TEST_RESULT_DIRS = {
     # tier is the whole point of the module's shape: `StreamRetryPolicy` and `MediaModule` carry no
     # Android or Media3 type in their signatures precisely so this runner can reach them.
     "core/media": "testDebugUnitTest",
+    # `:core:testing` joined in Plan 3 Task 7. A plain `muplay.jvm.library` module, so
+    # `test-results/test/` -- and reachable here for the same reason `:core:media`'s JVM tier is:
+    # `PcmAnalysis` is pure Kotlin over a `ByteArray`, with no Android or Media3 type in it, so the
+    # oracle the emulator's gapless assertion is read through is itself probed on this tier. That
+    # asymmetry is the whole point of splitting the analyser out: a `longestZeroRunFrames` that
+    # returned 0 would leave `GaplessTest` green and only these probes red.
+    "core/testing": "test",
 }
 
 
@@ -770,7 +997,7 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test"],
+                    ":core:media:test", ":core:testing:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

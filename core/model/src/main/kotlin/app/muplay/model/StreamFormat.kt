@@ -50,7 +50,16 @@ sealed interface StreamFormat {
 
   companion object {
 
-    /** MPEG-1 Layer III's own bitrate range. Below 32 is Layer III at MPEG-2 rates; above 320 is not MP3. */
+    /**
+     * The bounds on the cap this client may *ask* for, not on what MP3 can encode.
+     *
+     * MPEG-1 Layer III runs 32–320 kbps and MPEG-2/2.5 Layer III go down to 8, so the low end
+     * here is deliberately below every one of them: Navidrome answers a `maxBitRate` under its
+     * own profile floor with a real 200 and real audio (measured against the container at 1, 2,
+     * 5, 7, 8, 16 and 63 kbps), and `LiveNavidromeTest`'s cold-transcode search depends on that.
+     * 320 is a genuine ceiling — above it the response is no longer MP3 — and 0 or negative is
+     * not a request anyone can mean, which is what the `require` above rejects.
+     */
     const val MIN_BITRATE_KBPS: Int = 1
     const val MAX_BITRATE_KBPS: Int = 320
 
@@ -65,12 +74,28 @@ sealed interface StreamFormat {
      * The formats whose bytes must never reach this client, keyed by the file suffix the mirror
      * carries.
      *
-     * `opus` is the rule spec section 4 states outright. `ogg` is here because the suffix cannot
-     * distinguish Ogg-Vorbis from Ogg-Opus, and Navidrome mislabels Opus as `audio/ogg` anyway —
-     * so an `ogg` file that is really Opus would arrive looking exactly like one that is not.
-     * Transcoding both is a small, visible cost; letting one through is a silent one.
+     * `opus` is the rule spec section 4 states outright. `ogg` and `oga` are here because the
+     * suffix cannot distinguish Ogg-Vorbis from Ogg-Opus, and Navidrome mislabels Opus as
+     * `audio/ogg` anyway — so an Ogg file that is really Opus would arrive looking exactly like
+     * one that is not. Transcoding all three is a small, visible cost; letting one through is a
+     * silent one.
+     *
+     * This is the **whole Ogg family as the pinned server indexes it**, and stating it that way
+     * is the point: `oga` was missing for one review round, `forSuffix("oga", …)` returned [Raw],
+     * and nothing went red — a set like this fails silently by omission, so the source of truth
+     * for its membership is written down. That source is `deluan/navidrome:0.63.2`'s own
+     * audio-extension table, read out of the running container: `… m4a mp4 m4b m4p ogg oga aif
+     * asf mpp ac3 als wav raw mid`, with `opus` and `flac` in the MIME table beside it. `oga` is
+     * the IANA-registered Ogg *audio* extension and sits directly beside `ogg` there, so this
+     * server indexes a `.oga` file and reports `suffix = "oga"` like any other. `mka` is not in
+     * that table at all and `webm` appears only as a MIME type, never as an indexed audio
+     * extension, so neither is here: adding them would be a guess, and this set is observations.
+     *
+     * `StreamFormatTest`'s `every suffix the ogg container is indexed under is transcoded` holds
+     * the same list independently, so a member deleted from here reddens a test rather than
+     * quietly widening what streams raw.
      */
-    private val TRANSCODE_ONLY_SUFFIXES = setOf("opus", "ogg")
+    private val TRANSCODE_ONLY_SUFFIXES = setOf("opus", "ogg", "oga")
 
     /**
      * The format to request for a source file with this [suffix].

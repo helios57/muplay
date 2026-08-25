@@ -29,6 +29,10 @@ class PlaybackQueueTest {
 
     assertThat(queue.songs.map { it.id }).containsExactly("a", "b", "c")
     assertThat(queue.size).isEqualTo(3)
+    // A second, disjoint observation of `size`. With only the line above it, `get() = 3` passes --
+    // the one-observation defect this project has shipped four times. A single-song queue is also
+    // the shape every "play just this track" call makes, so it is not a contrived fixture.
+    assertThat(PlaybackQueue.of(listOf(song("only"))).size).isEqualTo(1)
   }
 
   @Test

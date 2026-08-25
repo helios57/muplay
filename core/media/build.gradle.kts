@@ -27,6 +27,9 @@ dependencies {
   // `SubsonicSourceProvider` and, from Task 8, `MediaProgressDao`. `implementation`, not `api`:
   // nothing this module exposes publicly mentions a `:core:database` type.
   implementation(project(":core:database"))
+  // Also what `ProgressTableShapeTest` reflects over: it holds `media_progress` to spec section
+  // 3's shape from the JVM tier, and a JVM test sees `implementation` dependencies, so the
+  // narrower `testImplementation` it arrived with is subsumed here rather than duplicated.
 
   // `kotlinx-coroutines-core` is deliberately NOT on the production classpath, and
   // `QueueRepository.mediaItems` being `suspend` is not a reason to put it back: `suspend` is a
