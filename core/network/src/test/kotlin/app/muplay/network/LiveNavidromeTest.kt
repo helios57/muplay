@@ -434,9 +434,18 @@ class LiveNavidromeTest {
     val client = client("testpass")
     val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
 
+    val cappedUrl = client.streamUrl(song.id, StreamFormat.Mp3(320)).toHttpUrl()
     val (_, raw) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
-    val (response, capped) = fetch(client.streamUrl(song.id, StreamFormat.Mp3(320)))
+    val (response, capped) = fetch(cappedUrl.toString())
 
+    // What this test pins is the behaviour of `format=mp3`, so the request it made has to have
+    // been a `format=mp3` request. Without these two lines `capped == raw` is equally true of a
+    // `format=raw` fetch — the test stayed green under the `stream/format-wire-value` mutation
+    // and under dropping `maxBitRate` altogether, so it could not be read as evidence about
+    // `format=mp3` at all. Asserted on the parsed parameters, never on the URL itself: this
+    // string carries a token and must not reach a log or a failure message.
+    assertThat(cappedUrl.queryParameter("format")).isEqualTo("mp3")
+    assertThat(cappedUrl.queryParameter("maxBitRate")).isEqualTo("320")
     assertThat(response.code).isEqualTo(200)
     assertThat(raw.size).isGreaterThan(1000)
     // Byte-identical, not merely the same length: this is the source file, not a re-encode that

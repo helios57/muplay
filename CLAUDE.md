@@ -150,8 +150,13 @@ cold in CI and warm on the long-lived shared container. A test pinned to one
 bitrate passes on the first run here and fails on the second.
 `LiveNavidromeTest.coldTranscode` searches for an unused bitrate instead.
 
-Two more measured facts from the same investigation: the cache is keyed on the
-bitrate **as requested**, not as encoded (24, 25 and 26 produce identical bytes
-and occupy three cache entries), and `format=mp3` on an `mp3` source with a cap
-at or above the file's own bitrate returns the source file untouched — so
-`StreamFormat.Mp3(192)` is not always a transcode.
+Two more measured facts from the same investigation. First, **below the source
+bitrate** the cache is keyed on the bitrate *as requested*, not as encoded (24,
+25 and 26 produce identical bytes and occupy three cache entries) — that is the
+regime `coldTranscode` searches in, and only that regime. **At or above the
+source bitrate** the rule does not hold: Navidrome selects "no cap" and every
+such request shares one entry (a `maxBitRate=63` request on the 32 kbps
+audiobook was served from the entry an earlier `maxBitRate=320` request
+created). Second, `format=mp3` on an `mp3` source with a cap at or above the
+file's own bitrate returns the source file untouched — so `StreamFormat.Mp3(192)`
+is not always a transcode.

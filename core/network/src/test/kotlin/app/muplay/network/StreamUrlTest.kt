@@ -175,4 +175,35 @@ class StreamUrlTest {
     assertThat(url(baseUrl = "http://localhost:4533").port).isEqualTo(4533)
     assertThat(url(baseUrl = "http://localhost:4533").scheme).isEqualTo("http")
   }
+
+  /**
+   * The scheme, observed on its own and at two values — because a URL is a *compound* value and
+   * the assertions above only ever pin one component of it at a time.
+   *
+   * This is a security assertion, not a tidiness one. `/rest/stream` is the one URL in this
+   * codebase that carries an authentication token out of this client's control: it is handed to
+   * Media3, fetched by Media3's own HTTP stack with no interceptor of ours in the path, and
+   * nothing downstream re-checks it. Inserting `.scheme("http")` into the builder is therefore a
+   * silent HTTPS-to-cleartext downgrade of every authenticated stream request — and it was
+   * measured to leave the whole JVM tier green (217 tests, 0 failures) before this test existed,
+   * because the only scheme any assertion had ever observed was `http`. The live tier could not
+   * see it either: `ci-navidrome-1` is plain `http://localhost:4533`.
+   *
+   * A release build would catch the downgrade loudly (Android blocks cleartext by default, and
+   * `verifyReleaseManifest` keeps `usesCleartextTraffic` out of the release manifest), but the
+   * debug/e2e variant sets it `true` for the emulator journey and would carry the token in the
+   * clear. The mutation is pinned as `stream/scheme-downgrade` in `ci/mutation-probes.sh`.
+   *
+   * The port rides along here rather than beside the host above for the same reason: the origin
+   * is three components, `stream/host-and-scheme` replaces all three at once, and it was caught
+   * by the host alone.
+   */
+  @Test
+  fun `the scheme comes from the credentials and is never downgraded to cleartext`() {
+    assertThat(url(baseUrl = "https://music.example.com").scheme).isEqualTo("https")
+    assertThat(url(baseUrl = "http://localhost:4533").scheme).isEqualTo("http")
+    // The second observation of the port, the origin's third component: 4533 above, the scheme's
+    // own default here — which a forced `http` would report as 80.
+    assertThat(url(baseUrl = "https://music.example.com").port).isEqualTo(443)
+  }
 }
