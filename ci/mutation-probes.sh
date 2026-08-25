@@ -1011,6 +1011,42 @@ PROBES = [
      '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
      '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
      "the service display names are the ones a user reads", 1),
+
+    # ---- Plan 3 Task 4, review round 1: what the queue's order and field assertions could not see
+    # Appended here rather than folded into the Task 4 block above, so the block stays the record of
+    # what that task shipped and this stays the record of what its review found. All three mutate
+    # PLAYBACK_QUEUE, which `revert()` already names.
+    #
+    # M3. `queue/songs-reversed` above genuinely reddens -- `containsExactly` is order-sensitive --
+    # and that made the order assertions look stronger than they were. Every fixture in
+    # `PlaybackQueueTest` was `song("a"), song("b"), song("c")`: ascending by id, ascending by
+    # `"Title $id"`, and *constant* by `trackNumber`. On a fixture like that every sort is the
+    # identity, so a reversal was the only reordering the file could see. The fixture is now
+    # `c(3), a(1), b(2)`, non-monotone in all three keys at once.
+    ("queue/songs-sorted-by-id", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.sortedBy { it.id }, startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # The one that is not hypothetical: "sort the queue by track number for album playback" is a
+    # change someone makes on purpose, and it would silently destroy library-scoped shuffle -- this
+    # project's headline feature -- by re-sorting a deliberately random order back into track order.
+    # A stable sort on equal keys is the identity, which is exactly why the old constant-trackNumber
+    # fixture could not see it.
+    ("queue/songs-sorted-by-track-number", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.sortedBy { it.trackNumber }, startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # L3. The companion-shaped half of `queue/position-field`. That probe adds an *instance*
+    # property and the structural test catches it; this one adds the same defect in its worst form
+    # -- one `positionMs` shared by every queue that will ever exist -- and until the filter was
+    # narrowed from `Modifier.isStatic(...)` to `Modifier.isStatic(...) && name == "Companion"` the
+    # test could not see it, because Kotlin emits a companion's property backing fields as static
+    # fields on the *containing* class. The blanket static filter was required (the `Companion`
+    # handle is ACC_PUBLIC|ACC_STATIC|ACC_FINAL and not synthetic); it was just too wide.
+    ("queue/companion-position-field", PLAYBACK_QUEUE,
+     "  companion object {\n",
+     "  companion object {\n    var positionMs: Long = 0\n",
+     "the queue carries no playback position of its own", 1),
 ]
 
 

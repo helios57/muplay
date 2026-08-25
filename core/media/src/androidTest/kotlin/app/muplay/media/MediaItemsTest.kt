@@ -106,6 +106,24 @@ class MediaItemsTest {
     assertThat(pair { it.mediaMetadata.discNumber }).containsExactly(1, 2)
   }
 
+  /**
+   * The mirror's duration, in milliseconds, on the metadata.
+   *
+   * Not decoration. For an Ogg/Opus source `StreamFormat.forSuffix` forces a **live** transcode,
+   * a live transcode carries no `Content-Length`, and ExoPlayer therefore reports
+   * `C.TIME_UNSET` -- at which point `LegacyConversions` falls back to exactly this field for the
+   * platform session. Unset, that fallback is null and every such track is unknown-length on the
+   * lock screen, in Auto and on Wear.
+   *
+   * Two observations at two values, like every other mapped field here: 5 s and 900 s. A
+   * `setDurationMs(0L)`, a `setDurationMs(song.durationSeconds.toLong())` (seconds, not
+   * milliseconds) and a deleted call all fail this.
+   */
+  @Test
+  fun theDurationIsTheSongDurationInMilliseconds() {
+    assertThat(pair { it.mediaMetadata.durationMs }).containsExactly(5_000L, 900_000L)
+  }
+
   @Test
   fun theArtworkUriIsTheOneItWasGiven() {
     assertThat(pair { it.mediaMetadata.artworkUri?.toString() })
