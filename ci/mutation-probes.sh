@@ -1039,7 +1039,10 @@ PROBES = [
     ("media/task-removal-keeps-an-empty-queue-alive", TASK_REMOVAL,
      "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
      "    playWhenReady != true",
-     "an empty queue stops the service even when the player is ready to play", 1),
+     # 2, measured: the same mutation also reddens `no session at all is the clearest reason to
+     # stop`, because with `mediaItemCount = null` and `playWhenReady = true` the surviving half of
+     # the condition answers "keep running" for a service that has no player.
+     "an empty queue stops the service even when the player is ready to play", 2),
     # A format the server transcodes on the fly has no `Content-Length`, so `player.duration` is
     # `C.TIME_UNSET` for the whole track and the metadata is the only source that knows. Dropping
     # the fallback shows every Opus track as unknown length on the lock screen, in Auto, in Wear
@@ -1054,7 +1057,9 @@ PROBES = [
     ("media/duration-metadata-wins", PLAYBACK_STATE,
      "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
      "      (metadataDurationMs ?: playerDurationMs ?: 0L).coerceAtLeast(0L)",
-     "the player's own duration wins, because it measured what is playing", 1),
+     # 2, measured: it also reddens `an unknown duration is zero, never a negative sentinel`,
+     # whose `playerDurationMs = -1L` case exists precisely to pin which source is consulted first.
+     "the player's own duration wins, because it measured what is playing", 2),
     # `NOTHING_PLAYING` is what four downstream tasks render before anything is loaded. A `true`
     # here is an enabled "next" button with no queue behind it, and it moves no branch anywhere.
     ("media/nothing-playing-has-next", PLAYBACK_STATE,
