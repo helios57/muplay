@@ -1450,8 +1450,8 @@ PROBES = [
     # the thumb springs back every 250ms and the bar cannot be used -- and invisible in a
     # screenshot, which is exactly the kind of defect a probe list is for.
     ("player/scrub-position-ignored", PLAYER_STATE,
-     "displayPositionMs = scrubPositionMs ?: playback.positionMs,",
-     "displayPositionMs = playback.positionMs,",
+     "displayPositionMs = displayPosition(scrubPositionMs ?: playback.positionMs, playback.durationMs),",
+     "displayPositionMs = displayPosition(playback.positionMs, playback.durationMs),",
      "the displayed position is the scrub position while scrubbing", 5),
     # ...and the flag that goes with it, which the screen reads to decide whether a drag is in
     # progress at all.
