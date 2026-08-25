@@ -2,6 +2,7 @@ package app.muplay.network
 
 import app.muplay.model.AlbumListType
 import app.muplay.model.LibraryRole
+import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.model.SubsonicEnvelope
 import app.muplay.network.model.SubsonicResponseBody
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -312,6 +314,128 @@ class LiveNavidromeTest {
     assertThat(second.lastScan).isEqualTo(first.lastScan)
   }
 
+  // --- /rest/stream: the URL Media3 fetches, and the server behaviour it rests on --------------
+
+  /**
+   * The precondition the whole streaming design rests on: a raw response is a plain, seekable,
+   * length-declared HTTP body.
+   *
+   * `assertThat(bytes).hasSizeGreaterThan(1000)` is not decoration. Without it this test passes
+   * against a server that answers 200 with an empty body — the same vacuity that let a
+   * live-Navidrome suite pass with no Navidrome running.
+   */
+  @Test
+  fun `a raw stream is a 200 with an accurate content length and byte ranges`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+
+    val (response, bytes) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(bytes.size).isGreaterThan(1000)
+    assertThat(response.header("Content-Length")?.toLong()).isEqualTo(bytes.size.toLong())
+    assertThat(response.header("Accept-Ranges")).isEqualTo("bytes")
+    // Chunked would mean no Content-Length, and no Content-Length means no seek.
+    assertThat(response.header("Transfer-Encoding")).isNull()
+    assertThat(response.header("Content-Type")).startsWith("audio/")
+  }
+
+  @Test
+  fun `a range request on a raw stream is a byte-exact 206`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val url = client.streamUrl(song.id, StreamFormat.Raw)
+    val (_, whole) = fetch(url)
+    val offset = whole.size / 2
+
+    val (response, tail) = fetch(url, range = "bytes=$offset-")
+
+    assertThat(response.code).isEqualTo(206)
+    assertThat(response.header("Content-Range"))
+      .isEqualTo("bytes $offset-${whole.size - 1}/${whole.size}")
+    // Byte-exact, not merely "the right length": a server that answered 206 with the *start* of
+    // the file would pass a length check and produce audio that jumps back on every seek.
+    assertThat(tail).isEqualTo(whole.copyOfRange(offset, whole.size))
+  }
+
+  @Test
+  fun `a range past the end of a raw stream is 416`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val url = client.streamUrl(song.id, StreamFormat.Raw)
+    val (_, whole) = fetch(url)
+
+    val (response, _) = fetch(url, range = "bytes=${whole.size + 1000}-")
+
+    assertThat(response.code).isEqualTo(416)
+  }
+
+  /**
+   * The other half of the raw preference, and the reason it is a preference at all: **a live
+   * transcode cannot be seeked.**
+   *
+   * If this ever started reporting `Accept-Ranges: bytes` and a `Content-Length`, the correct
+   * response is to go and simplify the format policy — not to delete this test. If it silently
+   * reversed the other way while nobody was looking, the symptom would be a seek bar that does
+   * nothing, on a code path no unit test can reach.
+   */
+  @Test
+  fun `a live transcode returns no content length and refuses ranges`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+
+    val (response, bytes) = fetch(client.streamUrl(song.id, StreamFormat.Mp3(32)))
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(bytes.size).isGreaterThan(1000)
+    assertThat(response.header("Accept-Ranges")).isEqualTo("none")
+    assertThat(response.header("Content-Length")).isNull()
+  }
+
+  /**
+   * The URL authenticates itself, which is the only reason handing it to ExoPlayer works at all.
+   *
+   * Asserted by *removing* the credentials and checking the audio does not come back, rather than
+   * by checking a status code: Navidrome answers a `/rest/stream` auth failure with an error
+   * document, and this assertion holds whether that arrives as 200-plus-JSON or as a 4xx. The
+   * status code is attached to the failure message so the real behaviour is recorded either way.
+   */
+  @Test
+  fun `stripping the credentials from a stream url stops the audio`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val authenticated = client.streamUrl(song.id, StreamFormat.Raw).toHttpUrl()
+    val stripped = authenticated.newBuilder().removeAllQueryParameters("t")
+      .removeAllQueryParameters("s").removeAllQueryParameters("u").build()
+
+    val (authorisedResponse, audio) = fetch(authenticated.toString())
+    val (response, body) = fetch(stripped.toString())
+
+    assertThat(authorisedResponse.code).isEqualTo(200)
+    assertThat(response.header("Content-Type"))
+      .describedAs("unauthenticated /rest/stream answered %s", response.code)
+      .doesNotContain("audio/")
+    assertThat(body).isNotEqualTo(audio)
+  }
+
+  /**
+   * The audiobook streams raw too, and the assertion is on its actual container bytes rather than
+   * on a header: every ISO-BMFF file (`.m4b`, `.m4a`, `.mp4`) begins with a four-byte size
+   * followed by the literal `ftyp`. A server returning an error page, silence, or the wrong file
+   * fails this; a `Content-Type` check would not.
+   */
+  @Test
+  fun `the audiobook streams raw as an mp4 container`() = runTest {
+    val client = client("testpass")
+    val song = client.getRandomSongs(musicFolderId = AUDIOBOOKS_LIBRARY_ID, size = 500).single()
+
+    val (response, bytes) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(bytes.size).isGreaterThan(1000)
+    assertThat(String(bytes.copyOfRange(4, 8), Charsets.US_ASCII)).isEqualTo("ftyp")
+  }
+
   // --- raw Subsonic, deliberately not through SubsonicClient -----------------------------------
 
   private fun scopedAlbumList(musicFolderId: String): SubsonicResponseBody =
@@ -337,6 +461,24 @@ class LiveNavidromeTest {
   private fun rawRandomSongTitles(musicFolderId: String): List<String> {
     val body = rawRest("getRandomSongs", mapOf("size" to "500", "musicFolderId" to musicFolderId))
     return Regex(""""title":"([^"]*)"""").findAll(body).map { it.groupValues[1] }.toList()
+  }
+
+  /**
+   * One raw HTTP GET of [url], returning the response and its whole body.
+   *
+   * A plain `OkHttpClient`, not [SubsonicClient]'s Retrofit stack, on purpose: the subject of
+   * every stream test above is what an *arbitrary* HTTP client sees when handed a stream URL,
+   * because that is exactly what Media3 is.
+   */
+  private fun fetch(url: String, range: String? = null): Pair<Response, ByteArray> {
+    val request = Request.Builder().url(url).apply {
+      if (range != null) header("Range", range)
+    }.build()
+    return OkHttpClient().newCall(request).execute().use { response ->
+      // The body must be read before `use` closes the response. Returning the `Response`
+      // afterwards is safe because every assertion above reads only its status line and headers.
+      response to response.body.bytes()
+    }
   }
 
   /** One raw Subsonic GET, authenticated exactly as the client authenticates, returning the body. */
