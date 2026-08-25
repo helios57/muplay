@@ -104,7 +104,7 @@ class DatagramSsdpTransportTest {
     val ssdp = start(
       FakeSsdpResponder.Responder(
         "unused", "uuid:clipped", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
-        rawReply = reply(udn = "uuid:clipped", totalBytes = 4_097),
+        rawReply = clippedReply(udn = "uuid:clipped"),
       ),
       // One byte under the buffer: the same shape, not truncated, and it must still come back.
       FakeSsdpResponder.Responder(
@@ -128,16 +128,27 @@ class DatagramSsdpTransportTest {
     )
   }
 
+  /** A well-formed reply of exactly [totalBytes], `LOCATION` last. */
+  private fun reply(udn: String, totalBytes: Int): String =
+    head(udn) + "P".repeat(totalBytes - head(udn).length - TAIL.length) + TAIL
+
   /**
-   * A reply of exactly [totalBytes], with `LOCATION` last and long enough that a cut at 4096
-   * bytes lands in the middle of its path rather than before `ST` or `USN`.
+   * A reply whose `LOCATION` straddles the receive buffer's last byte: everything up to
+   * `http://127.0.0.1:1400/xml` is inside the buffer and `/device_description.xml` is past it.
+   *
+   * The arithmetic is the whole point. A reply merely *longer* than the buffer is cut wherever it
+   * happens to be cut, and in the first version of this test that was before `ST` -- so the reply
+   * was dropped for a missing `ST` and the guard under test was never reached.
    */
-  private fun reply(udn: String, totalBytes: Int): String {
-    val head = "HTTP/1.1 200 OK\r\nEXT:\r\nST: ${SsdpSearch.TARGET_MEDIA_RENDERER}\r\n" +
-      "USN: $udn::${SsdpSearch.TARGET_MEDIA_RENDERER}\r\nX-Pad: "
-    val tail = "\r\nLOCATION: http://127.0.0.1:1400/xml/device_description.xml\r\n\r\n"
-    return head + "P".repeat(totalBytes - head.length - tail.length) + tail
+  private fun clippedReply(udn: String): String {
+    val upToCut = "\r\nLOCATION: http://127.0.0.1:1400/xml"
+    val padding = RECEIVE_BUFFER_BYTES - head(udn).length - upToCut.length
+    return head(udn) + "P".repeat(padding) + upToCut + "/device_description.xml\r\n\r\n"
   }
+
+  private fun head(udn: String) =
+    "HTTP/1.1 200 OK\r\nEXT:\r\nST: ${SsdpSearch.TARGET_MEDIA_RENDERER}\r\n" +
+      "USN: $udn::${SsdpSearch.TARGET_MEDIA_RENDERER}\r\nX-Pad: "
 
   @Test
   fun `a network with nothing on it yields an empty list rather than hanging`() = runTest {
@@ -167,5 +178,17 @@ class DatagramSsdpTransportTest {
   private companion object {
     /** Long enough for a loopback round trip, short enough that ten of these are not a minute. */
     const val WINDOW_MS = 500L
+
+    /** The `LOCATION` line every generated reply above ends with. */
+    const val TAIL = "\r\nLOCATION: http://127.0.0.1:1400/xml/device_description.xml\r\n\r\n"
+
+    /**
+     * `DatagramSsdpTransport.MAX_DATAGRAM_BYTES`, which is private to it.
+     *
+     * Duplicated rather than exposed: making a buffer size public so a test can read it is a
+     * worse trade than a constant that, if it ever drifts, makes this test fail loudly -- the
+     * clipped reply would then be cut somewhere else and `uuid:clipped` would come back.
+     */
+    const val RECEIVE_BUFFER_BYTES = 4096
   }
 }
