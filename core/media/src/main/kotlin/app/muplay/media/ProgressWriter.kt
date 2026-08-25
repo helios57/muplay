@@ -1,7 +1,9 @@
 package app.muplay.media
 
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.entity.MediaProgressEntity
 import java.time.Clock
@@ -84,6 +86,12 @@ import kotlinx.coroutines.withContext
  * *possible* -- so the ticker reads [player] on every tick rather than closing over the constructor
  * argument, and [start] and [flushBlocking] keep their meaning if it is ever repointed.
  */
+// `androidx.annotation.OptIn`, not `kotlin.OptIn` -- see `MuPlayerFactory` for the full argument.
+// The annotated member here is `Player.PositionInfo.mediaItem`, which is `@UnstableApi` even though
+// `Player` and `PositionInfo` are not. The Kotlin compiler cannot see that annotation at all: this
+// file compiled clean and `check` failed at `lintDebug` with `UnsafeOptInUsageError`, forty
+// minutes after the code was written, which is exactly the failure mode CLAUDE.md records.
+@OptIn(UnstableApi::class)
 class ProgressWriter(
   player: Player,
   private val dao: MediaProgressDao,
