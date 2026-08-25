@@ -56,9 +56,23 @@ object RealTrackBytes {
     bytesOf(musicTracks().first { it.suffix?.lowercase() == "mp3" })
 
   suspend fun bytesOf(song: Song): ByteArray = bytesById.getOrPut(song.id) {
-    val request = Request.Builder().url(client.streamUrl(song.id, StreamFormat.Raw)).build()
+    val request = Request.Builder().url(rawStreamUrl(song)).build()
     http.newCall(request).execute().use { checkNotNull(it.body).bytes() }
   }
+
+  /**
+   * The raw (untranscoded) stream URL for [song], built by the one shared client.
+   *
+   * `GaplessTest` plays these URLs through a real player rather than fetching the bytes, so it
+   * needs the URL and not the body — and it needs it from **this** client, because each call stamps
+   * a fresh auth salt and a second client here would be a second place the credentials live. It
+   * called `RealTrackBytes.client()` for it, which stopped compiling when that accessor became a
+   * private `val` in the merge that made this object cache its fixtures (`42e88a0`); nobody
+   * compiled this module's androidTest sources between that merge and Plan 3 Task 6, so the break
+   * was invisible on master. Exposing the URL rather than the client keeps the credential-holding
+   * object private, which is what that merge was for.
+   */
+  fun rawStreamUrl(song: Song): String = client.streamUrl(song.id, StreamFormat.Raw)
 
   /** Two genuinely different tracks' bytes — the pair [MediaCacheTest] needs for its control. */
   suspend fun twoDifferentTracks(): Pair<ByteArray, ByteArray> {

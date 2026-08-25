@@ -103,8 +103,7 @@ class GaplessTest {
       "ci/seed-fixtures.sh seeds exactly $TRACK_COUNT music tracks; found ${songs.size}. This " +
         "test's arithmetic is over those three."
     }
-    val client = RealTrackBytes.client()
-    streamUrls = songs.map { client.streamUrl(it.id, StreamFormat.Raw) }
+    streamUrls = songs.map { RealTrackBytes.rawStreamUrl(it) }
     // Serves the one thing the real library cannot: a track that is deliberately silent. Started
     // for every test rather than only the one that uses it, so there is no branch here that could
     // leave it unstarted.
