@@ -195,7 +195,21 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  * - **`:core:network`, `:core:testing`** — no `@Composable` code at all (neither module even
  *   applies the Compose convention plugin), and nothing within them that needs separating: a
  *   single `"BUNDLE"`-element BRANCH rule each (an aggregate across the whole module), measuring
- *   100% today (**56/56** and 6/6 real branches) against the full 0.90 target. `:core:network`'s
+ *   100% today (**56/56** and **28/28** real branches) against the full 0.90 target.
+ *
+ *   `:core:testing` was 6/6 until Plan 3 Task 7 added `PcmAnalysis`, the pure-JVM analyser the
+ *   gapless measurement is read through, which is 22 of those 28. A BUNDLE aggregate is the shape
+ *   `:core:model`'s entry below warns about, so the question was asked here rather than assumed,
+ *   and answered by deletion in both directions: with `PcmAnalysisTest` deleted this floor fails
+ *   at **6/28 = 0.21**, and with `OpenApiFixtureValidatorTest` deleted it fails at
+ *   **22/28 = 0.78**. Neither class can hide behind the other's coverage, which is the only
+ *   property that made the aggregate honest here in the first place; a third class arriving is
+ *   what would change that answer. (Raising this floor above its measured 1.00 is not a way to
+ *   watch it fire, incidentally: JaCoCo rejects a minimum outside 0.0..1.0 as a configuration
+ *   error — *"given minimum ratio is 1.01, but must be between 0.0 and 1.0"* — which fails the
+ *   build without ever reading a ratio. Deleting the tests is what actually exercises the gate.)
+ *
+ *   `:core:network`'s
  *   branch population went 30 → 56 in Plan 2 Task 3, and the floor is not decorative there: with
  *   the six browse commands added but before the three `OK_WITH_NO_PAYLOAD` tests that reach
  *   their absent-container branches, the same module measured **46/56 = 0.8214** and this floor
