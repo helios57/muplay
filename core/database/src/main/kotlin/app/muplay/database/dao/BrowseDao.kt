@@ -88,13 +88,24 @@ abstract class BrowseDao {
    * exactly what the server just listed. Scoped to one library so a failure while reconciling the
    * audiobook library cannot empty the music library.
    *
-   * The three `require` checks are the one thing standing between a caller's bug and a mirror row
-   * landing in the wrong library: [libraryId] scopes the deletes and the counts, but the inserts
-   * write whatever `libraryId` each entity already carries, and nothing about Room or SQLite
-   * checks that the two agree. `libraryId` is the *only* link between a track and the user's
-   * Music/Audiobooks decision (see this module's own doc), so a caller that built [songs] from the
-   * wrong library's server pages must fail loudly here rather than silently mis-scope a row the
-   * shuffle guard and every browse query then trust.
+   * The three `require` checks catch one specific caller bug, not every one: [libraryId] scopes
+   * the deletes and the counts, but the inserts write whatever `libraryId` each entity already
+   * carries, and nothing about Room or SQLite checks that the two agree. `libraryId` is the
+   * *only* link between a track and the user's Music/Audiobooks decision (see this module's own
+   * doc), so a caller that built a *non-empty* [artists]/[albums]/[songs] from the wrong
+   * library's server pages fails loudly here rather than silently mis-scoping a row the shuffle
+   * guard and every browse query then trust.
+   *
+   * **What the guard cannot catch:** a caller that passes the *wrong* [libraryId] alongside
+   * wholly **empty** lists. `List<T>.all {}` is vacuously true on an empty list, and there is no
+   * row left to cross-check the id against — genuinely undecidable inside this function, because
+   * an empty batch for the wrong library and an empty batch for a library that truly emptied out
+   * on the server look identical from here, and the second one must succeed (a server rescan that
+   * returns nothing for a folder is not an error). A caller that gets [libraryId] wrong on an
+   * empty batch silently wipes the wrong library with no exception and a [MirrorReplacement] that
+   * looks perfectly normal. The only place this can be caught is at the call site, by never
+   * constructing [libraryId] and the entity lists from different sources — see Task 6's sync
+   * engine, which is the one production caller.
    */
   @Transaction
   open suspend fun replaceLibraryContents(

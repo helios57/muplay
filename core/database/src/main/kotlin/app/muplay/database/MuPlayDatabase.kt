@@ -12,13 +12,18 @@ import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
 
 /**
- * Version 1 through Task 3; Task 4 took it to version 2 by adding `libraries`. Task 5 takes it to
- * version 3 by adding the library mirror (`artists`, `albums`, `songs`). Nothing has shipped, so
- * every task in this plan that adds a table bumps `version` and adds its entity to this same list
- * rather than writing a migration. `exportSchema = true` (with the schema directory wired up by
- * `muplay.android.room`) is what makes the *first* post-release migration verifiable — a
- * migration test needs the previous schema JSON, and there is no way to recover one that was
- * never exported.
+ * Version 1 through Task 3; Task 4 took it to version 2 by adding `libraries`; Task 5 took it to
+ * version 3 by adding the library mirror (`artists`, `albums`, `songs`), then to version 4 in its
+ * own fix round 2 when the `artists` primary key changed shape *inside* v3 (N2-1): a bare
+ * `fallbackToDestructiveMigration` does not rescue an identity-hash mismatch at an *unchanged*
+ * version number — verified on-device, it throws `IllegalStateException: Room cannot verify the
+ * data integrity` instead of dropping and recreating the tables — so any change to an already-
+ * exported schema needs its own version bump even pre-release, not just a new table. Nothing has
+ * shipped, so every task in this plan that adds or reshapes a table bumps `version` and updates
+ * this list rather than writing a migration. `exportSchema = true` (with the schema directory
+ * wired up by `muplay.android.room`) is what makes the *first* post-release migration verifiable
+ * — a migration test needs the previous schema JSON, and there is no way to recover one that was
+ * never exported. Task 5 leaves this at version 4; Task 6 takes it to whatever comes next.
  */
 @Database(
   entities = [
@@ -28,7 +33,7 @@ import app.muplay.database.entity.SongEntity
     AlbumEntity::class,
     SongEntity::class,
   ],
-  version = 3,
+  version = 4,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {
