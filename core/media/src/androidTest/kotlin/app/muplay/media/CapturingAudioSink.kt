@@ -18,16 +18,22 @@ import java.nio.ByteBuffer
  * header. So what lands here is exactly the audio "gapless" is a claim about: the decoder's output
  * with the trimming already applied, or without it if the header was never read.
  *
- * ### [flushCount] counts pipeline resets, not sink configurations
+ * ### [flushOffsets], and the count that was tried first and does not work
  *
- * Read from the Media3 1.11.0 bytecode rather than from the class's own comment, because the two
- * disagree: `TeeAudioProcessor` calls [flush] from `onFlush`, from `onQueueEndOfStream` **and** from
- * `onReset`, each guarded by `isActive()`. So this counter moves when the processing pipeline is
- * flushed, when a stream ends, and when the processor is reset -- every one of which is a
- * discontinuity in the audio pipeline. That is the property the gapless comparison turns on: three
- * separate `prepare()` cycles tear the pipeline down and rebuild it between tracks, and one
- * `setMediaItems` queue of the same three tracks does not. The absolute numbers are Media3
- * implementation detail; the comparison is the claim.
+ * `TeeAudioProcessor` calls [flush] from `onFlush`, from `onQueueEndOfStream` and from `onReset`
+ * (read off the Media3 1.11.0 bytecode, each guarded by `isActive()`), so this callback fires
+ * whenever the audio processing pipeline is drained -- which Media3 does **once per media period**,
+ * gapless transition or not.
+ *
+ * That is why a bare flush *count* is not a gapless measurement, and this class no longer offers
+ * one. Measured on `muplay37`: one `setMediaItems` queue of three tracks and three separate
+ * `prepare()` cycles of the same three both produced **12** flushes. A count cannot tell a drain
+ * that was followed seamlessly by the next track from one that tore the pipeline down.
+ *
+ * What can is *where* each drain fell in the audio. [flushOffsets] records the number of bytes
+ * already captured at each one, so an entry strictly inside the capture marks a join between two
+ * tracks -- the exact place a gap would be, reported by the pipeline itself rather than computed
+ * from an expected duration. `GaplessTest` measures silence there.
  *
  * ### It reports what it was told, never what it assumes
  *
@@ -40,8 +46,11 @@ class CapturingAudioSink : TeeAudioProcessor.AudioBufferSink {
 
   private val captured = ByteArrayOutputStream()
 
-  var flushCount: Int = 0
-    private set
+  /** The number of bytes already captured at the moment of each [flush], in order. */
+  val flushOffsets: List<Int> get() = flushes.toList()
+
+  private val flushes = mutableListOf<Int>()
+
   var sampleRateHz: Int = 0
     private set
   var channelCount: Int = 0
@@ -52,7 +61,7 @@ class CapturingAudioSink : TeeAudioProcessor.AudioBufferSink {
   val pcm: ByteArray get() = captured.toByteArray()
 
   override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {
-    flushCount++
+    flushes += captured.size()
     this.sampleRateHz = sampleRateHz
     this.channelCount = channelCount
     this.encoding = encoding

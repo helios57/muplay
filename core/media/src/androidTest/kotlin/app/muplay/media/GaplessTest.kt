@@ -13,7 +13,6 @@ import app.muplay.testing.PcmAnalysis
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.abs
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -29,32 +28,46 @@ import org.junit.runner.RunWith
  * Gapless, measured in PCM frames off a real decoder on a real device.
  *
  * Spec section 4: *"Gapless has zero server support. Use a real Media3 `setMediaItems` queue and let
- * ExoPlayer read LAME/iTunSMPB. Never hand-roll."* There are two claims in that sentence and this
- * class measures both, separately, because a test that conflates them proves neither:
+ * ExoPlayer read LAME/iTunSMPB. Never hand-roll."* Neither half of that is observable from
+ * `onMediaItemTransition` firing, which is what a "was asked to play" gapless test looks like. What
+ * is observable is the audio: a `TeeAudioProcessor` inside the audio sink captures every frame the
+ * decoder produced, and the silence in it is measured by `PcmAnalysis`.
  *
- * 1. **The encoder's delay and padding are trimmed.** Each seeded fixture carries a LAME header
- *    saying 576 samples of delay and 1260 of padding (read off `01 - Track 1.mp3` with `xxd`, not
- *    assumed), and the decoder emits 222336 samples for it. Trimmed, that is exactly 220500 --
- *    5.000 s. Untrimmed, three of them run 125 ms long. [aQueuePlaysAllThreeTracksWithNoInsertedSilence]
- *    holds the total to a band that excludes the untrimmed answer, and holds the longest run of
- *    silence anywhere in the stream under the audible threshold.
- * 2. **The audio pipeline is not torn down between tracks.**
- *    [aQueueReconfiguresTheAudioSinkFewerTimesThanThreeSeparatePreparations] is that one, and it is
- *    a comparison rather than a constant: one queue of three tracks against three separate
- *    `prepare()` cycles of the same three, everything else held identical.
+ * ### Where the measurement looks, and why it needs no expected frame count
  *
- * Neither is observable from `onMediaItemTransition` firing, which is what a "was asked to play"
- * gapless test looks like.
+ * A gap is silence **at a join**, and this capture knows where its own joins are: the audio
+ * processing pipeline is drained once per media period, and [CapturingAudioSink.flushOffsets]
+ * records how many bytes had been captured each time that happened. Every interior entry is a
+ * boundary between two tracks, measured rather than assumed -- and if a teardown ever happened
+ * somewhere unexpected, that is precisely where this would then look for silence. So no expected
+ * duration appears in the gap assertion and no constant can satisfy it.
+ *
+ * The trailing padding of the **last** track is deliberately outside the claim: it is silence after
+ * the final sample, with no following track to be gapless with. It is real -- 529 frames, 11 ms,
+ * measured -- and it is the reason this class measures joins rather than the whole stream.
+ *
+ * ### What the joins actually contain, measured on `muplay37`
+ *
+ * | run | frames | silence at each join |
+ * |---|---|---|
+ * | one `setMediaItems` queue of three | 662231 | none at all |
+ * | three separate `prepare()` cycles of the same three | 663693 | 535 and 529 frames (12 ms, 11 ms) |
+ *
+ * The queue is 1462 frames *shorter*, and that number is not slack: it is exactly twice the 731
+ * frames of encoder padding left on a track played by itself, dropped at each of the two interior
+ * joins. That is what "ExoPlayer reads LAME/iTunSMPB" looks like when it is measured -- the join is
+ * sample-exact, and three separate preparations of the same three files are not.
  *
  * ### The measurement is proved able to fail, on this tier, not only on the analyser's
  *
  * `PcmAnalysis` (`:core:testing`) has its own JVM tests over synthetic buffers with known silence in
  * them. That gates the *analyser*. It does not gate the *capture*: a `CapturingAudioSink` that
- * recorded nothing, or a player whose sink was never tapped, would leave the silence assertions here
- * green having measured an empty buffer. So [silenceInsertedIntoTheQueueIsMeasuredAsSilence] plays a
- * queue with a known 600 ms of digital silence spliced into it and requires this apparatus to find
- * exactly that -- the same player, the same tee, the same analyser, one item different. A one-sided
- * "no silence found" claim is indistinguishable from a broken sink; the pair is the evidence.
+ * recorded nothing, or a player whose sink was never tapped, would leave every silence assertion
+ * here green having measured an empty buffer, and so would a join scan whose windows landed on no
+ * data. So [silenceInsertedIntoTheQueueIsMeasuredAsSilence] plays the same queue with a known
+ * [SILENCE_MS] of digital silence spliced into it and requires this apparatus to find exactly that,
+ * at the join, through the same player and the same analyser. A one-sided "no silence found" claim
+ * is indistinguishable from a broken sink; the pair is the evidence.
  *
  * ### The player is the shipping player
  *
@@ -106,81 +119,87 @@ class GaplessTest {
   }
 
   @Test
-  fun aQueuePlaysAllThreeTracksWithNoInsertedSilence() {
+  fun aQueueJoinsItsTracksWithNoSilenceBetweenThem() {
     val capture = playAsOneQueue()
 
-    // Sanity first: a real 16-bit PCM stream at a real rate, or every number below it is a
-    // quantity with no unit. `PcmAnalysis` handles 16-bit little-endian and nothing else, so this
-    // is the assertion that stops anything else being silently mis-measured.
+    // Sanity first: a real 16-bit PCM stream at a real rate, or every number below it is a quantity
+    // with no unit. `PcmAnalysis` handles 16-bit little-endian and nothing else, so this is the
+    // assertion that stops any other encoding being silently mis-measured rather than rejected.
     assertThat(capture.encoding).isEqualTo(C.ENCODING_PCM_16BIT)
     assertThat(capture.sampleRateHz).isEqualTo(FIXTURE_SAMPLE_RATE_HZ)
     assertThat(capture.channelCount).isEqualTo(FIXTURE_CHANNEL_COUNT)
 
-    val playedMs = playedMs(capture)
     /*
-     * Claim 1, and the band is what makes it a claim rather than a formality. Each fixture decodes
-     * to 222336 samples and its LAME header asks for 576 + 1260 of them to be dropped, leaving
-     * exactly 220500 -- 5.000 s. Three tracks trimmed are 15.000 s; three untrimmed are 15.125 s.
-     * A player that never read the Xing/LAME header lands outside this band, which is the whole of
-     * what "ExoPlayer reads LAME/iTunSMPB" means when it is measured instead of asserted.
+     * All three decoded, and decoded once. 220500 + 220500 + 221231 frames: two interior tracks
+     * trimmed exactly to their 5.000 s of real audio, and the last one carrying the 731 frames of
+     * encoder padding that no following track asked it to drop. A player that never read the
+     * Xing/LAME header would run 15125 ms, which this band excludes; one that dropped a track would
+     * run 10 s, which it excludes by a mile.
      */
-    assertThat(playedMs)
-      .describedAs("decoded audio across a three-track queue, trimmed = 15000 ms")
-      .isBetween(TRIMMED_TOTAL_MS - TOTAL_TOLERANCE_MS, TRIMMED_TOTAL_MS + TOTAL_TOLERANCE_MS)
+    assertThat(playedMs(capture))
+      .describedAs("decoded audio across a three-track queue")
+      .isBetween(QUEUED_TOTAL_MS - TOTAL_TOLERANCE_MS, QUEUED_TOTAL_MS + TOTAL_TOLERANCE_MS)
 
     /*
-     * The audible half of claim 1, and it is self-calibrating: no expected frame count appears in
-     * it, so no constant can satisfy it. Every seeded track is a continuous sine wave
-     * (ci/seed-fixtures.sh: 385, 440, 495 Hz), so a genuine signal is at most a sample or two from
-     * one side of zero to the other -- measured on the decoded fixture, the longest run of exact
-     * zeros in a trimmed track is one sample. Untrimmed encoder delay and padding are silence, and
-     * they sit at exactly the two places a queue joins two tracks.
+     * The gapless assertion proper. Every seeded track is a continuous sine wave
+     * (ci/seed-fixtures.sh: 385, 440, 495 Hz), so a genuine signal is never more than a sample or
+     * two from one side of zero to the other; silence at a join is encoder delay or padding that
+     * was not trimmed, and it is what a listener hears as "a gap".
      *
-     * [silenceInsertedIntoTheQueueIsMeasuredAsSilence] is what stops this assertion being satisfied
-     * by a capture that recorded nothing.
+     * Measured here: none at all. [aQueueLeavesLessSilenceAtItsJoinsThanThreeSeparatePreparations]
+     * is what makes that a result rather than a formality, and
+     * [silenceInsertedIntoTheQueueIsMeasuredAsSilence] is what makes it a measurement rather than an
+     * empty buffer.
      */
-    val silentMs = longestSilenceMs(capture)
-    assertThat(silentMs)
-      .describedAs("longest run of silence anywhere in three gaplessly-queued tracks")
+    assertThat(joinSilenceMs(capture))
+      .describedAs("longest silence at a join of a three-track queue")
       .isLessThan(AUDIBLE_GAP_MS)
   }
 
   @Test
-  fun aQueueReconfiguresTheAudioSinkFewerTimesThanThreeSeparatePreparations() {
+  fun aQueueLeavesLessSilenceAtItsJoinsThanThreeSeparatePreparations() {
     val queued = playAsOneQueue()
     val separate = playAsThreeSeparatePreparations()
 
-    // Claim 2: the pipeline was not torn down between tracks. Strictly fewer, not "equal to one" --
-    // the absolute count is a Media3 implementation detail, the comparison is the property.
-    // Everything but the queueing is identical between the two runs: same tracks, same order, same
-    // player construction, same capture.
-    assertThat(queued.flushCount)
-      .describedAs(
-        "audio pipeline flushes for one queue of three (%d) vs three preparations (%d)",
-        queued.flushCount,
-        separate.flushCount,
-      )
-      .isLessThan(separate.flushCount)
+    val queuedSilenceMs = joinSilenceMs(queued)
+    val separateSilenceMs = joinSilenceMs(separate)
 
-    // ...and the queue did not achieve that by playing less. Within 10 ms of the same audio.
-    val differenceMs = PcmAnalysis.framesToMs(
-      abs(frames(queued) - frames(separate)),
-      queued.sampleRateHz,
-    )
+    // The comparison is the argument: the same three tracks, in the same order, through the same
+    // player construction and the same capture, differing in one thing only -- whether they were
+    // queued or prepared one at a time.
+    //
+    // Both bounds are needed. Strictly less is the property; the floor under `separate` is what
+    // stops this passing as a comparison between two silences that were both absent, which is
+    // exactly what it would degrade to if the capture stopped recording.
+    assertThat(separateSilenceMs)
+      .describedAs("silence at the joins of three separate preparations of the same three tracks")
+      .isGreaterThanOrEqualTo(AUDIBLE_GAP_MS)
+    assertThat(queuedSilenceMs)
+      .describedAs("silence at a join: queued (%d ms) vs separately prepared (%d ms)", queuedSilenceMs, separateSilenceMs)
+      .isLessThan(separateSilenceMs)
+
+    /*
+     * And the queue did not achieve that by dropping audio. It is *shorter* -- by the encoder
+     * padding it trimmed at each of the two interior joins, 731 frames each, 33 ms in total -- and
+     * that is the point rather than a caveat: a join is seamless precisely because the padding
+     * between the two tracks is gone. A queue that lost a whole track would show up here as
+     * seconds, not tens of milliseconds.
+     */
+    val differenceMs = playedMs(separate) - playedMs(queued)
     assertThat(differenceMs)
       .describedAs(
-        "total decoded audio, queued (%d ms) vs separately prepared (%d ms)",
+        "audio the queue trimmed at its joins: queued %d ms, separately prepared %d ms",
         playedMs(queued),
         playedMs(separate),
       )
-      .isLessThan(AUDIBLE_GAP_MS)
+      .isBetween(TRIMMED_AT_JOINS_MS - JOIN_TRIM_TOLERANCE_MS, TRIMMED_AT_JOINS_MS + JOIN_TRIM_TOLERANCE_MS)
   }
 
   @Test
   fun theQueueReallyPlayedEveryTrackAndNotTheFirstOneThreeTimes() {
     // The control for the two tests above. A "gapless" implementation that played track 1 three
-    // times would satisfy the frame count and the zero-run check perfectly. Media3 reports each
-    // transition; three distinct media ids, in order, is what rules that out.
+    // times would satisfy the frame count and every silence measurement perfectly. Media3 reports
+    // each transition; three distinct media ids, in order, is what rules that out.
     val transitions = mutableListOf<String>()
 
     runExperiment(transitions) { harness ->
@@ -198,16 +217,16 @@ class GaplessTest {
   /**
    * The falsification, run as a test rather than written down as a claim.
    *
-   * Splices [SILENCE_MS] of digital silence into the middle of the same queue, as a WAV item in the
-   * fixtures' own format so that nothing else about the pipeline changes -- no sample rate change,
-   * no channel change, no sink reconfiguration -- and requires the apparatus to measure it. Every
-   * one of the ways this measurement could be quietly dead fails here: a sink that captured nothing,
-   * a player whose renderers were never tapped, a `longestZeroRunFrames` that returned a constant,
-   * a `framesToMs` denominated in the wrong unit or read at the wrong rate. Each of those leaves
-   * [aQueuePlaysAllThreeTracksWithNoInsertedSilence] **green**.
+   * Splices [SILENCE_MS] of digital silence into the same queue, as a WAV item in the fixtures' own
+   * format so that nothing else about the pipeline changes -- no sample rate change, no channel
+   * change, no sink reconfiguration -- and requires the apparatus to find it, twice over: once as
+   * the largest silence anywhere in the stream, which pins the *magnitude*, and once through the
+   * join scan that [aQueueJoinsItsTracksWithNoSilenceBetweenThem] reads its whole claim through.
    *
-   * It is a two-sided assertion on purpose: too little silence found means the capture is missing
-   * audio, too much means it is finding silence the stream does not contain.
+   * Every way that claim could be quietly dead fails here and *only* here: a sink that captured
+   * nothing, a player whose renderers were never tapped, a `longestZeroRunFrames` that returned a
+   * constant, a `framesToMs` denominated in the wrong unit or read at the wrong rate, a join scan
+   * whose windows covered no audio. Each of those leaves the gapless assertion **green**.
    */
   @Test
   fun silenceInsertedIntoTheQueueIsMeasuredAsSilence() {
@@ -226,18 +245,73 @@ class GaplessTest {
     }
 
     // The three real tracks are still all there: the silence was added to the queue, not swapped in
-    // for a track. Without this, a run that played the silence and nothing else would satisfy the
-    // assertion below perfectly.
+    // for a track. Without this, a run that played the silence and nothing else would satisfy both
+    // assertions below perfectly.
     assertThat(playedMs(capture))
       .describedAs("decoded audio across three tracks plus %d ms of silence", SILENCE_MS)
       .isBetween(
-        TRIMMED_TOTAL_MS + SILENCE_MS - TOTAL_TOLERANCE_MS,
-        TRIMMED_TOTAL_MS + SILENCE_MS + TOTAL_TOLERANCE_MS,
+        QUEUED_TOTAL_MS + SILENCE_MS - TOTAL_TOLERANCE_MS,
+        QUEUED_TOTAL_MS + SILENCE_MS + TOTAL_TOLERANCE_MS,
       )
 
-    assertThat(longestSilenceMs(capture))
-      .describedAs("the %d ms of silence spliced into the queue, as this apparatus measures it", SILENCE_MS)
+    // Two-sided on purpose: too little silence found means the capture is losing audio, too much
+    // means it is finding silence the stream does not contain.
+    val wholeStreamSilenceMs = PcmAnalysis.framesToMs(
+      PcmAnalysis.longestZeroRunFrames(capture.pcm, capture.channelCount),
+      capture.sampleRateHz,
+    )
+    assertThat(wholeStreamSilenceMs)
+      .describedAs("the %d ms spliced into the queue, as this capture and analyser measure it", SILENCE_MS)
       .isBetween(SILENCE_MS - SILENCE_TOLERANCE_MS, SILENCE_MS + SILENCE_TOLERANCE_MS)
+
+    // ...and the join scan sees it too, which is the half that gates
+    // `aQueueJoinsItsTracksWithNoSilenceBetweenThem`. It reads a window either side of each join, so
+    // what it reports for a gap this large is the window, not the gap -- greater than the audible
+    // threshold is the claim, and the magnitude is the assertion above.
+    assertThat(joinSilenceMs(capture))
+      .describedAs("silence at the join of a deliberately gapped queue")
+      .isGreaterThan(AUDIBLE_GAP_MS)
+  }
+
+  /**
+   * The longest run of silence at any join, in milliseconds.
+   *
+   * A join is wherever the audio processing pipeline was drained with audio on both sides of it --
+   * that is, an entry of [CapturingAudioSink.flushOffsets] strictly inside the capture. The
+   * pipeline reports its own boundaries, so nothing here is an expected frame count: a queue's joins
+   * fall where its tracks meet, three separate preparations' fall where each `prepare()` cycle ends,
+   * and a teardown in an unexpected place would simply move where this looks.
+   *
+   * The final entry -- the end of the stream -- is not a join. The last track's encoder padding
+   * lives there, 529 frames of it, with no following track for it to be a gap between.
+   */
+  private fun joinSilenceMs(capture: CapturingAudioSink): Long {
+    val total = frames(capture)
+    val windowFrames = capture.sampleRateHz * JOIN_WINDOW_MS / MILLIS_PER_SECOND
+    val bytesPerFrame = BYTES_PER_SAMPLE * capture.channelCount
+    val joins = capture.flushOffsets
+      .map { PcmAnalysis.frameCount(it, capture.channelCount) }
+      .filter { it > 0 && it < total }
+      .distinct()
+
+    // The vacuity guard, and it is not decoration: with no join to look at, `maxOf` below would
+    // have nothing to reduce and this measurement would be an assertion over no audio at all.
+    check(joins.isNotEmpty()) {
+      "no interior pipeline flush was recorded in $total frames (offsets=${capture.flushOffsets}), " +
+        "so there is no join to measure silence at and this assertion would be vacuous"
+    }
+
+    return joins.maxOf { join ->
+      val from = maxOf(0, join - windowFrames)
+      val to = minOf(total, join + windowFrames)
+      PcmAnalysis.framesToMs(
+        PcmAnalysis.longestZeroRunFrames(
+          capture.pcm.copyOfRange(from * bytesPerFrame, to * bytesPerFrame),
+          capture.channelCount,
+        ),
+        capture.sampleRateHz,
+      )
+    }
   }
 
   private fun frames(capture: CapturingAudioSink): Int =
@@ -245,12 +319,6 @@ class GaplessTest {
 
   private fun playedMs(capture: CapturingAudioSink): Long =
     PcmAnalysis.framesToMs(frames(capture), capture.sampleRateHz)
-
-  private fun longestSilenceMs(capture: CapturingAudioSink): Long =
-    PcmAnalysis.framesToMs(
-      PcmAnalysis.longestZeroRunFrames(capture.pcm, capture.channelCount),
-      capture.sampleRateHz,
-    )
 
   /**
    * [setCustomCacheKey][MediaItem.Builder.setCustomCacheKey] is not decoration: every byte travels
@@ -298,8 +366,8 @@ class GaplessTest {
    * The position wait before each `awaitEnded` is load-bearing rather than belt-and-braces: after
    * the first track the player is already in `STATE_ENDED`, so a bare `awaitEnded` for the second
    * would return immediately on the *previous* track's state and this experiment would report one
-   * playback where it claims three. `setMediaItem` resets the position to zero synchronously, so
-   * a position past four seconds can only belong to the track just queued.
+   * playback where it claims three. `setMediaItem` resets the position to zero synchronously, so a
+   * position past four seconds can only belong to the track just queued.
    */
   private fun playAsThreeSeparatePreparations(): CapturingAudioSink = runExperiment { harness ->
     songs.indices.forEach { index ->
@@ -364,25 +432,25 @@ class GaplessTest {
    *
    * Built here rather than seeded, because `ci/seed-fixtures.sh` cannot help: the file has to be
    * *exactly* zero in every sample for this to be a known quantity, and an MP3 of silence is not --
-   * it decodes to a quantisation ripple around zero. Raw PCM has no encoder to argue with, and
-   * ExoPlayer plays it through the same audio sink and the same processor chain as an MP3, with no
-   * encoder delay or padding of its own to trim.
+   * it decodes to a quantisation ripple around zero, and it would arrive with encoder delay and
+   * padding of its own. Raw PCM has no encoder to argue with, and ExoPlayer plays it through the
+   * same audio sink and the same processor chain as an MP3.
    */
   private fun silentWav(durationMs: Long, sampleRateHz: Int, channelCount: Int): ByteArray {
     val bytesPerFrame = BYTES_PER_SAMPLE * channelCount
     val dataBytes = (durationMs * sampleRateHz / MILLIS_PER_SECOND).toInt() * bytesPerFrame
     val wav = ByteBuffer.allocate(WAV_HEADER_BYTES + dataBytes).order(ByteOrder.LITTLE_ENDIAN)
     wav.put("RIFF".toByteArray(Charsets.US_ASCII))
-    wav.putInt(WAV_HEADER_BYTES - 8 + dataBytes)
+    wav.putInt(WAV_HEADER_BYTES - RIFF_PREFIX_BYTES + dataBytes)
     wav.put("WAVE".toByteArray(Charsets.US_ASCII))
     wav.put("fmt ".toByteArray(Charsets.US_ASCII))
-    wav.putInt(16) // PCM fmt chunk size
-    wav.putShort(1) // PCM, uncompressed
+    wav.putInt(PCM_FMT_CHUNK_BYTES)
+    wav.putShort(WAV_FORMAT_PCM)
     wav.putShort(channelCount.toShort())
     wav.putInt(sampleRateHz)
     wav.putInt(sampleRateHz * bytesPerFrame) // byte rate
     wav.putShort(bytesPerFrame.toShort()) // block align
-    wav.putShort((BYTES_PER_SAMPLE * 8).toShort()) // bits per sample
+    wav.putShort((BYTES_PER_SAMPLE * BITS_PER_BYTE).toShort())
     wav.put("data".toByteArray(Charsets.US_ASCII))
     wav.putInt(dataBytes)
     // The remaining `dataBytes` are already zero -- which is the point of the file.
@@ -398,17 +466,33 @@ class GaplessTest {
     const val FIXTURE_CHANNEL_COUNT = 1
 
     /**
-     * Three 5.000 s tracks with their LAME delay and padding trimmed: 3 x 220500 frames.
-     * Untrimmed they run to 15125 ms, which is what [TOTAL_TOLERANCE_MS] is sized to exclude.
+     * 220500 + 220500 + 221231 frames, measured on `muplay37`. The two interior tracks are trimmed
+     * to exactly their 5.000 s of real audio; the last keeps the 731 frames of encoder padding that
+     * no following track asked it to drop. Untrimmed, three of these files run 15125 ms -- which
+     * [TOTAL_TOLERANCE_MS] is sized to exclude.
      */
-    const val TRIMMED_TOTAL_MS = 15_000L
+    const val QUEUED_TOTAL_MS = 15_016L
     const val TOTAL_TOLERANCE_MS = 60L
 
     /**
-     * The threshold "an audible gap" is denominated in. Untrimmed encoder delay is ~25 ms of
-     * silence per track boundary; a genuine sine crosses zero in a sample or two.
+     * 2 x 731 frames: the encoder padding a queue drops at each of its two interior joins, and so
+     * the amount by which it is *shorter* than three separate preparations of the same three files.
+     */
+    const val TRIMMED_AT_JOINS_MS = 33L
+    const val JOIN_TRIM_TOLERANCE_MS = 12L
+
+    /**
+     * The threshold "an audible gap" is denominated in. Measured against it: a queue's joins hold
+     * no silence at all, and three separate preparations of the same tracks hold 11 and 12 ms.
      */
     const val AUDIBLE_GAP_MS = 10L
+
+    /**
+     * How far either side of a join [joinSilenceMs] looks. Wide enough to contain the whole of an
+     * untrimmed encoder delay or padding (~12 ms, either side of the boundary), narrow enough that
+     * it can only report silence that is genuinely at the join.
+     */
+    const val JOIN_WINDOW_MS = 50
 
     /** The known gap [silenceInsertedIntoTheQueueIsMeasuredAsSilence] splices in, and its band. */
     const val SILENCE_MS = 600L
@@ -428,7 +512,11 @@ class GaplessTest {
     const val NEARLY_A_WHOLE_TRACK_MS = 4_000L
 
     const val BYTES_PER_SAMPLE = 2
-    const val MILLIS_PER_SECOND = 1_000L
+    const val BITS_PER_BYTE = 8
+    const val MILLIS_PER_SECOND = 1_000
     const val WAV_HEADER_BYTES = 44
+    const val RIFF_PREFIX_BYTES = 8
+    const val PCM_FMT_CHUNK_BYTES = 16
+    const val WAV_FORMAT_PCM: Short = 1
   }
 }
