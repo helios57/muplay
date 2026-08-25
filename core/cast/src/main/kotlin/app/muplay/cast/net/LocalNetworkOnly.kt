@@ -4,6 +4,8 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 
 /** Thrown when a cast connection would leave the local network. */
 class NonLocalAddressException(host: String, address: InetAddress) : IOException(
@@ -35,9 +37,22 @@ class NonLocalAddressException(host: String, address: InetAddress) : IOException
  * through OkHttp, which does consult the policy, and the release manifest still permits it nothing
  * in cleartext.
  *
- * The proxy's listening socket needs no rule of this kind at all: `NetworkSecurityPolicy` governs
- * outbound connections made by the platform's HTTP stacks and has no mechanism to affect a
- * `ServerSocket`.
+ * ### The rule has two directions, and the inbound one is the dangerous half
+ *
+ * `NetworkSecurityPolicy` governs outbound connections made by the platform's HTTP stacks and has
+ * no mechanism to affect a `ServerSocket` -- so the platform offers the proxy's listening socket
+ * nothing, which is *not* the same as the listening socket needing nothing. (This KDoc said the
+ * latter until the review that added [acceptLocal]. It was true about the platform and wrong as
+ * guidance, and the next author it steered was Task 6's.)
+ *
+ * Task 6 binds a `ServerSocket` that serves **Navidrome-authenticated audio**. A bound socket is
+ * reachable by every device on the LAN -- coffee-shop Wi-Fi included -- and by every other app on
+ * the phone. So the inbound direction gets its own guard: [acceptLocal] is the accept call the
+ * proxy makes, and it hands back only connections from an address [isLocal] admits. It is not the
+ * whole of the proxy's authorisation story (a capability token in the URL is Task 6's own job, and
+ * a hostile app on the same phone connects from loopback, which is local by construction) -- it is
+ * the network-shaped half of it, in the same place as its outbound twin so neither can be found
+ * without the other.
  *
  * Local means, exactly:
  *
@@ -59,6 +74,39 @@ object LocalNetworkOnly {
 
   fun require(host: String, address: InetAddress) {
     if (!isLocal(address)) throw NonLocalAddressException(host, address)
+  }
+
+  /**
+   * True when [socket]'s peer is on the local network.
+   *
+   * A socket with no peer address -- one already closed by the time it was asked -- is **not**
+   * local. That direction is the fail-closed one, and it is the case a `?: true` would get
+   * backwards while every ordinary test stayed green.
+   */
+  fun isLocalPeer(socket: Socket): Boolean {
+    val peer = socket.inetAddress ?: return false
+    return isLocal(peer)
+  }
+
+  /**
+   * Accepts one connection from [server] and returns it **only** if the peer is on the local
+   * network. A peer that is not is closed, and `null` comes back instead.
+   *
+   * `null` rather than an exception because the caller is an accept loop serving audio: one
+   * connection from somewhere it should not be is a thing to drop and carry on from, not a reason
+   * to stop serving the renderer that is legitimately playing. The closing is the point -- a
+   * refused connection that stays open is a file descriptor a peer can hold as many of as it
+   * likes.
+   *
+   * The `ServerSocket` itself should still be bound to the interface the renderer is on rather
+   * than to the wildcard, which is Task 6's decision to make with [LocalAddress]; this is the
+   * check that holds whatever it binds to the same rule as the outbound side.
+   */
+  fun acceptLocal(server: ServerSocket): Socket? {
+    val socket = server.accept()
+    if (isLocalPeer(socket)) return socket
+    socket.close()
+    return null
   }
 
   private fun isLocalIpv4(address: Inet4Address): Boolean {

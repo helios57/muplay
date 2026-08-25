@@ -490,6 +490,58 @@ class ConventionTest {
     assertThat(forbiddenAttributesArgs).contains("\"networkSecurityConfig\"")
   }
 
+  /**
+   * `:core:cast` speaks to renderers through a hand-written `java.net.Socket` client, and to
+   * Navidrome through OkHttp. That split **is** the module's security claim: `LocalNetworkOnly`
+   * can only hold a connection to the local network if the connection goes through the socket
+   * client, because OkHttp consults `NetworkSecurityPolicy` and knows nothing about this rule.
+   *
+   * Until this test existed the claim was enforced by a comment in `core/cast/build.gradle.kts`
+   * ("if you find an `okhttp3` import under these packages, that is the bug"). A future task that
+   * reached for OkHttp inside the cast protocol code would bypass `LocalNetworkOnly` entirely --
+   * and, because the debug manifest sets `usesCleartextTraffic="true"`, it would work on the bench
+   * and ship the bypass with every test green. This repository already enforces this shape of rule
+   * mechanically (`BANNED_MOCK_GROUPS`, `forbiddenAttributes`); this is the same move.
+   *
+   * The exempt package is read from the build file rather than duplicated here, so the two cannot
+   * drift -- and a build file that stops declaring one fails this test rather than quietly
+   * exempting nothing (or, worse, everything).
+   */
+  @Test
+  fun `only the cast module's proxy package may reach for OkHttp`() {
+    val buildFile = File(repoRoot(), "core/cast/build.gradle.kts")
+    val exemptPackage = Regex("""OKHTTP EXEMPT PACKAGE: ([\w.]+)""")
+      .find(buildFile.readText())?.groupValues?.get(1)
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against, and
+    // that applies to the carve-out as much as to the sources.
+    assertThat(exemptPackage)
+      .describedAs("${buildFile.path} must declare the one package that may use OkHttp")
+      .isNotNull()
+
+    val sourceRoot = File(repoRoot(), "core/cast/src/main/kotlin")
+    val sources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${sourceRoot.path}").isNotEmpty()
+
+    val exemptDir = File(sourceRoot, exemptPackage!!.replace('.', '/')).canonicalPath
+    // `okhttp3.` catches the import, the fully-qualified use and the star import alike. Prose that
+    // merely mentions OkHttp (`CastHttpClient`'s KDoc says "not OkHttp", and it should) does not
+    // write the package name with a dot after it.
+    val usage = Regex("""okhttp3\s*\.""")
+    val offenders = sources
+      .filterNot { it.canonicalPath.startsWith(exemptDir + File.separator) }
+      .filter { usage.containsMatchIn(it.readText()) }
+      .map { it.path }
+
+    assertThat(offenders)
+      .describedAs(
+        "renderer-facing cast code must use CastHttpClient, not OkHttp: OkHttp consults " +
+          "NetworkSecurityPolicy and bypasses LocalNetworkOnly entirely. Only `$exemptPackage` " +
+          "(the proxy's upstream fetch of Navidrome) is exempt.",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `every Gradle project has a coverage floor`() {
     // A module absent from `coverageFloors` is un-gated, and the build's own warning for it has

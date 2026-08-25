@@ -96,11 +96,18 @@ file containing the literal text `PID=12345` rather than the bare number, which
 made every liveness check structurally incapable of reporting "alive".
 
 **Bound the tool's timeout, not just the shell's.** A `timeout 900 ...` inside a
-harness call that itself caps at two minutes is killed by the harness, and a
-killed mutation run's `finally` never reverts — leaving a stray mutation the
-next run's dirty-tree guard blames on whoever comes along. Two agents hit this
-on the same afternoon. Run one mutation per bounded command, and check
-`git status` immediately after.
+harness call that itself caps lower is killed by the harness, and a killed
+mutation run's `finally` never reverts — leaving a stray mutation the next
+run's dirty-tree guard blames on whoever comes along. Three agents hit this on
+the same afternoon; one of them wrote this paragraph and then hit it again.
+
+**The harness tool timeout maxes out at 10 minutes.** So a shell `timeout` above
+that is a lie you tell yourself: the call dies at ten minutes regardless. A full
+probe sweep takes far longer than that. Run anything longer in the background
+(`run_in_background`), which survives across turns and reports its exit status,
+or split it into filtered runs that each finish inside the cap. Either way,
+check `git status` immediately after — the dirty-tree guard is the backstop, and
+it works, but it blames the next agent rather than the one who left the stray.
 
 ## A subagent's `.output` file mtime is not a liveness signal
 
