@@ -63,8 +63,14 @@ class LibraryViewModelTest {
 
     val searchCalls = mutableListOf<Triple<Int, String, Int>>()
     var searchResult = SearchResults(emptyList(), emptyList(), emptyList())
+
+    /** When set, [search] parks on it -- lets a test observe what the screen shows *while* a
+     *  search is in flight, which is where a stale result from the previous library shows up. */
+    var searchGate: CompletableDeferred<Unit>? = null
+
     override suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults {
       searchCalls += Triple(libraryId, query, limit)
+      searchGate?.await()
       return searchResult
     }
 
@@ -185,6 +191,107 @@ class LibraryViewModelTest {
       assertThat(content(vm).shuffled).isEmpty()
       // Back to library 2's own full list, not the stale search result carried over from library 1.
       assertThat(content(vm).albums.map { it.name }).containsExactly("Book Album")
+    }
+
+  @Test
+  fun `the library selector shows every library the mirror holds, exactly, in the mirror's order`() =
+    runTest(dispatcher) {
+      // N-2, at the layer above LibraryUiStateTest's own version of this: a mutation applied in
+      // the view model (dropping, truncating or re-sorting what it hands `libraryContent`) is not
+      // caught by a test of the pure builder, and vice versa -- a mutation proves only the layer
+      // it is applied at.
+      //
+      // Two view models over two sources whose library order is opposite, for the same reason
+      // LibraryUiStateTest gives: one order alone is satisfied by a sort.
+      val asGiven = warm(FakeLibrarySource(listOf(music, books)))
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(content(asGiven).libraries).containsExactly(music, books)
+
+      val theOtherWayRound = warm(FakeLibrarySource(listOf(books, music)))
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(content(theOtherWayRound).libraries).containsExactly(books, music)
+    }
+
+  @Test
+  fun `the shuffled track order reaches the screen unresorted`() = runTest(dispatcher) {
+    // N-5. Every shuffle fixture in this class held one song, and order over a one-element list is
+    // not observable. This is the play order the user reads under "Shuffled".
+    val fake = FakeLibrarySource(listOf(music))
+    fake.shuffleAnswer = {
+      ShuffleResult(
+        listOf(song("s3", "Zebra", 1), song("s1", "Apple", 1), song("s2", "Mango", 1)),
+        discardedOutOfScope = 0,
+      )
+    }
+    val vm = warm(fake)
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.shuffle()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(content(vm).shuffled.map { it.title }).containsExactly("Zebra", "Apple", "Mango")
+  }
+
+  @Test
+  fun `search results reach the screen in the order the search returned them`() = runTest(dispatcher) {
+    val fake = FakeLibrarySource(listOf(music))
+    fake.searchResult = SearchResults(
+      emptyList(),
+      listOf(album("a1", "Zebra", 1), album("a2", "Apple", 1), album("a3", "Mango", 1)),
+      emptyList(),
+    )
+    val vm = warm(fake)
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.search("a")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(content(vm).albums.map { it.name }).containsExactly("Zebra", "Apple", "Mango")
+  }
+
+  @Test
+  fun `a library switch drops the previous library's search results before the new search returns`() =
+    runTest(dispatcher) {
+      // N-5. `selectLibrary` clears `searchAlbums` as well as `query`, and the co-located
+      // `query.value = ""` hides the clear from every settled-state assertion: with the query
+      // blank, `libraryContent` shows the browse list either way, so deleting
+      // `searchAlbums.value = emptyList()` left all 34 tests green.
+      //
+      // It is not cosmetic. `search()` sets the query synchronously and the results
+      // asynchronously, so the first frame after switching library and typing renders whatever
+      // `searchAlbums` still holds -- library 1's hits, under library 2's chip. Observed here by
+      // parking the second search inside the fake.
+      val fake = FakeLibrarySource(listOf(music, books))
+      fake.setAlbums(1, listOf(album("a1", "Music Album", 1)))
+      fake.setAlbums(2, listOf(album("a2", "Book Album", 2)))
+      fake.searchResult = SearchResults(emptyList(), listOf(album("a9", "Library One Hit", 1)), emptyList())
+      val vm = warm(fake)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      vm.search("hit")
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(content(vm).albums.map { it.name }).containsExactly("Library One Hit")
+
+      vm.selectLibrary(2)
+      // Settled between the two actions, as two taps on a device are: `currentLibraryId()` reads
+      // `uiState.value`, which lags `selectedLibraryId` by one `combine` emission, so a switch and
+      // a search issued inside one dispatcher turn would scope the search to the *old* library.
+      // Not this test's subject (and unreachable from the UI, where the two are separate taps) --
+      // asserted below at the value it must have so that it cannot drift here unnoticed.
+      dispatcher.scheduler.advanceUntilIdle()
+
+      val gate = CompletableDeferred<Unit>()
+      fake.searchGate = gate
+      vm.search("hit")
+      dispatcher.scheduler.advanceUntilIdle()
+
+      // The search for library 2 is issued and parked. Nothing from library 1 may be on screen.
+      assertThat(fake.searchCalls.last()).isEqualTo(Triple(2, "hit", 50))
+      assertThat(content(vm).albums).isEmpty()
+
+      gate.complete(Unit)
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(content(vm).albums.map { it.name }).containsExactly("Library One Hit")
     }
 
   @Test

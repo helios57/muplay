@@ -64,16 +64,49 @@ class AlbumViewModel(
     },
   )
 
+  /**
+   * Whether [load]'s album lookup has come back yet -- the one distinction a bare `Album?` cannot
+   * draw, and the cause of N-3(b) in `task-9-review.md`.
+   *
+   * `album` used to be a `MutableStateFlow<Album?>` that [load] reset to `null` before launching
+   * the lookup, and `uiState` read `null` as [AlbumUiState.NotFound]. So between the songs flow's
+   * first emission and the album row arriving, the screen said **"That album is no longer in your
+   * library."** about an album that was loading perfectly well. Reachable for certain, not
+   * theoretically: this app installs no `ViewModelStoreNavEntryDecorator`, so `hiltViewModel()`
+   * inside a `NavDisplay` entry resolves against the *Activity's* store and this view model is
+   * shared -- album A -> back -> album B runs `load("B")` on an instance that already holds A's
+   * songs, and the reset published `NotFound` immediately.
+   *
+   * A sealed type rather than a second `Boolean` flow beside the album: "fetched, and it is null"
+   * and "not fetched yet" are the two states that must never be confused, and a pair of flows
+   * makes the confusable combination representable -- and momentarily *real*, between two
+   * assignments -- again. `object`/`class`, not `data object`/`data class`, deliberately: no
+   * generated `equals`, so [Done] is compared by identity and a re-fetch returning an equal album
+   * still emits rather than being conflated away by `MutableStateFlow`.
+   */
+  private sealed interface Fetch {
+    /** [load] has set an id and its lookup has not returned. The screen is [AlbumUiState.Loading]. */
+    object Pending : Fetch
+
+    /** The lookup returned. [album] is `null` **only** when the mirror genuinely has no such row. */
+    class Done(val album: Album?) : Fetch
+  }
+
   private val albumId = MutableStateFlow<String?>(null)
-  private val album = MutableStateFlow<Album?>(null)
+  private val album = MutableStateFlow<Fetch>(Fetch.Pending)
 
   val uiState: StateFlow<AlbumUiState> =
     albumId.flatMapLatest { id ->
       if (id == null) {
         flowOf(AlbumUiState.Loading)
       } else {
-        combine(album, source.songs(id)) { current, songs ->
-          if (current == null) AlbumUiState.NotFound else AlbumUiState.Content(current, songs)
+        combine(album, source.songs(id)) { fetch, songs ->
+          when (fetch) {
+            Fetch.Pending -> AlbumUiState.Loading
+            is Fetch.Done ->
+              if (fetch.album == null) AlbumUiState.NotFound
+              else AlbumUiState.Content(fetch.album, songs)
+          }
         }
       }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), AlbumUiState.Loading)
@@ -81,14 +114,22 @@ class AlbumViewModel(
   /**
    * Called once from `AlbumScreen`'s `LaunchedEffect(albumId)`. `flatMapLatest` above is what
    * makes a second call with a *different* id (the same view model instance navigating straight
-   * from one album to another, should Navigation 3 ever reuse it that way) switch cleanly rather
-   * than combining the new album with the previous id's still-collecting songs flow.
+   * from one album to another, which the Activity-scoped store above makes routine) switch cleanly
+   * rather than combining the new album with the previous id's still-collecting songs flow.
+   *
+   * The early return is the second belt: `LaunchedEffect(albumId)` re-launches only when its key
+   * changes, but a recomposition that re-runs this with the id already on screen must not throw
+   * the loaded album away and re-fetch it. It is covered by `AlbumViewModelTest`'s
+   * `loading the same album twice never fetches it a second time...` -- before review round 1 it
+   * was covered by nothing at all (the class measured 1/2 BRANCH) and deleting it left every test
+   * in this module green.
    */
   fun load(albumId: String) {
     if (this.albumId.value == albumId) return
+    // Before the id, so `flatMapLatest`'s new inner flow can never see the previous album's Done.
+    album.value = Fetch.Pending
     this.albumId.value = albumId
-    album.value = null
-    viewModelScope.launch { album.value = source.album(albumId) }
+    viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }
   }
 
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =

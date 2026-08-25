@@ -2,6 +2,7 @@ package app.muplay.library
 
 import app.muplay.model.Album
 import app.muplay.model.Song
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -52,8 +53,13 @@ class AlbumViewModelTest {
       return songsByAlbum.getOrPut(albumId) { MutableStateFlow(emptyList()) }
     }
 
+    /** When set, [album] parks on it -- lets a test observe the state *while* a lookup is in
+     *  flight, which is where N-3(b)'s false "no longer in your library" lived. */
+    var albumGate: CompletableDeferred<Unit>? = null
+
     override suspend fun album(albumId: String): Album? {
       albumCalls += albumId
+      albumGate?.await()
       return albumsById[albumId]
     }
 
@@ -179,6 +185,99 @@ class AlbumViewModelTest {
 
     assertThat(vm.uiState.value).isEqualTo(AlbumUiState.NotFound)
   }
+
+  @Test
+  fun `an album still being fetched is Loading, not the deleted-album message`() = runTest(dispatcher) {
+    // N-3(b), task-9-review.md. `load()` clears the album row before the lookup returns, and this
+    // view model used to read that cleared value as NotFound -- so between the songs flow's first
+    // emission and the album arriving, a perfectly healthy album rendered "That album is no longer
+    // in your library." The songs are already there below (setSongs before load), which is exactly
+    // the shape a re-navigation produces on a device: this view model is Activity-scoped, so
+    // album A -> back -> album B calls load("B") on an instance that already holds songs.
+    val fake = FakeAlbumSource()
+    fake.albumsById["a1"] = album("a1", "Still Loading", 1)
+    fake.setSongs("a1", listOf(song("s1", "Track", "a1", 1)))
+    val gate = CompletableDeferred<Unit>()
+    fake.albumGate = gate
+
+    val vm = warm(fake)
+    vm.load("a1")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    // Parked inside album(): the lookup has been issued and has not answered.
+    assertThat(fake.albumCalls).containsExactly("a1")
+    assertThat(vm.uiState.value).isEqualTo(AlbumUiState.Loading)
+
+    gate.complete(Unit)
+    dispatcher.scheduler.advanceUntilIdle()
+
+    // ...and the same fetch, once it answers, is Content -- so this is a two-value observation of
+    // the same field, not just "it was not NotFound once".
+    val content = vm.uiState.value as AlbumUiState.Content
+    assertThat(content.album.name).isEqualTo("Still Loading")
+  }
+
+  @Test
+  fun `switching to another album shows Loading, never the previous album under the new id`() =
+    runTest(dispatcher) {
+      // The other half of N-3(b): `load()` resets the album row to Pending *before* it changes the
+      // id, so `flatMapLatest`'s new inner flow cannot combine the new album's songs with the
+      // previous album's still-Done row. Deleting that one line leaves the end state correct and
+      // every other test in this class green -- it is only visible here, in the frame between the
+      // switch and the answer, which on a device is the frame the user actually sees.
+      val fake = FakeAlbumSource()
+      fake.albumsById["a1"] = album("a1", "First Album", 1)
+      fake.albumsById["a2"] = album("a2", "Second Album", 1)
+      fake.setSongs("a1", listOf(song("s1", "First Track", "a1", 1)))
+      fake.setSongs("a2", listOf(song("s2", "Second Track", "a2", 1)))
+
+      val vm = warm(fake)
+      vm.load("a1")
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat((vm.uiState.value as AlbumUiState.Content).album.name).isEqualTo("First Album")
+
+      val gate = CompletableDeferred<Unit>()
+      fake.albumGate = gate
+      vm.load("a2")
+      dispatcher.scheduler.advanceUntilIdle()
+
+      // Not Content("First Album", Second Track) -- the previous album's row wearing the new
+      // album's tracks is the exact frame this line exists to forbid.
+      assertThat(vm.uiState.value).isEqualTo(AlbumUiState.Loading)
+
+      gate.complete(Unit)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      val content = vm.uiState.value as AlbumUiState.Content
+      assertThat(content.album.name).isEqualTo("Second Album")
+      assertThat(content.songs.map { it.title }).containsExactly("Second Track")
+    }
+
+  @Test
+  fun `loading the same album twice never fetches it a second time, and keeps what is on screen`() =
+    runTest(dispatcher) {
+      // The early return in load(). Untested until review round 1 (N-3a): the class measured 1/2
+      // BRANCH and deleting the guard outright left all 34 tests in this module green. Both halves
+      // matter -- the call count proves the guard returns, and the state proves it returns
+      // *before* the album row is cleared, i.e. that a redundant call cannot flash Loading over an
+      // album the user is already reading.
+      val fake = FakeAlbumSource()
+      fake.albumsById["a1"] = album("a1", "Only Album", 1)
+      fake.setSongs("a1", listOf(song("s1", "Only Track", "a1", 1)))
+
+      val vm = warm(fake)
+      vm.load("a1")
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(fake.albumCalls).containsExactly("a1")
+
+      vm.load("a1")
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(fake.albumCalls).containsExactly("a1")
+      val content = vm.uiState.value as AlbumUiState.Content
+      assertThat(content.album.name).isEqualTo("Only Album")
+      assertThat(content.songs.map { it.title }).containsExactly("Only Track")
+    }
 
   @Test
   fun `coverArtUrl forwards the exact art id and size it is given, not a swapped or hardcoded pair`() =

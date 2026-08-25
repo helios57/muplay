@@ -354,7 +354,7 @@ PROBES = [
     # anonymous SetupLibrarySink, and the two FilterChip role literals swapped) are deliberately
     # NOT here: this runner is JVM-only (see this file's own header), and both of those mutants
     # pass every JVM test unchanged -- they are caught only on the emulator, by
-    # completingEveryTagPersistsTheRolesAndOpensTheLibrary's read-back, and are recorded in
+    # completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen's read-back, and are recorded in
     # task-8-report.md instead, the same way this header already documents for every other
     # instrumented-tier defect this project has found.
     ("setup/cancellation-rethrow", SETUP_VM,
@@ -450,13 +450,13 @@ PROBES = [
     # SavedStateHandle/checkNotNull design these two probes originally targeted. Re-measured
     # against the replacement.
     ("album/songs-id-swapped", ALBUM_VM,
-     "combine(album, source.songs(id)) { current, songs ->",
-     'combine(album, source.songs("wrong-id")) { current, songs ->',
+     "combine(album, source.songs(id)) { fetch, songs ->",
+     'combine(album, source.songs("wrong-id")) { fetch, songs ->',
      "the album shown is the one load was called with, not a different one the source also "
      "knows", 4),
     ("album/load-album-id-hardcoded", ALBUM_VM,
-     "viewModelScope.launch { album.value = source.album(albumId) }",
-     'viewModelScope.launch { album.value = source.album("wrong-id") }',
+     "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
+     'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
      "the album shown is the one load was called with, not a different one the source also "
      "knows", 4),
 ]
