@@ -20,6 +20,26 @@ working here at once. On device-busy, **wait and retry**. Never kill the
 emulator, never start a second, and never stop, restart or reseed the container
 — another agent's live suite may be mid-run against it.
 
+## `check` does not compile androidTest, so master can carry a broken device tier
+
+`./gradlew check` builds and runs the JVM tier and lints. It does **not** compile
+`src/androidTest`. So two lanes can each be green on their own branch, green
+together under `check` after merging, and still leave master unable to build a
+single instrumented test.
+
+Measured: `GaplessTest` called `RealTrackBytes.client().streamUrl(...)` while a
+concurrent lane changed that helper's shape. Both merged green. Master then
+failed `:core:media:compileDebugAndroidTestKotlin` with *"Expression 'client' of
+type 'SubsonicClient' cannot be invoked as a function"* — invisible to every gate
+until somebody ran a device suite.
+
+After merging anything that touches a shared test helper, run:
+
+    ./gradlew compileDebugAndroidTestKotlin
+
+for the modules involved. It is fast, it needs no emulator, and it is the only
+cheap check that sees this class of break.
+
 ## Two concurrent instrumented runs corrupt each other's results
 
 Both `:app:connectedDebugAndroidTest` runs install the same `applicationId`

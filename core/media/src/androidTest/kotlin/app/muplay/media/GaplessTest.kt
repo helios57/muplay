@@ -102,7 +102,7 @@ class GaplessTest {
       "ci/seed-fixtures.sh seeds exactly $TRACK_COUNT music tracks; found ${songs.size}. This " +
         "test's arithmetic is over those three."
     }
-    streamUrls = songs.map { RealTrackBytes.streamUrl(it) }
+    streamUrls = songs.map { RealTrackBytes.rawStreamUrl(it) }
     // Serves the one thing the real library cannot: a track that is deliberately silent. Started
     // for every test rather than only the one that uses it, so there is no branch here that could
     // leave it unstarted.
