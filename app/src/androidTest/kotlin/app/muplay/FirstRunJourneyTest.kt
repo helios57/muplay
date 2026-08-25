@@ -18,9 +18,10 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 
 /**
@@ -63,8 +64,21 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class FirstRunJourneyTest {
 
-  @get:Rule
   val composeRule = createAndroidComposeRule<MainActivity>()
+
+  /**
+   * **The reset has to happen before the Activity is created, which is why this is a `RuleChain`
+   * and not a `@Before` method any more.**
+   *
+   * As of Plan 2 Task 10 the app decides where it opens (`StartDestinationViewModel`) from stored
+   * state, in the ViewModel's `init` — i.e. during the first composition, which
+   * `createAndroidComposeRule` performs as part of *its* statement. A `@Before` method runs inside
+   * that statement, after the launch, so a reset written there was read too late: every test in
+   * this class opened on the library screen instead of on setup and died looking for a "Server
+   * URL" field. `RuleChain.outerRule(...)` is what puts the reset genuinely first.
+   */
+  @get:Rule
+  val rules: RuleChain = RuleChain.outerRule(ResetLibraryTagging()).around(composeRule)
 
   /**
    * Resets every library back to [LibraryRole.UNASSIGNED] before each test.
@@ -74,7 +88,7 @@ class FirstRunJourneyTest {
    * `composeRule` relaunches fresh per test, nothing recreates the database between methods.
    * JUnit4 does not guarantee method execution order (no `@FixMethodOrder` is declared here, nor
    * should there be one for a black-box journey), so a test that tags every library --
-   * [completingEveryTagReachesReadyAndShowsSetupComplete], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
+   * [completingEveryTagPersistsTheRolesAndOpensTheLibrary], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
    * -- can and did run before a later test that needs a fresh, untagged start: observed directly,
    * the first version of this suite without this reset flaked exactly that way, with
    * `Continue` already enabled before either role chip had been tapped.
@@ -84,16 +98,17 @@ class FirstRunJourneyTest {
    * cannot be used the same way: it would not be part of the real `MuPlayApplication`'s generated
    * Hilt component at all.
    */
-  @Before
-  fun resetLibraryTagging() = runBlocking {
-    val repository = libraryRepository()
-    repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
+  private inner class ResetLibraryTagging : ExternalResource() {
+    override fun before() = runBlocking {
+      val repository = libraryRepository()
+      repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
+    }
   }
 
   /**
    * The real, singleton `LibraryRepository` the app's own `SetupViewModel` writes through --
    * shared by [resetLibraryTagging] and by [readPersistedLibraries], which
-   * [completingEveryTagReachesReadyAndShowsSetupComplete] uses to prove a role actually got
+   * [completingEveryTagPersistsTheRolesAndOpensTheLibrary] uses to prove a role actually got
    * written, not merely displayed.
    */
   private fun libraryRepository() =
@@ -160,9 +175,18 @@ class FirstRunJourneyTest {
    * sealed `when` as a chain of `instanceof` checks -- the `Ready` check itself runs on *every*
    * composition regardless of which state is current, so the line lit up green while the branch
    * it guards, and the text it renders, had never once executed.
+   *
+   * **Renamed in Plan 2 Task 10, because what happens at `Ready` changed.** `MuPlayApp` now passes
+   * a real `onSetupComplete` that clears the back stack and navigates to the library, so
+   * `SetupScreen`'s `LaunchedEffect(uiState)` fires as soon as `Ready` is composed and the
+   * "Setup complete" text is gone before an assertion can see it -- measured, not assumed: this
+   * test failed on exactly that line the first time the callback was wired. The `Ready` branch is
+   * still composed (the effect runs *after* composition), so `SetupScreenKt`'s line coverage is
+   * unaffected; what the test asserts is now the observable consequence -- the library screen --
+   * plus the same persisted read-back it always had.
    */
   @Test
-  fun completingEveryTagReachesReadyAndShowsSetupComplete() {
+  fun completingEveryTagPersistsTheRolesAndOpensTheLibrary() {
     connectAs(PASSWORD)
 
     // First round: each library tagged to match its own name -- the first of two disjoint
@@ -179,7 +203,11 @@ class FirstRunJourneyTest {
     composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
     composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
 
-    composeRule.onNodeWithText("Setup complete").assertIsDisplayed()
+    // Finishing setup leaves the setup screen behind for the library screen. `SHUFFLE_LABEL` is
+    // only on the library screen, so finding it proves the navigation actually happened.
+    composeRule.waitUntil(timeoutMillis = CONNECT_TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
 
     // The read-back that actually proves it: reached through the real LibraryRepository, the
     // same singleton the app's own SetupViewModel and its @Inject-constructed SetupLibrarySink
@@ -272,6 +300,9 @@ class FirstRunJourneyTest {
     const val CONNECT_LABEL = "Connect"
     const val CONNECTING_LABEL = "Connecting…"
     const val CONTINUE_LABEL = "Continue"
+
+    /** `LibraryScreen`'s own label -- the proof that setup handed over to the library screen. */
+    const val SHUFFLE_LABEL = "Shuffle this library"
 
     /**
      * The two role chips' own labels -- distinct from the bare library-name text on purpose (see

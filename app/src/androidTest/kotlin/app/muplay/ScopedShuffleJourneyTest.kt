@@ -6,6 +6,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.database.SyncWatermarkEntryPoint
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -139,10 +143,19 @@ class ScopedShuffleJourneyTest {
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SYNCING_MESSAGE).fetchSemanticsNodes().isEmpty()
-    }
+    // The launch sync has committed at least once, so the mirror really holds the seeded songs --
+    // without which every shuffle here would draw from nothing. See
+    // `BrowseJourneyTest.theLibraryCanBeRefreshedFromTheScreen` for why the watermark rather than
+    // the on-screen "Checking the server for changes…" message.
+    composeRule.waitUntil(TIMEOUT_MILLIS) { runBlocking { watermarkDao().read() } != null }
   }
+
+  /** The real singleton [app.muplay.database.dao.SyncWatermarkDao] the app itself syncs through. */
+  private fun watermarkDao() =
+    EntryPointAccessors.fromApplication(
+      InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+      SyncWatermarkEntryPoint::class.java,
+    ).syncWatermarkDao()
 
   private companion object {
     const val SERVER_URL = "http://localhost:4533"
@@ -158,7 +171,6 @@ class ScopedShuffleJourneyTest {
     const val TAG_AS_AUDIOBOOKS_LABEL = "Tag as Audiobooks"
     const val SHUFFLE_LABEL = "Shuffle this library"
     const val SHUFFLE_HEADING = "Shuffled"
-    const val SYNCING_MESSAGE = "Checking the server for changes…"
 
     /** The one seeded audiobook — ci/seed-fixtures.sh writes `Test Book.m4b`. */
     const val AUDIOBOOK_TITLE = "Test Book"

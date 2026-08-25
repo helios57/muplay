@@ -8,6 +8,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.database.SyncWatermarkEntryPoint
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -123,44 +127,70 @@ class BrowseJourneyTest {
   }
 
   /**
-   * The user has a way to pick up a server-side change, and it is on the screen.
+   * The user has a way to pick up a server-side change, and it is on the screen **and wired**.
    *
    * `syncIfStale()` had exactly one caller — `LibraryViewModel.init` — so before this journey
    * existed, an album added to Navidrome mid-session never appeared, and the `ScanInProgress`
    * branch told the user their library would "update shortly" while nothing re-checked. This test
-   * is the standing guarantee that the control the copy names is really there: delete the button
-   * and it goes red, which is the point.
+   * is the standing guarantee that the control the copy names is really there **and really runs
+   * a sync**: the two are separate defects (a control that is not there, and a control that does
+   * nothing) and each is independently visible here.
    *
-   * **Three waits, in this order, and none of them is ceremony.** The brief for this task asked
-   * only for the third — wait for [SYNCING_MESSAGE] to *clear* — on the reasoning that
-   * `syncIfStale` sets the "checking" message first, so a click that reached nothing would leave
-   * that string on screen. Measured against the real code, that is exactly backwards and would
-   * have shipped this project's own signature defect: with `LibraryViewModel.refresh` mutated to
-   * an empty body the message is never set **at all**, so a lone wait-for-absence succeeds on its
-   * first poll and the test stays green against a Refresh button that does nothing. Waiting for
-   * the message to *appear* is what discriminates; waiting for it to be absent **first** is what
-   * stops the appearance being satisfied by the `init { refresh() }` sync that is still in flight
-   * from the app's own launch — without which a disconnected `onClick = {}` also passes.
+   * **Not asserted on the "Checking the server for changes…" message, which the brief for this
+   * task asked for, because that assertion cannot be made to work either way round.** Measured on
+   * `muplay37`, against an already-synced mirror: a `waitUntil` polling continuously for that
+   * string never saw it in 30 seconds, although the refresh had demonstrably run — one
+   * `getScanStatus` round trip over the loopback is shorter than a frame, and every hop between
+   * the ViewModel and the screen (`MutableStateFlow` → `combine` → `stateIn` →
+   * `collectAsStateWithLifecycle` → Compose's per-frame recomposition) is conflated, so the
+   * transient is swallowed before anything is drawn. And waiting for the message to *clear*, which
+   * is what the brief proposed, is strictly worse than no assertion: with `refresh()` mutated to
+   * an empty body the message is never set at all, so that wait succeeds on its first poll and the
+   * gate reports safety while the button does nothing.
+   *
+   * The watermark is the durable observable that does discriminate. Cleared through
+   * [SyncWatermarkEntryPoint], the next `syncIfStale()` is a real reconcile
+   * (`SyncDecision.decide(null, …)` → `Reconcile`) and stores one again; nothing else in the app
+   * writes it, and the app's own launch sync has long since finished by the time this test clears
+   * it.
    */
   @Test
   fun theLibraryCanBeRefreshedFromTheScreen() {
     reachLibraryScreen()
 
+    // The app's own launch sync has to be finished before this test may make the mirror stale on
+    // purpose. On a cold install `LibraryViewModel.init`'s refresh is a full reconcile that stores
+    // a watermark of its own at the very end, and `reachLibraryScreen` returns while it is still
+    // running -- so without this, the wait below could be satisfied by the launch rather than by
+    // the button, which is the "verified at a different layer than it was applied" defect in
+    // miniature.
+    awaitQuietWatermark()
+
+    // Provably stale, and provably so *before* the click: an assertion that a value changed is
+    // worth nothing without having read its starting value. A sentinel rather than `clear()`, so
+    // that "the refresh wrote this" and "something left it null" cannot be confused.
+    runBlocking { watermarkDao().store(STALE_WATERMARK) }
+    check(runBlocking { watermarkDao().read() } == STALE_WATERMARK) {
+      "the watermark was not made stale, so this test could not tell a refresh from a no-op"
+    }
+
     composeRule.onNodeWithText(REFRESH_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(REFRESH_LABEL).performClick()
 
-    // 1. This click's own sync started, and said so. A Refresh whose `onClick` reached nothing,
-    //    or a `refresh()` with an empty body, never gets here.
+    // A reconcile ran, all the way through to its own last step: `SyncEngine` stores the watermark
+    // only after every library's replacement transaction has committed.
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SYNCING_MESSAGE).fetchSemanticsNodes().isNotEmpty()
-    }
-    // 2. ...and it completed rather than hanging: a refresh against an up-to-date mirror settles
-    //    back to no message at all.
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SYNCING_MESSAGE).fetchSemanticsNodes().isEmpty()
+      runBlocking { watermarkDao().read() }.let { it != null && it != STALE_WATERMARK }
     }
     composeRule.onNodeWithText(MUSIC_ALBUM).assertIsDisplayed()
   }
+
+  /** The real singleton [app.muplay.database.dao.SyncWatermarkDao] the app itself syncs through. */
+  private fun watermarkDao() =
+    EntryPointAccessors.fromApplication(
+      InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+      SyncWatermarkEntryPoint::class.java,
+    ).syncWatermarkDao()
 
   /**
    * Spec §7: *"Predictive back is default-on and must be implemented."*
@@ -247,10 +277,24 @@ class BrowseJourneyTest {
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
-    // The launch sync has finished. See this helper's own doc, point 2.
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(SYNCING_MESSAGE).fetchSemanticsNodes().isEmpty()
+    // The launch sync has committed at least once, so the mirror really holds the seeded content.
+    // See this helper's own doc, point 2, and `theLibraryCanBeRefreshedFromTheScreen` for why the
+    // watermark rather than the on-screen "Checking the server for changes…" message.
+    composeRule.waitUntil(TIMEOUT_MILLIS) { runBlocking { watermarkDao().read() } != null }
+  }
+
+  /**
+   * Blocks until two reads [SETTLE_MILLIS] apart return the same non-null watermark, i.e. until
+   * nothing is still writing it.
+   */
+  private fun awaitQuietWatermark() {
+    val deadline = System.currentTimeMillis() + TIMEOUT_MILLIS
+    while (System.currentTimeMillis() < deadline) {
+      val first = runBlocking { watermarkDao().read() }
+      Thread.sleep(SETTLE_MILLIS)
+      if (first != null && first == runBlocking { watermarkDao().read() }) return
     }
+    error("the sync watermark never settled: something is still reconciling after $TIMEOUT_MILLIS ms")
   }
 
   private companion object {
@@ -272,7 +316,15 @@ class BrowseJourneyTest {
     const val SHUFFLE_LABEL = "Shuffle this library"
     const val REFRESH_LABEL = "Refresh library"
     const val OPEN_LABEL = "Open"
-    const val SYNCING_MESSAGE = "Checking the server for changes…"
+
+    /**
+     * Older than any real Navidrome `lastScan`, so `SyncDecision.decide` reads it as stale and
+     * the next `syncIfStale()` is a genuine reconcile.
+     */
+    const val STALE_WATERMARK = "1970-01-01T00:00:00Z"
+
+    /** Long enough for one loopback `getScanStatus` plus a Room commit; see `awaitQuietWatermark`. */
+    const val SETTLE_MILLIS = 2_000L
 
     /** The seeded content, per `ci/seed-fixtures.sh`. */
     const val MUSIC_ALBUM = "Test Album"

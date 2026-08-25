@@ -354,7 +354,7 @@ PROBES = [
     # anonymous SetupLibrarySink, and the two FilterChip role literals swapped) are deliberately
     # NOT here: this runner is JVM-only (see this file's own header), and both of those mutants
     # pass every JVM test unchanged -- they are caught only on the emulator, by
-    # completingEveryTagReachesReadyAndShowsSetupComplete's read-back, and are recorded in
+    # completingEveryTagPersistsTheRolesAndOpensTheLibrary's read-back, and are recorded in
     # task-8-report.md instead, the same way this header already documents for every other
     # instrumented-tier defect this project has found.
     ("setup/cancellation-rethrow", SETUP_VM,
