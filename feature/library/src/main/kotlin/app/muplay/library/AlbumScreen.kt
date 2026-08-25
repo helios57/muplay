@@ -1,7 +1,9 @@
 package app.muplay.library
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun AlbumScreen(
   albumId: String,
+  onOpenPlayer: () -> Unit,
   modifier: Modifier = Modifier,
   viewModel: AlbumViewModel = hiltViewModel(),
 ) {
@@ -59,7 +62,21 @@ fun AlbumScreen(
         )
         Text(text = content.album.name, style = MaterialTheme.typography.headlineSmall)
         content.album.artistName?.let { Text(text = it, style = MaterialTheme.typography.bodyMedium) }
-        content.songs.forEach { song -> Text(text = song.title) }
+        // The index is this row's position in the list being rendered, so the track that plays
+        // is the track that was tapped -- see `LibraryScreen`'s own note. Play first, then
+        // navigate, for the same `stateIn(WhileSubscribed)` reason.
+        content.songs.forEachIndexed { index, song ->
+          Text(
+            text = song.title,
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable {
+                viewModel.play(index)
+                onOpenPlayer()
+              }
+              .padding(vertical = 8.dp),
+          )
+        }
       }
     }
   }

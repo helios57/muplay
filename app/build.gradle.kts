@@ -28,6 +28,9 @@ dependencies {
   implementation(project(":core:media"))
   implementation(project(":feature:setup"))
   implementation(project(":feature:library"))
+  // The player screen and the mini player `MuPlayApp` hosts, and the `PlayerViewModel` behind
+  // both. `:app` is the only module that composes them.
+  implementation(project(":feature:player"))
 
   // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing
   // else in the tree may name an :integrations:* project, and `ConventionTest`'s

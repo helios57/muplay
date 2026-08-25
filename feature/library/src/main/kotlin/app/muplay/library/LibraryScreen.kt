@@ -1,5 +1,6 @@
 package app.muplay.library
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +27,7 @@ import app.muplay.model.Album
 @Composable
 fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
+  onOpenPlayer: () -> Unit,
   modifier: Modifier = Modifier,
   viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -37,6 +39,13 @@ fun LibraryScreen(
     onShuffle = viewModel::shuffle,
     onRefresh = viewModel::refresh,
     onAlbumClick = onAlbumClick,
+    // Play first, then navigate. The order is not cosmetic: `playShuffled` reads `uiState.value`,
+    // and navigating away first is what would let `stateIn(WhileSubscribed)` drop the state out
+    // from under it.
+    onShuffledSongClick = { index ->
+      viewModel.playShuffled(index)
+      onOpenPlayer()
+    },
     coverArtUrl = viewModel::coverArtUrl,
     modifier = modifier,
   )
@@ -50,6 +59,7 @@ private fun LibraryScreen(
   onShuffle: () -> Unit,
   onRefresh: () -> Unit,
   onAlbumClick: (String) -> Unit,
+  onShuffledSongClick: (Int) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
@@ -95,7 +105,19 @@ private fun LibraryScreen(
 
         if (uiState.shuffled.isNotEmpty()) {
           Text(text = SHUFFLE_HEADING, style = MaterialTheme.typography.titleMedium)
-          uiState.shuffled.forEach { song -> Text(text = song.title) }
+          // `forEachIndexed`, and the index is the row's own position in the very list this
+          // screen is rendering -- so "the third row" and "the third song of the shuffle" cannot
+          // drift apart. Passing `song.id` and having the view model look it up again would be a
+          // second lookup to get wrong.
+          uiState.shuffled.forEachIndexed { index, song ->
+            Text(
+              text = song.title,
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onShuffledSongClick(index) }
+                .padding(vertical = 8.dp),
+            )
+          }
           if (uiState.discardedOutOfScope > 0) {
             Text(
               text = "${uiState.discardedOutOfScope} tracks were outside this library and were skipped.",

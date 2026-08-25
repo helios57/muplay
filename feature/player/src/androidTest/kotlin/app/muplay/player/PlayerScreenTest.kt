@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -43,6 +44,9 @@ class PlayerScreenTest {
 
   private val scrubbedTo = mutableListOf<Long>()
   private val actions = mutableListOf<String>()
+
+  /** Long enough for a `viewModelScope` round trip on a loaded emulator, short enough to fail. */
+  private val WAIT_MILLIS = 5_000L
 
   private fun show(uiState: PlayerUiState) {
     composeRule.setContent {
@@ -263,6 +267,45 @@ class PlayerScreenTest {
     show(content(PLAYING.copy(isBuffering = false)))
 
     composeRule.onNodeWithText(BUFFERING_LABEL).assertDoesNotExist()
+  }
+
+  /**
+   * The **Hilt-bound** entry point — `PlayerScreen()` with no state argument, which is what `:app`
+   * calls — over a real [PlayerViewModel] built on a hand-written [PlaybackControls].
+   *
+   * This is the one hop nothing else covers. `PlayerViewModelTest` stops at the view model and
+   * every case above starts after it, so between them sits an untested wire: `uiState` out of the
+   * view model, into the stateless overload, and each control back into a view-model method. A
+   * screen that collected the wrong flow, or passed `viewModel::next` to the Previous button, would
+   * be green in both of the other suites. "The layer at which a decision was verified versus
+   * applied" is this project's own name for that defect.
+   *
+   * `hiltViewModel()` remains the default argument, so production wiring is unchanged; only that
+   * default expression goes unexercised here.
+   */
+  @Test
+  fun theHiltBoundScreenFollowsItsViewModelAndItsControlsReachItAgain() {
+    val controls = RecordingPlaybackControls()
+    val viewModel = PlayerViewModel(controls)
+    composeRule.setContent { PlayerScreen(viewModel = viewModel) }
+
+    composeRule.onNodeWithText(NOTHING_PLAYING_LABEL).assertIsDisplayed()
+
+    controls.publish(PLAYING)
+    composeRule.waitUntil(WAIT_MILLIS) {
+      composeRule.onAllNodesWithText(TRACK_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText(TRACK_ARTIST).assertIsDisplayed()
+
+    // ...and back the other way, to the method that belongs to the control that was tapped.
+    controls.playerIsPlaying = true
+    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.waitUntil(WAIT_MILLIS) { controls.calls.contains("pause") }
+    assertThat(controls.calls).doesNotContain("play", "next", "previous")
+
+    composeRule.onNodeWithText(NEXT_LABEL).performClick()
+    composeRule.waitUntil(WAIT_MILLIS) { controls.calls.contains("next") }
+    assertThat(controls.calls).doesNotContain("previous")
   }
 
   /**

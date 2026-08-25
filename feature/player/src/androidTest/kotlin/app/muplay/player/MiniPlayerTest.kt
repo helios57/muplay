@@ -2,6 +2,7 @@ package app.muplay.player
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -120,6 +121,36 @@ class MiniPlayerTest {
 
     composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
+  }
+
+  /**
+   * The **Hilt-bound** entry point — `MiniPlayer(onOpenPlayer)`, which is what `MuPlayApp` puts in
+   * its `Scaffold`'s `bottomBar` — over a real [PlayerViewModel]. See `PlayerScreenTest`'s own
+   * version for why this hop needs its own case.
+   *
+   * It also pins the bar's most visible behaviour end to end: nothing on screen until something is
+   * playing, and the bar appearing by itself when something starts.
+   */
+  @Test
+  fun theHiltBoundBarAppearsOnlyOncePlaybackStartsAndItsButtonReachesTheViewModel() {
+    val controls = RecordingPlaybackControls()
+    val viewModel = PlayerViewModel(controls)
+    composeRule.setContent { MiniPlayer(onOpenPlayer = { actions += "open" }, viewModel = viewModel) }
+
+    composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertDoesNotExist()
+
+    controls.publish(PLAYING)
+    composeRule.waitUntil(5_000L) {
+      composeRule.onAllNodesWithText(TRACK_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertIsDisplayed()
+
+    controls.playerIsPlaying = true
+    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.waitUntil(5_000L) { controls.calls.contains("pause") }
+    // Tapping the button did not also navigate -- the same nested-clickable rule as above, now
+    // through the real view model.
+    assertThat(actions).isEmpty()
   }
 
   /** Same rule as the full screen's: an authenticated cover-art URL reaches the image loader and
