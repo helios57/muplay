@@ -1751,6 +1751,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // `DefaultSurfaceResolver` 8/8 = 1.0000 LINE, instrumented. It arrived with Plan 5 Task 3 and
+    // was the one class `warnUngatedClasses` still named on every run at Plan 3 Task 10 -- 8/8 and
+    // gated by nothing, which is the *other* half of that warning's job: not only "this is
+    // uncovered" but "this is covered and no rule is holding it there".
+    //
+    // LINE, not BRANCH, and this is the vacuous-rule case rather than a preference: the class is a
+    // single expression that forwards four values into `BrowseSurfaces.of`, so it carries **no
+    // BRANCH counters at all**, and a BRANCH rule over it would match only zero-total counters,
+    // score NaN, and report no violation at every minimum. `SurfaceResolver` (the `fun interface`)
+    // is listed beside it for the same reason `:core:cast`'s declaration-only types are: zero
+    // counters of either kind, so it cannot move this ratio and `warnUngatedClasses` stops naming
+    // it. All 8 of the counters under this rule are `DefaultSurfaceResolver`'s, so the floor is not
+    // thereby vacuous.
+    //
+    // `requiresInstrumentedData`, measured rather than assumed: the covering test is
+    // `DefaultSurfaceResolverTest` in this module's *instrumented* tier -- a `ControllerInfo` is
+    // not constructible on the JVM -- and with the `.ec` files withheld this reads 0/8. Falsified
+    // that way rather than by raising the minimum, since it measures 1.0000.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.browse.DefaultSurfaceResolver",
+        "app.muplay.media.browse.SurfaceResolver",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
