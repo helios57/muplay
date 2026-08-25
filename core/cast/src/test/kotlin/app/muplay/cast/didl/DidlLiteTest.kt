@@ -121,11 +121,23 @@ class DidlLiteTest {
   fun `the rendered document is well-formed xml`() {
     // Parsed, not eyeballed. This is what catches an unescaped character that no `contains`
     // assertion happens to look at.
+    //
+    // The **URL** carries an ampersand here as well as the title, and that is not decoration: a
+    // measured mutation dropping `XmlText.escape` from the `res` URL alone reddened exactly one
+    // test in this file, because the item this test started from had no `&` in its URL. A
+    // well-formedness check whose input cannot be malformed by the defect it is meant to catch is
+    // the assertion-that-cannot-fail this project keeps finding.
+    val nasty = item.copy(
+      title = "Rock & Roll <live>",
+      resourceUrl = "http://10.0.0.2:8080/media/9f2a.mp3?x=1&y=2",
+    )
     val document = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
       .newDocumentBuilder()
-      .parse(DidlLite.render(item.copy(title = "Rock & Roll <live>")).byteInputStream())
+      .parse(DidlLite.render(nasty).byteInputStream())
 
     assertThat(document.documentElement.nodeName).isEqualTo("DIDL-Lite")
+    // ...and the URL survived the round trip intact, decoded back to what it started as.
+    assertThat(document.getElementsByTagName("res").item(0).textContent).isEqualTo(nasty.resourceUrl)
   }
 
   /**

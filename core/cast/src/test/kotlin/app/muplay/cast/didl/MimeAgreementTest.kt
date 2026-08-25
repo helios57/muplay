@@ -69,6 +69,41 @@ class MimeAgreementTest {
     assertThat(ServedMedia.rawTypes).hasSizeGreaterThanOrEqualTo(12)
   }
 
+  /**
+   * **The whole invariant under a forced transcode**, which is the case spec section 12's *"Sonos
+   * rejects a served format"* risk is actually about.
+   *
+   * A FLAC source sent as `StreamFormat.Mp3` arrives at the renderer as MP3 bytes. All three legs
+   * have to say so, and every one of them is read here out of the artifact its party sees -- the
+   * `<res>` URL out of the rendered document, the `protocolInfo` attribute out of the same
+   * document, and the `Content-Type` as a header string -- rather than off the `ServedMedia`
+   * they were built from.
+   */
+  @Test
+  fun `a transcoded flac reaches the renderer as mp3 on all three legs`() {
+    val served = ServedMedia.of("flac", StreamFormat.Mp3(StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS))
+    val item = CastItem(
+      mediaId = "track-1",
+      title = "Track 1",
+      artist = "Test Artist",
+      albumTitle = "Test Album",
+      artworkUri = null,
+      durationMs = 300_000L,
+      upnpClass = DidlLite.CLASS_MUSIC_TRACK,
+      resourceUrl = "http://10.0.0.2:8080/media/${served.fileName("9f2a")}",
+      served = served,
+    )
+    val document = DidlLite.render(item)
+
+    assertThat(document).contains(">http://10.0.0.2:8080/media/9f2a.mp3</res>")
+    assertThat(document).contains("protocolInfo=\"http-get:*:audio/mpeg:")
+    assertThat(MimeAgreement.disagreements(document, "audio/mpeg")).isEmpty()
+    // ...and the source format appears nowhere in what the renderer is told. Promising `.flac` or
+    // `audio/flac` while serving MP3 is the defect, and it is invisible to any check that reads
+    // the source suffix.
+    assertThat(document).doesNotContain("flac")
+  }
+
   @Test
   fun `a protocolInfo that disagrees with the url extension is reported`() {
     // The transcode defect in its natural form: MP3 bytes on a `.mp3` URL, announced as Ogg.
