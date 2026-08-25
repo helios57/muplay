@@ -1409,16 +1409,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
     // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 45/45
     // and its four compiled lambdas (`controller$2` 7/7, `listener$1` 2/2, `connect$2$1` 2/2,
-    // `startTicker$1` 3/3), `MuPlayerFactory` 10/10, and the service's two nested types
+    // `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's two nested types
     // (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 1/1 -- the "not supported" browse
     // answer Plan 5 will fill in).
     //
     // `MuPlayerFactory` has **zero BRANCH counters**, so LINE is the only counter that can gate it
     // at all -- the vacuous-floor shape this table's own doc describes, checked rather than assumed.
-    // That matters more than ten lines suggest: those ten lines are the only place in this project
-    // an `ExoPlayer` is built, and the one of them that attaches the 429 retry policy is silent
-    // when it is missing. LINE is what notices a deleted builder call; `PlayerConstructionTest`
-    // (JVM) is what notices a second builder appearing somewhere else.
+    // That matters more than eleven lines suggest: those eleven lines are the only place in this
+    // project an `ExoPlayer` is built, and the one of them that attaches the 429 retry policy is
+    // silent when it is missing. LINE is what notices a deleted builder call;
+    // `PlayerConstructionTest` (JVM) is what notices a second builder appearing somewhere else.
+    //
+    // 11/11 and not 10/10 since Plan 3 Task 7b, and the eleventh line is worth naming because it
+    // looks like it should have brought a branch with it and did not. `create` grew a
+    // `renderersFactory` parameter with a production default (see its own note: Media3 offers no
+    // way to reach the audio processor chain after construction, so `GaplessTest` needs the seam
+    // there rather than a player of its own), and Kotlin compiles that into a synthetic
+    // `create$default` holding the default-value expression. JaCoCo's `KotlinDefaultArgumentsFilter`
+    // removes the argument-mask branches from that method, so the class still reports **zero**
+    // BRANCH counters -- read off the merged report, which is why the sentence above is still true.
+    // The line itself is covered because production calls `create()` and the instrumented gapless
+    // suite calls `create(renderersFactory)`; note that this floor would NOT notice the first of
+    // those disappearing (10/11 = 0.9091 still clears 0.90), so it is `MuPlayDataSourceFactoryTest`
+    // and `MuPlaybackServiceTest` calling the no-argument form, not this rule, that keeps the
+    // production shape exercised.
+    //
+    // Re-falsified after the change, not assumed to still hold: with `:core:media`'s own connected
+    // `.ec` moved aside, "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, and green again once restored.
     //
     // `MuPlaybackService*Companion` and `*LibraryCallback` are listed by name rather than as
     // `MuPlaybackService*`, deliberately: that pattern also matches `MuPlaybackService` itself,
