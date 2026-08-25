@@ -1124,6 +1124,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
   ),
+  // `:core:cast` (Plan 6 Task 1). A pure-JVM module with no Compose and no Android, so every floor
+  // here is BRANCH and every one of them is enforceable in Tier 1 -- `requiresInstrumentedData`
+  // appears nowhere in this entry, deliberately. The include list grows one task at a time and is
+  // completed in Task 11; each task measures its own classes and refuses to lower a floor to make
+  // a number fit.
+  //
+  // Measured at this commit from `core/cast/build/reports/jacoco/jacocoTestReport/`:
+  // HttpHeaders BRANCH 8/8, HttpWire BRANCH 26/26, LocalNetworkOnly BRANCH 16/16 -- all 1.0000.
+  // `HttpHeaders*` rides along and matches the `Companion` class the `of`/`EMPTY` members compile
+  // to; it carries no branches of its own (a CLASS-element rule over a zero-counter class yields
+  // NaN, which JaCoCo does not report as a violation) and is included only so
+  // `warnUngatedClasses` never has to flag it.
+  //
+  // `LocalAddress` and `CastHttpClient` are deliberately absent: `LocalAddress.towards` is a
+  // kernel query with one `runCatching` and no author-written branch worth a floor, and
+  // `CastHttpClient` gains its branches in Task 6.
+  ":core:cast" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.http.HttpHeaders",
+        "app.muplay.cast.http.HttpHeaders*",
+        "app.muplay.cast.http.HttpWire",
+        "app.muplay.cast.net.LocalNetworkOnly",
+      ),
+    ),
+  ),
 )
 
 /**
