@@ -149,7 +149,7 @@ fi
 # -u: without it Python buffers stdout through a pipe and a four-minute run prints nothing
 # until it is over, which makes an interrupted run impossible to interpret.
 exec python3 -u - "${1:-}" <<'PY'
-import glob, html, re, shutil, subprocess, sys
+import glob, html, pathlib, re, shutil, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 
@@ -2004,6 +2004,36 @@ run_auth = FILTER in AUTH_PROBE[0]
 total = len(selected) + (1 if run_auth else 0)
 if total == 0:
     raise SystemExit(f"no probe id matches '{FILTER}'")
+
+# PREFLIGHT: every probe's search text must still match its file exactly once.
+#
+# A probe's `old` text goes stale the moment somebody edits the line it names, and
+# `apply()` then raises SystemExit on the FIRST such probe -- which aborts the whole
+# run and, because every run here is filtered to one family, can sit unnoticed for
+# hours. That has happened twice in one day: a position clamp rewrote the line
+# `player/scrub-position-ignored` searched for, and a depth cap rewrote the line
+# `discovery/no-devicelist-recursion` searched for. Both times the regression list
+# this repo relies on could not be run at all, by anybody, and nothing said so.
+#
+# This checks EVERY probe in the list -- not just the selected ones -- before
+# mutating anything, and reports all the stale ones together. Checking the whole
+# list on a filtered run is deliberate: a filtered run is exactly how the other
+# families' staleness stays invisible.
+stale = []
+for probe_id, path, old_text, *_ in PROBES + EXTRA_PROBES:
+    try:
+        n = pathlib.Path(path).read_text().count(old_text)
+    except FileNotFoundError:
+        stale.append(f"  {probe_id}: file not found: {path}")
+        continue
+    if n != 1:
+        stale.append(f"  {probe_id}: {n} matches in {path} (need exactly 1)")
+if stale:
+    raise SystemExit(
+        "STALE PROBES -- their search text no longer matches the source exactly once.\n"
+        "The list cannot run until these are realigned with the code they name:\n"
+        + "\n".join(stale)
+    )
 
 print(f"Running {total} mutation probe(s). Each is applied alone and reverted.\n")
 results = []
