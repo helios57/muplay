@@ -439,6 +439,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.ShuffleResult",
         "app.muplay.model.StreamFormat",
         "app.muplay.model.StreamFormat*",
+        // Plan 6 Task 2. `RememberedRenderer` is a three-field record and `RememberedRenderers` is
+        // an interface whose only member with a body is a `const val`; between them they carry
+        // zero branch counters, so they ride along here exactly the way `Album` and `Song` do
+        // above -- included so `warnUngatedClasses` has nothing to say, never gating anything.
+        //
+        // Their LINE counters are deliberately left ungated, and that needs saying rather than
+        // hiding: `RememberedRenderer` measures 0/4 LINE from this module's own tests, because
+        // the only code that constructs one lives in `:core:cast` and `:core:database`, whose
+        // execution data is not this module's. That is the exact trap `SubsonicCredentials` fell
+        // into below -- but the answer there was a real test for a real security control, and the
+        // answer here is that those 4 lines are compiler-generated `equals`/`hashCode`/`copy`
+        // plumbing on a class with no body. Gating them would be gating the Kotlin compiler, and
+        // writing a `:core:model` test that constructs one just to light them up would be gating
+        // it dishonestly. If this record ever grows a member, it needs a rule of its own.
+        "app.muplay.model.RememberedRenderer",
+        "app.muplay.model.RememberedRenderers",
+        "app.muplay.model.RememberedRenderers*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -827,6 +844,49 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.SubsonicSourceProvider",
         "app.muplay.database.BrowseRepository",
         "app.muplay.database.ShuffleRepository",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 6 Task 2. `RendererStore`, the remembered-speaker store, measured **4/4 BRANCH** and
+    // **14/14 LINE** against a real DataStore file on the emulator. Its four branches are the two
+    // that decide whether a record on disk is usable at all -- `decode`'s `parts.size != 3` and
+    // `forget`'s `decode(it)?.udn` safe call -- plus `load`/`forget`'s `orEmpty()` on an absent
+    // key, and every one of them was closed by a test that writes the raw preference set by hand
+    // (`aRecordThatIsNotAWholeTripleIsSkippedAndItsNeighboursAreKept`,
+    // `forgettingWorksAlongsideARecordThatCannotBeDecoded`,
+    // `forgettingFromAStoreThatWasNeverWrittenIsHarmless`).
+    //
+    // `requiresInstrumentedData` because DataStore is an Android type: there is no JVM tier for
+    // this class at all, and every number above came from `connectedDebugAndroidTest`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.RendererStore"),
+      requiresInstrumentedData = true,
+    ),
+    // The same class's LINE, and its coroutine artefacts, at the full 0.90 rather than at the
+    // 0.50 the rule above this one carries for `CredentialStore`'s and `BrowseRepository`'s --
+    // because these measure 1.0000 and there is no reason to gate them lower than they are.
+    // `RendererStore$remember$2` (1/1) and `RendererStore$forget$2` (5/5) are the `dataStore.edit`
+    // lambda bodies; `$load$1`/`$remember$1`/`$forget$1` are suspend continuations carrying no
+    // LINE counter at all (0/0, JaCoCo's isNaN pass, which is not the same as excluded).
+    //
+    // Their BRANCH is deliberately not gated: `remember$2` measures 1/2 and `forget$2` 5/6, and
+    // in both cases the missing branch is the coroutine state machine's own `label` check, whose
+    // other arm throws `IllegalStateException("call to 'resume' before 'invoke' with coroutine")`
+    // and is unreachable by construction. That is the same "gating the compiler" argument this
+    // table already makes about Compose codegen.
+    //
+    // `CastPreferences` rides along: a `@Qualifier` annotation class with no counters of any kind,
+    // included so `warnUngatedClasses` never has to mention it.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.RendererStore*",
+        "app.muplay.database.CastPreferences",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1307,6 +1367,82 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.cast.net.LocalAddress"),
+    ),
+    // Plan 6 Task 2, `app.muplay.cast.discovery`. Every class below with an author-written branch
+    // measures **1.0000** today, and each number is from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`
+    // -- no emulator anywhere, which is the whole point of this module being pure JVM:
+    //
+    //   `SsdpSearch`            28/28 -- the M-SEARCH renderer's `MX` branch and every one of
+    //                           `parseResponse`'s six rejections. Its last two branches were the
+    //                           `UnknownHostException` arm of `InetAddress.getByName`, which
+    //                           looked unreachable without a DNS query; a link-local IPv6 literal
+    //                           with a scope id the host does not have fails from the literal
+    //                           alone, in single-digit milliseconds, with no query.
+    //   `DeviceDescription`     56/56 -- `URLBase` present/absent/unparseable, every `orEmpty()`
+    //                           arm on a device that names no type, no UDN and no serviceList,
+    //                           both `URI.resolve` failures, and the DOCTYPE refusal in both
+    //                           cases. Was 47/58 when first measured.
+    //   `CastDevice*`           22/22 on the `Companion` (both `isSonos` signals independently,
+    //                           the no-AVTransport refusal, the empty-friendlyName fallback);
+    //                           `CastDevice`, `CastDeviceKt` and the record types below carry no
+    //                           branches and ride along.
+    //   `DescriptionFetcher`    10/10 -- 200 against 404, a non-local URL, an `https` URL and a
+    //                           URL with no host, each of which must be `null` rather than an
+    //                           exception escaping a whole discovery pass.
+    //   `RendererDirectory`     30/30 -- deduplication, the three fallback layers, the UDN check
+    //                           that stops a recycled DHCP lease being mistaken for a speaker,
+    //                           and the local-network guard on the unicast search. Was 23/30.
+    //
+    // `SsdpResponse`, `DiscoveryResult`, `UpnpDevice`, `UpnpService` and
+    // `MalformedDescriptionException` ride along at zero branches each, the same way `:core:model`
+    // and `:feature:setup` carry theirs -- included so `warnUngatedClasses` stays quiet, gating
+    // nothing (a CLASS rule over a zero-counter class yields NaN, which JaCoCo reports as no
+    // violation). The floor is not vacuous regardless: 146 of its BRANCH counters come from the
+    // five classes above.
+    //
+    // `DatagramSsdpTransport` is **not** here, and that is the brief's own ruling rather than a
+    // convenience: its branches are socket timeouts and network-interface enumeration, so a floor
+    // over it would be a number nothing in CI could move. It is gated on LINE below instead.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.discovery.SsdpSearch",
+        "app.muplay.cast.discovery.SsdpResponse",
+        "app.muplay.cast.discovery.DeviceDescription",
+        "app.muplay.cast.discovery.MalformedDescriptionException",
+        "app.muplay.cast.discovery.UpnpDevice",
+        "app.muplay.cast.discovery.UpnpService",
+        "app.muplay.cast.discovery.CastDevice*",
+        "app.muplay.cast.discovery.DescriptionFetcher",
+        "app.muplay.cast.discovery.RendererDirectory",
+        "app.muplay.cast.discovery.DiscoveryResult",
+      ),
+    ),
+    // The transport, and the coroutine artefacts of the two suspend classes, on LINE.
+    //
+    // `DatagramSsdpTransport` measures 3/3, its `Companion` 4/4 and its `search$2` body 23/23
+    // LINE -- every line runs, against a real `DatagramSocket` and a real responder on loopback.
+    // Its BRANCH (5/8 on the companion, 10/12 in the read loop) is the interface filter
+    // (`isUp && !isLoopback && supportsMulticast`, whose arms depend on the host's own hardware)
+    // and the socket-timeout poll, and lowering a floor to fit those is what this table refuses to
+    // do -- so LINE gates what can honestly be gated, exactly as it does for `LocalAddress` above.
+    //
+    // `RendererDirectory*` catches `describe$xml$1` (1/1 LINE; its BRANCH is 3/4, the missing one
+    // being the coroutine `label` check whose other arm is unreachable by construction) and four
+    // suspend continuations carrying no counters at all. `SsdpTransport`, the interface, has no
+    // counters either and is here so nothing in this package is left unmatched.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.discovery.DatagramSsdpTransport*",
+        "app.muplay.cast.discovery.RendererDirectory*",
+        "app.muplay.cast.discovery.SsdpTransport",
+      ),
     ),
   ),
 )

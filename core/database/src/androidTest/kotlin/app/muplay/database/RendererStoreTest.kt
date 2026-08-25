@@ -143,6 +143,38 @@ class RendererStoreTest {
     assertThat(store.load().map { it.udn }).containsExactlyInAnyOrder("uuid:a", "uuid:b")
   }
 
+  /**
+   * `forget` before anything was ever remembered. The key is absent, not empty, so this is the
+   * `orEmpty()` arm -- and it is the ordinary case for the first speaker a user dismisses on a
+   * fresh install.
+   */
+  @Test
+  fun forgettingFromAStoreThatWasNeverWrittenIsHarmless() = runTest {
+    store.forget("uuid:anything")
+
+    assertThat(store.load()).isEmpty()
+  }
+
+  /**
+   * A record this version cannot decode is left alone by `forget` rather than crashing it. It is
+   * invisible to `load` either way, and the next `remember` replaces the whole set, so nothing
+   * shows it to a user -- but `decode(it)!!.udn` here would take down a button press.
+   */
+  @Test
+  fun forgettingWorksAlongsideARecordThatCannotBeDecoded() = runTest {
+    dataStore.edit {
+      it[stringSetPreferencesKey("remembered_renderers")] = setOf(
+        "uuid:a\thttp://10.0.0.1/d.xml\tA",
+        "uuid:b\thttp://10.0.0.2/d.xml\tB",
+        "not-a-record",
+      )
+    }
+
+    store.forget("uuid:a")
+
+    assertThat(store.load().map { it.udn }).containsExactly("uuid:b")
+  }
+
   @Test
   fun theStoreIsBoundedAndKeepsTheOnesItWasGivenFirst() = runTest {
     store.remember((1..40).map { device("uuid:$it", "Speaker $it", "http://10.0.0.$it/d.xml") })
