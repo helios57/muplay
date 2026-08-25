@@ -239,10 +239,12 @@ jobs:
           # `:feature:player`'s own `.ec` deleted), so the coverage gate below would *not* have
           # caught the omission either. `ConventionTest`'s `every module with instrumented tests is
           # run by the emulator job` now holds this list against the repository, so the next module
-          # to grow a `src/androidTest` cannot be forgotten here.
+          # to grow a `src/androidTest` cannot be forgotten here -- and it earned its place on the first
+          # merge after it was written: `:integrations:core` (17 instrumented tests, Plan 7) was in
+          # exactly the same position, found by that rule, and is now named here too.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
