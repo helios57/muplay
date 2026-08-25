@@ -37,8 +37,18 @@ import javax.inject.Singleton
  * every test of *this class* stays green, and the 429 handling this module exists for is absent
  * from the running app. `ProgressiveMediaPeriod` reads the policy off the `MediaSource` that
  * created it, which is why the factory is the only place that counts.
- * `MuPlayDataSourceFactoryTest.twoRefusalsWithHttp429DoNotKillThePlayback` is the test that fails
- * when the wiring is wrong rather than the logic.
+ *
+ * **The one test that goes red when it is not attached is
+ * `MuPlayDataSourceFactoryTest.aRefusalBudgetThatRunsOutSurfacesAsAPlayerError`**, because it
+ * counts requests, and the six it asserts (`MAX_RETRIES + 1`) is a number Media3's own
+ * three-retry budget cannot reach at all. Do **not** reach for
+ * `twoRefusalsWithHttp429DoNotKillThePlayback`, which is what this paragraph named until Task 2's
+ * review measured it: it enqueues two refusals carrying `Retry-After: 0` and asserts three
+ * requests, and Media3's *own* policy retries an `InvalidResponseCodeException` after
+ * `min((errorCount - 1) * 1000, 5000)` ms -- 0, then 1000 -- so playback starts on the third
+ * request and that test is green whether or not this class was ever wired in. A wiring test is a
+ * wiring test only if the number it asserts is one `DefaultLoadErrorHandlingPolicy` cannot
+ * produce on its own.
  *
  * `@Singleton` on the class with an `@Inject` constructor, rather than a `@Provides` in
  * `MediaModule`: a provider method whose whole body is a no-argument constructor call is the
@@ -64,28 +74,78 @@ import javax.inject.Singleton
 class NavidromeLoadErrorHandlingPolicy @Inject constructor() :
   DefaultLoadErrorHandlingPolicy(StreamRetryPolicy.MAX_RETRIES) {
 
+  /**
+   * How long Media3 should wait before trying this load again, or `C.TIME_UNSET` to give up now.
+   *
+   * `C.TIME_UNSET` is Media3's own "do not retry" sentinel, not a value invented here:
+   * `ProgressiveMediaPeriod.onLoadError` compares what this returns against it and answers
+   * `Loader.DONT_RETRY_FATAL` when they match -- read out of the resolved 1.11.0 bytecode rather
+   * than assumed. `super` returns it for the cases this class does not touch.
+   *
+   * Two things happen below, and only the first is what this class exists for.
+   *
+   * **A 429 is answered by [StreamRetryPolicy].** Left to Media3 a refused track is retried three
+   * times inside five seconds and then fails; here it is retried five times, and with no
+   * `Retry-After` to obey that is 1 + 2 + 4 + 8 + 16 = 31 s of backoff over six requests before
+   * the give-up path runs. That is the number
+   * `MuPlayDataSourceFactoryTest.aRefusalBudgetThatRunsOutSurfacesAsAPlayerError` waits for.
+   *
+   * **Every other response code is handed back Media3's own budget.**
+   * `getMinimumLoadableRetryCount` takes a data type and never sees the exception, so the five
+   * retries the 429 path needs are necessarily raised for *every* retriable error. Nothing else
+   * stops a 404: Media3 gives up early only on `ParserException`, `FileNotFoundException`,
+   * `CleartextNotPermittedException`, `Loader.UnexpectedLoaderException` and
+   * `DataSourceException.reason == 2008` (bytecode again), and an `InvalidResponseCodeException`
+   * is none of them. Unchecked, a dead track costs 0 + 1 + 2 + 3 + 4 = 10 s across an attempt
+   * budget of six, where an unmodified `DefaultLoadErrorHandlingPolicy` takes 3 s across four.
+   * Giving up once `errorCount` passes `DEFAULT_MIN_LOADABLE_RETRY_COUNT` reproduces both of those
+   * numbers exactly, which is why the threshold is Media3's own constant and not a literal `3`.
+   *
+   * That give-up is deliberately narrow -- an `InvalidResponseCodeException` [StreamRetryPolicy]
+   * declined, and nothing else. A server that answered with a status will answer with the same
+   * status again; a socket reset halfway through a track will not, so transport failures keep the
+   * wider budget this policy asks for.
+   */
   override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
     val exception = loadErrorInfo.exception
     if (exception is HttpDataSource.InvalidResponseCodeException) {
-      val retryAfter = exception.headerFields["Retry-After"]?.firstOrNull()
       val delay = StreamRetryPolicy.retryDelayMs(
         responseCode = exception.responseCode,
-        retryAfterHeader = retryAfter,
+        retryAfterHeader = exception.headerFields.firstValueIgnoringCase(RETRY_AFTER),
         errorCount = loadErrorInfo.errorCount,
       )
       if (delay != null) return delay
+      // Declined, so this is not a 429 and the raised budget above is not for it: give up where
+      // an unmodified `DefaultLoadErrorHandlingPolicy` would have.
+      val media3Budget = DefaultLoadErrorHandlingPolicy.DEFAULT_MIN_LOADABLE_RETRY_COUNT
+      if (loadErrorInfo.errorCount > media3Budget) return C.TIME_UNSET
     }
     return super.getRetryDelayMsFor(loadErrorInfo)
   }
 
   /**
-   * `C.TIME_UNSET` is Media3's own "do not retry" sentinel and is referenced here only so the
-   * import documents the contract this override lives inside: a non-negative return retries after
-   * that many milliseconds, `C.TIME_UNSET` gives up. `super` returns it for the cases this class
-   * does not touch.
+   * The first value held under [name], compared without regard to case.
+   *
+   * Deliberately not `get(name)`. `InvalidResponseCodeException.headerFields` is whatever the
+   * `HttpDataSource` that threw handed it, and the two in Media3 hand over different shapes:
+   * `OkHttpDataSource` -- the one this module uses -- passes `okhttp3.Headers.toMultimap()`, whose
+   * keys are **lowercased**, and `DefaultHttpDataSource` passes
+   * `HttpURLConnection.getHeaderFields()`, which additionally carries a `null` key for the status
+   * line. An exact-case `get("Retry-After")` finds anything at all in the first of those only
+   * because `toMultimap()` happens to build its `TreeMap` with `String.CASE_INSENSITIVE_ORDER` --
+   * a detail of a third-party class, invisible from here, and the whole 429 policy silently
+   * degrades to plain backoff on the day it changes. Field names are case-insensitive by RFC 9110
+   * section 5.1, so this compares them that way itself. `String?.equals(other, ignoreCase = true)`
+   * is the null-safe overload, which is what makes the `null` key above harmless.
    */
+  private fun Map<String, List<String>>.firstValueIgnoringCase(name: String): String? =
+    entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value?.firstOrNull()
+
   private companion object {
-    @Suppress("unused")
-    const val DO_NOT_RETRY: Long = C.TIME_UNSET
+    /**
+     * RFC 9110 section 10.2.3. Spelled in its canonical case for readers, matched in any case by
+     * [firstValueIgnoringCase].
+     */
+    const val RETRY_AFTER = "Retry-After"
   }
 }
