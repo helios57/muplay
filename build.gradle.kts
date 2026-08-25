@@ -1017,6 +1017,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
+    // Plan 3 Task 9: `PlaybackLauncherKt` -- `launchQueue`, the one decision `PlaybackLauncher`
+    // makes before it touches a `MediaController`. 2/2 = 1.0000 BRANCH and 1/1 LINE from **JVM data
+    // alone** (`PlaybackLauncherTest`, six tests, no emulator), which is the entire reason it is a
+    // top-level function rather than a private method: everything else in `PlaybackLauncher.play`
+    // is a controller handshake that needs a bound media session, but *which item the caller asked
+    // to start from* is what a user notices immediately when it is wrong -- tapping track 7 and
+    // hearing track 1 -- and it should not cost a device run to notice. Same argument
+    // `StreamRetryPolicy` and `ResumePolicy` above already make in this module.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum (at a measured
+    // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing):
+    // with `PlaybackLauncherTest` moved aside, "Rule violated for class
+    // app.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
+    // 0.90", BUILD FAILED.
+    //
+    // **`PlaybackLauncher` itself is deliberately not listed, and it is not an oversight.** The
+    // class measures 0/2 BRANCH and 0/12 LINE here, because every line of it needs a real
+    // `MediaController` bound to a real `MuPlaybackService` -- which only an `@HiltAndroidApp`
+    // application can start, i.e. `:app`'s instrumented tier, i.e. Task 10's journey. It is named,
+    // with those measured ratios, in `warnUngatedClasses`'s output on every run, which is where a
+    // genuinely-deferred class belongs; the same shape `:feature:library` used for `CoverArtKt`
+    // between its Task 9 and its Task 10.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackLauncherKt"),
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
