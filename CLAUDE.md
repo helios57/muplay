@@ -129,6 +129,14 @@ must stay derived — a hardcoded total has gone stale twice. It refuses to run 
 a dirty tree, and that guard has caught a real stray mutation left behind by a
 killed run.
 
+## A fresh worktree has no `local.properties`
+
+Every Android Gradle task in it dies with **"SDK location not found"** until you
+write `sdk.dir=/home/helios/Android/Sdk` into `<worktree>/local.properties`
+(git-ignored). Two agents lost time to this on the same afternoon, and one of
+them saw it as a probe runner reporting no results for six modules rather than
+as a missing SDK path — the failure does not name itself clearly.
+
 ## A worktree inside the repo reddens `:app`'s mock-framework guard
 
 `ConventionTest`'s `no mock framework is declared in any build file or
