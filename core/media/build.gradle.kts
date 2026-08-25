@@ -20,6 +20,18 @@ dependencies {
   // `ExoPlayer` eventually does.
   api(libs.media3.session)
 
+  // Plan 6 Task 4. `MediaItems.of` sets `MediaItem.localConfiguration.mimeType` from
+  // `ServedMedia`, the one statement of what format a renderer is about to receive.
+  //
+  // `implementation`, not `api`: no `:core:cast` type appears in this module's public surface --
+  // `MediaItems.of` takes a `StreamFormat` (already `api` via `:core:model`) and the MIME leaves
+  // as a `String` on the `MediaItem`.
+  //
+  // `:core:cast` is pure JVM. This dependency is one-directional and stays that way for the rest
+  // of the plan: `:core:cast` must never see a Media3 type, which is why `UpnpPlayer` (Task 8)
+  // lives here and not there.
+  implementation(project(":core:cast"))
+
   implementation(libs.media3.exoplayer)
   implementation(libs.media3.datasource.okhttp)
   implementation(libs.okhttp)

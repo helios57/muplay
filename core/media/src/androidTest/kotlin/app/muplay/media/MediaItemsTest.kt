@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,9 +54,9 @@ class MediaItemsTest {
   )
 
   private val firstItem =
-    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1", isAudiobook = false)
+    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1", isAudiobook = false, format = StreamFormat.Raw)
   private val secondItem =
-    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", isAudiobook = false)
+    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", isAudiobook = false, format = StreamFormat.Raw)
 
   private fun <T> pair(select: (MediaItem) -> T): List<T> = listOf(select(firstItem), select(secondItem))
 
@@ -139,6 +140,7 @@ class MediaItemsTest {
       "https://host/stream",
       artworkUri = null,
       isAudiobook = false,
+      format = StreamFormat.Raw,
     )
 
     assertThat(item.mediaMetadata.artworkUri).isNull()
@@ -155,6 +157,7 @@ class MediaItemsTest {
       "https://host/s",
       null,
       isAudiobook = false,
+      format = StreamFormat.Raw,
     )
 
     assertThat(item.mediaMetadata.trackNumber).isNull()
@@ -186,10 +189,10 @@ class MediaItemsTest {
   @Test
   fun theMediaTypeFollowsTheUsersOwnLibraryRoleAndNothingElse() {
     assertThat(
-      MediaItems.of(first, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType,
+      MediaItems.of(first, "https://host/s", null, isAudiobook = false, format = StreamFormat.Raw).mediaMetadata.mediaType,
     ).isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
     assertThat(
-      MediaItems.of(second, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType,
+      MediaItems.of(second, "https://host/s", null, isAudiobook = true, format = StreamFormat.Raw).mediaMetadata.mediaType,
     ).isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
   }
 
@@ -206,10 +209,56 @@ class MediaItemsTest {
     assertThat(second.suffix).isEqualTo("m4b")
     assertThat(first.suffix).isEqualTo("mp3")
     assertThat(
-      MediaItems.of(second, "https://host/s", null, isAudiobook = false).mediaMetadata.mediaType,
+      MediaItems.of(second, "https://host/s", null, isAudiobook = false, format = StreamFormat.Raw).mediaMetadata.mediaType,
     ).isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
     assertThat(
-      MediaItems.of(first, "https://host/s", null, isAudiobook = true).mediaMetadata.mediaType,
+      MediaItems.of(first, "https://host/s", null, isAudiobook = true, format = StreamFormat.Raw).mediaMetadata.mediaType,
     ).isEqualTo(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER)
   }
+
+  /**
+   * The **served** MIME type, which is not the source file's suffix.
+   *
+   * `MediaItem.localConfiguration.mimeType` is a real Media3 field the local extractor reads as a
+   * hint, and Plan 6 makes it the single value three separate parties read: the proxy serves it as
+   * `Content-Type`, the proxy path ends in the matching extension, and `res/@protocolInfo` in the
+   * DIDL document declares it. See `ServedMedia` and `MimeAgreement` in `:core:cast`.
+   *
+   * Two observations of the raw branch, so it cannot be a constant, and two of the transcode
+   * branch, where the suffix must NOT win: an Opus track announced to Sonos as `audio/ogg` while
+   * MP3 bytes are served is spec section 12's "Sonos rejects a served format" risk in its most
+   * confusing form.
+   *
+   * **The `flac` line is the one that discriminates, and it is here because the `opus` line does
+   * not.** Measured: with `ServedMedia.of`'s transcode arm mutated to fall through to the source
+   * suffix -- the exact defect this test is named for -- the `opus` assertion stays **green**,
+   * because `opus` is absent from `RAW_TYPES` and the fallback answers `audio/mpeg` either way.
+   * The `opus` line states the rule; only a suffix the raw table knows can catch it being broken.
+   */
+  @Test
+  fun theMimeTypeIsTheServedFormatAndNotTheSourceSuffix() {
+    assertThat(mimeOf(first.copy(suffix = "mp3"), StreamFormat.Raw)).isEqualTo("audio/mpeg")
+    assertThat(mimeOf(first.copy(suffix = "flac"), StreamFormat.Raw)).isEqualTo("audio/flac")
+    assertThat(mimeOf(first.copy(suffix = "opus"), StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+    assertThat(mimeOf(first.copy(suffix = "flac"), StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+  }
+
+  /**
+   * ...and the value really did come from this call rather than from the queue deciding twice.
+   * `QueueRepository` computes one `StreamFormat`, builds the URL with it and passes the same value
+   * here, so `format=mp3` on the wire and `audio/mpeg` on the item are one decision. The pairing
+   * that would go unnoticed is a `.opus` source streamed raw, which this rules out from the other
+   * side: the same song answers differently depending only on the format it is given.
+   */
+  @Test
+  fun theSameSongAnswersDifferentlyForTheFormatItsUrlWasBuiltWith() {
+    val song = first.copy(suffix = "flac")
+
+    assertThat(mimeOf(song, StreamFormat.Raw)).isEqualTo("audio/flac")
+    assertThat(mimeOf(song, StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+  }
+
+  private fun mimeOf(song: Song, format: StreamFormat): String? =
+    MediaItems.of(song, "https://host/s", null, isAudiobook = false, format = format)
+      .localConfiguration?.mimeType
 }

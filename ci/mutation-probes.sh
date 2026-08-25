@@ -197,6 +197,9 @@ SOAP_XML = "core/cast/src/main/kotlin/app/muplay/cast/soap/XmlText.kt"
 SOAP_ENVELOPE = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapEnvelope.kt"
 SOAP_NAMES = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapNames.kt"
 SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
+DIDL_SERVED = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
+DIDL_LITE = "core/cast/src/main/kotlin/app/muplay/cast/didl/DidlLite.kt"
+DIDL_MIME = "core/cast/src/main/kotlin/app/muplay/cast/didl/MimeAgreement.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -1807,6 +1810,74 @@ PROBES = [
      # volume rocker stops changing the music's volume, which a user reports as "the volume buttons
      # do nothing" and no playback test can see.
      "the usage is always media", 1),
+
+    # ---- Plan 6 Task 4: DIDL-Lite, protocolInfo, and the three-way MIME invariant -------------
+    # Three parties decide what format a renderer is about to receive and each reads a different
+    # artifact: Sonos reads the URL's file extension, a generic DLNA renderer reads
+    # `res/@protocolInfo`, everything else reads the proxy's `Content-Type`. Every count below is
+    # MEASURED with `:core:cast:test`, listed test by test in task-4-report.md.
+
+    # THE MOST IMPORTANT PROBE IN THIS TASK. `StreamFormat.forSuffix` sends `opus`/`ogg`/`oga` as
+    # `format=mp3`, so the bytes on the wire are MP3 whatever the source file was. A `ServedMedia`
+    # that fell back to the source suffix would promise Sonos `audio/ogg` on a `.opus` URL and
+    # serve MP3 -- spec section 12's "Sonos rejects a served format" risk, arriving in the form
+    # where the device refuses a format it was never actually sent.
+    #
+    # Note WHICH tests catch it, because it is not the ones an author would guess: `opus never
+    # reaches a renderer, by construction` does NOT redden, since `opus` is absent from `RAW_TYPES`
+    # and so falls through to the same fallback either way. The suffix that discriminates is a real
+    # one -- `flac` -- which is why the transcode test sweeps four sources rather than one.
+    ("didl/transcode-falls-through-to-suffix", DIDL_SERVED,
+     "      is StreamFormat.Mp3 -> ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     "      is StreamFormat.Mp3 -> RAW_TYPES[suffix?.lowercase()] ?: ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     "a transcode is served as mp3, whatever the source file was", 2),
+
+    # `DLNA.ORG_OP=01` is a PROMISE: the low bit says byte-range seeking is supported, so a renderer
+    # that reads it may issue `Range` and expect 206. Task 6's proxy owes that promise. Turning it
+    # off is silent -- the document still parses, the MIME is still right, and the seek bar simply
+    # stops working on hardware nobody has on the bench.
+    ("didl/no-byte-range-promise", DIDL_SERVED,
+     'val protocolInfo: String get() = "http-get:*:$mimeType:DLNA.ORG_OP=01;DLNA.ORG_FLAGS=$DLNA_FLAGS"',
+     'val protocolInfo: String get() = "http-get:*:$mimeType:DLNA.ORG_OP=00;DLNA.ORG_FLAGS=$DLNA_FLAGS"',
+     "protocolInfo declares no dlna profile name, on purpose", 3),
+
+    # A Navidrome stream URL carries `&` between query parameters, and ONE unescaped ampersand makes
+    # the whole metadata document unparseable at the device. The count is 2 rather than 1 only
+    # because `the rendered document is well-formed xml` was given a URL containing an ampersand:
+    # measured at 1 before that, since the item it started from had none, which made a
+    # well-formedness assertion that could not be broken by the defect it exists to catch.
+    ("didl/res-url-unescaped", DIDL_LITE,
+     "    append(XmlText.escape(item.resourceUrl))",
+     "    append(item.resourceUrl)",
+     "every text field is escaped, including in the res url", 2),
+
+    # The mirror image, and the one that gets applied twice as often as it gets forgotten:
+    # `&amp;lt;DIDL-Lite` inside `CurrentURIMetaData` is a device that shows the track as unknown
+    # with no error reported anywhere. `FakeRenderer`'s `requireNonEmptyMetadata` answers 714 to it,
+    # so Task 5's suite reddens on this too.
+    ("didl/metadata-escaped-twice", DIDL_LITE,
+     "  fun renderEscaped(item: CastItem): String = XmlText.escape(render(item))",
+     "  fun renderEscaped(item: CastItem): String = XmlText.escape(XmlText.escape(render(item)))",
+     "renderEscaped is render escaped exactly once", 2),
+
+    # THE INVARIANT PROBE. `> 2` instead of `> 1` is the off-by-one that makes the check report a
+    # disagreement only when all three legs differ -- i.e. it goes quiet on exactly the case the
+    # whole check exists for, where TWO legs agree and the third silently differs. Every assertion
+    # that compares `served.mimeType` with `served.protocolInfo` is already blind to that, because
+    # both come from one object; these four are not.
+    ("didl/two-legs-agreeing-is-enough", DIDL_MIME,
+     "    if (listOfNotNull(declaredMime, urlMime, servedMime).distinct().size > 1) {",
+     "    if (listOfNotNull(declaredMime, urlMime, servedMime).distinct().size > 2) {",
+     "a protocolInfo that disagrees with the url extension is reported", 4),
+
+    # `ServedMedia.of` guesses `audio/mpeg` for an unknown suffix because it MUST return something.
+    # Asking what a *peer* will conclude from a URL is a different question, and guessing there is
+    # how `.opus` -- the one suffix spec section 4 forbids outright -- comes to agree with every MP3
+    # stream this client serves. One red, and it is the whole point of the distinction.
+    ("didl/url-extension-guesses", DIDL_MIME,
+     "    val urlMime = ServedMedia.forExtension(extension)?.mimeType",
+     "    val urlMime = ServedMedia.forExtension(extension)?.mimeType ?: ServedMedia.FALLBACK_MIME",
+     "an extension this client never serves is reported rather than assumed to be mp3", 1),
 ]
 
 

@@ -54,6 +54,10 @@ class QueueRepository @Inject constructor(
       streamUri = source.streamUrl(song.id, format),
       artworkUri = song.coverArtId?.let { source.coverArtUrl(it, ARTWORK_SIZE_PX) },
       isAudiobook = isAudiobook,
+      // The same value the URL was built from, passed rather than recomputed: the served MIME
+      // type and the `format` query parameter are two statements of one decision, and deciding
+      // twice is how they drift.
+      format = format,
     )
   }
 

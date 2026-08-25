@@ -5,7 +5,9 @@ import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
+import app.muplay.cast.didl.ServedMedia
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 
 /**
  * Turns one mirrored [Song] into the `MediaItem` Media3 plays.
@@ -69,12 +71,37 @@ object MediaItems {
    * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
    *   inferable from anything the server sends -- see this object's own note above for why the
    *   library id plus the user's own `LibraryRole` is the only mechanism there is.
+   * @param format the [StreamFormat] [streamUri] was built with. Needed because the **served**
+   *   MIME type is not the source file's: a forced transcode (spec section 4's "Never Opus")
+   *   delivers MP3 whatever the source was, and Sonos infers the MIME type from the URL's
+   *   extension rather than from `Content-Type`. See `ServedMedia`.
+   *
+   *   Taken as a parameter rather than recomputed from `song.suffix` here, and that is the point of
+   *   the parameter existing: [QueueRepository] already calls `StreamFormat.forSuffix` to build
+   *   [streamUri], so recomputing it would be a second decision about one fact, free to drift from
+   *   the URL the moment either rule changed. One call, two consumers.
+   *
+   * The two are independent and both are required, which a merge of two lanes established the
+   * hard way: [isAudiobook] decides `mediaType` (speech vs music, and Plan 5's surfaces), [format]
+   * decides `mimeType` (what the bytes on the wire actually are). Neither is derivable from the
+   * other -- a book is served as MP3 as readily as a song is.
    */
-  fun of(song: Song, streamUri: String, artworkUri: String?, isAudiobook: Boolean): MediaItem =
+  fun of(
+    song: Song,
+    streamUri: String,
+    artworkUri: String?,
+    isAudiobook: Boolean,
+    format: StreamFormat,
+  ): MediaItem =
     MediaItem.Builder()
       .setMediaId(song.id)
       .setUri(streamUri)
       .setCustomCacheKey(song.id)
+      // The one statement of what these bytes are, read by the local extractor as a hint and by
+      // the cast layer as the truth it tells a renderer. See `ServedMedia`'s KDoc for why three
+      // parties must agree and why they all read this one value, and `MimeAgreement` for the check
+      // that makes their agreement observable rather than merely intended.
+      .setMimeType(ServedMedia.of(song.suffix, format).mimeType)
       .setMediaMetadata(
         MediaMetadata.Builder()
           .setTitle(song.title)

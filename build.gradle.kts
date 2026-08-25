@@ -2252,6 +2252,96 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.soap.SoapClient*",
       ),
     ),
+    // Plan 6 Task 4, `app.muplay.cast.didl`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator anywhere. Which class goes on which rule is a measurement and not a preference,
+    // because a CLASS-element rule over a class carrying no counter of that kind is a `0/0`
+    // COVEREDRATIO, which is `NaN`, which JaCoCo reports as no violation at every minimum:
+    //
+    //   `MimeAgreement`          BRANCH 48/48 -- the missing `<res>`, the DOCTYPE refusal and the
+    //                            unparseable document; a `protocolInfo` with too few fields and
+    //                            one with an empty MIME field; a URL with no extension, one whose
+    //                            extension this client does not serve, one `URI` will not parse
+    //                            and an opaque `mailto:`; an absent and a blank `Content-Type`;
+    //                            and the disagreement check itself, at one distinct value and at
+    //                            more than one.
+    //   `DidlLite`               BRANCH 6/6 -- each of the three optional fields present and
+    //                            absent. All six are author-written; there is no codegen here.
+    //   `ServedMedia$Companion`  BRANCH 8/8 -- `of`'s `Mp3` and `Raw` arms, the `RAW_TYPES` hit
+    //                            and miss, the null suffix, and `forExtension`'s hit and miss.
+    //
+    // `ServedMedia` itself is on the LINE rule below rather than here, for exactly the reason
+    // `XmlText` is: it carries **no BRANCH counter at all**. `protocolInfo` and `fileName` are
+    // string building with no conditional anywhere in them, so a BRANCH rule over this class would
+    // be the silent `NaN` pass -- over the type this whole task exists to make single-valued.
+    // LINE 16/16.
+    //
+    // Falsified per class, and the first attempt is recorded because it FAILED to fire, which is
+    // the interesting half:
+    //
+    //   * withholding `DidlLiteTest`'s `an absent optional field is omitted rather than rendered
+    //     empty` **alone leaves `DidlLite` at 6/6 = 1.0000 and this floor green**. The three
+    //     optional fields' absent arms are also driven by `MimeAgreementTest`'s
+    //     `every format this client serves agrees with itself on all three legs`, which renders an
+    //     item with all three null. Withholding that sweep as well drops `DidlLite` to
+    //     **3/6 = 0.50** and the rule fires -- *"Rule violated for class
+    //     app.muplay.cast.didl.DidlLite: branches covered ratio is 0.50, but expected minimum is
+    //     0.90"*. One withheld test is not always enough, and a near-miss is worth recording
+    //     rather than re-deriving.
+    //   * `MimeAgreement`: withholding `a document with no res element, or an unreadable one, is
+    //     reported` alone drops it to **43/48 = 0.8958** and the rule fires. Note how thin that
+    //     is -- five branches of forty-eight is the whole margin -- which is the honest state of a
+    //     class this size at a 0.90 floor, not a reason to raise the minimum.
+    //   * `ServedMedia$Companion`: withholding `ServedMediaTest`'s `a transcode is served as mp3,
+    //     whatever the source file was` together with `opus never reaches a renderer, by
+    //     construction` leaves `of`'s `is StreamFormat.Mp3 ->` arm unexecuted, at
+    //     **7/8 = 0.8750**, and the rule fires naming `ServedMedia.Companion`. That arm is the one
+    //     the whole task turns on: it is what stops an Opus source being announced as `audio/ogg`
+    //     while MP3 bytes are served.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.didl.DidlLite",
+        "app.muplay.cast.didl.MimeAgreement",
+        "app.muplay.cast.didl.ServedMedia*Companion",
+      ),
+    ),
+    // The one class in this package with real code and no branches, and the two declaration-only
+    // types beside it -- LINE, the same shape and the same argument as `XmlText` above.
+    //
+    //   `ServedMedia`                 LINE 16/16. `protocolInfo`, `fileName`, and the data class.
+    //   `CastItem`                    LINE 10/10, declaration only (JaCoCo's Kotlin filters remove
+    //                                 a data class's generated members, so what is left is the
+    //                                 constructor and the `copy` the tests use).
+    //   `MimeDisagreementException`   LINE 1/1, declaration only.
+    //
+    // `MimeDisagreementException` is NOT a ride-along here, unlike the zero-counter passengers on
+    // the rules above: its one line is the exception's construction, reached only when a refusal
+    // actually happens. Falsified as such -- withholding `MimeAgreementTest`'s `require refuses a
+    // disagreement as an IOException naming every leg` **alone** takes it to **0/1 = 0.0000** and
+    // this floor fires: *"Rule violated for class app.muplay.cast.didl.MimeDisagreementException:
+    // lines covered ratio is 0.00, but expected minimum is 0.90"*. So the one class in this
+    // package that exists to say no is gated on whether anything ever makes it say no.
+    //
+    // `ServedMedia` itself takes considerably more to move, and the number is recorded so nobody
+    // repeats the search: its two behavioural lines are `protocolInfo` and `fileName`, and both
+    // have several callers, so withholding `ServedMediaTest`'s three `protocolInfo`/`opus` tests,
+    // `MimeAgreementTest`'s three tests that mint a URL through `fileName`, and the seven
+    // `DidlLiteTest` tests that render -- thirteen in all -- is what leaves it at
+    // **14/16 = 0.8750** and fires the rule. That is the shape of a value with many readers: no
+    // single test is load-bearing for it, which is the reason it is worth gating at all.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.didl.ServedMedia",
+        "app.muplay.cast.didl.CastItem",
+        "app.muplay.cast.didl.MimeDisagreementException",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
