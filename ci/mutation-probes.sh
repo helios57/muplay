@@ -145,6 +145,9 @@ CAST_ADDRESS = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalAddress.kt"
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
+PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
+TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
+PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -1155,6 +1158,57 @@ PROBES = [
      # Minor, from the same review. Task 6 puts Subsonic's u/t/s in these URLs, and an exception
      # message is the one string in this project that reliably reaches a bug report.
      "a password in a url's userinfo never reaches an exception message", 1),
+    # ---- Plan 3 Task 5: the service, the player factory and the connection -------------------
+    # The one defect in this task that no runtime test can see, because it is structural: a second
+    # `ExoPlayer.Builder` anywhere in the module compiles, runs, and quietly keeps Media3's own
+    # three-retries-in-five-seconds, because the 429 policy attaches to the `MediaSource.Factory`
+    # and `ExoPlayer.Builder` has no setter for it at all. `PlayerConstructionTest` is a source
+    # scan for exactly that, and this is the probe that it still scans.
+    #
+    # It caught a real one within hours of being written: Task 3's `MediaCacheTest` hand-built two
+    # players, so two of the three instrumented playback suites were driving a player that is not
+    # the one that ships.
+    ("media/second-player-construction", PLAYBACK_SERVICE,
+     "    val player: ExoPlayer = playerFactory.create()",
+     "    val player: ExoPlayer = ExoPlayer.Builder(this).build()",
+     "an ExoPlayer is constructed in exactly one place", 1),
+    # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
+    # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
+    # a policy that lost either one is silently wrong on a device nobody is watching.
+    ("media/task-removal-stops-while-playing", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    true",
+     "music that is playing survives the user tidying their recents list", 1),
+    ("media/task-removal-keeps-an-empty-queue-alive", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    playWhenReady != true",
+     # 2, measured: the same mutation also reddens `no session at all is the clearest reason to
+     # stop`, because with `mediaItemCount = null` and `playWhenReady = true` the surviving half of
+     # the condition answers "keep running" for a service that has no player.
+     "an empty queue stops the service even when the player is ready to play", 2),
+    # A format the server transcodes on the fly has no `Content-Length`, so `player.duration` is
+    # `C.TIME_UNSET` for the whole track and the metadata is the only source that knows. Dropping
+    # the fallback shows every Opus track as unknown length on the lock screen, in Auto, in Wear
+    # and in the seek bar -- and moves no other assertion in this project.
+    ("media/duration-metadata-ignored", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     "the metadata's duration is used when the extractor had none", 1),
+    # The other direction: the metadata is what the *server* said about the file, the player is
+    # what the extractor measured of the bytes actually playing. Preferring the wrong one is a
+    # seek bar that disagrees with the audio.
+    ("media/duration-metadata-wins", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (metadataDurationMs ?: playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     # 2, measured: it also reddens `an unknown duration is zero, never a negative sentinel`,
+     # whose `playerDurationMs = -1L` case exists precisely to pin which source is consulted first.
+     "the player's own duration wins, because it measured what is playing", 2),
+    # `NOTHING_PLAYING` is what four downstream tasks render before anything is loaded. A `true`
+    # here is an enabled "next" button with no queue behind it, and it moves no branch anywhere.
+    ("media/nothing-playing-has-next", PLAYBACK_STATE,
+     "      hasNext = false,\n      hasPrevious = false,",
+     "      hasNext = true,\n      hasPrevious = false,",
+     "nothing playing can step neither forward nor back", 1),
 ]
 
 
@@ -1210,6 +1264,9 @@ LATER_PROBE_FILES = [
     BROWSE_ID,
     BASE_URL,
     INTEGRATION_SERVICE,
+    PLAYBACK_SERVICE,
+    TASK_REMOVAL,
+    PLAYBACK_STATE,
 ]
 
 

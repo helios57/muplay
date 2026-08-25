@@ -22,14 +22,11 @@ import javax.inject.Singleton
  * [LoadErrorHandlingPolicy] from scratch: everything that is not a 429 must keep Media3's own
  * behaviour, and 404/416/`ParserException` handling in particular is what makes seeking work.
  *
- * **Where this has to be attached, or it does nothing.** On the `MediaSource.Factory`:
- *
- * ```
- * ExoPlayer.Builder(context)
- *   .setMediaSourceFactory(
- *     DefaultMediaSourceFactory(dataSourceFactory).setLoadErrorHandlingPolicy(policy),
- *   )
- * ```
+ * **Where this has to be attached, or it does nothing.** On the `MediaSource.Factory`, inside
+ * [MuPlayerFactory] -- the only place in this project that builds a player at all, and
+ * `PlayerConstructionTest` is what keeps it the only place. Read that function rather than a
+ * copy of it here: a snippet in a doc comment is a second version of the wiring that nothing
+ * checks, and a wiring that nothing checks is this class's entire failure mode.
  *
  * `ExoPlayer.Builder` has no `setLoadErrorHandlingPolicy` of its own in Media3 1.11.0 — checked
  * against the resolved artifact — so there is no compile error waiting for anyone who forgets;

@@ -5,8 +5,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.Cache
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -68,27 +66,30 @@ class MuPlayDataSourceFactoryTest {
     // something other than what it claims to.
     cacheDir = File(context.cacheDir, "datasource-test-${System.nanoTime()}")
     cache = MediaCache.create(context, cacheDir)
-    val factory = MuPlayDataSourceFactory(markerCallFactory(), cache)
+    // Through `MuPlayerFactory`, never `ExoPlayer.Builder` directly, and that is the point of
+    // this block rather than an incidental tidy-up. The 429 retry policy hangs off the **media
+    // source factory**, not off `ExoPlayer.Builder` -- which has no such setter at all in Media3
+    // 1.11.0, checked against the resolved artifact -- so a player that never got it fails
+    // nothing loudly: it quietly keeps `DefaultLoadErrorHandlingPolicy`'s three retries inside
+    // five seconds while every unit test of the policy stays green.
+    //
+    // A test that assembled that arrangement for itself would be testing a *copy* of the
+    // production wiring, and the copy is exactly what drifts: the shipping player could lose the
+    // policy and `aRefusalBudgetThatRunsOutSurfacesAsAPlayerError` below would still be green.
+    // Calling the production factory makes this suite's wiring the shipping wiring, which is what
+    // Task 2's review asked for in these words: "then the test's wiring is the production wiring".
+    // `PlayerConstructionTest` (JVM tier) is what stops a hand-built player coming back here.
+    val playerFactory = MuPlayerFactory(
+      context = context,
+      dataSourceFactory = MuPlayDataSourceFactory(markerCallFactory(), cache),
+      loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+    )
     // Built inside runOnMainSync: ExoPlayer.Builder captures the calling thread's Looper, and the
     // instrumentation thread has none. A violation throws
     // "Player is accessed on the wrong thread" -- clear, but only at the first access, which is
     // far from here.
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(
-        ExoPlayer.Builder(context)
-          // The policy hangs off the **media source factory**, not off `ExoPlayer.Builder`. There
-          // is no `ExoPlayer.Builder.setLoadErrorHandlingPolicy` in Media3 1.11.0 at all
-          // (checked against the resolved artifact, not assumed), and the sequence that silently
-          // does nothing is easy to write: build the policy, inject it, never attach it, and the
-          // player quietly keeps `DefaultLoadErrorHandlingPolicy`'s three-retries-in-five-seconds
-          // while every unit test of the policy stays green. `ProgressiveMediaPeriod` reads it
-          // from the `MediaSource` it was created by, which is why it goes here.
-          .setMediaSourceFactory(
-            DefaultMediaSourceFactory(factory.create())
-              .setLoadErrorHandlingPolicy(NavidromeLoadErrorHandlingPolicy()),
-          )
-          .build(),
-      )
+      harness = PlayerHarness(playerFactory.create())
     }
   }
 
@@ -194,6 +195,14 @@ class MuPlayDataSourceFactoryTest {
    * that was never passed in cannot stamp it. And it now travels through Task 3's
    * `CacheDataSource` wrapper as well, so this doubles as the proof that wrapping the upstream
    * factory in a cache preserved the injected client rather than quietly building its own.
+   *
+   * Since Task 5 it spans a third layer, which is why it is the answer to "what proves
+   * `MuPlayerFactory` forwards the data source factory it was handed?": the player these tests
+   * drive is built by that production factory, so an implementation that ignored its
+   * `dataSourceFactory` argument and constructed an identical one internally -- the classic
+   * argument-passthrough defect on a delegating constructor, and one no `User-Agent` assertion can
+   * see, because the replacement would send the same one -- loses this header. Measured: with
+   * `MuPlayerFactory` mutated to do exactly that, this is the test that goes red.
    */
   @Test
   fun theRequestIsIssuedByTheInjectedCallFactoryAndNotOneBuiltInside() {

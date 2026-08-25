@@ -477,17 +477,70 @@ class ConventionTest {
       repoRoot(),
       "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
     )
-    val forbiddenAttributesArgs = Regex("""forbiddenAttributes\.set\(listOf\(([^)]*)\)\)""")
+    // Scoped to the *release* arm, since Plan 3 Task 5: the task runs for every variant now, and
+    // `forbiddenAttributes` is variant-dependent because debug legitimately carries
+    // `usesCleartextTraffic` for the Tier 2 journey's plain-HTTP container. A pattern that matched
+    // the whole `set(...)` call would therefore also match the `emptyList()` the debug arm passes,
+    // and would go on passing if the release arm lost an entry.
+    val forbiddenAttributesArgs =
+      Regex("""buildType == "release"\)\s*\{\s*listOf\(([^)]*)\)""")
+        .find(pluginFile.readText())
+        ?.groupValues
+        ?.get(1)
+
+    // A pattern that stops matching the declaration must fail here too, not silently treat a
+    // missing match as "nothing to check" -- the same principle as the very first test in this
+    // class. It has already earned that: this regex went stale the moment the release-only
+    // selector moved out of `onVariants` and into this value, and the missing-match branch is what
+    // reported it.
+    assertThat(forbiddenAttributesArgs).describedAs(pluginFile.path).isNotNull()
+    assertThat(forbiddenAttributesArgs).contains("\"usesCleartextTraffic\"")
+    assertThat(forbiddenAttributesArgs).contains("\"networkSecurityConfig\"")
+  }
+
+  /**
+   * The mirror of the test above, for the half of the same task that checks *presence*.
+   *
+   * It can be lost the same silent way, and worse: deleting an entry from `requiredDeclarations`
+   * leaves `verifyDebugManifest` and `verifyReleaseManifest` both green, and the defect it stops
+   * checking for -- a media playback service that is not declared, or that lacks
+   * `FOREGROUND_SERVICE_MEDIA_PLAYBACK` -- fails no build, no install and no foreground test. It
+   * throws `SecurityException` from `startForeground` the first time the app is backgrounded with
+   * audio playing.
+   *
+   * Each entry is asserted **with its `android:name="..."` wrapper**, which is the part that is
+   * easy to "tidy" away and is load-bearing: `android.permission.FOREGROUND_SERVICE` is a prefix of
+   * `android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK`, so a bare-name list reports the shorter
+   * permission present in a manifest that declares only the longer one. Measured before the wrapper
+   * existed: deleting the `FOREGROUND_SERVICE` line from `core/media/src/main/AndroidManifest.xml`
+   * left `verifyDebugManifest` green.
+   */
+  @Test
+  fun `the merged-manifest gate still requires the playback service and its permissions`() {
+    val pluginFile = File(
+      repoRoot(),
+      "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
+    )
+    val requiredDeclarations = Regex("""requiredDeclarations\.set\(\s*listOf\(([\s\S]*?)\n\s*\),""")
       .find(pluginFile.readText())
       ?.groupValues
       ?.get(1)
 
-    // A pattern that stops matching the declaration must fail here too, not silently treat a
-    // missing match as "nothing to check" -- the same principle as the very first test in this
-    // class.
-    assertThat(forbiddenAttributesArgs).describedAs(pluginFile.path).isNotNull()
-    assertThat(forbiddenAttributesArgs).contains("\"usesCleartextTraffic\"")
-    assertThat(forbiddenAttributesArgs).contains("\"networkSecurityConfig\"")
+    assertThat(requiredDeclarations).describedAs(pluginFile.path).isNotNull()
+    assertThat(
+      listOf(
+        "android.permission.INTERNET",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "app.muplay.media.MuPlaybackService",
+        "androidx.media3.session.MediaSessionService",
+      ).map { """android:name="$it"""" }
+        .plus("""android:foregroundServiceType="mediaPlayback"""")
+        .filterNot { checkNotNull(requiredDeclarations).contains(it) },
+      // The list of what is missing, not `allMatch`: a failure has to name which declaration was
+      // dropped, and an `allMatch` over an empty required list would be vacuously true.
+    ).describedAs("declarations dropped from requiredDeclarations").isEmpty()
   }
 
   /**
