@@ -1596,7 +1596,10 @@ PROBES = [
      '    .replace("\\"", "&quot;")\n'
      '    .replace("\'", "&apos;")\n'
      '    .replace("&", "&amp;")',
-     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 5),
+     # 22 as of Task 3's fix round, up from 5: `SoapEnvelope.render` escapes argument values now,
+     # so this ordering defect reaches every test that reads a rendered envelope or sends one to
+     # the fake -- which is the point of moving escaping to one layer, seen from the probe side.
+     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 22),
 
     # The quotes are part of the SOAPACTION header VALUE. Sent unquoted, some renderers accept it
     # and Sonos answers 401 -- the worst possible distribution, because it works on the developer's
@@ -1605,7 +1608,8 @@ PROBES = [
     ("soap/soapaction-unquoted", SOAP_ENVELOPE,
      '    "\\"${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}\\""',
      '    "${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}"',
-     "the soapaction header value is quoted", 25),
+     # 28, up from 25: Task 3's fix round added three tests that send a quoted SOAPACTION.
+     "the soapaction header value is quoted", 28),
 
     # UPnP argument lists are ORDERED by the service description and implementations parse
     # positionally. Sorting them is the mutation because it is the plausible one: a `Map` a caller
@@ -1613,7 +1617,8 @@ PROBES = [
     ("soap/arguments-sorted", SOAP_ENVELOPE,
      "      arguments.forEach { (name, value) ->",
      "      arguments.sortedBy { it.name }.forEach { (name, value) ->",
-     "arguments appear in the order they were given, and reordering them changes the bytes", 15),
+     # 18, up from 15, for the same reason.
+     "arguments appear in the order they were given, and reordering them changes the bytes", 18),
 
     # A UPnP error is HTTP 500 WITH A BODY. Checking the status first turns "Sonos said 714, illegal
     # MIME type" into "HTTP 500" and loses the only thing the caller can act on. Two reds, which is
@@ -1691,7 +1696,8 @@ PROBES = [
      '    val supportedSeekModes: List<String> = listOf("REL_TIME", "ABS_TIME"),\n'
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
-     "an unquoted soapaction is rejected with 401", 10),
+     # 12, up from 10: an eighth knob (`requireWellFormedBody`) and the two tests that drive it.
+     "an unquoted soapaction is rejected with 401", 12),
 
     # ---- Plan 6 Task 3, fix round: the two HIGH findings of its security review --------------
     #
@@ -1704,7 +1710,9 @@ PROBES = [
     ("soap/argument-value-unescaped", SOAP_ENVELOPE,
      "        append(XmlText.escape(value))",
      "        append(value)",
-     "a navidrome stream url reaches the device intact, ampersands and all", 4),
+     # 17, MEASURED. High, and honestly so: unescaped values break every rendered envelope in the
+     # module at once, which is exactly the blast radius the finding described.
+     "a navidrome stream url reaches the device intact, ampersands and all", 17),
 
     # THE MIRROR IMAGE, re-pointed here from `didl/metadata-escaped-twice` when
     # `DidlLite.renderEscaped` was deleted. Escaping is framing and framing now happens in exactly
@@ -1714,7 +1722,8 @@ PROBES = [
     ("soap/argument-escaped-twice", SOAP_ENVELOPE,
      "        append(XmlText.escape(value))",
      "        append(XmlText.escape(XmlText.escape(value)))",
-     "the metadata argument carries the document escaped exactly once", 5),
+     # 16, MEASURED, for the mirror-image reason.
+     "the metadata argument carries the document escaped exactly once", 16),
 
     # THE SECOND HIGH FINDING, AND THE ONE THAT MADE THE FIRST INVISIBLE. `RecordedSoap.arguments`
     # parsed request bodies with `<(\w+)>(.*?)</\1>`, and a regex cannot tell well-formed XML from
