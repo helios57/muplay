@@ -1394,14 +1394,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackState", "app.muplay.media.TaskRemovalPolicy"),
     ),
-    // 23/24 = 0.9583 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
+    // 22/22 = 1.0000 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
     // in `:app` (see that suite's own doc for why it cannot live in this module, and `Jacoco.kt`'s
     // `mergedExecutionData` for why its `.ec` still lands here).
     //
-    // The one missed branch is the compiler's own: `suspendCoroutine` emits a `COROUTINE_SUSPENDED`
-    // check whose other arm is a synchronous resume that a real IPC connection never takes. 0.90
-    // leaves that single synthetic branch of room and no more -- one genuinely-uncovered branch
-    // takes this to 22/24 = 0.9166, two takes it to 0.875 and fails.
+    // It was 23/24 = 0.9583 until Task 5's fix round, and the two branches that went are the same
+    // kind that went before them: `suspendCoroutine`'s `COROUTINE_SUSPENDED` check, whose other arm
+    // is a synchronous resume a real IPC connection never takes, moved into
+    // `PlaybackConnection$connect$1` -- a continuation class carrying no counters at all -- when the
+    // install-after-connect code moved inside `connect()`. Nothing was excused; the arithmetic
+    // changed because the code did.
     //
     // Three branches that used to sit here are gone rather than excused, and that is worth
     // recording because the fix improved the code: `release()`'s null-safe calls stayed uncovered
@@ -1411,21 +1413,79 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // a loop that exits only by cancellation cannot take its condition's false arm, and a field
     // that is cleared only after the coroutine is cancelled cannot be null inside it. Two branches
     // that can never take their other arm are not safety; they are two uncoverable branches.
+    //
+    // **`PlaybackConnection$controller$2` is deliberately NOT here any more, and that is the honest
+    // reading rather than a retreat.** The lambda measures 5/6 = 0.8333 BRANCH since the fix round,
+    // and the sixth is the false arm of `connection === attempt` inside `invokeOnCompletion`. That
+    // check is load-bearing -- without it, an attempt cancelled by `release()` completing *after* a
+    // caller has already started its replacement would null out the replacement, and the next
+    // `controller()` would build a third controller while the second stayed bound, which is exactly
+    // the leak this round fixed. But its false arm needs the cancelled attempt to complete after the
+    // replacement was assigned, and cancellation resumes through the main dispatcher: `release()`
+    // posts the resume before any later caller can post its own `withContext` body, so on this
+    // project's dispatcher the queue is always [resume, replacement]. No test this project can write
+    // forces the other order. The lambda keeps its LINE rule below (7/7), so
+    // `warnUngatedClasses` is satisfied -- a class matched by any rule is gated -- and this
+    // paragraph is where the missing branch is recorded instead of being hidden under a 0.80 floor
+    // that would permit a real one.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf(
-        "app.muplay.media.PlaybackConnection",
-        "app.muplay.media.PlaybackConnection*controller*2",
-      ),
+      includes = listOf("app.muplay.media.PlaybackConnection"),
       requiresInstrumentedData = true,
     ),
-    // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 45/45
-    // and its four compiled lambdas (`controller$2` 7/7, `listener$1` 2/2, `connect$2$1` 2/2,
-    // `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's two nested types
-    // (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 1/1 -- the "not supported" browse
-    // answer Plan 5 will fill in).
+    // Plan 3 Task 5's fix round: the connection gate. 4/4 = 1.0000 BRANCH from **JVM data alone**
+    // (`ControllerAccessPolicyTest`, five tests, no emulator), and the reason
+    // `ControllerAccessPolicy` is a separate object rather than an `if` inside
+    // `MediaLibrarySession.Callback.onConnect`: the decision about who may read this app's session
+    // metadata -- which carries a non-expiring Subsonic credential -- is gated by the fast tier.
+    //
+    // The four branches are the rule: `isTrustedForMediaControl`, and the exact-name comparison
+    // that lets the platform's own unattributable legacy caller through. Both arms of both are
+    // driven, and both fail in opposite, visible directions -- accepting an untrusted controller
+    // hands any local app a replayable credential, refusing the legacy caller kills hardware media
+    // buttons on API 26 and 27.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum, for the reason
+    // the Task 8a entry above spells out (JaCoCo rejects a minimum over 1.0 before it compares
+    // anything, which proves nothing): with `ControllerAccessPolicyTest` moved aside, "Rule
+    // violated for class app.muplay.media.ControllerAccessPolicy: branches covered ratio is 0.00,
+    // but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ControllerAccessPolicy"),
+    ),
+    // The adapter half of the same decision: `MuPlaybackService$LibraryCallback` 2/2 = 1.0000
+    // BRANCH, instrumented, driven by `ControllerAccessGateTest` -- which calls the real
+    // `onConnect` with a real `ControllerInfo` for a package that is not this one, because
+    // `ControllerInfo` is Android-backed and there is no Robolectric here.
+    //
+    // It rides on the LINE rule below as well (6/6), and it needs this one too rather than only
+    // that one: the class is one `if`, so its two branches ARE the gate, and a LINE floor over a
+    // six-line class is satisfied by an `onConnect` that accepts everything.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.MuPlaybackService*LibraryCallback"),
+      requiresInstrumentedData = true,
+    ),
+    // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 51/51
+    // and its compiled lambdas (`controller$2` 7/7, `controller$2$1` 1/1, `listener$1` 2/2,
+    // `connect$connected$1$1` 2/2, `startTicker$1` 3/3), `MuPlayerFactory` 11/11, and the service's
+    // two nested types (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 6/6 -- the connection
+    // gate, plus the "not supported" browse answer Plan 5 will fill in).
+    //
+    // **Two of those lambda names changed in Task 5's fix round, and the patterns had to move with
+    // them.** `connect$2$1` became `connect$connected$1$1` when the `suspendCoroutine` result was
+    // bound to a local so the install-after-connect code could follow it, and `controller$2$1` is
+    // new -- the `async { connect() }` body. A JaCoCo `includes` pattern that stops matching does
+    // not fail; it silently gates nothing, which is why `warnUngatedClasses` names every class no
+    // rule matches on every run. It is what caught both of these, by name, with their measured
+    // ratios. Read its output after any change that moves a lambda.
     //
     // `MuPlayerFactory` has **zero BRANCH counters**, so LINE is the only counter that can gate it
     // at all -- the vacuous-floor shape this table's own doc describes, checked rather than assumed.
@@ -1466,8 +1526,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.PlaybackConnection",
         "app.muplay.media.PlaybackConnection*controller*2",
+        "app.muplay.media.PlaybackConnection*controller*2*1",
         "app.muplay.media.PlaybackConnection*listener*1",
-        "app.muplay.media.PlaybackConnection*connect*2*1",
+        // Deliberately `*connect*` and not `*connect*connected*1*1`: the suspend function's own
+        // continuation class (`PlaybackConnection$connect$1`) carries zero counters of either kind,
+        // so it can never move this ratio, and a pattern pinned to the lambda's exact spelling is
+        // the thing that just went stale once. This one survives the body being rearranged again.
+        "app.muplay.media.PlaybackConnection*connect*",
         "app.muplay.media.PlaybackConnection*startTicker*1",
         "app.muplay.media.MuPlayerFactory",
         "app.muplay.media.MuPlaybackService*Companion",
