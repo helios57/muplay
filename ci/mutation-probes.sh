@@ -118,6 +118,7 @@ TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
 MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
 MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
 SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
+SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -386,6 +387,30 @@ PROBES = [
      "      serverInfo = info,\n      libraries = current,",
      '      serverInfo = info.copy(serverVersion = "9.9.9"),\n      libraries = current,',
      "a successful connect saves the credentials and lists the libraries for tagging", 1),
+
+    # ---- Task 6: SyncDecision -- the pure watermark ruling SyncEngine.syncIfStale is built on --
+    # The only class this task adds that is JVM-measurable at all (SyncEngine itself needs Room,
+    # see task-6-report.md); each of the four guards in `decide`'s `when` collapsed to a constant
+    # `false` (or, for the final `else`, to the wrong source value) and the test that catches it.
+    ("sync/decide-scanning-guard", SYNC_DECISION,
+     "      status.isScanning -> ScanInProgress",
+     "      false -> ScanInProgress",
+     "a scan in progress is never a reason to reconcile", 1),
+    ("sync/decide-null-lastScan-guard", SYNC_DECISION,
+     "      status.lastScan == null -> Reconcile(null)",
+     "      false -> Reconcile(null)",
+     "a server that reports no lastScan reconciles every time and stores nothing", 1),
+    ("sync/decide-uptodate-guard", SYNC_DECISION,
+     "      status.lastScan == stored -> UpToDate",
+     "      false -> UpToDate",
+     "an unchanged watermark means there is nothing to do", 1),
+    # 2, not 1: the reconcile carries the *server's* new value, not whatever was already stored --
+    # both "a moved watermark..." (stored != new lastScan) and "the first ever sync..." (stored is
+    # null, lastScan is not) construct a `Reconcile` whose argument this mutation gets wrong.
+    ("sync/decide-else-watermark", SYNC_DECISION,
+     "      else -> Reconcile(status.lastScan)",
+     "      else -> Reconcile(stored)",
+     "a moved watermark triggers a reconcile carrying the new value", 2),
 ]
 
 
@@ -421,7 +446,10 @@ def apply(path, old, new):
 
 
 def revert():
-    subprocess.run(["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM], check=True)
+    subprocess.run(
+        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION],
+        check=True,
+    )
 
 
 # Exactly the modules `run_suite()` below invokes, paired with the result directory each one's
