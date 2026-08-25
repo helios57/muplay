@@ -160,9 +160,52 @@ class ConventionTest {
     .replace(Regex("""(?s)/\*.*?\*/"""), "")
     .replace(Regex("""(?s)<!--.*?-->"""), "")
 
-  /** [text] reduced to the lines a Kotlin compiler would act on: no block comments, no `//`, no blanks. */
+  /**
+   * [text] with every **trailing** `//` comment removed, quote-aware.
+   *
+   * [significantLines] drops a line that *starts* with `//` and nothing else, which left every
+   * `contains`/`doesNotContain` rule below still answerable by prose — the exact defect
+   * [withoutBlockComments] exists for, one comment style down. Measured shape of the hole:
+   *
+   * ```
+   * import app.muplay.integrations.CleartextPolicy as CP
+   * fun provideCleartextPolicy(): CP = CP.Allowed  // not CleartextPolicy.Forbidden
+   * ```
+   *
+   * satisfies `contains("CleartextPolicy.Forbidden")` from the comment and dodges
+   * `doesNotContain("CleartextPolicy.Allowed")` through the import alias. The alias half is not
+   * fixable by text scanning and is left to the compile-and-run gates; the comment half is, and
+   * this is it.
+   *
+   * A line containing `"""` is returned untouched: a raw string can carry a `//` that is code, and
+   * truncating one would hide a real occurrence from a `doesNotContain` — a hole, which is the
+   * wrong direction for a security rule to fail in. Within an ordinary line, a `//` inside a
+   * double-quoted string (`"https://host"`, every URL literal in this repository) is not a comment
+   * and is skipped by tracking quote state.
+   */
+  private fun withoutTrailingLineComments(text: String): String =
+    text.lineSequence().joinToString("\n") { line ->
+      if (line.contains("\"\"\"")) return@joinToString line
+      var inString = false
+      var escaped = false
+      var index = 0
+      while (index < line.length) {
+        val c = line[index]
+        when {
+          escaped -> escaped = false
+          inString && c == '\\' -> escaped = true
+          c == '"' -> inString = !inString
+          !inString && c == '/' && index + 1 < line.length && line[index + 1] == '/' ->
+            return@joinToString line.substring(0, index)
+        }
+        index++
+      }
+      line
+    }
+
+  /** [text] reduced to the lines a Kotlin compiler would act on: no comments of any kind, no blanks. */
   private fun kotlinCode(text: String): String =
-    significantLines(withoutBlockComments(text)).joinToString("\n")
+    significantLines(withoutTrailingLineComments(withoutBlockComments(text))).joinToString("\n")
 
   /**
    * The character ranges of every `name { ... }` block in [text], braces included, outermost only
@@ -640,8 +683,13 @@ class ConventionTest {
         val path = file.parentFile.relativeTo(root).invariantSeparatorsPath
         !path.startsWith("integrations/") && path !in permitted
       }
+    // A regex, not `contains("project(\":integrations:")`: Gradle accepts the named form
+    // `project(path = ":integrations:core")` just as happily, and the literal missed it entirely.
+    // Named once so the rule and its own control assertion below cannot grep for different
+    // things and agree anyway.
+    val dependencyOnAnIntegration = Regex("""project\(\s*(path\s*=\s*)?":integrations:""")
     val offenders = scanned
-      .filter { it.readText().contains("project(\":integrations:") }
+      .filter { dependencyOnAnIntegration.containsMatchIn(it.readText()) }
       .map { it.relativeTo(root).invariantSeparatorsPath }
 
     // Vacuity, from both ends. A permit-list that happened to exclude every build file would leave
@@ -649,9 +697,9 @@ class ConventionTest {
     assertThat(scanned).describedAs("build files outside integrations/ and the permit-list").isNotEmpty()
     // ...and so would a rule grepping for a literal no build file in this repo actually writes.
     // The one permitted edge that exists today is the proof that this literal is the right one.
-    assertThat(File(root, "app/build.gradle.kts").readText())
+    assertThat(dependencyOnAnIntegration.containsMatchIn(File(root, "app/build.gradle.kts").readText()))
       .describedAs("the :app -> :integrations:core edge this rule greps for")
-      .contains("project(\":integrations:core\")")
+      .isTrue()
 
     assertThat(offenders)
       .describedAs(
