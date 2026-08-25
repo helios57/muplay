@@ -51,6 +51,19 @@ object RealTrackBytes {
       .sortedBy { it.title }
       .also { tracks = it }
 
+  /**
+   * The real stream URL for one seeded song, for a test that needs the URL rather than the bytes.
+   *
+   * Exists because [client] is private and must stay so -- it is the one client this whole module's
+   * instrumented tier shares, and handing it out is how the per-call `SubsonicClient` this object's
+   * own header describes came back. `GaplessTest` called `RealTrackBytes.client()` for exactly this
+   * and had stopped compiling: `client` is a private *property*, not a function, so the androidTest
+   * source set of this module did not build at all on master 45b7cdb. Repaired here rather than
+   * worked around, because a source set that does not compile takes every instrumented test in the
+   * module down with it, silently -- `check` never compiles androidTest.
+   */
+  fun streamUrl(song: Song): String = client.streamUrl(song.id, StreamFormat.Raw)
+
   /** One seeded mp3 — the single track `MuPlayDataSourceFactoryTest` plays. */
   suspend fun oneMp3Track(): ByteArray =
     bytesOf(musicTracks().first { it.suffix?.lowercase() == "mp3" })

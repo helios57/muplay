@@ -8,7 +8,6 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.Song
-import app.muplay.model.StreamFormat
 import app.muplay.testing.PcmAnalysis
 import java.io.File
 import java.nio.ByteBuffer
@@ -103,8 +102,7 @@ class GaplessTest {
       "ci/seed-fixtures.sh seeds exactly $TRACK_COUNT music tracks; found ${songs.size}. This " +
         "test's arithmetic is over those three."
     }
-    val client = RealTrackBytes.client()
-    streamUrls = songs.map { client.streamUrl(it.id, StreamFormat.Raw) }
+    streamUrls = songs.map { RealTrackBytes.streamUrl(it) }
     // Serves the one thing the real library cannot: a track that is deliberately silent. Started
     // for every test rather than only the one that uses it, so there is no branch here that could
     // leave it unstarted.

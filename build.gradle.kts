@@ -521,6 +521,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.browse.BrowseText",
         "app.muplay.model.browse.BrowseSurface",
         "app.muplay.model.browse.BrowseSurface*",
+        // Plan 5 Task 3. Named in full even though the `BrowseSurface*` rider one line up already
+        // matches it (`wildcardToRegex` turns that into `\QBrowseSurface\E.*`, and `BrowseSurfaces`
+        // matches) -- because that rider was added in Task 2 to catch `BrowseSurface$Companion`,
+        // a class carrying no counters at all, and a floor whose only reason for reaching a class
+        // is a glob aimed at something else is one narrowing away from silently letting go. This
+        // is the first entry in this list that the rider was gating by accident, and it is the
+        // only class in the browse package whose branches are a *decision* rather than a guard.
+        //
+        // Measured today: `BrowseSurfaces` BRANCH **12/12**, LINE 19/19, and all 12 of those
+        // branches are `of`'s (measured per method: `of` BRANCH 12/12 LINE 10/10; the other 9
+        // lines are `<clinit>` and the two set getters). Verified fireable by withholding tests
+        // rather than by raising the minimum, and the near-misses are the point: withholding `the
+        // media3 predicate wins...` alone leaves 12/12 = 1.0000 (`each of the four arguments...`
+        // still varies `isCarController` on its own), withholding both leaves 11/12 = 0.9167 and
+        // still passes, and it takes a third -- `a hint is honoured from our own package and
+        // refused from any other`, the only test that reaches the `HINT_CAR` arm from our own
+        // package -- to reach 10/12 = 0.8333 and fail. Raising the minimum instead would have been
+        // vacuous: JaCoCo validates it before comparing, so anything above 1.0 fails with "given
+        // minimum ratio is 1.01, but must be between 0.0 and 1.0" against any code at all.
+        //
+        // Deliberately NOT given a LINE floor of its own, unlike `BrowseTree` and `BrowseText`
+        // below: every one of `of`'s 10 lines sits under a branch this rule already gates, and the
+        // remaining 9 are the two `setOf(...)` initialisers in `<clinit>`, which execute the moment
+        // any test in the module touches the object at all. That is the unfireable-declaration
+        // case the ride-along paragraph above describes, not the `BrowseTree` case.
+        "app.muplay.model.browse.BrowseSurfaces",
         "app.muplay.model.browse.BrowseNode",
         "app.muplay.model.browse.BrowseCompletion",
         "app.muplay.model.browse.BrowseCompletionStatus",
