@@ -101,6 +101,35 @@ class RendererStoreTest {
     assertThat(store.load().single().descriptionUrl).isEqualTo("http://10.0.0.3/d.xml")
   }
 
+  /**
+   * The sharp edge from the other side: a **UDN or URL** carrying the separator is refused, where
+   * the name above is carried.
+   *
+   * This class's KDoc used to assert that neither field can contain a tab, on the grounds that one
+   * is a URN and the other is a URL. That is a claim about a well-behaved device.
+   * `DeviceDescription` reads `<UDN>` as arbitrary trimmed text with no grammar check, so a device
+   * serving `<UDN>a\tb\tc</UDN>` wrote a record that came back with `b` in the URL field -- the
+   * field `RendererDirectory`'s unicast fallback dials. Two hostile records here, one tripping
+   * each half of the guard, and one good one so the test observes a store that still works rather
+   * than a store that refuses everything.
+   */
+  @Test
+  fun aUdnOrUrlContainingTheSeparatorIsRefusedRatherThanShiftingTheFieldsAfterIt() = runTest {
+    store.remember(
+      listOf(
+        device("uuid:a\thttp://10.0.0.66/hostile.xml\tImpostor", "Kitchen", "http://10.0.0.1/d.xml"),
+        device("uuid:b", "Study", "http://10.0.0.2/d.xml\tuuid:c\tAlso An Impostor"),
+        device("uuid:good", "Bedroom", "http://10.0.0.3/d.xml"),
+      ),
+    )
+
+    assertThat(store.load().map { it.udn }).containsExactly("uuid:good")
+    // Not merely "one record": the surviving one is untouched, and no field of it came out of
+    // either hostile record.
+    assertThat(store.load().single().descriptionUrl).isEqualTo("http://10.0.0.3/d.xml")
+    assertThat(store.load().single().friendlyName).isEqualTo("Bedroom")
+  }
+
   @Test
   fun rememberingReplacesRatherThanAccumulating() = runTest {
     store.remember(listOf(device("uuid:a", "A", "http://10.0.0.1/d.xml")))

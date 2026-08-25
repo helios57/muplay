@@ -466,9 +466,14 @@ class DeviceDescriptionTest {
         <serviceList/></device></root>
     """.trimIndent()
 
+    // **The guard's own sentence, not the word "DOCTYPE".** With `rejectDoctype` deleted, SAX's
+    // own refusal is `DOCTYPE is disallowed when the feature "...disallow-doctype-decl" set to
+    // true.`, which `parse` wraps into a MalformedDescriptionException that still contains the
+    // word -- so this test was green on the very mutation it exists to catch. What no parser says
+    // is why *MuPlay* refuses.
     assertThatExceptionOfType(MalformedDescriptionException::class.java)
       .isThrownBy { DeviceDescription.parse(hostile, genericUrl) }
-      .withMessageContaining("DOCTYPE")
+      .withMessageContaining("MuPlay refuses one")
   }
 
   /**
@@ -488,9 +493,125 @@ class DeviceDescriptionTest {
         <serviceList/></device></root>
     """.trimIndent()
 
+    // Asserted on the guard's own wording for the same reason as the test above -- and here the
+    // old assertion discriminated only by accident, because Xerces's message for a lower-case
+    // `<!doctype` happens not to contain the word `DOCTYPE`. Discrimination by a third party's
+    // string is discrimination until that party changes its string.
     assertThatExceptionOfType(MalformedDescriptionException::class.java)
       .isThrownBy { DeviceDescription.parse(hostile, genericUrl) }
-      .withMessageContaining("DOCTYPE")
+      .withMessageContaining("MuPlay refuses one")
+  }
+
+  /**
+   * **The 4 KiB blind spot.** `rejectDoctype` used to scan `xml.take(4096)`, on the reasoning that
+   * a `DOCTYPE` is only legal in the prolog -- which is true, and says nothing about how long a
+   * prolog may be. A comment is legal `Misc` before the doctype, so the document below is
+   * well-formed, is five thousand characters short of `MAX_DESCRIPTION_BYTES` (so the size guard
+   * does not fire either), and carries its doctype past index 5000, where the window could not see
+   * it.
+   *
+   * **This test is vacuous unless it asserts the guard's own sentence**, and that is the whole
+   * reason the two tests above were changed as well. On the JVM the Apache
+   * `disallow-doctype-decl` feature catches this document whether `rejectDoctype` looks at four
+   * kilobytes, at everything, or at nothing -- so an assertion on "a MalformedDescriptionException
+   * was thrown" is green on the defect. On Android that feature is expected to be refused at
+   * `setFeature` and Expat resolves a `SYSTEM` entity with no `EntityResolver` in the way, which
+   * is where the hole was live and where this project has no tier that could observe it.
+   */
+  @Test
+  fun `a doctype hidden behind a five kilobyte comment is refused too`() {
+    val hostile = "<!--" + " ".repeat(5_000) + "-->" +
+      "<!DOCTYPE root [<!ENTITY xxe SYSTEM \"file:///etc/hostname\">]>" +
+      "<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><device>" +
+      "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>" +
+      "<friendlyName>&xxe;</friendlyName><UDN>uuid:x</UDN><serviceList/></device></root>"
+
+    // The two facts that make it a regression rather than a restatement: past any prologue-sized
+    // window, and under the size guard that would otherwise have refused it first.
+    assertThat(hostile.indexOf("<!DOCTYPE")).isGreaterThan(4_096)
+    assertThat(hostile.length).isLessThan(DeviceDescription.MAX_DESCRIPTION_BYTES)
+
+    assertThatExceptionOfType(MalformedDescriptionException::class.java)
+      .isThrownBy { DeviceDescription.parse(hostile, genericUrl) }
+      .withMessageContaining("MuPlay refuses one")
+  }
+
+  /**
+   * **Unbounded recursion is a `StackOverflowError`, not a refusal.**
+   *
+   * Ten thousand nested `<deviceList><device>` pairs is 420,030 characters -- under
+   * `MAX_DESCRIPTION_BYTES`, so nothing earlier refuses it -- and the DOM parse succeeds. Before
+   * the depth bound, the recursive walk then threw a `StackOverflowError` out of `parse`, a public
+   * function whose KDoc enumerates what it throws; it was contained only because Kotlin's
+   * `runCatching` catches `Throwable`, and Task 3 tells Tasks 5, 8 and 9 that one
+   * `catch (e: IOException)` is complete.
+   *
+   * `assertThatExceptionOfType` catches `Throwable`, so this fails with "but was
+   * StackOverflowError" rather than crashing the runner when the bound is removed.
+   */
+  @Test
+  fun `a description nested ten thousand deep is refused rather than overflowing the stack`() {
+    val deep = nested(10_000)
+
+    assertThat(deep.length).isLessThan(DeviceDescription.MAX_DESCRIPTION_BYTES)
+
+    assertThatExceptionOfType(MalformedDescriptionException::class.java)
+      .isThrownBy { DeviceDescription.parse(deep, genericUrl) }
+      .withMessageContaining("nests devices more than")
+  }
+
+  /**
+   * Both sides of the depth bound, because "refuse the too-deep" and "refuse everything nested"
+   * are the same test otherwise -- and a Sonos is nested, so getting that wrong would take the
+   * headline device out of the picker.
+   */
+  @Test
+  fun `a description nested exactly to the limit is parsed, and one deeper is refused`() {
+    val atLimit = DeviceDescription.parse(nested(DeviceDescription.MAX_DEVICE_DEPTH), genericUrl)
+
+    // The root plus one device per level: the deepest one really was walked, not merely tolerated.
+    assertThat(atLimit.flatten()).hasSize(DeviceDescription.MAX_DEVICE_DEPTH + 1)
+    assertThat(atLimit.flatten().last().friendlyName)
+      .isEqualTo("Level ${DeviceDescription.MAX_DEVICE_DEPTH}")
+
+    assertThatExceptionOfType(MalformedDescriptionException::class.java)
+      .isThrownBy { DeviceDescription.parse(nested(DeviceDescription.MAX_DEVICE_DEPTH + 1), genericUrl) }
+      .withMessageContaining("nests devices more than")
+  }
+
+  /**
+   * A root device with [levels] devices nested below it, the innermost one named for its depth.
+   *
+   * Deliberately as small per level as the grammar allows -- twenty characters down and
+   * twenty-two back -- because the ten-thousand-level document has to stay under
+   * `MAX_DESCRIPTION_BYTES` for its test to mean anything: the point is a document that every
+   * *other* guard in this parser waves through.
+   */
+  private fun nested(levels: Int): String =
+    "<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><device>" +
+      "<deviceList><device>".repeat(levels) +
+      "<friendlyName>Level $levels</friendlyName>" +
+      "</device></deviceList>".repeat(levels) +
+      "</device></root>"
+
+  /**
+   * **An anonymous device is not a device.** A description with an `AVTransport` and no `<UDN>`
+   * used to produce a `CastDevice` whose `udn` is the empty string -- and `RendererDirectory`
+   * deduplicates the picker with `distinctBy { it.udn }`, so every anonymous renderer on a network
+   * collapses into a single entry, while `RememberedRenderers` stores that empty identity and the
+   * fallback re-fetches whichever one won.
+   */
+  @Test
+  fun `a renderer that declares no udn is not a cast device`() {
+    val anonymous = generic.replace("<UDN>uuid:9ab0c000-f668-11de-9976-00a0ded1e211</UDN>", "")
+    val root = DeviceDescription.parse(anonymous, genericUrl)
+
+    // It still parses, and it still has the service -- so this is the identity check refusing and
+    // not the AVTransport search failing to find anything.
+    assertThat(root.udn).isEmpty()
+    assertThat(root.service(DeviceDescription.SERVICE_AV_TRANSPORT)).isNotNull
+
+    assertThat(CastDevice.from(root, genericUrl)).isNull()
   }
 
   @Test
