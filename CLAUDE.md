@@ -244,3 +244,27 @@ including the pure-JVM ones that have nothing to do with the SDK — because
 `:core:database`'s configuration failure aborts the whole invocation before any
 task runs. It reads like the probe list is broken. Run the script's own gradle
 line by hand and the real message is the first thing printed.
+
+## A lane's report describes master as it was at that lane's last sync
+
+Plan 6 Task 4 reported, correctly and usefully, that *"the brief's claim that
+`isAudiobook` was already a fourth parameter is wrong about master"*. It was
+right when that lane last merged master up, and wrong by the time it reported:
+Plan 3 Task 6 had landed `isAudiobook` in between.
+
+Both lanes were green alone. Both added a **fourth parameter to
+`MediaItems.of`** at the same source line, so git conflicted and the collision
+was visible. It was luck that they collided textually — had one added its
+parameter a few lines away, `ort` would have merged both signatures cleanly into
+a five-argument function while leaving every call site passing four, and the
+break would have surfaced as a Kotlin error attributed to neither lane.
+
+Two things follow, and both cost time here:
+
+- **Re-verify any claim a lane makes about master before acting on it.** The
+  claim is a measurement with a timestamp, not a fact. Check what the lane's
+  last merge commit actually was (`git log --oneline master..<branch>`).
+- **When two lanes extend the same function, the resolution is usually "both".**
+  `isAudiobook` decides `mediaType`, `format` decides `mimeType`; neither is
+  derivable from the other. Reading the merged body first is what shows this —
+  it already called *both* new parameters while the signature declared one.
