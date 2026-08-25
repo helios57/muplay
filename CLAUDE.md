@@ -51,3 +51,37 @@ Read its header before changing it. Its probe count is derived at runtime and
 must stay derived — a hardcoded total has gone stale twice. It refuses to run on
 a dirty tree, and that guard has caught a real stray mutation left behind by a
 killed run.
+
+## A worktree inside the repo reddens `:app`'s mock-framework guard
+
+`ConventionTest`'s `no mock framework is declared in any build file or
+convention plugin` walks the whole repo root and skips only `build/` and
+`.git/`. The one carve-out it makes — the root `build.gradle.kts`, which has to
+name the frameworks in `BANNED_MOCK_GROUPS` — is matched by *canonical path*.
+
+So a git worktree checked out **inside** the repo (`.claude/worktrees/<name>/`)
+brings its own copy of `build.gradle.kts`, which is not the carved-out file, and
+`:app:testDebugUnitTest` fails on a build file no agent in this session wrote.
+The assertion message names the offending path — read it before assuming your
+own change caused it. Nothing to fix in the product; it clears when the worktree
+goes away.
+
+## Navidrome caches transcodes, so a fixed-bitrate transcode assertion is flaky
+
+`/rest/stream` with `format=mp3` behaves two different ways for the same URL.
+The first request for a given (track, **requested** bitrate) is streamed live:
+chunked, `Accept-Ranges: none`, no `Content-Length`. Every request after it is
+served from Navidrome's transcoding cache as an ordinary file — `Accept-Ranges:
+bytes`, an accurate `Content-Length`, `Range` answered with a 206.
+
+The cache lives in the container's writable layer (`ND_TRANSCODINGCACHESIZE`,
+100MB by default; this compose file mounts no volume over `/data`), so it is
+cold in CI and warm on the long-lived shared container. A test pinned to one
+bitrate passes on the first run here and fails on the second.
+`LiveNavidromeTest.coldTranscode` searches for an unused bitrate instead.
+
+Two more measured facts from the same investigation: the cache is keyed on the
+bitrate **as requested**, not as encoded (24, 25 and 26 produce identical bytes
+and occupy three cache entries), and `format=mp3` on an `mp3` source with a cap
+at or above the file's own bitrate returns the source file untouched — so
+`StreamFormat.Mp3(192)` is not always a transcode.
