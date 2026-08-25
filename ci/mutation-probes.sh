@@ -186,6 +186,9 @@ INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
+# Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
+# exported playback session at all.
+CONTROLLER_ACCESS = "core/media/src/main/kotlin/app/muplay/media/ControllerAccessPolicy.kt"
 DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
 DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
 DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
@@ -1682,6 +1685,34 @@ PROBES = [
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
+
+    # ---- Plan 3 Task 5, review round: who may connect to the exported media session ----------
+    # The service is exported -- it has to be, or Android Auto, Wear, Assistant and the system
+    # media controls cannot find it -- with no `android:permission`, and Media3's default callback
+    # accepts every connection unconditionally. A connected controller gets
+    # `DEFAULT_UNTRUSTED_PLAYER_COMMANDS`, which withholds transport control and grants metadata
+    # reads: i.e. the artwork URI, which carries `u`, `s=salt` and `t=md5(password+salt)` and does
+    # not expire.
+    #
+    # The first probe is the gate failing OPEN, which is the shape that ships silently: the app's
+    # own controller still connects, every playback test on every tier stays green, and any local
+    # app can read the credential. Nothing in this project noticed it for a whole task.
+    ("media/controller-gate-accepts-everyone", CONTROLLER_ACCESS,
+     "isTrustedForMediaControl || controllerPackageName == PLATFORM_LEGACY_CONTROLLER_PACKAGE",
+     "controllerPackageName.isNotEmpty() || isTrustedForMediaControl",
+     # 3, measured: it also reddens `this app's own controller connects, and does so on the trusted
+     # arm` (whose second half pins that the decision is the trust flag and not the package name)
+     # and `the legacy carve-out is one exact name, not a family of them`.
+     "an app the platform does not trust with media control cannot connect", 3),
+    # The other direction, and it breaks a real user rather than a real secret: dropping the legacy
+    # carve-out refuses the platform's own unattributable caller, which below API 28 is every
+    # headset button and Bluetooth AVRCP command that reaches the session (minSdk is 26). Neither
+    # this project's emulator nor any device test it can run reproduces that API level -- which is
+    # the whole reason this rule is a plain function the JVM tier holds.
+    ("media/controller-gate-drops-legacy-carve-out", CONTROLLER_ACCESS,
+     "isTrustedForMediaControl || controllerPackageName == PLATFORM_LEGACY_CONTROLLER_PACKAGE",
+     "isTrustedForMediaControl",
+     "the platform's own unattributable legacy caller connects", 1),
 ]
 
 
@@ -1750,6 +1781,10 @@ LATER_PROBE_FILES = [
     PLAYER_STATE,
     PLAYER_VM,
     PLAYBACK_LAUNCHER,
+    # Plan 3 Task 5's review round, added in the same edit as its two probes above -- which is what
+    # this list's own comment asks for, and the reason it asks: a mutated file no `git checkout`
+    # names is left in the tree when the run ends.
+    CONTROLLER_ACCESS,
 ]
 
 
