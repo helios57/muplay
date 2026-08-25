@@ -44,11 +44,30 @@
 # list exited 1 on a stale `auth/empty-authParams` count, and an independent review re-proved it by
 # weakening a stamp test in a throwaway worktree.
 #
-# SCOPE. Production-code mutations only. The falsifiability probes for `LiveNavidromeTest`'s six
-# scoping assertions are *test-side* (they change which musicFolderId the test sends, to prove the
-# assertion discriminates rather than that the client is right), so they do not belong here; they
-# are recorded in task-3-report.md instead. This script runs the JVM suites only and needs no
-# Navidrome container.
+# SCOPE. Production-code mutations only. The falsifiability
+# probes for `LiveNavidromeTest`'s six scoping assertions are *test-side* (they change which
+# musicFolderId the test sends, to prove the assertion discriminates rather than that the client is
+# right), so they do not belong here; they are recorded in task-3-report.md instead. This script
+# runs the JVM suites only and needs no Navidrome container.
+#
+# AND A HARDER LIMIT THAN "PRODUCTION CODE ONLY", MEASURED IN PLAN 3 TASK 7B: this runner cannot see
+# a mutation to any file the JVM tier does not declare as a task *input*, however loudly a test
+# reading that file at runtime would fail. `run_suite()` deletes the result directories to force a
+# re-run, but Gradle then restores `:core:media:testDebugUnitTest` FROM-CACHE, because an
+# androidTest source is not an input to it and the cache key therefore did not move.
+#
+# Measured, not deduced. Task 7b wrote a probe that hand-builds an `ExoPlayer` inside `GaplessTest`
+# -- exactly the defect `PlayerConstructionTest`'s scan of `core/media/src` exists to refuse -- and
+# this runner reported MISSED with **zero** failures in the whole suite. The same mutation, applied
+# by hand and run as `./gradlew --no-build-cache :core:media:test`, fails as designed:
+# "PlayerConstructionTest > an ExoPlayer is constructed in exactly one place() FAILED". The probe
+# was therefore removed rather than left MISSED, and the falsification is recorded by hand in
+# task-7b-report.md.
+#
+# So: a probe on a repo-walking scanner's *subject* belongs here only if that subject is inside a
+# source set the invocation below already compiles. Adding `--no-build-cache` to fix one such probe
+# would pay a full recompilation on every one of the probes in this list, which is not a trade this
+# script makes.
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
@@ -160,6 +179,15 @@ DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDesc
 DISCOVERY_DEVICE = "core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt"
 DISCOVERY_DIR = "core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt"
 DISCOVERY_FETCH = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DescriptionFetcher.kt"
+SOAP_XML = "core/cast/src/main/kotlin/app/muplay/cast/soap/XmlText.kt"
+SOAP_ENVELOPE = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapEnvelope.kt"
+SOAP_NAMES = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapNames.kt"
+SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
+# The one probe below that mutates TEST source, named here rather than quietly reached through
+# the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
+# test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
+# `FakeRendererStrictnessTest`, not one of its assertions.
+SOAP_FAKE = "core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -1487,6 +1515,160 @@ PROBES = [
      "viewModelScope.launch { source.play(content.shuffled, startIndex) }",
      "viewModelScope.launch { source.play(content.shuffled, 0) }",
      "playing a shuffled row launches the shuffle result from that row", 1),
+    # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
+    # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
+    # a policy that lost either one is silently wrong on a device nobody is watching.
+    ("media/task-removal-stops-while-playing", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    true",
+     "music that is playing survives the user tidying their recents list", 1),
+    ("media/task-removal-keeps-an-empty-queue-alive", TASK_REMOVAL,
+     "    playWhenReady != true || (mediaItemCount ?: 0) == 0",
+     "    playWhenReady != true",
+     # 2, measured: the same mutation also reddens `no session at all is the clearest reason to
+     # stop`, because with `mediaItemCount = null` and `playWhenReady = true` the surviving half of
+     # the condition answers "keep running" for a service that has no player.
+     "an empty queue stops the service even when the player is ready to play", 2),
+    # A format the server transcodes on the fly has no `Content-Length`, so `player.duration` is
+    # `C.TIME_UNSET` for the whole track and the metadata is the only source that knows. Dropping
+    # the fallback shows every Opus track as unknown length on the lock screen, in Auto, in Wear
+    # and in the seek bar -- and moves no other assertion in this project.
+    ("media/duration-metadata-ignored", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     "the metadata's duration is used when the extractor had none", 1),
+    # The other direction: the metadata is what the *server* said about the file, the player is
+    # what the extractor measured of the bytes actually playing. Preferring the wrong one is a
+    # seek bar that disagrees with the audio.
+    ("media/duration-metadata-wins", PLAYBACK_STATE,
+     "      (playerDurationMs ?: metadataDurationMs ?: 0L).coerceAtLeast(0L)",
+     "      (metadataDurationMs ?: playerDurationMs ?: 0L).coerceAtLeast(0L)",
+     # 2, measured: it also reddens `an unknown duration is zero, never a negative sentinel`,
+     # whose `playerDurationMs = -1L` case exists precisely to pin which source is consulted first.
+     "the player's own duration wins, because it measured what is playing", 2),
+    # `NOTHING_PLAYING` is what four downstream tasks render before anything is loaded. A `true`
+    # here is an enabled "next" button with no queue behind it, and it moves no branch anywhere.
+    ("media/nothing-playing-has-next", PLAYBACK_STATE,
+     "      hasNext = false,\n      hasPrevious = false,",
+     "      hasNext = true,\n      hasPrevious = false,",
+     "nothing playing can step neither forward nor back", 1),
+
+    # ---- Plan 6 Task 3: the SOAP layer ------------------------------------------------------
+    # Counts here are LARGE for three of the seven, and that is the finding rather than noise: the
+    # SOAPACTION quotes, the argument order and the fake's strictness are each observed at three
+    # layers (a unit assertion on the rendered value, an assertion on the bytes the fake recorded,
+    # and the fake's own refusal turning the request into a 401/402/714). A mutation to any of them
+    # reddens all three. Measured per probe with `:core:cast:test` and listed test by test in
+    # task-3-report.md; if one of these reports MISSED but its named test IS in the failing list,
+    # re-measure the count as the note on `expected failures` above describes.
+
+    # `.replace("<", "&lt;")` before `.replace("&", "&amp;")` rewrites the ampersand the first
+    # replacement introduced and yields `&amp;lt;DIDL-Lite` -- and it is RIGHT for every input that
+    # did not already contain an entity, which is most inputs, which is why it survives review.
+    ("soap/escape-ampersand-last", SOAP_XML,
+     '    .replace("&", "&amp;") // first, always\n'
+     '    .replace("<", "&lt;")\n'
+     '    .replace(">", "&gt;")\n'
+     '    .replace("\\"", "&quot;")\n'
+     '    .replace("\'", "&apos;")',
+     '    .replace("<", "&lt;")\n'
+     '    .replace(">", "&gt;")\n'
+     '    .replace("\\"", "&quot;")\n'
+     '    .replace("\'", "&apos;")\n'
+     '    .replace("&", "&amp;")',
+     "the ampersand is replaced first, so an existing entity is escaped once and not twice", 5),
+
+    # The quotes are part of the SOAPACTION header VALUE. Sent unquoted, some renderers accept it
+    # and Sonos answers 401 -- the worst possible distribution, because it works on the developer's
+    # speaker. 25 reds: every `FakeRendererStrictnessTest` and `SoapClientTest` case that sends a
+    # well-formed request through `quoted()` now gets a 401 instead.
+    ("soap/soapaction-unquoted", SOAP_ENVELOPE,
+     '    "\\"${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}\\""',
+     '    "${SoapNames.requireServiceType(serviceType)}#${SoapNames.requireAction(action)}"',
+     "the soapaction header value is quoted", 25),
+
+    # UPnP argument lists are ORDERED by the service description and implementations parse
+    # positionally. Sorting them is the mutation because it is the plausible one: a `Map` a caller
+    # sorted, or a tidy-up that "made the output deterministic", produces exactly this.
+    ("soap/arguments-sorted", SOAP_ENVELOPE,
+     "      arguments.forEach { (name, value) ->",
+     "      arguments.sortedBy { it.name }.forEach { (name, value) ->",
+     "arguments appear in the order they were given, and reordering them changes the bytes", 15),
+
+    # A UPnP error is HTTP 500 WITH A BODY. Checking the status first turns "Sonos said 714, illegal
+    # MIME type" into "HTTP 500" and loses the only thing the caller can act on. Two reds, which is
+    # the precision this probe is for -- the ordering matters for faults and for nothing else.
+    ("soap/fault-checked-after-status", SOAP_CLIENT,
+     "    SoapEnvelope.parseFault(response.bodyText())?.let { throw UpnpErrorException(action, it) }\n"
+     "\n"
+     "    if (response.code != HttpURLConnection.HTTP_OK) {\n"
+     "      throw SoapTransportException(action, response.code)\n"
+     "    }",
+     "    if (response.code != HttpURLConnection.HTTP_OK) {\n"
+     "      throw SoapTransportException(action, response.code)\n"
+     "    }\n"
+     "    SoapEnvelope.parseFault(response.bodyText())?.let { throw UpnpErrorException(action, it) }",
+     "a refused action throws with the device's own error code", 2),
+
+    # THE SECURITY PROBE. `SOAPACTION` is built from the service type parsed out of the
+    # device-description XML the renderer itself served -- attacker-controlled input, and a review
+    # of Task 1 put a real extra header on the wire through it against a live ServerSocket. The
+    # allowlist here is what stops it; `CastHttpClient`'s CR/LF refusal underneath is the backstop,
+    # and it refuses with `IllegalArgumentException`, so with this mutation the hostile description
+    # reaches the caller as a CRASH rather than as a catchable `IOException`. The named test asserts
+    # exactly that difference.
+    ("soap/service-type-unchecked", SOAP_NAMES,
+     '  private val SERVICE_TYPE = Regex("[A-Za-z0-9][A-Za-z0-9._:+~-]{0,${MAX_SERVICE_TYPE_LENGTH - 1}}")',
+     '  private val SERVICE_TYPE = Regex("[\\\\s\\\\S]{0,${MAX_SERVICE_TYPE_LENGTH}}")',
+     "a hostile service type parsed from a device description never reaches the wire", 4),
+
+    # The third peer-controlled input, and the one most easily forgotten because it does not look
+    # like text: `<controlURL>https://attacker.example/x</controlURL>` resolves to an absolute URL
+    # that `CastHttpClient` refuses with `IllegalArgumentException`. One red, and it is the whole
+    # point of the check.
+    ("soap/control-url-unchecked", SOAP_CLIENT,
+     "    SoapNames.requireControlUrl(controlUrl)\n", "",
+     "a control url that is not plain http is refused as an IOException, not a crash", 1),
+
+    # THE MOST IMPORTANT PROBE IN THIS TASK, and the reason it is here despite this file's
+    # production-code-only SCOPE note: `FakeRenderer` is the SUBJECT of
+    # `FakeRendererStrictnessTest`, not one of its assertions, so mutating it is a subject mutation
+    # of exactly the kind every other probe here is -- unlike `LiveNavidromeTest`'s scoping probes,
+    # which change what a test SENDS in order to prove its assertion discriminates.
+    #
+    # Every cast test in Plan 6 is only as good as this renderer's willingness to say no. A fake
+    # that accepts everything executes no rejection path, leaves the client's error handling
+    # unexercised, and produces exactly the same green suite as a strict one right up until real
+    # hardware disagrees. With all seven knobs relaxed, 10 tests go red -- eight of them
+    # `FakeRendererStrictnessTest`'s own rejections and two of them `SoapClientTest`'s, which is
+    # the proof the fake's strictness is load-bearing one layer up as well.
+    ("soap/fake-accepts-everything", SOAP_FAKE,
+     "  data class Strictness(\n"
+     "    /** SOAP 1.1 quotes the `SOAPACTION` value. Sonos enforces it. Violation: 401. */\n"
+     "    val requireQuotedSoapAction: Boolean = true,\n"
+     "    /** UPnP argument lists are ordered by the service description. Violation: 402. */\n"
+     "    val requireArgumentOrder: Boolean = true,\n"
+     '    /** Spec section 6: *"DIDL-Lite mandatory"*. Violation: 714. */\n'
+     "    val requireNonEmptyMetadata: Boolean = true,\n"
+     "    /** Spec section 6: Sonos infers MIME from the URL. Violation: 714. */\n"
+     "    val requireUrlExtension: Boolean = true,\n"
+     "    /** Only `InstanceID` 0 exists on a single-zone renderer. Violation: 718. */\n"
+     "    val requireInstanceIdZero: Boolean = true,\n"
+     "    /** What `A_ARG_TYPE_SeekMode` allows. Anything else: 710. */\n"
+     '    val supportedSeekModes: List<String> = listOf("REL_TIME"),\n'
+     '    /** Spec section 4: *"Never Opus. Sonos cannot decode it."* Violation: 714. */\n'
+     '    val rejectedMimeTypes: Set<String> = setOf("audio/ogg", "audio/opus", "audio/webm"),\n'
+     "  )",
+     "  data class Strictness(\n"
+     "    val requireQuotedSoapAction: Boolean = false,\n"
+     "    val requireArgumentOrder: Boolean = false,\n"
+     "    val requireNonEmptyMetadata: Boolean = false,\n"
+     "    val requireUrlExtension: Boolean = false,\n"
+     "    val requireInstanceIdZero: Boolean = false,\n"
+     '    val supportedSeekModes: List<String> = listOf("REL_TIME", "ABS_TIME"),\n'
+     "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
+     "  )",
+     "an unquoted soapaction is rejected with 401", 10),
 ]
 
 

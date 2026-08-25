@@ -3,7 +3,9 @@ package app.muplay.media
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -55,7 +57,10 @@ import javax.inject.Inject
  *
  * A future collaborator -- a resume policy, an audio-focus configuration, a cache -- arrives as
  * another constructor parameter here, applied inside [create]. It must not arrive as a second
- * construction site somewhere else; that is exactly what `PlayerConstructionTest` refuses.
+ * construction site somewhere else; that is exactly what `PlayerConstructionTest` refuses. When a
+ * test needs to reach *inside* the player rather than to configure it -- Task 7's PCM capture is
+ * the first -- the answer is a parameter on [create] with a production default, for the same
+ * reason: see that function's own note.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is an
 // `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at all -- Android
@@ -71,8 +76,41 @@ class MuPlayerFactory @Inject constructor(
   private val loadErrorPolicy: NavidromeLoadErrorHandlingPolicy,
 ) {
 
-  fun create(): ExoPlayer =
-    ExoPlayer.Builder(context)
+  /**
+   * The shipping player. [renderersFactory] defaults to exactly what this player has always used.
+   *
+   * ### Why the parameter exists, since it is a seam a test asked for
+   *
+   * Plan 3 Task 7 measures gapless playback by capturing the PCM a real decoder produced, from
+   * inside the audio pipeline: a `TeeAudioProcessor` in the `DefaultAudioSink`'s processor chain,
+   * upstream of the `AudioTrack`. Media3 offers **no** way to reach that chain on an already-built
+   * player -- no setter, no listener, nothing after construction. The only supported route is the
+   * `RenderersFactory`, which is a *construction* argument.
+   *
+   * So the choice was between this parameter and `GaplessTest` assembling a player of its own. The
+   * second is the one this class exists to prevent, and `PlayerConstructionTest` refuses it outright
+   * -- a hand-built player would silently lose the 429 retry policy, which hangs off the media
+   * source factory below and is silent when it is missing. A test measuring a player that is not
+   * the one that ships is measuring a copy, and the copy is exactly what drifts.
+   *
+   * ### Why the default is not a behaviour change
+   *
+   * `ExoPlayer.Builder(context)` -- the single-argument form this used to call -- supplies
+   * `DefaultRenderersFactory(context)` itself, from a lazy supplier. Passing the same object
+   * explicitly is the same arrangement, constructed eagerly; the constructor stores a `Context` and
+   * an extension-renderer mode and does nothing else. `MuPlaybackService` calls `create()` with no
+   * argument and gets the player it always got.
+   *
+   * ### What keeps the seam honest
+   *
+   * The parameter is not observable from production -- both call shapes build a working player --
+   * so what stops it drifting is the tier that uses it: `GaplessTest` passes a renderers factory
+   * whose audio sink is tapped, and every frame it measures arrives through *this* function. A
+   * `create` that ignored its argument would leave that suite with an empty capture and every
+   * frame-count assertion in it red. Measured, not asserted from the armchair: see task-7b-report.md.
+   */
+  fun create(renderersFactory: RenderersFactory = DefaultRenderersFactory(context)): ExoPlayer =
+    ExoPlayer.Builder(context, renderersFactory)
       .setMediaSourceFactory(
         DefaultMediaSourceFactory(dataSourceFactory.create())
           .setLoadErrorHandlingPolicy(loadErrorPolicy),
