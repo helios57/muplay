@@ -806,6 +806,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // `:core:media`. Measured in this task's Step 11 and re-measured in Task 10 once the service,
+  // the queue and the progress writer are in. `StreamRetryPolicy` is a pure object with real
+  // branches and no Android dependency at all -- that is why it exists as a separate type from
+  // the Media3 adapter, and why this is the module's one Tier-1-enforceable floor.
+  ":core:media" to listOf(
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.StreamRetryPolicy"),
+    ),
+  ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
   // composes MuPlayTheme (MainActivity wraps the whole app in it). Task 7 could only gate ThemeKt,
