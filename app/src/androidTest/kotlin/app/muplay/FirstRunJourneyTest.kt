@@ -74,7 +74,7 @@ class FirstRunJourneyTest {
    * `composeRule` relaunches fresh per test, nothing recreates the database between methods.
    * JUnit4 does not guarantee method execution order (no `@FixMethodOrder` is declared here, nor
    * should there be one for a black-box journey), so a test that tags every library --
-   * [completingEveryTagReachesReadyAndShowsSetupComplete], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
+   * [completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen], [theFlowCannotBeFinishedUntilEveryLibraryIsTagged]
    * -- can and did run before a later test that needs a fresh, untagged start: observed directly,
    * the first version of this suite without this reset flaked exactly that way, with
    * `Continue` already enabled before either role chip had been tapped.
@@ -93,7 +93,7 @@ class FirstRunJourneyTest {
   /**
    * The real, singleton `LibraryRepository` the app's own `SetupViewModel` writes through --
    * shared by [resetLibraryTagging] and by [readPersistedLibraries], which
-   * [completingEveryTagReachesReadyAndShowsSetupComplete] uses to prove a role actually got
+   * [completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen] uses to prove a role actually got
    * written, not merely displayed.
    */
   private fun libraryRepository() =
@@ -160,9 +160,31 @@ class FirstRunJourneyTest {
    * sealed `when` as a chain of `instanceof` checks -- the `Ready` check itself runs on *every*
    * composition regardless of which state is current, so the line lit up green while the branch
    * it guards, and the text it renders, had never once executed.
+   *
+   * **N-1 (review round 1, task-9-review.md): this test used to end by asserting `"Setup complete"`
+   * was displayed, and Task 9 made that assertion permanently false.** `SetupScreen`'s
+   * `LaunchedEffect(uiState) { if (uiState is Ready) onSetupComplete() }` has existed since Task 8,
+   * but `MuPlayApp` wired `onSetupComplete = {}`, so `Ready` rendered `Text("Setup complete")` and
+   * stayed there. Task 9 wired the callback to `backStack.clear(); backStack.add(LibraryRoute)`, so
+   * `Ready` now navigates away in the same frame it is reached and that string is never displayed
+   * to anyone. Measured on this device: base `7ee8a85` 4/4 green, `5aec4d4` 3/4.
+   *
+   * Two things changed here as a result, and the order of the second one is the point:
+   *
+   * 1. The final assertion is now what actually happens after Continue -- the browse screen, by its
+   *    own two control labels. That also discharges the instruction Task 8's review left in
+   *    `SetupScreen.kt` ("whoever wires real navigation should add a test that actually observes
+   *    this firing"): deleting that `LaunchedEffect`, or reverting `onSetupComplete` to a no-op,
+   *    strands this test on the setup screen.
+   * 2. **The persisted-role read-back moved *above* the Continue click.** It was below the
+   *    `"Setup complete"` assertion, so from `5aec4d4` onwards the strongest assertion in this
+   *    class -- the two-disjoint-observation proof that a tag reached the database at all -- was
+   *    not executing. It does not depend on navigation in any way (every role is written by the
+   *    chip taps, each of which is already confirmed by `assertIsSelected`), so nothing downstream
+   *    can take it down with it again.
    */
   @Test
-  fun completingEveryTagReachesReadyAndShowsSetupComplete() {
+  fun completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen() {
     connectAs(PASSWORD)
 
     // First round: each library tagged to match its own name -- the first of two disjoint
@@ -177,16 +199,40 @@ class FirstRunJourneyTest {
     // observation of the same two ids, and the state this test's other assertions build on.
     composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[MUSIC_ROW_CHIP].performClick().assertIsSelected()
     composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
-    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
-
-    composeRule.onNodeWithText("Setup complete").assertIsDisplayed()
 
     // The read-back that actually proves it: reached through the real LibraryRepository, the
     // same singleton the app's own SetupViewModel and its @Inject-constructed SetupLibrarySink
     // write through -- not through what the screen merely displays.
+    //
+    // Taken *before* Continue on purpose (N-1, see this test's own doc). Both roles are already
+    // written at this point -- each tap above was confirmed by assertIsSelected, and that chip's
+    // `selected` predicate reads the library's persisted role back out of SetupViewModel's own
+    // `tagging()` refresh -- so this observation owes nothing to navigation, and no later
+    // assertion about where the app went next can stop it from running.
     val libraries = readPersistedLibraries()
     assertEquals(LibraryRole.AUDIOBOOKS, libraries.single { it.id == MUSIC_LIBRARY_ID }.role)
     assertEquals(LibraryRole.MUSIC, libraries.single { it.id == AUDIOBOOKS_LIBRARY_ID }.role)
+
+    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
+
+    // What Continue does now: SetupUiState.Ready fires SetupScreen's LaunchedEffect, which calls
+    // onSetupComplete, which MuPlayApp wires to `backStack.clear(); backStack.add(LibraryRoute)`.
+    // Waited for rather than asserted immediately -- the state change, the effect and the back
+    // stack edit all land on the main dispatcher after the click returns.
+    composeRule.waitUntil(timeoutMillis = NAVIGATION_TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_LIBRARY_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
+    // Both of the browse screen's own controls, by the literal strings LibraryScreen renders --
+    // duplicated here rather than shared, for the same reason every other label in this class is.
+    composeRule.onNodeWithText(SEARCH_LIBRARY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithText(SHUFFLE_LIBRARY_LABEL).assertIsDisplayed()
+
+    // Replaced, not pushed: `backStack.clear()` is what keeps a back gesture from offering to
+    // re-enter credentials the app already has. Without the clear, SetupScreen is still the entry
+    // underneath -- NavDisplay renders only the top one, so this asserts the *setup screen itself*
+    // is gone from the composition, which is also what makes the removed "Setup complete"
+    // assertion unrecoverable rather than merely relocated.
+    composeRule.onNodeWithText(CONNECT_LABEL).assertDoesNotExist()
   }
 
   @Test
@@ -274,6 +320,14 @@ class FirstRunJourneyTest {
     const val CONTINUE_LABEL = "Continue"
 
     /**
+     * The two controls `LibraryScreen` renders in its `Content` state -- what the app shows once
+     * setup hands over. Same duplicate-the-literal rule as the setup labels above: a shared
+     * constant would let a change to what the user actually sees pass unnoticed here.
+     */
+    const val SEARCH_LIBRARY_LABEL = "Search this library"
+    const val SHUFFLE_LIBRARY_LABEL = "Shuffle this library"
+
+    /**
      * The two role chips' own labels -- distinct from the bare library-name text on purpose (see
      * SetupScreen's own doc on this): a first draft of this suite labelled the chips "Music"/
      * "Audiobooks" too, which made every `onNodeWithText("Music")` ambiguous the moment a chip and
@@ -315,5 +369,14 @@ class FirstRunJourneyTest {
      * worse than useless.
      */
     const val CONNECT_TIMEOUT_MILLIS = 30_000L
+
+    /**
+     * How long to wait for the setup -> browse hand-over. Much shorter than
+     * [CONNECT_TIMEOUT_MILLIS] because nothing here touches the network: `continueToLibrary` reads
+     * the already-loaded library list back out of Room, and the back-stack edit and the first
+     * `LibraryScreen` composition are both main-thread work. Generous anyway -- a gate that flakes
+     * is worse than no gate.
+     */
+    const val NAVIGATION_TIMEOUT_MILLIS = 10_000L
   }
 }

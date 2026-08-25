@@ -291,6 +291,47 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   — that would need JaCoCo's METHOD-element scoping, materially riskier machinery for a slice
  *   already fully covered.
  *
+ * - **`:feature:library`** (Plan 2 Task 9, floors 2 and 3 added in its review round 1) — three
+ *   `"CLASS"`-element BRANCH rules:
+ *
+ *   1. `1.00` over `LibraryUiStateKt` (`libraryContent`, measured **18/18**), with the zero-branch
+ *      `LibraryUiState` sealed interface riding along, per the same reasoning `SetupUiState` rides
+ *      along in `:feature:setup`'s own rule above.
+ *   2. `1.00` over `LibraryViewModel` and `AlbumViewModel` **by exact name** (measured 4/4 and
+ *      2/2), with `AlbumViewModel`'s zero-branch nested `Fetch` types riding along.
+ *   3. `0.75` over `CoverArtCacheKeyKt` (measured **3/4** — see below for the missing fourth).
+ *
+ *   Rules 2 and 3 were deferred to Task 10 when this module shipped, on two arguments the review
+ *   (N-7) showed were choices rather than constraints, and the corrections are worth keeping:
+ *
+ *   - *"`coverArtCacheKey` and `CoverArtImage` compile into one file-class, so a CLASS rule cannot
+ *     separate them."* True, and irrelevant: **which declarations share a file is the author's
+ *     choice**, and splitting pure state out of a Compose file is already this codebase's own
+ *     convention (`LibraryUiState.kt` vs `LibraryScreen.kt`, `SetupUiState.kt` vs
+ *     `SetupScreen.kt`). `coverArtCacheKey` moved to `CoverArtCacheKey.kt` and now measures
+ *     `CoverArtCacheKeyKt` 3/4 BRANCH, 1/1 LINE on its own. The fourth branch is Kotlin's
+ *     unreachable non-null path of `sizePx?.toString() ?: "full"`, so `0.75` — not `0.90` — is the
+ *     honest ceiling, the same shape and the same reason as `SetupFailureReasonKt`'s `0.85` above.
+ *     Proved able to fail, not merely to pass: raising this entry to `1.00` produces
+ *     `Rule violated for class app.muplay.library.CoverArtCacheKeyKt: branches covered ratio is
+ *     0.75, but expected minimum is 1.00 -> BUILD FAILED`.
+ *   - *"`LibraryViewModel` cannot be gated: `LibraryViewModel$shuffle$1` measures 6/12."* True of a
+ *     **wildcard**, which is what was tried; it is not true of an exact-name include, and this
+ *     table already uses exact names beside wildcards (`"app.muplay.setup.SetupViewModel"` *and*
+ *     `"app.muplay.setup.SetupViewModel*"`). `LibraryViewModel` itself is 4/4 from this module's
+ *     own JVM tests, and an exact-name rule gates the outer class while leaving the under-covered
+ *     nested ones to keep warning. `AlbumViewModel` was genuinely 1/2 when the review ran — its
+ *     double-load guard was executed by no test (N-3a) — and is 2/2 now that it is.
+ *
+ *   **Still deferred to Task 10, and now genuinely so:** `CoverArtKt` (the `@Composable
+ *   CoverArtImage` alone, 0/52 BRANCH, 0/23 LINE), `LibraryScreenKt` (0/158, 0/62) and
+ *   `AlbumScreenKt` (0/58, 0/24) — none can be composed from a JVM test — plus both ViewModels'
+ *   nested lambda classes, which no floor a wildcard could hold reaches today
+ *   (`LibraryViewModel$shuffle$1` 6/12, and the `@Inject` constructor's real-repository
+ *   `LibrarySource`/`AlbumSource` adapters, `LibraryViewModel$1` and `AlbumViewModel$1`, reachable
+ *   only through Hilt's DI graph at 0/8 and 0/4 LINE). All of them are named, by measured ratio,
+ *   in `warnUngatedClasses`'s output on every run.
+ *
  * - **`:app`** — one `"BUNDLE"`-element LINE rule at `0.90` (measured **20/21 = 0.9524**), the one
  *   aggregate rule in this table, and the one place where that is the right shape rather than a
  *   compromise — with one cost, stated here rather than only in a report: `matchesFloor` below
@@ -779,6 +820,82 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       // MuPlayTheme is composed only by the emulator journey; from the JVM alone ThemeKt measures
       // 0.65 and TypeKt 0.00.
       requiresInstrumentedData = true,
+    ),
+  ),
+  // Plan 2 Task 9 (:feature:library), floors 2 and 3 added in its review round 1 (N-7). Every
+  // number below is measured from `./gradlew :feature:library:test :feature:library:jacocoTestReport`
+  // at commit-time; see this table's own doc above for the two arguments the review overturned and
+  // for what is still, genuinely, Task 10's.
+  ":feature:library" to listOf(
+    // 18/18 -- libraryContent's own branches: the empty-libraries early return, the
+    // firstOrNull-elvis-firstOrNull selection repair, and the searching ? searchAlbums : albums
+    // branch -- all covered by LibraryUiStateTest's own cases.
+    //
+    // LibraryUiState* rides along for the same reason SetupUiState did in :feature:setup's own
+    // rule above: Content/Loading/NoLibraries carry 0 branches of their own (a sealed interface
+    // and data classes with no body), so they can never move this ratio, and including them is
+    // what keeps warnUngatedClasses from flagging their own fully-covered lines as an ungated
+    // class.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.LibraryUiStateKt",
+        "app.muplay.library.LibraryUiState",
+        "app.muplay.library.LibraryUiState*",
+        // AlbumUiState rides along on exactly the same reasoning -- Loading/NotFound/Content carry
+        // no BRANCH counter at all (measured: branch n/a, line 1/1 for Content) -- rather than
+        // being left to warn forever about three types with nothing a floor could gate. It has no
+        // Kt file-class of its own to name here: `AlbumUiState.kt` declares no top-level function.
+        "app.muplay.library.AlbumUiState",
+        "app.muplay.library.AlbumUiState*",
+      ),
+    ),
+    // Both ViewModels' own bodies. **Exact names, not `"LibraryViewModel*"`** -- that wildcard is
+    // what cannot hold a floor here (LibraryViewModel$shuffle$1 is 6/12, LibraryViewModel$1 is the
+    // Hilt-only LibrarySource adapter at 0/8 LINE), and it was mistaken for the class itself being
+    // ungateable when this module shipped. The exact form gates the outer class and leaves the
+    // nested ones to go on warning, which is what warnUngatedClasses is for. Precedent for exact
+    // names beside wildcards in this same table: "app.muplay.setup.SetupViewModel".
+    //
+    // Measured: LibraryViewModel 4/4 BRANCH (36/39 LINE, hence no LINE rule -- the three are the
+    // @Inject secondary constructor's own body, reachable only through Hilt), AlbumViewModel 2/2
+    // BRANCH (the double-load guard, both ways, since review round 1 covered it; it was 1/2 and
+    // therefore genuinely ungateable before that).
+    //
+    // AlbumViewModel*Fetch* rides along, same reasoning as LibraryUiState* above: `Fetch`,
+    // `Fetch.Pending` and `Fetch.Done` carry no BRANCH counters at all (an `object` and a `class`
+    // with no generated equals, on purpose -- see AlbumViewModel), so they cannot move this ratio,
+    // and including them keeps warnUngatedClasses quiet about three types with nothing to gate.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.LibraryViewModel",
+        "app.muplay.library.AlbumViewModel",
+        "app.muplay.library.AlbumViewModel*Fetch*",
+      ),
+    ),
+    // 3/4 = 0.75, and 0.75 is the honest ceiling rather than a rounded-down 0.90: the fourth
+    // branch is the non-null path of `sizePx?.toString() ?: "full"` on a value Kotlin has already
+    // proven non-null, which no test can reach. Same shape and same reason as SetupFailureReasonKt
+    // at 0.85 above. LINE is 1/1 and carries no rule of its own -- one expression body, nothing a
+    // second counter would add.
+    //
+    // Live, and proved able to fail rather than merely to pass: at minimum = 1.00 this entry
+    // reports `Rule violated for class app.muplay.library.CoverArtCacheKeyKt: branches covered
+    // ratio is 0.75, but expected minimum is 1.00` and fails the build.
+    //
+    // This floor exists because `coverArtCacheKey` was moved out of `CoverArt.kt` into its own
+    // file -- see `CoverArtCacheKey.kt`'s own header. Folding it back in would silently delete
+    // this gate (the merged CoverArtKt measured 3/56 BRANCH, well under any floor worth setting).
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.75"),
+      includes = listOf("app.muplay.library.CoverArtCacheKeyKt"),
     ),
   ),
   // 20/21 = 0.9524 LINE across the whole module. The one BUNDLE-element rule in this table -- see

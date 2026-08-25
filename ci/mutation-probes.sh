@@ -52,12 +52,15 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test :feature:setup:test` -- four plain JVM invocations (a third
-# module, `:feature:setup`, joined in Task 8's review round 1: `SetupViewModel` is a plain
-# ViewModel with hand-written fakes for its two Android-backed collaborators, so its own logic
-# needs no device either) -- and `failures()` globs both `core/*/build/test-results/test/`
-# (`:core:network`, `:core:model`) and `*/build/test-results/testDebugUnitTest/`
-# (`:core:database`, `:feature:setup` -- both Android modules' JVM-tier results directory).
+# :core:model:test :core:database:test :feature:setup:test :feature:library:test` -- five plain
+# JVM invocations (a third module, `:feature:setup`, joined in Task 8's review round 1:
+# `SetupViewModel` is a plain ViewModel with hand-written fakes for its two Android-backed
+# collaborators, so its own logic needs no device either; a fourth, `:feature:library`, joined in
+# Task 9 for the identical reason -- LibraryViewModel/AlbumViewModel are plain ViewModels with
+# hand-written fakes for their own Room/network-backed collaborators) -- and `failures()` globs
+# both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
+# `*/build/test-results/testDebugUnitTest/` (`:core:database`, `:feature:setup`,
+# `:feature:library` -- every Android module's JVM-tier results directory).
 # `:core:database` genuinely does carry JVM test source (`KeystoreCipherTest`, six tests -- its
 # cryptographic contract needs no device) and `run_suite()` now runs it; an earlier version of
 # this comment said `:core:database` "has no JVM test source at all", which was false and was
@@ -119,6 +122,9 @@ MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.
 MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
 SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
 SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.kt"
+LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt"
+ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
+LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiState.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -349,7 +355,7 @@ PROBES = [
     # anonymous SetupLibrarySink, and the two FilterChip role literals swapped) are deliberately
     # NOT here: this runner is JVM-only (see this file's own header), and both of those mutants
     # pass every JVM test unchanged -- they are caught only on the emulator, by
-    # completingEveryTagReachesReadyAndShowsSetupComplete's read-back, and are recorded in
+    # completingEveryTagPersistsBothRolesAndLandsOnTheLibraryScreen's read-back, and are recorded in
     # task-8-report.md instead, the same way this header already documents for every other
     # instrumented-tier defect this project has found.
     ("setup/cancellation-rethrow", SETUP_VM,
@@ -411,6 +417,99 @@ PROBES = [
      "      else -> Reconcile(status.lastScan)",
      "      else -> Reconcile(stored)",
      "a moved watermark triggers a reconcile carrying the new value", 2),
+
+    # ---- Task 9: LibraryViewModel/AlbumViewModel -- the ruling's own forwarding proofs --------
+    # The brief for this task ships no ViewModel tests at all; the ruling that added
+    # LibraryViewModelTest/AlbumViewModelTest required every one of these to be provable by
+    # mutation before being trusted, not just written. Each was applied and confirmed to redden
+    # exactly the named test(s) during task-9's own implementation (see task-9-report.md).
+    ("library/albums-ignores-selection", LIBRARY_VM,
+     "      libraries.firstOrNull { it.id == selected }?.id ?: libraries.firstOrNull()?.id",
+     "      libraries.firstOrNull()?.id",
+     "selecting a library shows that library's own albums, not the previous selection's", 2),
+    ("library/search-libraryId-hardcoded", LIBRARY_VM,
+     "else source.search(id, newQuery, SEARCH_LIMIT).albums",
+     "else source.search(1, newQuery, SEARCH_LIMIT).albums",
+     # 1 -> 2 in review round 1: `a library switch drops the previous library's search results...`
+     # asserts the second search's own (libraryId, query, limit) triple too.
+     "searching forwards the exact query and the currently selected library, not a stale or "
+     "swapped one", 2),
+    ("library/shuffle-size-hardcoded", LIBRARY_VM,
+     "source.shuffle(id, ShuffleRepository.DEFAULT_SHUFFLE_SIZE)",
+     "source.shuffle(id, 10)",
+     "shuffle forwards the exact selected library id and the default shuffle size", 1),
+    ("library/currentLibraryId-no-fallback", LIBRARY_VM,
+     "(uiState.value as? LibraryUiState.Content)?.selectedLibraryId\n      ?: source.allIds().firstOrNull()",
+     "(uiState.value as? LibraryUiState.Content)?.selectedLibraryId",
+     "actions fall back to the mirror's own known library ids when no library is selected yet", 1),
+    ("library/scan-message-reverts-to-unkept-promise", LIBRARY_VM,
+     '"The server is still scanning, so some albums may be missing. Tap $REFRESH_LABEL when it '
+     'has finished."',
+     '"Your library will update shortly."',
+     "a scan in progress names the Refresh control by the screen's own label, not a promise "
+     "nothing keeps", 1),
+    # AlbumViewModel was rewritten mid-task (see task-9-report.md): a real-device run found
+    # savedStateHandle["albumId"] null under Navigation 3, so `load(albumId)` replaced the
+    # SavedStateHandle/checkNotNull design these two probes originally targeted. Re-measured
+    # against the replacement.
+    ("album/songs-id-swapped", ALBUM_VM,
+     "combine(album, source.songs(id)) { fetch, songs ->",
+     'combine(album, source.songs("wrong-id")) { fetch, songs ->',
+     # 4 -> 6 in Task 9's review round 1: two AlbumViewModelTest tests were added that also load a
+     # real id and read the resulting Content, so they redden here too. See the note on
+     # `expected failures` above -- a count above 1 is a measurement, and it goes stale when tests
+     # are added.
+     "the album shown is the one load was called with, not a different one the source also "
+     "knows", 6),
+    ("album/load-album-id-hardcoded", ALBUM_VM,
+     "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
+     'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
+     # 4 -> 7, same cause as the probe above; this one additionally reddens the album-call-count
+     # assertion in `an album still being fetched is Loading...`.
+     "the album shown is the one load was called with, not a different one the source also "
+     "knows", 7),
+
+    # ---- Task 9 / review round 1 (task-9-review.md): the values no test observed ---------------
+    # N-2, N-3 and N-5. Every one of these mutations left all 34 of this module's tests green when
+    # the review applied it. Two of them (`libraries` at no value, and the album that announces
+    # itself deleted while it loads) are user-facing: the first deletes the Music/Audiobooks chip
+    # row outright, which is the only control this app has for the distinction it exists to make.
+    #
+    # N-1 and N-6 from the same review are NOT here and cannot be: both are instrumented-tier
+    # (a navigation callback and the album id's two hops above the view model), this runner is
+    # JVM-only per this file's own header, and their mutants are recorded in task-9-report.md
+    # instead -- the same way task-8-report.md carries SetupViewModel's two device-only mutants.
+    ("library/libraries-not-forwarded", LIBRARY_STATE,
+     "    libraries = libraries,", "    libraries = emptyList(),",
+     "the library selector carries every library, exactly, in the order the mirror gave them", 2),
+    ("library/libraries-reordered", LIBRARY_STATE,
+     "    libraries = libraries,", "    libraries = libraries.reversed(),",
+     "the library selector carries every library, exactly, in the order the mirror gave them", 2),
+    ("library/shuffled-order-reversed", LIBRARY_STATE,
+     "    shuffled = shuffle?.songs.orEmpty(),", "    shuffled = shuffle?.songs.orEmpty().reversed(),",
+     "shuffle order is the order the shuffle produced, not resorted", 2),
+    ("library/search-results-resorted", LIBRARY_STATE,
+     "    albums = if (searching) searchAlbums else albums,",
+     "    albums = if (searching) searchAlbums.sortedBy { it.name } else albums,",
+     "search result order is preserved, not resorted", 2),
+    ("library/selectLibrary-keeps-stale-search", LIBRARY_VM,
+     '    query.value = ""\n    searchAlbums.value = emptyList()\n  }',
+     '    query.value = ""\n  }',
+     "a library switch drops the previous library's search results before the new search "
+     "returns", 1),
+    ("album/double-load-guard-deleted", ALBUM_VM,
+     "    if (this.albumId.value == albumId) return\n", "",
+     "loading the same album twice never fetches it a second time, and keeps what is on "
+     "screen", 1),
+    ("album/loading-reads-as-notfound", ALBUM_VM,
+     "Fetch.Pending -> AlbumUiState.Loading", "Fetch.Pending -> AlbumUiState.NotFound",
+     # 2: `switching to another album shows Loading...` observes the same Pending state at the
+     # other place it is reachable (across an id change), so it reddens too.
+     "an album still being fetched is Loading, not the deleted-album message", 2),
+    ("album/load-keeps-previous-album", ALBUM_VM,
+     "    album.value = Fetch.Pending\n    this.albumId.value = albumId",
+     "    this.albumId.value = albumId",
+     "switching to another album shows Loading, never the previous album under the new id", 1),
 ]
 
 
@@ -447,7 +546,8 @@ def apply(path, old, new):
 
 def revert():
     subprocess.run(
-        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION],
+        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE],
         check=True,
     )
 
@@ -473,6 +573,7 @@ JVM_TEST_RESULT_DIRS = {
     "core/model": "test",
     "core/database": "testDebugUnitTest",
     "feature/setup": "testDebugUnitTest",
+    "feature/library": "testDebugUnitTest",
 }
 
 
@@ -520,12 +621,15 @@ def run_suite():
         except FileNotFoundError:
             pass
     # --continue: keep scheduling every other requested task after one fails, rather than
-    # aborting the whole invocation on the first failure. The four modules here share no
+    # aborting the whole invocation on the first failure. The five modules here share no
     # compile-time dependency that would make one module's task genuinely unable to run after
     # another's test failure (a *test* task failing does not un-compile anything downstream), so
-    # with --continue every one of the four should get a real chance to execute every time.
+    # with --continue every one of the five should get a real chance to execute every time.
+    # `:feature:library` joined in Task 9, for the same reason `:feature:setup` joined in Task 8:
+    # LibraryViewModel/AlbumViewModel are plain ViewModels with hand-written fakes for their own
+    # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
-                    ":core:database:test", ":feature:setup:test"],
+                    ":core:database:test", ":feature:setup:test", ":feature:library:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
