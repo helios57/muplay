@@ -1,36 +1,34 @@
-# Handoff — MuPlay, end of the 2026-08-25 fleet session
+# Handoff — MuPlay, the 2026-08-25 fleet session
 
-Master is `e5a4d79`, green (`check verifyNoMockFrameworks`), pushed, androidTest
-compiles. **30 merges landed this session.** The app went from "cannot play
-audio" to playing in the background with a session, notification, lock-screen
-controls, a media cache, a player UI and proven gapless playback.
+Master is `6c7d4b1`, green (`check verifyNoMockFrameworks`), pushed, release
+Kotlin and androidTest both compile. The app went from "cannot play audio" to
+playing in the background with a session, notification, lock-screen controls, a
+media cache, a player UI and proven gapless playback.
 
 ## Where the plans stand
 
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 10 of 12 | 8b blocked on 6 + the keystone fix; 11 and 12 blocked on 8b |
-| 6 — Sonos/DLNA casting | 3 of 12 | codec, SSDP, SOAP in; DIDL-Lite in flight |
-| 5 — Auto/Wear | 2 of 11 | `BrowseId`, browse tree in; surfaces in flight |
-| 7 — integrations | 1 of 11 | `:integrations:core` in; credential store in flight |
-| 4 — audiobooks | 0 of 10 | fixtures in flight |
+| 3 — playback core | 10 of 12 | 8b blocked on the keystone fix (`MuPlaybackService.kt`); 11 and 12 blocked on 8b |
+| 6 — Sonos/DLNA casting | 4 of 12 | codec, SSDP, SOAP, DIDL-Lite in; SOAP hardening + proxy in flight |
+| 5 — Auto/Wear | 3 of 11 | `BrowseId`, browse tree, browse surfaces in; T4 blocked on the keystone fix |
+| 7 — integrations | 2 of 11 | `:integrations:core` + credential store in; request store in flight |
+| 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** — see below |
 
-## Eight lanes were live when the session ended
-
-All have **committed work in their worktrees** under `.claude/worktrees/`, all
-had merged master, none had written its report yet. Resume by sending each agent
-a message, or read the worktree and finish it directly.
+## Lanes live now
 
 | Worktree | Task | State |
 | --- | --- | --- |
-| `p3t6` | P3 T6 audio focus, `startIndex`, wake lock | 8 commits, clean — closest to done |
-| `p3t5fix` | Keystone security: `onConnect`, controller race, entry points → `src/debug/`, `build-logic` test source set | 7 commits |
-| `p3t10` | P3 T10 the gates (Tier 2 journey) | 3 commits |
-| `p6t4` | P6 T4 DIDL-Lite, three-way MIME invariant | 5 commits |
-| `p6t2fix` | SSDP security: DNS-in-read-loop, XXE 4 KiB blind spot, depth cap | 3 commits |
-| `p5t3` | P5 T3 `BrowseSurfaces` / `SurfaceResolver` | 2 commits |
-| `p4t1` | P4 T1 audiobook fixtures | 2 commits |
-| `p7t2` | P7 T2 `KeystoreKeys`, integration credential store | 1 commit |
+| `p3t5fix` | Keystone security: `onConnect`, controller race, entry points → `src/debug/`, `build-logic` test source set | in flight; **holds `MuPlaybackService.kt`, `ConventionTest.kt`, `build-logic/`** |
+| `p3t10` | P3 T10 the gates (Tier 2 journey) | in flight |
+| `p6t3fix` | SOAP hardening: escape argument values, make the "strict" fake actually strict | dispatched |
+| `p6t6` | P6 T6 the media proxy — range serving, the token that is not a track id | dispatched |
+| `p7t3` | P7 T3 the request store | dispatched |
+| `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
+
+**What unblocks when the keystone lane lands:** Plan 3 Task 8b (`MuPlayer` +
+`ProgressWriter`), and behind it Tasks 11 and 12; and Plan 5 Task 4
+(`BrowseItems` + `MuPlayLibraryCallback`), which needs the session callback.
 
 ## Merge routine that this session settled on
 
@@ -97,9 +95,11 @@ this until they are fixed.**
   (~56 KB, inside the 1 MiB cap) overflows a default JVM stack; depth **3000**
   overflows at `-Xss512k` ≈ an Android worker thread. `SoapClient`'s KDoc tells
   later tasks that `catch (IOException)` is complete — `StackOverflowError` is an
-  `Error`. **Routed to the SSDP fix lane**, which is already fixing the identical
+  `Error`. **FIXED and on master** (`MAX_FAULT_DEPTH`); it was the identical
   shape in `DeviceDescription.parseDevice`.
-- **HIGH — `render` inserts argument *values* verbatim.** The KDoc claims `render`
+- **HIGH — `render` inserts argument *values* verbatim. ROUTED to `p6t3fix`,
+  option A: `render` escapes, `DidlLite.renderEscaped` is deleted.** The Plan 6
+  Task 4 lane reproduced this independently and recommended the same fix. The KDoc claims `render`
   is "total: well-formed XML or throws". It is not. A Navidrome stream URL
   (`?u=…&t=…&s=…`) produces `The reference to entity "t" must end with ';'` — not
   well-formed. And `"x</CurrentURI><Speed>99</Speed><CurrentURI>y"` silently
@@ -107,7 +107,7 @@ this until they are fixed.**
   documents why; SOAP, the layer that owns framing, does not. Fix: escape values
   in `render` and have `DidlLite` hand over unescaped, or split the type
   (`text(...)` vs `preEscaped(...)`).
-- **HIGH — the "strict" fake parses request bodies with a regex**
+- **HIGH — the "strict" fake parses request bodies with a regex. ROUTED to `p6t3fix`.**
   (`FakeRenderer.kt:51-56`), so it cannot see malformed XML at all. That is
   *why* 266 green tests could not see the HIGH above. Fix: parse with
   `DocumentBuilder`, answer 500 when it does not parse, keep `headBytes` raw.
@@ -134,7 +134,7 @@ and it is pinned at a value.
   so the release-side cleartext refusal was verified exactly once, by hand. Added a
   `Compile the gates check does not` step to `pr.yml` covering release Kotlin **and**
   androidTest (the gap that let master carry a broken device tier earlier today).
-- **HIGH-2 — open, routed to Plan 7 Task 2's lane.** `CleartextPolicy`'s KDoc claims
+- **HIGH-2 — FIXED by Plan 7 Task 2's lane, falsified with `--rerun-tasks`.** `CleartextPolicy`'s KDoc claims
   no release-compiled code names `Allowed`. False: `IntegrationBaseUrl.kt:84` is
   `CleartextPolicy.Allowed -> true`, in the same module, compiled into release
   (`:app` uses `implementation`, not `debugImplementation`). And the cited
