@@ -52,12 +52,15 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test :feature:setup:test` -- four plain JVM invocations (a third
-# module, `:feature:setup`, joined in Task 8's review round 1: `SetupViewModel` is a plain
-# ViewModel with hand-written fakes for its two Android-backed collaborators, so its own logic
-# needs no device either) -- and `failures()` globs both `core/*/build/test-results/test/`
-# (`:core:network`, `:core:model`) and `*/build/test-results/testDebugUnitTest/`
-# (`:core:database`, `:feature:setup` -- both Android modules' JVM-tier results directory).
+# :core:model:test :core:database:test :feature:setup:test :feature:library:test` -- five plain
+# JVM invocations (a third module, `:feature:setup`, joined in Task 8's review round 1:
+# `SetupViewModel` is a plain ViewModel with hand-written fakes for its two Android-backed
+# collaborators, so its own logic needs no device either; a fourth, `:feature:library`, joined in
+# Task 9 for the identical reason -- LibraryViewModel/AlbumViewModel are plain ViewModels with
+# hand-written fakes for their own Room/network-backed collaborators) -- and `failures()` globs
+# both `core/*/build/test-results/test/` (`:core:network`, `:core:model`) and
+# `*/build/test-results/testDebugUnitTest/` (`:core:database`, `:feature:setup`,
+# `:feature:library` -- every Android module's JVM-tier results directory).
 # `:core:database` genuinely does carry JVM test source (`KeystoreCipherTest`, six tests -- its
 # cryptographic contract needs no device) and `run_suite()` now runs it; an earlier version of
 # this comment said `:core:database` "has no JVM test source at all", which was false and was
@@ -119,6 +122,8 @@ MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.
 MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
 SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
 SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.kt"
+LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt"
+ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -411,6 +416,46 @@ PROBES = [
      "      else -> Reconcile(status.lastScan)",
      "      else -> Reconcile(stored)",
      "a moved watermark triggers a reconcile carrying the new value", 2),
+
+    # ---- Task 9: LibraryViewModel/AlbumViewModel -- the ruling's own forwarding proofs --------
+    # The brief for this task ships no ViewModel tests at all; the ruling that added
+    # LibraryViewModelTest/AlbumViewModelTest required every one of these to be provable by
+    # mutation before being trusted, not just written. Each was applied and confirmed to redden
+    # exactly the named test(s) during task-9's own implementation (see task-9-report.md).
+    ("library/albums-ignores-selection", LIBRARY_VM,
+     "      libraries.firstOrNull { it.id == selected }?.id ?: libraries.firstOrNull()?.id",
+     "      libraries.firstOrNull()?.id",
+     "selecting a library shows that library's own albums, not the previous selection's", 2),
+    ("library/search-libraryId-hardcoded", LIBRARY_VM,
+     "else source.search(id, newQuery, SEARCH_LIMIT).albums",
+     "else source.search(1, newQuery, SEARCH_LIMIT).albums",
+     "searching forwards the exact query and the currently selected library, not a stale or "
+     "swapped one", 1),
+    ("library/shuffle-size-hardcoded", LIBRARY_VM,
+     "source.shuffle(id, ShuffleRepository.DEFAULT_SHUFFLE_SIZE)",
+     "source.shuffle(id, 10)",
+     "shuffle forwards the exact selected library id and the default shuffle size", 1),
+    ("library/currentLibraryId-no-fallback", LIBRARY_VM,
+     "(uiState.value as? LibraryUiState.Content)?.selectedLibraryId\n      ?: source.allIds().firstOrNull()",
+     "(uiState.value as? LibraryUiState.Content)?.selectedLibraryId",
+     "actions fall back to the mirror's own known library ids when no library is selected yet", 1),
+    ("library/scan-message-reverts-to-unkept-promise", LIBRARY_VM,
+     '"The server is still scanning, so some albums may be missing. Tap $REFRESH_LABEL when it '
+     'has finished."',
+     '"Your library will update shortly."',
+     "a scan in progress names the Refresh control by the screen's own label, not a promise "
+     "nothing keeps", 1),
+    ("album/songs-albumId-swapped", ALBUM_VM,
+     "combine(album, source.songs(albumId)) { current, songs ->",
+     'combine(album, source.songs("wrong-id")) { current, songs ->',
+     "the album shown is the one named by the saved state handle, not a different one the "
+     "source also knows", 3),
+    ("album/missing-id-not-checked", ALBUM_VM,
+     '  private val albumId: String = checkNotNull(savedStateHandle[ALBUM_ID_KEY]) {\n'
+     '    "AlbumViewModel needs an `$ALBUM_ID_KEY` argument"\n'
+     '  }',
+     '  private val albumId: String = savedStateHandle[ALBUM_ID_KEY] ?: ""',
+     "a missing albumId argument fails loudly rather than silently showing an empty album", 1),
 ]
 
 
@@ -447,7 +492,7 @@ def apply(path, old, new):
 
 def revert():
     subprocess.run(
-        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION],
+        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION, LIBRARY_VM, ALBUM_VM],
         check=True,
     )
 
@@ -473,6 +518,7 @@ JVM_TEST_RESULT_DIRS = {
     "core/model": "test",
     "core/database": "testDebugUnitTest",
     "feature/setup": "testDebugUnitTest",
+    "feature/library": "testDebugUnitTest",
 }
 
 
@@ -520,12 +566,15 @@ def run_suite():
         except FileNotFoundError:
             pass
     # --continue: keep scheduling every other requested task after one fails, rather than
-    # aborting the whole invocation on the first failure. The four modules here share no
+    # aborting the whole invocation on the first failure. The five modules here share no
     # compile-time dependency that would make one module's task genuinely unable to run after
     # another's test failure (a *test* task failing does not un-compile anything downstream), so
-    # with --continue every one of the four should get a real chance to execute every time.
+    # with --continue every one of the five should get a real chance to execute every time.
+    # `:feature:library` joined in Task 9, for the same reason `:feature:setup` joined in Task 8:
+    # LibraryViewModel/AlbumViewModel are plain ViewModels with hand-written fakes for their own
+    # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
-                    ":core:database:test", ":feature:setup:test"],
+                    ":core:database:test", ":feature:setup:test", ":feature:library:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
