@@ -1239,6 +1239,45 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
+  // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
+  // `connectedDebugAndroidTest` run (instrumented) at commit time.
+  //
+  // The BRANCH/LINE split is this table's standing ruling, applied to a module that is mostly
+  // Compose: the author-written logic (the pure state mapping, the formatter, the ViewModel) gets
+  // BRANCH, and the `@Composable` file-classes get LINE, because the Compose compiler weaves
+  // `$changed`/`$dirty` skip branches into the same method bodies as the author's own `if`s and no
+  // class-granular exclusion can separate them.
+  ":feature:player" to listOf(
+    // `PlayerUiStateKt` -- `playerUiState` and `formatDuration` -- 8/8 = 1.0000 BRANCH, 13/13 LINE,
+    // from **JVM data alone** (`PlayerUiStateTest`, twelve tests, no emulator). That is the whole
+    // reason this mapping is a top-level function in its own file rather than a `ViewModel` method
+    // or a line inside `PlayerScreen.kt`: `:feature:library`'s `CoverArtCacheKey.kt` header records
+    // what happens otherwise -- a pure function sharing a file-class with a Composable measures its
+    // own branches drowned in the Composable's synthetic ones, and no floor can reach it.
+    //
+    // `PlayerUiState`/`PlayerUiState*` ride along, carrying zero BRANCH counters of their own (a
+    // sealed interface, a `data object` and a `data class` with no body), so they cannot move this
+    // ratio; they are listed only so `warnUngatedClasses` has nothing to say about them on every
+    // run. The floor is not thereby vacuous: all 8 branches come from `PlayerUiStateKt`.
+    //
+    // Falsified by withholding the covering test, not by raising the minimum: at a measured 1.0000
+    // a higher minimum is rejected by JaCoCo before it compares anything ("given minimum ratio is
+    // 1.01, but must be between 0.0 and 1.0"), which is the same configuration error zero-coverage
+    // code would produce. With `PlayerUiStateTest` moved aside this floor reports "Rule violated
+    // for class app.muplay.player.PlayerUiStateKt: branches covered ratio is 0.00, but expected
+    // minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerUiStateKt",
+        "app.muplay.player.PlayerUiState",
+        "app.muplay.player.PlayerUiState*",
+      ),
+    ),
+  ),
   // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
   // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
