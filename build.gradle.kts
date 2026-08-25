@@ -406,6 +406,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                         the nested `Companion` and `Mp3` classes rather than in the
     //                         interface itself.
     //
+    //   `BrowseId`            Plan 5 Task 1, and the same shape as `StreamFormat` for the same
+    //                         reason: the interface itself compiles to **no counters at all**
+    //                         (measured -- neither BRANCH nor LINE appears for
+    //                         `app/muplay/model/browse/BrowseId` in the report), and every branch
+    //                         lives in nested classes the `*` pattern is what reaches. Measured
+    //                         today: `BrowseId$Companion` **60/60** (all of `decode` -- the empty
+    //                         check, the prefix check, `hasPayload`, the eleven-arm `when` over
+    //                         the kind, and `canonicalInt`'s two), `BrowseId$Track` **8/8** (its
+    //                         two `require`s -- empty, and the `muplay/` collision the bare-leaf
+    //                         encoding buys) and `BrowseId$Book`/`$Album`/`$Artist` **4/4** each
+    //                         (one `require` apiece). Those last three are the reason
+    //                         `BrowseIdTest` asserts an empty id is refused for *every*
+    //                         payload-carrying member rather than for `Track` alone: without
+    //                         those three assertions each of those classes measures 2/4 = 0.50
+    //                         and this floor fails, which is a CLASS-element rule doing exactly
+    //                         what a BUNDLE aggregate over this module would have hidden.
+    //
     // Everything else in the list rides along, the same way `SetupUiState` rides along in
     // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
     // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
@@ -439,6 +456,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.ShuffleResult",
         "app.muplay.model.StreamFormat",
         "app.muplay.model.StreamFormat*",
+        "app.muplay.model.browse.BrowseId",
+        "app.muplay.model.browse.BrowseId*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -452,6 +471,31 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.model.SubsonicCredentials"),
+    ),
+    // A LINE rule over the same classes the BRANCH rule above already lists, and it is not
+    // redundant with it: eight of `BrowseId`'s twelve members -- the six `data object`s plus
+    // `Library` and `Shuffle` -- carry **no BRANCH counters at all** (measured: BRANCH absent from
+    // the report for every one of them), so the BRANCH rule above rides over them at NaN and
+    // gates nothing about them at any minimum. What it cannot see is their `encode()` bodies,
+    // which are the wire format itself -- the string Android Auto persists across a reinstall.
+    // LINE can see exactly that, and this is the `SubsonicCredentials` argument one floor up
+    // repeated for a different reason: a hand-written member with no branch in it still needs a
+    // gate, and LINE is the only counter that has one.
+    //
+    // Measured today, all at 1.0000: `BrowseId$Companion` 20/20, `BrowseId$Track` 7/7,
+    // `BrowseId$Book`/`$Album`/`$Artist` 3/3, `BrowseId$Library`/`$Shuffle` 2/2, and each of
+    // `Root`/`Continue`/`Books`/`Albums`/`Artists`/`Libraries` 1/1. Verified fireable rather than
+    // assumed so: with the three tests that call `encode()` on a `data object` moved aside, this
+    // floor fails at `BrowseId.Root` 0/1 = 0.00 while the BRANCH rule above stays green -- the
+    // whole reason it is here.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.browse.BrowseId",
+        "app.muplay.model.browse.BrowseId*",
+      ),
     ),
   ),
   ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
