@@ -30,7 +30,21 @@ import androidx.media3.exoplayer.ExoPlayer
 class ContentTypeSwitcher(private val player: ExoPlayer) : Player.Listener {
 
   override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-    val mediaType = mediaItem?.mediaMetadata?.mediaType ?: return
+    // Null when the queue is cleared. Nothing is playing, so there is nothing to choose attributes
+    // for, and the ones already on the player are the right ones for whatever plays next until the
+    // transition into it says otherwise.
+    //
+    // Two decisions, two branches, all four arms driven -- rather than the three this started as.
+    // `mediaItem?.mediaMetadata?.mediaType ?: return` measured 5/6 BRANCH: `mediaMetadata` is a
+    // *platform* type (a plain Java field), so the middle safe call emitted a null check whose
+    // other arm nothing can reach, and the missed branch was a compiler artefact rather than an
+    // untested case. Written as a receiver it emits no check at all.
+    if (mediaItem == null) return
+    // `MediaMetadata.mediaType` is a nullable `Integer`, and genuinely null for an item built
+    // without metadata (`MediaItem.fromUri`, and every item in this module's own device suites bar
+    // the ones `MediaItems` builds). Leaving the attributes alone is right for it: they belong to
+    // whatever was playing, and the next item that *does* declare a type replaces them.
+    val mediaType = mediaItem.mediaMetadata.mediaType ?: return
     player.setAudioAttributes(PlaybackAudioAttributes.of(mediaType), /* handleAudioFocus = */ true)
   }
 }
