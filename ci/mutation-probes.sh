@@ -1279,9 +1279,17 @@ PROBES = [
     # It caught a real one within hours of being written: Task 3's `MediaCacheTest` hand-built two
     # players, so two of the three instrumented playback suites were driving a player that is not
     # the one that ships.
+    #
+    # Realigned by Plan 3 Task 8b, which changed the line it searched for: the session is now handed
+    # a `MuPlayer` rather than the raw `ExoPlayer`. The mutation is the same defect in the same
+    # place, spelled to still compile -- `ExoPlayer` is no longer imported in this file, so the
+    # builder is named in full, and the scan `PlayerConstructionTest` runs matches the substring
+    # either way. (Realigned rather than left stale: the note at the foot of this file records two
+    # occasions when a rewritten line silently took a whole probe family out of service.)
     ("media/second-player-construction", PLAYBACK_SERVICE,
-     "    val player: ExoPlayer = playerFactory.create()",
-     "    val player: ExoPlayer = ExoPlayer.Builder(this).build()",
+     "    val player: MuPlayer = playerFactory.create()",
+     "    val player: MuPlayer =\n"
+     "      MuPlayer(androidx.media3.exoplayer.ExoPlayer.Builder(this).build(), NeverResume)",
      "an ExoPlayer is constructed in exactly one place", 1),
     # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
     # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
