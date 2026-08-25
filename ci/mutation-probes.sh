@@ -135,6 +135,7 @@ RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
+BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -800,6 +801,36 @@ PROBES = [
     ("pcm/frames-to-ms-rate-unguarded", PCM_ANALYSIS,
      'require(sampleRateHz > 0) { "sampleRateHz must be positive, was $sampleRateHz" }\n', "",
      "a zero sample rate is rejected rather than dividing by zero", 1),
+
+    # ---- Plan 5 Task 1: BrowseId, the mediaId wire format --------------------------------------
+    # `mediaId` is the only handle Android Auto, Wear OS and the Assistant keep for a node, and Auto
+    # *persists* it across a reinstall -- so this encoding is a contract with software this project
+    # does not own, and every one of these three mutations is a way it can change while every
+    # round-trip assertion in the file stays green.
+    ("browse/book-encode-drops-payload", BROWSE_ID,
+     'override fun encode(): String = "$PREFIX$KIND_BOOK$SEPARATOR$bookId"',
+     'override fun encode(): String = "$PREFIX$KIND_BOOK"',
+     # 5, and deliberately broad: an encode that ignores its payload is the defect a per-member
+     # round-trip test cannot see, so several independent assertions are meant to catch it. The one
+     # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
+     # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
+     # property, and it is the property no round trip implies.
+     "every id encodes to its exact documented string", 5),
+    ("browse/library-id-non-canonical", BROWSE_ID,
+     "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
+     "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
+     # The spec section 4 probe. `toIntOrNull` alone accepts "+1", "01" and "-0", so three
+     # different strings would name library 1, 1 and 0 -- second spellings of a node in Auto's
+     # persisted recents, which is exactly how a "shuffle my music" tap comes back pointing
+     # somewhere else. Exactly 1: no other test in the repository reads a library id from a string.
+     "a library id that is not canonically numeric is rejected rather than widened", 1),
+    ("browse/decode-splits-payload", BROWSE_ID,
+     '      val payload = if (hasPayload) body.substring(kind.length + SEPARATOR.length) else ""',
+     '      val payload = body.split(SEPARATOR).getOrElse(1) { "" }',
+     # A `split` without a limit turns "muplay/book/a/b/c" into a Book whose id is "a" -- silently,
+     # for exactly the server ids that contain a separator. Navidrome ids are hex today, and "the
+     # ids are hex" is the class of assumption spec section 4 is a catalogue of.
+     "the payload survives every character a server id could contain", 1),
 ]
 
 
@@ -852,6 +883,7 @@ def apply(path, old, new):
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
     RESUME_POLICY,
+    BROWSE_ID,
 ]
 
 
