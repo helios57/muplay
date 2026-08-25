@@ -23,10 +23,17 @@ import kotlinx.coroutines.flow.first
  *
  * Records are stored as tab-separated triples in a `Set<String>`, because DataStore Preferences
  * has no list type and adding kotlinx.serialization to `:core:database` for three fields would be
- * a dependency bought for nothing. The separator is a tab: a UDN is a `uuid:` URN and a
- * description URL is a URL, and neither can contain one, while a **friendly name can contain
+ * a dependency bought for nothing. The separator is a tab, and a **friendly name can contain
  * almost anything** -- which is why the name is stored **last** and re-joined on read rather than
  * split blindly.
+ *
+ * The other two fields are the ones that have to be free of the separator, and [encode] now
+ * **checks** rather than assuming. This KDoc used to say "a UDN is a `uuid:` URN and a description
+ * URL is a URL, and neither can contain one", which is a statement about what a well-behaved
+ * device sends: `DeviceDescription` reads `<UDN>` as arbitrary trimmed text with no grammar check
+ * of any kind, so a device serving `<UDN>a\tb\tc</UDN>` wrote a record that `decode` read back
+ * with somebody else's URL in the URL field. Everything about this store's format is downstream of
+ * text a stranger's device chose, which is the same reason `limit = 3` is there.
  *
  * A `Set` does not preserve order, and nothing here needs it to: `RendererDirectory` sorts the
  * picker itself, because arrival order is a property of the network rather than of the store.
@@ -40,7 +47,7 @@ class RendererStore @Inject constructor(
     dataStore.data.first()[KEY].orEmpty().mapNotNull(::decode)
 
   override suspend fun remember(renderers: List<RememberedRenderer>) {
-    val encoded = renderers.take(RememberedRenderers.MAX_REMEMBERED).map(::encode).toSet()
+    val encoded = renderers.take(RememberedRenderers.MAX_REMEMBERED).mapNotNull(::encode).toSet()
     // Replaces rather than merges. A phone that moved between five networks would otherwise
     // accumulate every speaker it had ever seen, and the bound above would then evict the ones
     // that are actually on the air.
@@ -55,8 +62,20 @@ class RendererStore @Inject constructor(
     }
   }
 
-  private fun encode(renderer: RememberedRenderer): String =
-    listOf(renderer.udn, renderer.descriptionUrl, renderer.friendlyName).joinToString(SEPARATOR)
+  /**
+   * One record, or `null` for a renderer this format cannot represent.
+   *
+   * Dropped rather than escaped or thrown: a device whose UDN or URL carries a tab is one this app
+   * cannot identify again anyway (`forget` matches on the UDN, and so does the picker's
+   * deduplication), and losing it from the *fallback* list is a smaller harm than writing a record
+   * whose fields shift on read -- which is what used to happen, and which put a string of the
+   * device's choosing into the field the unicast fallback dials. The friendly name is exempt by
+   * construction: it is last, and `decode`'s `limit = 3` rejoins it.
+   */
+  private fun encode(renderer: RememberedRenderer): String? {
+    if (SEPARATOR in renderer.udn || SEPARATOR in renderer.descriptionUrl) return null
+    return listOf(renderer.udn, renderer.descriptionUrl, renderer.friendlyName).joinToString(SEPARATOR)
+  }
 
   private fun decode(record: String): RememberedRenderer? {
     // `limit = 3`, so a friendly name containing a tab rejoins into the third field instead of

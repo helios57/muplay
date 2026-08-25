@@ -1669,6 +1669,69 @@ PROBES = [
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
+
+    # ---- Plan 6 Task 2, fix round: the review's HIGH and MEDIUM findings ----------------------
+    # Same `revert()` note as the Task 2 block above: `core/cast` is checked out wholesale, so none
+    # of these needs a LATER_PROBE_FILES line. Every count was measured by applying the mutation
+    # alone against the committed tree and reading the result XML.
+    #
+    # The seventh finding in that review, `RendererStore.encode` writing a record whose fields
+    # shift when the UDN carries a tab, has NO probe here and cannot have one: `RendererStore`
+    # needs a DataStore, so its only tier is `connectedDebugAndroidTest`, which this runner cannot
+    # reach. Its falsification is by hand, in task-2-fix-report.md, the same way Plan 3 Task 3's
+    # throw site is.
+    ("discovery/location-host-resolved", DISCOVERY_SSDP,
+     "    if (!isIpLiteral(host)) return null\n", "",
+     # The denial of service. M-SEARCH is multicast, so every device on the segment learns this
+     # phone's source port, and the reply socket is unconnected -- so one datagram naming a host
+     # whose nameserver drops queries parks the read loop in `getByName` for a resolver timeout,
+     # and N distinct labels cost N of them. The window then closes with every real speaker's reply
+     # still unread. The named test uses `localhost` on purpose: it is the one name that resolves
+     # with no network at all, so it cannot pass on this mutation the way an unresolvable one would.
+     "a reply whose location names a host rather than an address is discarded without resolving it", 1),
+    ("discovery/location-not-source-checked", DISCOVERY_SSDP,
+     "    if (address != from) return null\n", "",
+     # The other half: a device may announce its own address and nothing else. Without this, one
+     # datagram from anywhere on the segment redirects the description fetch at a host of the
+     # sender's choosing.
+     "a reply that announces an address it did not come from is discarded", 1),
+    ("discovery/search-ignores-cancellation", DISCOVERY_TRANSPORT,
+     "        ensureActive()\n", "",
+     # Nothing in the read loop suspends, so without this a user who opens the picker and goes
+     # straight back leaves an IO thread and a bound socket working for the rest of the listen
+     # window. The named test's window is twenty times its assertion, so it fails by a factor of
+     # twenty rather than by a margin.
+     "cancelling a search stops the read loop rather than pinning a thread for the whole window", 1),
+    ("discovery/doctype-not-refused", DISCOVERY_DESC,
+     "    rejectDoctype(xml, descriptionUrl)\n", "",
+     # THE probe that did not exist, and the reason MEDIUM 1 of the review was a finding at all:
+     # before the fix round this mutation reddened NOTHING. SAX's own refusal message contains the
+     # word "DOCTYPE", so `withMessageContaining("DOCTYPE")` was satisfied by the parser feature
+     # this guard exists to be independent of -- on Android that feature is expected to be refused
+     # at `setFeature`, so there it is this guard or nothing. All three doctype tests now assert
+     # this function's own sentence, which no parser says.
+     "a description carrying a doctype is refused outright", 3),
+    ("discovery/doctype-scanned-in-a-window", DISCOVERY_DESC,
+     'if (xml.contains("<!DOCTYPE", ignoreCase = true))',
+     'if (xml.take(4096).contains("<!DOCTYPE", ignoreCase = true))',
+     # The 4 KiB blind spot itself, as the code actually had it. A comment is legal Misc in the
+     # prolog, so a doctype can sit at index 5008 of a well-formed document that is five hundred
+     # kilobytes short of the size guard.
+     "a doctype hidden behind a five kilobyte comment is refused too", 1),
+    ("discovery/unbounded-device-recursion", DISCOVERY_DESC,
+     "    if (depth > MAX_DEVICE_DEPTH) {", "    if (false) {",
+     # Ten thousand nested deviceList/device pairs is 420,030 characters -- under every other bound
+     # here -- and the recursive walk answered with a StackOverflowError rather than a refusal.
+     # `parse` is public API whose KDoc enumerates what it throws, and Task 3 tells Tasks 5, 8 and 9
+     # that one `catch (e: IOException)` around a call is complete.
+     "a description nested ten thousand deep is refused rather than overflowing the stack", 2),
+    ("discovery/anonymous-device-is-a-device", DISCOVERY_DEVICE,
+     "      if (root.udn.isEmpty()) return null\n", "",
+     # A description with an AVTransport and no <UDN> used to yield a CastDevice whose udn is "",
+     # and `RendererDirectory` deduplicates the picker with `distinctBy { it.udn }` -- so every
+     # anonymous renderer on a network collapsed into one entry, and the store remembered that
+     # empty identity for the fallback to re-fetch.
+     "a renderer that declares no udn is not a cast device", 1),
 ]
 
 
