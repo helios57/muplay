@@ -387,3 +387,26 @@ about a minute on a warm daemon. Use it for the run whose result you are going t
 act on — a merge gate, a floor measurement, a falsification — and let the cache
 speed up ordinary iteration. If a failure names a path outside your own tree,
 suspect this before you suspect your change.
+
+## The emulator job's module list is hand-written, and it silently omitted two
+
+Plan 3 Task 10 measured that `.github/workflows/e2e.yml` ran
+`:core:database`, `:core:media` and `:app` — and **not** `:feature:player`'s 24
+instrumented tests, nor `:integrations:core`'s 17. Both modules had a working
+device suite that CI had never once executed.
+
+**The coverage gate could not have caught it, and that was measured rather than
+assumed.** A floor marked `requiresInstrumentedData` is enforced by
+`jacocoTestCoverageVerification`, which runs *in the emulator job* — so a module
+missing from that job's command line has its floors skipped by the same omission
+that skips its tests. The gate and the thing it gates fail together, silently.
+
+`ConventionTest`'s `every module with instrumented tests is run by the emulator
+job` now holds that command line against the repository: any module with a
+`src/androidTest` source set must appear in it. It found the second module by
+itself, after the author had already fixed the first by hand.
+
+The general shape, which has now cost this repository three separate gates: **a
+list written by hand in one file, describing something discoverable from the
+tree, drifts and nothing notices.** When you find one, do not just fix the list
+— derive it, or assert it against what it claims to describe.
