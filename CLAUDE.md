@@ -95,6 +95,26 @@ matched its own command line and so could never report "finished", and a PID
 file containing the literal text `PID=12345` rather than the bare number, which
 made every liveness check structurally incapable of reporting "alive".
 
+## A subagent's `.output` file mtime is not a liveness signal
+
+The per-agent transcript under the session's `tasks/` directory is flushed at
+its own cadence, not on every tool round. Measured here: five lanes showed
+`.output` untouched for ~36 minutes while every one of them had written source
+files 21-88 seconds earlier, and one had committed 8 seconds earlier. A
+controller watching those mtimes concluded twice that healthy agents had
+stalled.
+
+Use signals the work itself produces: `git -C <worktree> log -1 --format=%ct`,
+and the newest source-file mtime in the worktree. Those move when the agent
+moves.
+
+This is the third liveness check in this repository that could not report
+"alive" — after a `pgrep` that matched its own command line and a PID file
+holding `PID=12345` instead of a bare number. The pattern is always the same:
+the check returns a falsey value for both "dead" and "I cannot tell", and the
+reader takes it for "dead". Prefer a check that fails loudly when it cannot
+observe its subject.
+
 ## `ci/mutation-probes.sh` is a regression list, not a rule
 
 Read its header before changing it. Its probe count is derived at runtime and
