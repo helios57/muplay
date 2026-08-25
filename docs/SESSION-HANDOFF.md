@@ -81,3 +81,44 @@ Two of those were in **the gates themselves**: `check` never compiled
 androidTest, and a stale probe silently aborted the whole regression list. A
 gate that passes because it never looks at the thing it claims to cover is the
 defect this project is most prone to.
+
+## SOAP review (Plan 6 Task 3) — landed after the handoff was written
+
+**CRITICAL 1 · HIGH 2 · MEDIUM 4 · LOW 4 · MINOR 4.** The security claim the task
+was dispatched to prove **holds** — the reviewer brute-forced every code point
+`U+0000`–`U+2FFF` through the allowlists, confirmed `Regex.matches` anchors both
+ends (no trailing-newline bypass), and found no input that passes validation and
+still injects a header. Ordering is as claimed: validation runs before DNS or
+socket. But three defects sit under it, and **Tasks 5/8/9 should not be built on
+this until they are fixed.**
+
+- **CRITICAL — `SoapEnvelope.descendant()` recurses unbounded.** Called from
+  `parseFault` on *every* response, outside `invoke`'s try/catch. Depth 8000
+  (~56 KB, inside the 1 MiB cap) overflows a default JVM stack; depth **3000**
+  overflows at `-Xss512k` ≈ an Android worker thread. `SoapClient`'s KDoc tells
+  later tasks that `catch (IOException)` is complete — `StackOverflowError` is an
+  `Error`. **Routed to the SSDP fix lane**, which is already fixing the identical
+  shape in `DeviceDescription.parseDevice`.
+- **HIGH — `render` inserts argument *values* verbatim.** The KDoc claims `render`
+  is "total: well-formed XML or throws". It is not. A Navidrome stream URL
+  (`?u=…&t=…&s=…`) produces `The reference to entity "t" must end with ';'` — not
+  well-formed. And `"x</CurrentURI><Speed>99</Speed><CurrentURI>y"` silently
+  injects a third argument. Task 4's `DidlLite` escapes *the same URL* and
+  documents why; SOAP, the layer that owns framing, does not. Fix: escape values
+  in `render` and have `DidlLite` hand over unescaped, or split the type
+  (`text(...)` vs `preEscaped(...)`).
+- **HIGH — the "strict" fake parses request bodies with a regex**
+  (`FakeRenderer.kt:51-56`), so it cannot see malformed XML at all. That is
+  *why* 266 green tests could not see the HIGH above. Fix: parse with
+  `DocumentBuilder`, answer 500 when it does not parse, keep `headBytes` raw.
+- MEDIUM: an unreadable 200 body is reported as a **successful empty result**,
+  indistinguishable from a legitimately argument-less response; the same 4096-char
+  DOCTYPE window; no mechanical rule stopping a later task calling
+  `CastHttpClient.exchange` with an unvalidated peer name (a `ConventionTest`
+  would cost ten lines).
+- LOW: `requireControlUrl`'s refusal echoes userinfo where `CastHttpClient`
+  deliberately strips it.
+
+Worth keeping from that review: it praised **recording the two *failed*
+falsification attempts** as the single best thing in the task report — evidence
+that "I withheld a test and the floor still passed" is a result, not an error.
