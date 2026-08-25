@@ -203,6 +203,10 @@ SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
 DIDL_SERVED = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 DIDL_LITE = "core/cast/src/main/kotlin/app/muplay/cast/didl/DidlLite.kt"
 DIDL_MIME = "core/cast/src/main/kotlin/app/muplay/cast/didl/MimeAgreement.kt"
+PROXY_RANGE = "core/cast/src/main/kotlin/app/muplay/cast/proxy/RangeHeader.kt"
+PROXY_REGISTRY = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyRegistry.kt"
+PROXY_UPSTREAM = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyUpstream.kt"
+PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -1950,6 +1954,95 @@ PROBES = [
      "    val urlMime = ServedMedia.forExtension(extension)?.mimeType",
      "    val urlMime = ServedMedia.forExtension(extension)?.mimeType ?: ServedMedia.FALLBACK_MIME",
      "an extension this client never serves is reported rather than assumed to be mp3", 1),
+
+    # ---- Plan 6 Task 6: the proxy ------------------------------------------------------------
+    #
+    # The defect this task is written against is the one a status-code assertion cannot see: a
+    # proxy that answers 206 with a correct `Content-Range` and streams from byte 0. Six of the ten
+    # probes below are offsets, because `bytes=0-` -- the request a naive renderer sends first, and
+    # therefore the one most likely to be the only one tested -- is served identically by a correct
+    # implementation and by one that ignores the header entirely.
+    #
+    # MEASURED with `:core:cast:test`, test by test, in task-6-report.md.
+
+    # `>=` against `>`. The whole difference is at EXACTLY `firstByte == totalLength`, which is why
+    # the live test that asked for `length + 1000` was green against this mutation and had to be
+    # rewritten to ask at the boundary. A renderer that seeks to the end of a track gets a 206
+    # naming no bytes instead of the 416 that tells it how long the resource really is.
+    ("proxy/range-boundary-off-by-one", PROXY_RANGE,
+     "      request.firstByte >= totalLength -> RangeResolution.Unsatisfiable",
+     "      request.firstByte > totalLength -> RangeResolution.Unsatisfiable",
+     "a first byte at or past the end is unsatisfiable", 2),
+
+    # `bytes=-0` names no bytes at all. Read as "no suffix, so everything", it hands a renderer the
+    # START of the file when it asked for nothing -- and RFC 7233 calls it unsatisfiable.
+    ("proxy/range-suffix-zero-is-whole", PROXY_RANGE,
+     "      request.lastBytes <= 0 -> RangeResolution.Unsatisfiable",
+     "      request.lastBytes <= 0 -> RangeResolution.Whole",
+     "a suffix of zero bytes is unsatisfiable, not the whole entity", 2),
+
+    # A 206 with no `Content-Range` is a partial response the renderer cannot place. Silent: the
+    # status is right, the length is right, and the seek bar simply does not work.
+    ("proxy/no-content-range", PROXY_SERVER,
+     '              contentRange = "$BYTES_UNIT ${range.firstByte}-${range.lastByte}/$totalLength",',
+     "              contentRange = null,",
+     "a ranged HEAD reports the range's length without sending it", 2),
+
+    # THE PROBE THIS TASK EXISTS FOR. The head is correct in every particular -- 206, the right
+    # `Content-Range`, the right `Content-Length` -- and the bytes are the start of the file. Every
+    # seek lands at the beginning of the track, and nothing anywhere reports a problem. No status
+    # assertion can see it; only an assertion on the BYTES can, and both the fake-upstream table and
+    # the live byte-exact tests do.
+    ("proxy/stream-from-byte-zero", PROXY_SERVER,
+     "      upstream.open(media.upstreamUrl, range).use { input ->",
+     "      upstream.open(media.upstreamUrl, ByteRange(0, range.length - 1)).use { input ->",
+     "a 206 body is the bytes that were asked for and not the bytes at the start of the file", 3),
+
+    # The traversal check. Pulling the token out of a path with `substringAfterLast('/')` resolves
+    # `/media/../<token>.mp3` -- and anything else ending the same way -- to a real published item.
+    ("proxy/token-out-of-any-path", PROXY_REGISTRY,
+     "    published.values.firstOrNull { it.path == path }",
+     "    published.values.firstOrNull { it.path.substringAfterLast('/') == path.substringAfterLast('/') }",
+     "a path outside the media prefix resolves to nothing, traversal included", 1),
+
+    # A token is a CAPABILITY, not an identity. Derived from the upstream URL it is stable across
+    # sessions, guessable by anything that knows the library, and a revoked session's URL works
+    # again the moment the same track is cast twice.
+    ("proxy/token-is-the-url", PROXY_REGISTRY,
+     '    val token = ByteArray(TOKEN_BYTES).also(random::nextBytes)\n      .joinToString("") { "%02x".format(it) }',
+     "    val token = upstreamUrl.hashCode().toString(16)",
+     "two publications of the same url get different tokens", 6),
+
+    # Spec section 6: Sonos infers MIME from the URL, not from `Content-Type`. A path with no
+    # extension is `714 Illegal MIME-type` on real hardware -- and a perfectly good 200 here.
+    ("proxy/path-without-an-extension", PROXY_REGISTRY,
+     "      path = PATH_PREFIX + served.fileName(token),",
+     "      path = PATH_PREFIX + token,",
+     "a published path ends in the served extension, because sonos sniffs the url", 4),
+
+    # Spec section 4's 429. Ignoring `Retry-After` means backing off 0.5 s when the server asked for
+    # 3 -- which is how a transcode limit turns into "random playback failure" rather than a wait.
+    ("proxy/retry-after-ignored", PROXY_UPSTREAM,
+     "    retryAfterHeader?.toLongOrNull()?.let { return (it * MILLIS_PER_SECOND).coerceIn(0L, MAX_BACKOFF_MS) }\n",
+     "",
+     "the origin's own retry-after wins over the backoff", 4),
+
+    # 503 says "try again" and 502 says "this is broken". A renderer that believes the second one
+    # stops, and the user sees a track that will not play with no way to retry it.
+    ("proxy/throttle-is-502", PROXY_SERVER,
+     '          503,\n          "Service Unavailable",',
+     '          502,\n          "Bad Gateway",',
+     "a throttled upstream becomes 503 with a retry-after, not 502", 2),
+
+    # THE SECURITY PROBE, and the companion to `cast/no-inbound-guard` above. That one proves
+    # `LocalNetworkOnly.acceptLocal` refuses a peer off the local network; this one proves the proxy
+    # -- the only ServerSocket in the app, serving Navidrome-authenticated audio to a LAN -- is
+    # actually the thing that calls it. The refusal itself cannot be observed from a loopback-only
+    # test, because loopback is local by construction, so the call site is what gets asserted.
+    ("proxy/no-inbound-guard-at-the-call-site", PROXY_SERVER,
+     "  internal val acceptConnection: (ServerSocket) -> Socket? = LocalNetworkOnly::acceptLocal,",
+     "  internal val acceptConnection: (ServerSocket) -> Socket? = { it.accept() },",
+     "connections are taken through the inbound local-network guard", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why

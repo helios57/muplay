@@ -2430,16 +2430,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // 100 BRANCH counters across the five, all covered. The floor is 0.90 and not the measured
     // 1.0000 for this table's usual reason: JaCoCo validates a minimum is inside 0.0..1.0 before it
     // reads a ratio, so a floor at the measurement can only ever be falsified by withholding tests
-    // -- which is how these were falsified. Recorded in task-6-report.md, and the near-misses are
-    // the interesting part:
+    // -- which is how these were falsified. Every number below was read off a run; the near-misses
+    // are the interesting part, and the second one is the most interesting thing in this entry:
     //
-    //   * `RangeHeader`: withholding `everything unparseable is Ignored...` alone leaves it at
-    //     **43/48 = 0.8958** and the rule fires. Five branches of forty-eight is the whole margin.
-    //   * `MediaProxyServer`: withholding `the eleven range cases...` -- the whole table -- leaves
-    //     it at **27/34 = 0.7941** and the rule fires.
+    //   * `RangeHeader`: withholding `everything unparseable is Ignored...` **alone leaves it at
+    //     46/48 = 0.9583 and this floor green**. Adding `a number too large to hold is ignored...`
+    //     and `a range against an empty entity is unsatisfiable` reaches **41/48 = 0.8542** and the
+    //     rule fires -- *"Rule violated for class app.muplay.cast.proxy.RangeHeader: branches
+    //     covered ratio is 0.85, but expected minimum is 0.90"*.
+    //   * `MediaProxyServer`: withholding `the eleven range cases...` -- the ENTIRE range table --
+    //     leaves it at **34/34 = 1.0000**, unchanged. Not a surprise on reflection and worth
+    //     stating anyway, because it is this plan's own thesis about this class of defect: the
+    //     table's value is in what it asserts (the exact status, `Content-Range` and *bytes* of
+    //     eleven requests), and a proxy that ignored `Range` entirely would execute every one of
+    //     these branches. Coverage cannot see that; the mutation probes can, and do. It takes
+    //     **thirteen** withheld tests -- the table plus every 4xx/5xx and both HEAD tests -- to
+    //     reach **28/34 = 0.8235** and fire the rule.
     //   * `OkHttpProxyUpstream`: withholding `an origin that never stops refusing gives up...`
     //     together with `an origin that refuses without saying how long...` leaves it at
-    //     **6/8 = 0.75**.
+    //     **5/8 = 0.6250** and the rule fires.
     //
     // NOT here, and named so the omission is a decision rather than an oversight: `ProxyRegistry`
     // and `ByteRange` carry **no BRANCH counter at all** (`resolve`'s `firstOrNull` predicate and
@@ -2474,9 +2483,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                                  object expression, and gated because a `close` override
     //                                  nothing ever calls is a leaked connection per track.
     //
-    // Falsified: withholding `ProxyRegistryTest`'s `a revoked token resolves to nothing...` and
-    // `revokeAll empties the registry` drops `ProxyRegistry` to **12/14 = 0.8571** and this rule
-    // fires.
+    // Falsified, and this one needed a third test as well: withholding `ProxyRegistryTest`'s `a
+    // revoked token resolves to nothing...` and `revokeAll empties the registry` leaves
+    // `ProxyRegistry` at **13/14 = 0.9286** and this rule green, because `MediaProxyServerTest`'s
+    // `an unknown token is 404 and a revoked one stops working` still calls `revoke`. Withholding
+    // that one too reaches **11/14 = 0.7857** -- *"Rule violated for class
+    // app.muplay.cast.proxy.ProxyRegistry: lines covered ratio is 0.78, but expected minimum is
+    // 0.90"*.
     //
     // The remaining classes in this package carry **no counter of either kind** -- `RangeRequest`
     // and `RangeResolution` (interfaces), their four `data object` members, `ProxyUpstream`
