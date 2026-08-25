@@ -8,6 +8,7 @@ import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 
 /**
@@ -77,6 +78,22 @@ interface SubsonicSource {
    * exactly this reason.
    */
   fun coverArtUrl(coverArtId: String, sizePx: Int?): String
+
+  /**
+   * An authenticated `/rest/stream` URL for one song. Not `suspend`: it opens no connection, it
+   * builds a URL.
+   *
+   * Handed to Media3, which fetches it with **its own** HTTP stack and none of this client's
+   * interceptors, so every credential has to be in the string. It carries a **fresh salt**, so two
+   * calls for the same song produce different strings — see [coverArtUrl] for the same property
+   * and `:core:media`'s `TrackIdCacheKeyFactory` for why that makes a URL-derived cache key
+   * unusable.
+   *
+   * [format] is a [StreamFormat], never a `String`: the global constraints say stream requests
+   * force `raw` or `mp3` and **never** Opus, and the way to enforce that is to make `opus`
+   * unrepresentable rather than to check for it.
+   */
+  fun streamUrl(songId: String, format: StreamFormat): String
 }
 
 /**
