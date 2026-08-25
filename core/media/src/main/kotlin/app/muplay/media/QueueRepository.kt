@@ -35,6 +35,10 @@ class QueueRepository @Inject constructor(private val sourceProvider: SubsonicSo
       song = song,
       streamUri = source.streamUrl(song.id, format),
       artworkUri = song.coverArtId?.let { source.coverArtUrl(it, ARTWORK_SIZE_PX) },
+      // The same value the URL was built from, passed rather than recomputed: the served MIME
+      // type and the `format` query parameter are two statements of one decision, and deciding
+      // twice is how they drift.
+      format = format,
     )
   }
 

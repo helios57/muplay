@@ -42,6 +42,20 @@ object RealTrackBytes {
     )
   }
 
+  /**
+   * The one client, for a caller that needs a stream URL rather than bytes -- `GaplessTest`, which
+   * hands the URLs to a real `ExoPlayer` instead of fetching them itself.
+   *
+   * An accessor rather than a public `val` so the property above stays the single construction
+   * site, and it exists because two branches disagreed about this in silence: `42e88a0` made the
+   * property `private` on master at the same time as `35acd13` wrote `RealTrackBytes.client()` on
+   * `p3t7b-branch`, and the merge of the two produced an `androidTest` source set that does not
+   * compile at all. Nothing went red because no instrumented compile ran after the merge -- the
+   * JVM tier cannot see this source set, which is the limit `ci/mutation-probes.sh`'s own header
+   * records for a different reason. Plan 6 Task 4 found it on the first `assembleDebugAndroidTest`.
+   */
+  fun client(): SubsonicClient = client
+
   private var tracks: List<Song>? = null
   private val bytesById = mutableMapOf<String, ByteArray>()
 

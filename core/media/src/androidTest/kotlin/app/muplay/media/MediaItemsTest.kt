@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,8 +53,10 @@ class MediaItemsTest {
     coverArtId = "art-2",
   )
 
-  private val firstItem = MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1")
-  private val secondItem = MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2")
+  private val firstItem =
+    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1", StreamFormat.Raw)
+  private val secondItem =
+    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", StreamFormat.Raw)
 
   private fun <T> pair(select: (MediaItem) -> T): List<T> = listOf(select(firstItem), select(secondItem))
 
@@ -132,7 +135,12 @@ class MediaItemsTest {
 
   @Test
   fun aSongWithNoArtworkGetsNoArtworkUriRatherThanAPlaceholder() {
-    val item = MediaItems.of(first.copy(coverArtId = null), "https://host/stream", artworkUri = null)
+    val item = MediaItems.of(
+      first.copy(coverArtId = null),
+      "https://host/stream",
+      artworkUri = null,
+      format = StreamFormat.Raw,
+    )
 
     assertThat(item.mediaMetadata.artworkUri).isNull()
     // ...and the rest of the mapping is unaffected, so "no artwork" is not silently "no metadata".
@@ -143,7 +151,8 @@ class MediaItemsTest {
   fun absentTrackAndDiscNumbersStayAbsent() {
     // Navidrome omits these for a single-file audiobook. Mapping a missing number to 0 would put
     // "0" on a lock screen and sort a book above every real track.
-    val item = MediaItems.of(first.copy(trackNumber = null, discNumber = null), "https://host/s", null)
+    val item =
+      MediaItems.of(first.copy(trackNumber = null, discNumber = null), "https://host/s", null, StreamFormat.Raw)
 
     assertThat(item.mediaMetadata.trackNumber).isNull()
     assertThat(item.mediaMetadata.discNumber).isNull()
@@ -169,7 +178,45 @@ class MediaItemsTest {
    */
   @Test
   fun theMediaTypeIsNotAnAudiobookInferenceAndTheSuffixDoesNotChangeIt() {
-    assertThat(MediaItems.of(second, "https://host/s", null).mediaMetadata.mediaType)
+    assertThat(MediaItems.of(second, "https://host/s", null, StreamFormat.Raw).mediaMetadata.mediaType)
       .isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
   }
+
+  /**
+   * The **served** MIME type, which is not the source file's suffix.
+   *
+   * `MediaItem.localConfiguration.mimeType` is a real Media3 field the local extractor reads as a
+   * hint, and Plan 6 makes it the single value three separate parties read: the proxy serves it as
+   * `Content-Type`, the proxy path ends in the matching extension, and `res/@protocolInfo` in the
+   * DIDL document declares it. See `ServedMedia` and `MimeAgreement` in `:core:cast`.
+   *
+   * Two observations of the raw branch, so it cannot be a constant, and one of the transcode
+   * branch, where the suffix must NOT win: without that last line an Opus track is announced to
+   * Sonos as `audio/ogg` while MP3 bytes are served -- spec section 12's "Sonos rejects a served
+   * format" risk in its most confusing form.
+   */
+  @Test
+  fun theMimeTypeIsTheServedFormatAndNotTheSourceSuffix() {
+    assertThat(mimeOf(first.copy(suffix = "mp3"), StreamFormat.Raw)).isEqualTo("audio/mpeg")
+    assertThat(mimeOf(first.copy(suffix = "flac"), StreamFormat.Raw)).isEqualTo("audio/flac")
+    assertThat(mimeOf(first.copy(suffix = "opus"), StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+  }
+
+  /**
+   * ...and the value really did come from this call rather than from the queue deciding twice.
+   * `QueueRepository` computes one `StreamFormat`, builds the URL with it and passes the same value
+   * here, so `format=mp3` on the wire and `audio/mpeg` on the item are one decision. The pairing
+   * that would go unnoticed is a `.opus` source streamed raw, which this rules out from the other
+   * side: the same song answers differently depending only on the format it is given.
+   */
+  @Test
+  fun theSameSongAnswersDifferentlyForTheFormatItsUrlWasBuiltWith() {
+    val song = first.copy(suffix = "flac")
+
+    assertThat(mimeOf(song, StreamFormat.Raw)).isEqualTo("audio/flac")
+    assertThat(mimeOf(song, StreamFormat.Mp3(192))).isEqualTo("audio/mpeg")
+  }
+
+  private fun mimeOf(song: Song, format: StreamFormat): String? =
+    MediaItems.of(song, "https://host/s", null, format).localConfiguration?.mimeType
 }
