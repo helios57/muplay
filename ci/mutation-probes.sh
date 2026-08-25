@@ -52,8 +52,9 @@
 #
 # THE INSTRUMENTED TIER IS OUT OF REACH HERE, AND THAT IS A REAL LIMIT, NOT A DESIGN CHOICE THIS
 # SCRIPT MAKES GOOD ON ITS OWN. `run_suite()` below runs `./gradlew :core:network:test
-# :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test`
-# -- six plain
+# :core:model:test :core:database:test :feature:setup:test :feature:library:test :core:media:test
+# :core:cast:test`
+# -- seven plain
 # JVM invocations (a third module, `:feature:setup`, joined in Task 8's review round 1:
 # `SetupViewModel` is a plain ViewModel with hand-written fakes for its two Android-backed
 # collaborators, so its own logic needs no device either; a fourth, `:feature:library`, joined in
@@ -778,6 +779,16 @@ JVM_TEST_RESULT_DIRS = {
     # tier is the whole point of the module's shape: `StreamRetryPolicy` and `MediaModule` carry no
     # Android or Media3 type in their signatures precisely so this runner can reach them.
     "core/media": "testDebugUnitTest",
+    # `:core:cast` joined in Plan 6 Task 1. A plain `muplay.jvm.library`, so `test` -- and the
+    # entire module is reachable here by construction: it carries no Android type at all, which is
+    # what puts the casting protocol surface, the proxy and the routing decision in Tier 1.
+    # Verified by breaking it on purpose: with the cast probes added and this entry (and the
+    # invocation below) still absent, `./ci/mutation-probes.sh cast` reported 0/8 caught, every one
+    # of them "got 0" failures. That is the same argument this file's header makes about the probe
+    # list, applied to the runner -- a runner that runs no tests for a module reports "caught" for
+    # nothing and "missed" for nothing, and the only way to tell which you have is to make it fail
+    # once deliberately.
+    "core/cast": "test",
 }
 
 
@@ -834,7 +845,7 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test"],
+                    ":core:media:test", ":core:cast:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
