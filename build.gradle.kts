@@ -1017,6 +1017,158 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
+    // ---- Plan 3 Task 5: the service, the player factory and the connection --------------------
+    // 6/6 = 1.0000 BRANCH from **JVM data alone** (`TaskRemovalPolicyTest`, four tests, no
+    // emulator), and the reason `TaskRemovalPolicy` is a separate object at all.
+    // `Service.onTaskRemoved` is invoked by the system and by nothing else, so the *override* is
+    // unreachable from every test this project can run -- but the rule it applies does not have to
+    // live inside it. Same split as `StreamRetryPolicy` behind the Media3 adapter, reached from a
+    // different direction: there, the decision was hoisted out of an `@UnstableApi` signature;
+    // here, out of an Android lifecycle callback.
+    //
+    // The six branches are the rule: `playWhenReady != true` (which folds in "there is no player at
+    // all"), and `(mediaItemCount ?: 0) == 0`. Both halves fail in opposite directions and both are
+    // driven -- stopping unconditionally kills music a user is listening to, never stopping leaves
+    // a notification they cannot dismiss.
+    //
+    // Falsified with `TaskRemovalPolicyTest` moved aside, because a floor measuring exactly 1.0000
+    // cannot be falsified by raising its minimum (see the Task 8a note above for the exact JaCoCo
+    // message that produces and why it proves nothing): "Rule violated for class
+    // app.muplay.media.TaskRemovalPolicy: branches covered ratio is 0.00, but expected minimum is
+    // 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TaskRemovalPolicy"),
+    ),
+    // `PlaybackState$Companion` 4/4 = 1.0000 BRANCH, JVM-only (`PlaybackStateTest`). The four
+    // branches are `durationMsOf`'s two elvis arms and its `coerceAtLeast`, which is the whole of
+    // this task's answer to a format the server transcodes on the fly: `player.duration` is
+    // `C.TIME_UNSET` for the entire track, and without the metadata fallback every Opus track shows
+    // as unknown length on the lock screen, in Auto, in Wear and in Plan 3's seek bar.
+    //
+    // `*Companion`, not `$Companion`: a literal `$` in a pattern never matches (this table's own
+    // doc, gotcha 3). Falsified with `PlaybackStateTest` moved aside: 0/4, BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackState*Companion"),
+    ),
+    // `PlaybackState` 24/24 and `TaskRemovalPolicy` 1/1 = 1.0000 LINE, JVM-only. Both ride here as
+    // well as (for `TaskRemovalPolicy` and the companion) carrying a BRANCH rule, because the
+    // branchless half of each is real: `PlaybackState` itself has **no branches at all**, and its
+    // twenty-four lines are `NOTHING_PLAYING` -- the value four downstream tasks render before
+    // anything is loaded. A field of it silently changing meaning (`hasNext = true` on an empty
+    // queue) moves no BRANCH counter anywhere.
+    //
+    // `PlaybackState$Companion`'s own 2/2 LINE rides on the BRANCH rule above, which is what
+    // `warnUngatedClasses` needs -- a class matched by any rule is gated.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackState", "app.muplay.media.TaskRemovalPolicy"),
+    ),
+    // 23/24 = 0.9583 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
+    // in `:app` (see that suite's own doc for why it cannot live in this module, and `Jacoco.kt`'s
+    // `mergedExecutionData` for why its `.ec` still lands here).
+    //
+    // The one missed branch is the compiler's own: `suspendCoroutine` emits a `COROUTINE_SUSPENDED`
+    // check whose other arm is a synchronous resume that a real IPC connection never takes. 0.90
+    // leaves that single synthetic branch of room and no more -- one genuinely-uncovered branch
+    // takes this to 22/24 = 0.9166, two takes it to 0.875 and fails.
+    //
+    // Three branches that used to sit here are gone rather than excused, and that is worth
+    // recording because the fix improved the code: `release()`'s null-safe calls stayed uncovered
+    // until a test released a connection that had never connected (which is what a UI does when the
+    // user leaves before the service binds), `controller()`'s cached arm until a test asked for the
+    // controller twice, and the ticker's `isActive` condition and `controller?.let` were deleted --
+    // a loop that exits only by cancellation cannot take its condition's false arm, and a field
+    // that is cleared only after the coroutine is cancelled cannot be null inside it. Two branches
+    // that can never take their other arm are not safety; they are two uncoverable branches.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.PlaybackConnection",
+        "app.muplay.media.PlaybackConnection*controller*2",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 45/45
+    // and its four compiled lambdas (`controller$2` 7/7, `listener$1` 2/2, `connect$2$1` 2/2,
+    // `startTicker$1` 3/3), `MuPlayerFactory` 10/10, and the service's two nested types
+    // (`Companion` 1/1 -- `sessionToken`; `LibraryCallback` 1/1 -- the "not supported" browse
+    // answer Plan 5 will fill in).
+    //
+    // `MuPlayerFactory` has **zero BRANCH counters**, so LINE is the only counter that can gate it
+    // at all -- the vacuous-floor shape this table's own doc describes, checked rather than assumed.
+    // That matters more than ten lines suggest: those ten lines are the only place in this project
+    // an `ExoPlayer` is built, and the one of them that attaches the 429 retry policy is silent
+    // when it is missing. LINE is what notices a deleted builder call; `PlayerConstructionTest`
+    // (JVM) is what notices a second builder appearing somewhere else.
+    //
+    // `MuPlaybackService*Companion` and `*LibraryCallback` are listed by name rather than as
+    // `MuPlaybackService*`, deliberately: that pattern also matches `MuPlaybackService` itself,
+    // which measures 0.8710 and has its own rule below.
+    //
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
+    // have: "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered ratio is 0.00,
+    // but expected minimum is 0.90", BUILD FAILED, once per class.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.PlaybackConnection",
+        "app.muplay.media.PlaybackConnection*controller*2",
+        "app.muplay.media.PlaybackConnection*listener*1",
+        "app.muplay.media.PlaybackConnection*connect*2*1",
+        "app.muplay.media.PlaybackConnection*startTicker*1",
+        "app.muplay.media.MuPlayerFactory",
+        "app.muplay.media.MuPlaybackService*Companion",
+        "app.muplay.media.MuPlaybackService*LibraryCallback",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // `MuPlaybackService` itself: 27/31 = 0.8710 LINE, instrumented, and the **one floor in this
+    // module below 0.90**. The number is a measurement and so is the exception, so both are spelled
+    // out rather than rounded to a comfortable figure.
+    //
+    // Four lines cannot be covered by any test this project can run, and they are all of the miss:
+    //
+    //   L96-L98  `onTaskRemoved`, called by the system when a user swipes the app out of recents
+    //            and by nothing else. There is no instrumentation API that delivers it. The *rule*
+    //            it applies was hoisted into `TaskRemovalPolicy` for exactly this reason and is
+    //            gated at 1.0000 by the fast tier above; what is left here is the adapter that
+    //            reads two properties off a nullable player.
+    //   L76      the lazy message of `checkNotNull(packageManager.getLaunchIntentForPackage(..))`.
+    //            An installed application always has a launcher activity, so the failure arm is
+    //            unreachable -- but the check is not decoration: without it the session activity is
+    //            null and the notification silently does nothing when tapped, which is a defect a
+    //            user reports and a developer cannot reproduce from a log.
+    //
+    // 0.85 leaves those four lines and no more: one genuinely-uncovered line takes this to
+    // 26/31 = 0.8387 and fails. Watched failing at a minimum of 0.90 -- "Rule violated for class
+    // app.muplay.media.MuPlaybackService: lines covered ratio is 0.87, but expected minimum is
+    // 0.90", BUILD FAILED -- which is the falsification a fractional floor admits, and then
+    // restored.
+    //
+    // No BRANCH rule, and that is the honest reading rather than an omission: the class measures
+    // 2/12 = 0.1667, because ten of its twelve branches are the null-safe reads inside
+    // `onTaskRemoved` and the unreachable arm of the `checkNotNull` above. A BRANCH floor at 0.16
+    // would permit anything and is the vacuous shape this table exists to refuse; `warnUngatedClasses`
+    // is satisfied by the LINE rule, because a class matched by any rule is gated.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.media.MuPlaybackService"),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey

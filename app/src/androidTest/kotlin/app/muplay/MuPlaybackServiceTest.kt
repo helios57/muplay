@@ -3,6 +3,7 @@ package app.muplay
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.service.notification.StatusBarNotification
 import androidx.media3.common.MediaItem
@@ -16,7 +17,9 @@ import app.muplay.database.CredentialStoreEntryPoint
 import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackEntryPoint
 import app.muplay.media.PlaybackNotification
+import app.muplay.media.MuPlaybackService
 import app.muplay.media.PlaybackQueue
+import app.muplay.media.PlaybackState
 import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
@@ -278,6 +281,71 @@ class MuPlaybackServiceTest {
     assertThat(state.mediaId).isEqualTo(songs[1].id)
     assertThat(state.hasNext).isFalse
     assertThat(state.hasPrevious).isTrue
+  }
+
+  /**
+   * One controller per connection, however many times it is asked for.
+   *
+   * Not a triviality: `controller()` is what every screen in `:feature:player` will call, and a
+   * connection that built a second `MediaController` per caller would leave the first one bound,
+   * its listener still publishing into the same `StateFlow`, and the service unable to stop because
+   * something is still connected to it. Asserted by identity, not by equality.
+   */
+  @Test
+  fun askingTheConnectionForItsControllerTwiceReturnsTheSameOne() {
+    val again = runBlocking { connection.controller() }
+
+    assertThat(again).isSameAs(controller)
+  }
+
+  /**
+   * Releasing a connection that never connected must be a no-op, not a crash.
+   *
+   * This is the shape a UI produces on its own: a screen is created, its connection starts, the
+   * user leaves before the service binds, and the screen releases. Nothing here can be reached by
+   * any test that connects first.
+   */
+  @Test
+  fun releasingAConnectionThatNeverConnectedIsSafeAndLeavesNothingPlaying() {
+    var fresh: PlaybackConnection? = null
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      fresh = PlaybackConnection(context).also { it.release() }
+    }
+
+    assertThat(checkNotNull(fresh).state.value).isEqualTo(PlaybackState.NOTHING_PLAYING)
+  }
+
+  /**
+   * The service can be stopped and comes back with a working session.
+   *
+   * `onDestroy` releases the player and the session, and it is the one place in this class where a
+   * leak would be silent: an unreleased `ExoPlayer` keeps its audio focus, its codecs and its
+   * loading thread, and the symptom is a second player fighting the first one over the output --
+   * which is only visible once a session has been created twice in one process. That is what this
+   * does.
+   */
+  @Test
+  fun theServiceCanBeStoppedAndComesBackWithAWorkingSession() {
+    setQueueAndPlay(listOf(songs[0]))
+    awaitPositionAtLeast(1_000L)
+
+    onMain {
+      controller.stop()
+      controller.clearMediaItems()
+      connection.release()
+    }
+    context.stopService(Intent(context, MuPlaybackService::class.java))
+
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      connection = PlaybackConnection(context)
+    }
+    controller = runBlocking { connection.controller() }
+    setQueueAndPlay(listOf(songs[1]))
+
+    // A position that moved, on the second instance of the service, is the observation a leaked or
+    // half-released player could not produce.
+    awaitPositionAtLeast(1_000L)
+    assertThat(connection.state.value.mediaId).isEqualTo(songs[1].id)
   }
 
   private fun setQueueAndPlay(items: List<Song>): List<MediaItem> {

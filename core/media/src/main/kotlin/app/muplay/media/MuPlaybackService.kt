@@ -87,15 +87,14 @@ class MuPlaybackService : MediaLibraryService() {
   /**
    * Stops the service when the user swipes the app away **and nothing is playing**.
    *
-   * Both halves matter. Stopping unconditionally kills music the user is listening to while they
-   * clear their recents list; never stopping leaves an idle foreground service and a stale
-   * notification the user cannot get rid of.
+   * The rule is [TaskRemovalPolicy]'s, not this method's, and the split is not decoration: this
+   * override is called by the system and by nothing else, so it is unreachable from any test this
+   * project can run, and a rule that lives inside it is a rule protected by a comment. See that
+   * object for why both halves of the condition matter and which defect each one prevents.
    */
   override fun onTaskRemoved(rootIntent: Intent?) {
     val player = session?.player
-    if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
-      stopSelf()
-    }
+    if (TaskRemovalPolicy.stopsService(player?.playWhenReady, player?.mediaItemCount)) stopSelf()
   }
 
   override fun onDestroy() {

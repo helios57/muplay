@@ -20,7 +20,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -107,7 +106,7 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
       controller = connected
       connected.addListener(listener)
       publish(connected)
-      startTicker()
+      startTicker(connected)
     }
   }
 
@@ -147,10 +146,22 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
     }
   }
 
-  private fun startTicker() {
+  /**
+   * Samples [player] until this connection's scope is cancelled.
+   *
+   * Takes the controller as an argument rather than re-reading the field, and loops on `while
+   * (true)` rather than on `isActive`, for the same reason in both cases: each of the alternatives
+   * adds a branch that can never take its other arm. The field cannot be null while the ticker
+   * runs -- [release] cancels this coroutine *before* it clears the field -- and the loop never
+   * exits by its own condition, because `delay` is the cancellation point and throws out of the
+   * body rather than returning to the top. A null check that is never null and a condition that is
+   * never false are not safety; they are two uncoverable branches and a reader's false impression
+   * that either case was thought about.
+   */
+  private fun startTicker(player: Player) {
     scope.launch {
-      while (isActive) {
-        controller?.let(::publish)
+      while (true) {
+        publish(player)
         delay(POSITION_TICK_MS)
       }
     }
