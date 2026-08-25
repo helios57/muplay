@@ -761,6 +761,63 @@ class ConventionTest {
   }
 
   /**
+   * Nothing in `integrations/` may write to a log.
+   *
+   * This is the one rule in this class that guards a *value* rather than a build setting, and it
+   * exists because of what that value is: a Lidarr or Bindery API key is **instance-wide and
+   * carries admin authority** over the user's download client or library, with no scoped or
+   * read-only form to fall back on. `IntegrationCredentials.Lidarr.toString()` redacts it, and
+   * `IntegrationCredentialsTest` plus `ci/mutation-probes.sh`'s `integrations/credentials-redaction`
+   * keep that redaction honest — but a redacted `toString()` protects nothing against
+   * `Log.d(TAG, "key=$apiKey")`, which names the field directly.
+   *
+   * "No integration code logs" was true when this plan's second task shipped and was checked by
+   * *reading*, which is exactly the kind of claim this project has repeatedly watched decay. A
+   * scan is what makes it stay true through Tasks 3-11, when clients, interceptors and error
+   * handling arrive and logging is the obvious thing to reach for while debugging one against a
+   * real instance.
+   *
+   * Test sources are excluded: an assertion is allowed to print, and none of them holds a real
+   * user's key. `android.util.Log` and `System.out`/`err` are matched by name; bare `println(` is
+   * matched too, since that is what actually gets typed at 1am and it goes to logcat on Android.
+   */
+  @Test
+  fun `nothing in integrations writes to a log`() {
+    val root = repoRoot()
+    val sources = File(root, "integrations").walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { it.invariantSeparatorsPath.contains("/src/main/") }
+      .toList()
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(sources).describedAs("Kotlin sources under integrations/*/src/main").isNotEmpty()
+
+    // `android.util.Log` catches the import and the fully-qualified use; a bare `Log.` catches the
+    // imported form. Comments are stripped first, so this file's own prose about logging -- and
+    // every KDoc in `integrations/` that explains why a secret must not be logged -- does not
+    // trip it. That is not hypothetical here: `IntegrationCredentialStore`'s class doc contains
+    // the words "never logged", and `IntegrationCredentials` explains what a log line would leak.
+    val loggers = listOf("android.util.Log", "Log.d(", "Log.e(", "Log.i(", "Log.v(", "Log.w(",
+                         "Timber.", "println(", "System.out", "System.err")
+    val offenders = sources
+      .mapNotNull { file ->
+        val code = kotlinCode(file.readText())
+        val found = loggers.filter { code.contains(it) }
+        if (found.isEmpty()) null else "${file.relativeTo(root).invariantSeparatorsPath} -> $found"
+      }
+
+    assertThat(offenders)
+      .describedAs(
+        "An integration API key is instance-wide and carries admin authority; there is no scoped " +
+          "form of it. Redacting toString() protects nothing against a log line that names the " +
+          "field. If a diagnostic is genuinely needed here, surface it as a typed result the UI " +
+          "can render -- never as a log line that a bug report attaches wholesale.",
+      )
+      .isEmpty()
+  }
+
+  /**
    * Every Kotlin source a release build compiles, except the two files that are allowed to name it.
    *
    * `CleartextPolicy`'s own KDoc used to claim that *"no code compiled into the release variant
