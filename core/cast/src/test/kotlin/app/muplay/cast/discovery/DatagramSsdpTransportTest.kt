@@ -1,7 +1,12 @@
 package app.muplay.cast.discovery
 
 import app.muplay.cast.fake.FakeSsdpResponder
+import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -158,6 +163,43 @@ class DatagramSsdpTransportTest {
   }
 
   /**
+   * Backing out of the picker has to stop the search, and nothing in this loop suspends.
+   *
+   * `withContext(Dispatchers.IO)` does not interrupt a blocking `receive`, and a loop with no
+   * suspension point in it never notices that its coroutine was cancelled -- so before the
+   * `ensureActive()` this asserts, a user who opened the picker and immediately went back left an
+   * IO thread reading datagrams, into a list nobody would ever look at, for the rest of the listen
+   * window: three seconds in production, and longer for the unicast fallback that runs one search
+   * per remembered device. The socket stays bound for that whole time too, because it is closed by
+   * leaving the `use` block.
+   *
+   * The window here is twenty times the assertion's bound, so the two outcomes are not close: with
+   * the check, cancelling costs one socket poll; without it, this waits out [ABANDONED_WINDOW_MS]
+   * and fails by a factor of twenty rather than by a flaky margin.
+   */
+  @Test
+  fun `cancelling a search stops the read loop rather than pinning a thread for the whole window`() = runTest {
+    val ssdp = start()
+
+    val job = launch(Dispatchers.IO) {
+      transport.search(ssdp.endpoint, RendererDirectory.SEARCH_TARGETS, null, ABANDONED_WINDOW_MS)
+    }
+    // Wait on a real clock -- `runTest`'s is virtual -- until both M-SEARCHes have arrived at the
+    // responder. Cancelling before the loop has started would prove nothing at all.
+    withContext(Dispatchers.IO) {
+      val giveUp = System.nanoTime() + STARTUP_GRACE_MS * 1_000_000
+      while (ssdp.searches.size < RendererDirectory.SEARCH_TARGETS.size && System.nanoTime() < giveUp) {
+        Thread.sleep(5)
+      }
+    }
+    assertThat(ssdp.searches).hasSize(RendererDirectory.SEARCH_TARGETS.size)
+
+    val elapsedMs = measureTimeMillis { job.cancelAndJoin() }
+
+    assertThat(elapsedMs).isLessThan(ABANDONED_WINDOW_MS / 20)
+  }
+
+  /**
    * `multicastDestinations()` returns the same endpoint once per usable interface, which looks
    * like a bug and is not -- see its own KDoc. What is asserted here is the part that would be a
    * real defect: that every destination is the address the protocol reserves, and that the list
@@ -178,6 +220,15 @@ class DatagramSsdpTransportTest {
   private companion object {
     /** Long enough for a loopback round trip, short enough that ten of these are not a minute. */
     const val WINDOW_MS = 500L
+
+    /**
+     * The listen window of the search the cancellation test abandons. Long enough that waiting it
+     * out is unmistakably different from stopping, and paid only when that test fails.
+     */
+    const val ABANDONED_WINDOW_MS = 10_000L
+
+    /** How long that test will wait for the loopback round trip before giving up on it. */
+    const val STARTUP_GRACE_MS = 10_000L
 
     /** The `LOCATION` line every generated reply above ends with. */
     const val TAIL = "\r\nLOCATION: http://127.0.0.1:1400/xml/device_description.xml\r\n\r\n"

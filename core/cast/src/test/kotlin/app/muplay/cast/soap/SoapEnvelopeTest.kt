@@ -318,6 +318,89 @@ class SoapEnvelopeTest {
     ).isEmpty()
   }
 
+  /**
+   * **The same 4 KiB blind spot `DeviceDescription` carried, in the second copy of the guard.**
+   *
+   * A comment is legal `Misc` in the prolog, and the prolog has no length limit, so `<!--` + five
+   * thousand spaces + `-->` + a doctype is well-formed XML whose doctype no fixed-size window can
+   * see.
+   *
+   * **Asserted on the predicate, not through `parseFault`, and that is the point of the test.**
+   * `bodyOf` answers `null` for a refused doctype and `null` for a document the parser would not
+   * read -- and on this JVM the `disallow-doctype-decl` feature refuses that document itself, so
+   * `parseFault(hostile) == null` is green with the scan looking at four kilobytes, at everything,
+   * or at nothing whatsoever. The platform the scan exists for is Android, where that feature is
+   * expected to be refused at `setFeature`, and this project has no tier that can observe it. So
+   * the guard's own decision is what is asserted -- the same move `DeviceDescriptionTest` makes
+   * when it asserts its sibling's own sentence instead of the word "DOCTYPE" that SAX also says.
+   */
+  @Test
+  fun `a doctype hidden behind a five kilobyte comment is still seen by the guard`() {
+    val hostile = "<!--" + " ".repeat(5_000) + "-->" +
+      "<!DOCTYPE s:Envelope [<!ENTITY xxe SYSTEM \"file:///etc/hostname\">]>" +
+      "<s:Envelope xmlns:s=\"x\"><s:Body><s:Fault><detail><UPnPError>" +
+      "<errorCode>714</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>"
+
+    // Past any prologue-sized window -- the fact that makes this a regression and not a restatement.
+    assertThat(hostile.indexOf("<!DOCTYPE")).isGreaterThan(4_096)
+
+    assertThat(SoapEnvelope.declaresDoctype(hostile)).isTrue
+    // And the ordinary shape still answers true, so this is not a predicate that says yes to
+    // everything.
+    assertThat(SoapEnvelope.declaresDoctype("<!DOCTYPE foo><s:Envelope/>")).isTrue
+    assertThat(SoapEnvelope.declaresDoctype("<s:Envelope xmlns:s=\"x\"><s:Body/></s:Envelope>")).isFalse
+
+    // The end-to-end contract, stated because it is the contract -- not because it discriminates.
+    assertThat(SoapEnvelope.parseFault(hostile)).isNull()
+  }
+
+  /**
+   * **A fault body that is nothing but nesting is a refusal, not a `StackOverflowError`.**
+   *
+   * `SoapClient.invoke` calls `parseFault` on **every** response, outside its `try`/`catch` and
+   * outside the `runCatching` that guards the parse -- so before the depth bound, an
+   * unauthenticated device on the LAN could answer any action with ~56 KB of nested elements and
+   * take the calling coroutine down with an `Error`. That falsifies this layer's headline
+   * contract: `SoapClient`'s KDoc tells Tasks 5, 8 and 9 that one `catch (e: IOException)` around
+   * a call is complete, and no `IOException` catch sees a `StackOverflowError`.
+   *
+   * The body is far inside `CastHttpClient.maxBodyBytes`, which is why the size guard upstream is
+   * no help. `assertThatCode` catches `Throwable`, so removing the bound fails this test rather
+   * than killing the runner.
+   */
+  @Test
+  fun `a fault nested twenty thousand deep is a plain refusal rather than a stack overflow`() {
+    val deep = "<s:Envelope xmlns:s=\"x\"><s:Body><s:Fault>" +
+      "<a>".repeat(20_000) + "</a>".repeat(20_000) +
+      "</s:Fault></s:Body></s:Envelope>"
+
+    // Well under the 1 MiB body cap CastHttpClient applies, so nothing upstream refuses this.
+    assertThat(deep.length).isLessThan(1024 * 1024)
+
+    // "The device refused and did not say why" -- the answer `parseFault` already gives for a
+    // fault whose detail it cannot read, which is precisely what a fault this deep is.
+    assertThat(SoapEnvelope.parseFault(deep)).isEqualTo(UpnpFault(UpnpError.ACTION_FAILED, null))
+  }
+
+  /**
+   * Both sides of the depth bound, because "stop at 32" and "stop at 0" are the same test
+   * otherwise -- and a real fault nests, so a bound that refused all nesting would report every
+   * device error as ACTION_FAILED and lose the code Task 5 branches on.
+   */
+  @Test
+  fun `a fault detail nested within the bound is still read, and one past it is not`() {
+    fun fault(depth: Int) = "<s:Envelope xmlns:s=\"x\"><s:Body><s:Fault>" +
+      "<a>".repeat(depth) +
+      "<UPnPError><errorCode>714</errorCode></UPnPError>" +
+      "</a>".repeat(depth) +
+      "</s:Fault></s:Body></s:Envelope>"
+
+    // 32 levels of padding puts `UPnPError` at depth 32 counting from `Fault`'s children.
+    assertThat(SoapEnvelope.parseFault(fault(32))).isEqualTo(UpnpFault(714, null))
+    assertThat(SoapEnvelope.parseFault(fault(33)))
+      .isEqualTo(UpnpFault(UpnpError.ACTION_FAILED, null))
+  }
+
   @Test
   fun `a successful response is not a fault`() {
     assertThat(
