@@ -893,6 +893,57 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
+    // 2/2 = 1.0000 BRANCH, instrumented. BRANCH and not LINE because this class is *all* branch:
+    // its single line is `dataSpec.key ?: throw MissingCacheKeyException(...)`, and the two sides
+    // of that elvis are the whole task. A LINE floor over it would be satisfied by covering
+    // either one, which is the difference between "the cache key comes from the track id" and
+    // "the missing-key fallback Tempo ships is gone". Counter chosen by reading the merged
+    // report, not from the non-UI default: `warnVacuousFloors` would have said nothing either
+    // way, since this class has both counters.
+    //
+    // Watched failing: `TrackIdCacheKeyFactory` measures exactly 1.0000, so raising the minimum
+    // above it proves nothing -- JaCoCo rejects a minimum > 1.0 before it compares anything, with
+    // the same message it would give against zero coverage. Falsified by moving the covering
+    // tests aside instead: with `MediaCacheTest` excluded from the run this floor fires at its
+    // real minimum, "branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
+      requiresInstrumentedData = true,
+    ),
+    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three classes carries a single
+    // BRANCH counter -- confirmed in the merged report, not assumed -- so LINE is the only counter
+    // that can gate them at all; a BRANCH rule here would score NaN and pass at every minimum,
+    // which is the vacuous shape this table's own doc describes.
+    //
+    // They are instrumented-only for one reason each, and all three reduce to "needs a real
+    // device": `MediaCache` builds a `SimpleCache` over `context.cacheDir` and a
+    // `StandaloneDatabaseProvider` (real SQLite); `MediaCacheModule` calls it; and
+    // `MissingCacheKeyException`'s message is only constructed from a `DataSpec`, which holds an
+    // `android.net.Uri`. This project has no Robolectric, so there is no JVM path to any of them.
+    //
+    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: it is a `@Qualifier`
+    // annotation class and carries no counter of either kind, so `warnUngatedClasses` skips it
+    // and no rule could gate it -- the same reason the two `$Companion` classes are absent.
+    //
+    // Watched failing, the same way and for the same reason as the rule above: all three measure
+    // 1.0000, so the covering tests were moved aside instead of the minimum raised. "lines
+    // covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, naming
+    // `app.muplay.media.MediaCache`.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.MediaCache",
+        "app.muplay.media.MissingCacheKeyException",
+        "app.muplay.media.di.MediaCacheModule",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
