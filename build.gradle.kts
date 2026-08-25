@@ -1139,9 +1139,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `Bookshelf`'s own provenance note. Whoever does that owns re-measuring this entry rather than
     // carrying the numbers forward.
     //
-    // Falsified by moving `:core:media`'s connected `.ec` aside -- the only execution data these
-    // three classes have: "Rule violated for class app.muplay.database.BrowseTreeRepository:
-    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class.
+    // Falsified by moving `:core:media`'s connected `.ec` aside: all three fired on BRANCH at
+    // **0.00**, BUILD FAILED. On LINE the residuals are **not** zero and are recorded as measured --
+    // `BrowseTreeRepository` 0.09 and `MirrorBookshelf` 0.15 -- because `:app`'s device journey
+    // starts the real service, which builds these objects through Hilt even though it never browses.
+    // Constructor lines are not coverage of a browse decision, and the LINE rule below fires on both
+    // of them anyway; the point of writing the numbers down is that "0.00" would have been false.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -1163,8 +1166,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // zero counters of either kind, so `warnUngatedClasses` skips them and no rule could gate them
     // -- the standing exception this table records for every `$Companion`.
     //
-    // Falsified with the same `.ec` moved aside: "lines covered ratio is 0.00, but expected minimum
-    // is 0.90" for all four classes, BUILD FAILED.
+    // Falsified with the same `.ec` moved aside -- all four fired, BUILD FAILED, at
+    // `BrowseTreeRepository` 0.09, `MirrorBookshelf` 0.15, `BookProgress` 0.00 and `BookPosition`
+    // 0.00. See the BRANCH rule above for why two of those are not zero.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -1707,11 +1711,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // only that one: `onConnect` is one `if`, so its two branches ARE the gate, and a LINE floor
     // over the whole class is satisfied by an `onConnect` that accepts everything.
     //
-    // Falsified by deleting the `if` -- `onConnect` reduced to `super.onConnect(session,
+    // Falsified twice. By deleting the `if` -- `onConnect` reduced to `super.onConnect(session,
     // controller)` -- and running the device suite: `ControllerAccessGateTest`'s
     // `anAppThePlatformDoesNotTrustWithMediaControlIsRefused` and
-    // `theSameConnectionIsRefusedOrAcceptedOnTheTrustFlagAlone` both went red. See
-    // task-4-report.md.
+    // `theSameConnectionIsRefusedOrAcceptedOnTheTrustFlagAlone` both went red (task-4-report.md).
+    // And by moving `:core:media`'s connected `.ec` aside: "branches covered ratio is 0.50, but
+    // expected minimum is 0.90". **0.50, not 0.00**, because `:app`'s device journey connects a
+    // real controller and takes the accepting arm; it is the *refusing* arm that only this module's
+    // suite reaches, which is exactly the arm a security gate is for.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -2006,10 +2013,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // database under the repository and asserts the browser receives an error result rather than a
     // blank list. That arm is the whole reason this helper exists.
     //
-    // 0.85 and not lower: one more genuinely uncovered branch takes it to 6/9 = 0.6667 and fails.
-    // Watched failing at 0.90: "Rule violated for class
-    // app.muplay.media.browse.MuPlayLibraryCallback.future.1: branches covered ratio is 0.86, but
-    // expected minimum is 0.90", BUILD FAILED, and restored.
+    // 0.85 and not lower: one more genuinely uncovered branch takes it to 6/8 = 0.7500 and fails.
+    // Watched failing at 0.90 -- "Rule violated for class
+    // app.muplay.media.browse.MuPlayLibraryCallback.future.1: branches covered ratio is 0.85, but
+    // expected minimum is 0.90", BUILD FAILED -- and restored. It also fires with this module's
+    // connected `.ec` withheld, at 0.00.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -2034,11 +2042,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // continuation classes it also matches carry zero counters of either kind, so they can never
     // move this ratio -- the standing exception this module already records for its `$Companion`s.
     //
-    // Falsified by moving `:core:media`'s connected `.ec` aside: "lines covered ratio is 0.00, but
-    // expected minimum is 0.90" for `app.muplay.media.browse.BrowseItems`,
-    // `app.muplay.media.browse.MuPlayLibraryCallback`, `.MuPlayLibraryCallback.future.1`,
-    // `.MuPlayLibraryCallback.onGetChildren.1`, `.MuPlayLibraryCallback.onGetItem.1` and
-    // `app.muplay.media.browse.DefaultSurfaceResolver` -- six classes, BUILD FAILED.
+    // Falsified by moving `:core:media`'s connected `.ec` aside -- all six classes fired, BUILD
+    // FAILED. The **residual ratios are recorded rather than rounded to zero**, because two of them
+    // are not zero and a comment that said they were would be the stale-falsification shape
+    // CLAUDE.md describes: `BrowseItems` 0.00, `MuPlayLibraryCallback` **0.45**,
+    // `.future.1` 0.00, `.onGetChildren.1` 0.00, `.onGetItem.1` 0.00,
+    // `DefaultSurfaceResolver` **0.25**. The non-zero two come from `:app`'s own device journey,
+    // which starts the real service: that builds the callback and resolves a surface for the app's
+    // own controller, and `Jacoco.kt` globs every project's `.ec`. So this floor is enforced by two
+    // suites, and withholding either one alone is not enough to fire the whole rule.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
