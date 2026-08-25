@@ -1,8 +1,11 @@
 package app.muplay.cast.net
 
+import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
+import java.net.SocketAddress
+import java.net.SocketException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -45,5 +48,65 @@ class LocalAddressTest {
     assumeTrue(ownAddress != null, "this host has no non-loopback IPv4 interface")
 
     assertThat(LocalAddress.towards(ownAddress!!)).isEqualTo(ownAddress)
+  }
+
+  @Test
+  fun `the address the kernel chose is the answer, whatever address that is`() {
+    // The discriminating observation, made hermetically. The test above it can only make it when
+    // this host has a non-loopback IPv4 interface, and on a bare container it skips -- at which
+    // point the only surviving observation of `towards` was satisfied by
+    // `{ InetAddress.getLoopbackAddress() }` and the module's floor stayed green. Both guards
+    // degraded to nothing at the same moment, and nothing said so.
+    //
+    // The seam is a hand-written `DatagramSocket` (no mock framework; `connect` and
+    // `getLocalAddress` are both overridable on JDK 21, measured). 192.0.2.0/24 is TEST-NET-1, so
+    // no address here is one this machine could hold by accident.
+    val chosen = InetAddress.getByName("192.0.2.7")
+
+    val answer = LocalAddress.towards(InetAddress.getByName("198.51.100.9")) { FakeDatagramSocket(chosen) }
+
+    assertThat(answer).isEqualTo(chosen)
+  }
+
+  @Test
+  fun `the wildcard is never the answer, because it is the one that looks plausible in a log`() {
+    // `0.0.0.0` is what an unbound socket reports. In the URL this feeds a renderer it is useless,
+    // and it is the failure that produces a cast which appears to start and plays nothing.
+    val answer = LocalAddress.towards(InetAddress.getByName("198.51.100.9")) {
+      FakeDatagramSocket(InetAddress.getByName("0.0.0.0"))
+    }
+
+    assertThat(answer).isNull()
+  }
+
+  @Test
+  fun `a kernel that refuses the route probe is a null answer, not an exception`() {
+    // "No route to that peer" is a real answer the router (Task 7) turns into a named failure.
+    // Before the seam, this arm was unreachable from a hermetic test and the class was gated on
+    // LINE instead of BRANCH because of it.
+    val answer = LocalAddress.towards(InetAddress.getByName("198.51.100.9")) {
+      FakeDatagramSocket(refuseConnect = true)
+    }
+
+    assertThat(answer).isNull()
+  }
+
+  /**
+   * A `DatagramSocket` that answers the route probe with what a test told it to.
+   *
+   * Hand-written, because this project bans mock frameworks -- and it needs nothing a framework
+   * would give it: `connect(SocketAddress)` and `getLocalAddress()` are both overridable, and
+   * `DatagramSocket(null)` binds nothing, so this touches no port and sends no packet.
+   */
+  private class FakeDatagramSocket(
+    private val chosen: InetAddress? = null,
+    private val refuseConnect: Boolean = false,
+  ) : DatagramSocket(null as SocketAddress?) {
+
+    override fun connect(addr: SocketAddress?) {
+      if (refuseConnect) throw SocketException("network is unreachable")
+    }
+
+    override fun getLocalAddress(): InetAddress? = chosen
   }
 }

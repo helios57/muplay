@@ -141,6 +141,10 @@ CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
 CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
+CAST_ADDRESS = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalAddress.kt"
+BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
+BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
+INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
 DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
 DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
@@ -864,7 +868,9 @@ PROBES = [
      "entries.filter { it.first == name }.map { it.second }",
      # The defect that makes a Sonos invisible: it sends CONTENT-TYPE, an SSDP reply sends
      # LOCATION, and a null LOCATION is a device that never appears with nothing reported anywhere.
-     "a header is found whatever case the peer used", 7),
+     # 7 until the security review added `two content lengths that disagree are refused` -- which
+     # reads a header, so a case-sensitive lookup reddens it too. Re-measured, not adjusted.
+     "a header is found whatever case the peer used", 8),
     ("cast/render-bare-lf", CAST_WIRE,
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(CRLF)",
      "append(\"HTTP/1.1 \").append(code).append(' ').append(reason).append(\"\\n\")",
@@ -883,15 +889,21 @@ PROBES = [
      "    @Suppress(\"UNREACHABLE_CODE\")\n    if (",
      # The same guard from the other side. Without this probe, `cast/cgnat-dropped` above would be
      # satisfied by a rule that permitted everything.
-     "a public address is not local", 6),
+     # 6 until the security review gave this rule its inbound half: `isLocalPeer` and
+     # `acceptLocal` ask the same question, so a rule that permits everything reddens their tests
+     # too. Re-measured, not adjusted.
+     "a public address is not local", 8),
     ("cast/no-local-guard", CAST_CLIENT,
      "    LocalNetworkOnly.require(host, address)\n", "",
      # The mutation that matters most in this module: without that one line MuPlay becomes an app
      # that will send plaintext anywhere it is pointed, and every other test stays green.
      "a public address is refused before a socket is opened", 1),
+    # The anchor moved in the security review: every header line, this one included, now goes
+    # through `HttpWire.headerLine`, which is the single place the CR/LF check can live. Same
+    # mutation, same named test.
     ("cast/host-without-port", CAST_CLIENT,
-     "      append(\"Host: \").append(hostHeader).append(HttpWire.CRLF)",
-     "      append(\"Host: \").append(host).append(HttpWire.CRLF)",
+     "      append(HttpWire.headerLine(\"Host\", hostHeader))",
+     "      append(HttpWire.headerLine(\"Host\", host))",
      # A Sonos control endpoint lives on 1400 and answers 400 to a Host with no port.
      "a get request is framed with the request line, the host header and a blank line", 4),
     ("cast/tolerant-truncated-head", CAST_WIRE,
@@ -910,6 +922,245 @@ PROBES = [
      # wrong-argument shape, the same one `media/read-timeout-copied` records one module over.
      "the read timeout is the one the caller gave, and is not the connect timeout", 1),
 
+    # ---- Plan 5 Task 1: BrowseId, the mediaId wire format --------------------------------------
+    # `mediaId` is the only handle Android Auto, Wear OS and the Assistant keep for a node, and Auto
+    # *persists* it across a reinstall -- so this encoding is a contract with software this project
+    # does not own, and every one of these three mutations is a way it can change while every
+    # round-trip assertion in the file stays green.
+    ("browse/book-encode-drops-payload", BROWSE_ID,
+     'override fun encode(): String = "$PREFIX$KIND_BOOK$SEPARATOR$bookId"',
+     'override fun encode(): String = "$PREFIX$KIND_BOOK"',
+     # 5, and deliberately broad: an encode that ignores its payload is the defect a per-member
+     # round-trip test cannot see, so several independent assertions are meant to catch it. The one
+     # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
+     # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
+     # property, and it is the property no round trip implies.
+     "every id encodes to its exact documented string", 5),
+    ("browse/library-id-non-canonical", BROWSE_ID,
+     "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
+     "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
+     # The spec section 4 probe. `toIntOrNull` alone accepts "+1", "01" and "-0", so three
+     # different strings would name library 1, 1 and 0 -- second spellings of a node in Auto's
+     # persisted recents, which is exactly how a "shuffle my music" tap comes back pointing
+     # somewhere else. Exactly 1: no other test in the repository reads a library id from a string.
+     "a library id that is not canonically numeric is rejected rather than widened", 1),
+    ("browse/decode-splits-payload", BROWSE_ID,
+     '      val payload = if (hasPayload) body.substring(kind.length + SEPARATOR.length) else ""',
+     '      val payload = body.split(SEPARATOR).getOrElse(1) { "" }',
+     # A `split` without a limit turns "muplay/book/a/b/c" into a Book whose id is "a" -- silently,
+     # for exactly the server ids that contain a separator. Navidrome ids are hex today, and "the
+     # ids are hex" is the class of assumption spec section 4 is a catalogue of.
+     "the payload survives every character a server id could contain", 1),
+    # ---- Plan 7 Task 1: :integrations:core -----------------------------------------------------
+    # Written as this task's own audit rather than from shipped defects, with one exception:
+    # `baseurl/scheme-check-too-narrow` is the task brief's own bug, reintroduced -- it specified a
+    # prefix check for http/https placed *before* HttpUrl, which answers "ftp://host" with
+    # MissingScheme while the same brief's test and KDoc both call it Malformed.
+    #
+    # The rest are the two requirements this type exists for -- a credential must never survive into
+    # the stored URL, and the cleartext policy must be unbypassable -- plus the three defect classes
+    # this project has a recorded history of: a hardcoded value where an argument was passed, an
+    # argument accepted and dropped, and a collection asserted without its order.
+    #
+    # Several counts are above 1 because `IntegrationBaseUrlTest` deliberately observes the
+    # secret-stripping twice: once per component, and once with userinfo, query and fragment on a
+    # single URL, so no single-component edit can survive by varying only what one test looks at.
+    ("baseurl/query-not-stripped", BASE_URL,
+     '        .query(null)\n        .fragment(null)\n',
+     '        .fragment(null)\n',
+     "a query string is discarded, including one carrying an api key", 2),
+    ("baseurl/fragment-not-stripped", BASE_URL,
+     '        .query(null)\n        .fragment(null)\n',
+     '        .query(null)\n',
+     "a fragment is discarded", 2),
+    ("baseurl/userinfo-not-stripped", BASE_URL,
+     '        .username("")\n        .password("")\n',
+     '',
+     "userinfo is discarded", 2),
+    # The Retrofit invariant. Without the trailing slash, `baseUrl("https://host/lidarr")` resolved
+    # against "api/v1/system/status" gives `https://host/api/v1/system/status` -- the urlBase
+    # silently dropped, which is a 404 nobody reads backwards to this line.
+    ("baseurl/trailing-slash", BASE_URL,
+     'return if (stripped.endsWith("/")) stripped else "$stripped/"',
+     'return stripped',
+     "a url base path is preserved and terminated with a slash", 4),
+    # Argument accepted and dropped, on the one argument that decides a security question.
+    ("baseurl/cleartext-policy-ignored", BASE_URL,
+     'private fun permitsCleartext(policy: CleartextPolicy): Boolean = when (policy) {\n'
+     '      CleartextPolicy.Allowed -> true\n'
+     '      CleartextPolicy.Forbidden -> false\n'
+     '    }',
+     'private fun permitsCleartext(policy: CleartextPolicy): Boolean = true',
+     "http is refused when the policy forbids cleartext, and the host is reported", 3),
+    # The hardcoded-value class, on the host the refusal message has to name.
+    ("baseurl/cleartext-host-hardcoded", BASE_URL,
+     'return BaseUrlResult.CleartextForbidden(parsed.host)',
+     'return BaseUrlResult.CleartextForbidden("192.168.1.20")',
+     "http is refused when the policy forbids cleartext, and the host is reported", 3),
+    # The specific error collapsed into the general one: "that is not an address MuPlay can reach
+    # Lidarr at", printed at someone who typed 192.168.1.20:8686.
+    ("baseurl/missing-scheme-collapsed", BASE_URL,
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.MissingScheme',
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.Malformed',
+     "a url with no scheme is MissingScheme, not Malformed", 1),
+    ("baseurl/scheme-check-too-narrow", BASE_URL,
+     'if (!ANY_SCHEME.containsMatchIn(trimmed)) return BaseUrlResult.MissingScheme',
+     'if (!trimmed.lowercase().startsWith("http://") && !trimmed.lowercase().startsWith("https://")) return BaseUrlResult.MissingScheme',
+     "a non-http scheme is Malformed", 1),
+    # `message(service)` accepting a service and then naming one.
+    ("baseurl/message-service-hardcoded", BASE_URL,
+     '    "Start the ${service.displayName} address with https:// \u2014 for example " +\n'
+     '      "https://${service.displayName.lowercase()}.example.com."',
+     '    "Start the Lidarr address with https:// \u2014 for example " +\n'
+     '      "https://lidarr.example.com."',
+     "every message varies with the service it is asked about", 2),
+    # Equality by type rather than by value: every base URL equal to every other one, which makes
+    # this type useless as a map key and two configured integrations indistinguishable.
+    ("baseurl/equals-ignores-value", BASE_URL,
+     'this === other || (other is IntegrationBaseUrl && value == other.value)',
+     'this === other || (other is IntegrationBaseUrl)',
+     "two urls with the same value are equal and hash alike", 2),
+    # The recorded wrong-collection-order class. `IntegrationService.entries` is rendered in
+    # declaration order by every screen in this plan, so the order is the contract.
+    ("baseurl/service-order", INTEGRATION_SERVICE,
+     '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
+     '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
+     "the service display names are the ones a user reads", 1),
+
+    # ---- Plan 3 Task 4, review round 1: what the queue's order and field assertions could not see
+    # Appended here rather than folded into the Task 4 block above, so the block stays the record of
+    # what that task shipped and this stays the record of what its review found. All three mutate
+    # PLAYBACK_QUEUE, which `revert()` already names.
+    #
+    # M3. `queue/songs-reversed` above genuinely reddens -- `containsExactly` is order-sensitive --
+    # and that made the order assertions look stronger than they were. Every fixture in
+    # `PlaybackQueueTest` was `song("a"), song("b"), song("c")`: ascending by id, ascending by
+    # `"Title $id"`, and *constant* by `trackNumber`. On a fixture like that every sort is the
+    # identity, so a reversal was the only reordering the file could see. The fixture is now
+    # `c(3), a(1), b(2)`, non-monotone in all three keys at once.
+    ("queue/songs-sorted-by-id", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.sortedBy { it.id }, startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # The one that is not hypothetical: "sort the queue by track number for album playback" is a
+    # change someone makes on purpose, and it would silently destroy library-scoped shuffle -- this
+    # project's headline feature -- by re-sorting a deliberately random order back into track order.
+    # A stable sort on equal keys is the identity, which is exactly why the old constant-trackNumber
+    # fixture could not see it.
+    ("queue/songs-sorted-by-track-number", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.sortedBy { it.trackNumber }, startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # L3. The companion-shaped half of `queue/position-field`. That probe adds an *instance*
+    # property and the structural test catches it; this one adds the same defect in its worst form
+    # -- one `positionMs` shared by every queue that will ever exist -- and until the filter was
+    # narrowed from `Modifier.isStatic(...)` to `Modifier.isStatic(...) && name == "Companion"` the
+    # test could not see it, because Kotlin emits a companion's property backing fields as static
+    # fields on the *containing* class. The blanket static filter was required (the `Companion`
+    # handle is ACC_PUBLIC|ACC_STATIC|ACC_FINAL and not synthetic); it was just too wide.
+    ("queue/companion-position-field", PLAYBACK_QUEUE,
+     "  companion object {\n",
+     "  companion object {\n    var positionMs: Long = 0\n",
+     "the queue carries no playback position of its own", 1),
+    # ---- Plan 6 Task 1's security review: nine findings, and the probes that hold them ---------
+    # Every count below was measured by applying the mutation and reading the result XML, the same
+    # way the eight probes above it were. These reintroduce the defects a review found in the
+    # committed module, not defects its author found while writing it -- which is why several of
+    # them redden a dozen tests at once: a codec that stops refusing malformed input stops
+    # refusing it everywhere.
+    ("cast/header-value-unchecked", CAST_WIRE,
+     "  private fun isFieldValueChar(c: Char): Boolean = c == '\\t' || c in ' '..'~'",
+     "  private fun isFieldValueChar(c: Char): Boolean = true",
+     # HIGH 1, the value half. `HttpHeaders.of("SOAPACTION" to "\"urn:x#Y\"\r\nX-Injected: ...")`
+     # put a real second header into a request a real ServerSocket received. Task 3 builds
+     # SOAPACTION out of the device-description XML the RENDERER serves, so this is peer-controlled.
+     "a header value carrying CRLF cannot write a header of its own, and nothing reaches the wire", 4),
+    ("cast/header-name-unchecked", CAST_WIRE,
+     "  private fun isTokenChar(c: Char): Boolean =\n    c in 'a'..'z'",
+     "  private fun isTokenChar(c: Char): Boolean =\n    true || c in 'a'..'z'",
+     # HIGH 1, the name half. A name is a token per RFC 9110: no CR, no LF, no NUL, and no
+     # separators or whitespace either -- `X-A: 1\r\nX-Injected` is a name that writes two headers.
+     "every character that could end a header line early is refused, in a name and in a value", 4),
+    ("cast/method-unchecked", CAST_CLIENT,
+     "    HttpWire.requireToken(\"method\", method)\n", "",
+     # HIGH 1, the request-line half. `method` was appended raw, so "GET /evil HTTP/1.1\r\nX: 1"
+     # was a whole second request line.
+     "a method that is not a token is refused, so the request line cannot be split either", 1),
+    ("cast/caller-framing-header", CAST_CLIENT,
+     "      require(FRAMING_HEADERS.none { it.equals(name, ignoreCase = true) }) {",
+     "      require(FRAMING_HEADERS.none { it.equals(name + \"!\", ignoreCase = true) }) {",
+     # HIGH 1's last clause: a caller-supplied Content-Length used to travel alongside the one
+     # `exchange` appends, which is a request that frames two ways.
+     "a caller may not supply a header that decides where the message ends", 1),
+    ("cast/body-unbounded", CAST_WIRE,
+     "    if (contentLength == null) return readUntilClosed(input, maxBytes)",
+     "    if (contentLength == null) return input.readBytes()",
+     # HIGH 2, first half, and the exact line that was there: `soTimeout` is per read, so a
+     # renderer streaming steadily resets it forever and `readBytes()` never returns.
+     "a response with no content length cannot exhaust the heap, however long the peer streams", 2),
+    ("cast/chunked-misframed", CAST_WIRE,
+     "      return readChunkedBody(input, maxBytes)",
+     "      return readUntilClosed(input, maxBytes)",
+     # HIGH 2, second half. A chunked response read flat comes back with its chunk sizes inside
+     # the body, which Task 3 reports as an XML parse failure -- at the wrong layer, blaming the
+     # renderer for MuPlay's bug.
+     "a chunked response is decoded, not returned with its chunk sizes inside the body", 5),
+    ("cast/content-length-overflow", CAST_WIRE,
+     "    if (contentLength > maxBytes) {\n"
+     "      throw MalformedHttpException(\n"
+     "        \"declared ${HttpHeaders.CONTENT_LENGTH} $contentLength exceeds the $maxBytes byte cap on \" +\n"
+     "          \"one body\",\n"
+     "      )\n"
+     "    }\n"
+     "    return input.readNBytes(contentLength.toInt())",
+     "    return input.readNBytes(contentLength.toInt())",
+     # M4. Without the cap check in front of it, `2147483648` reaches readNBytes as a negative Int
+     # (IllegalArgumentException, NOT an IOException, so a caller guarding a socket misses it) and
+     # `4294967296` narrows to exactly 0 and returns a silently empty body.
+     "a content length that does not fit an Int is refused, not narrowed into a wrong body", 2),
+    ("cast/no-inbound-guard", CAST_NET,
+     "    val socket = server.accept()\n"
+     "    if (isLocalPeer(socket)) return socket\n"
+     "    socket.close()\n"
+     "    return null",
+     "    return server.accept()",
+     # HIGH 3. Task 6 binds a ServerSocket serving Navidrome-authenticated audio, reachable by
+     # every device on the LAN and every other app on the phone. `isLocal` and `require` existed;
+     # nothing called either of them on an accept().
+     "a connection from off the local network is refused and closed rather than served", 2),
+    ("cast/first-content-length-wins", CAST_HEADERS,
+     "    val distinct = values.distinct()",
+     "    val distinct = values.take(1)",
+     # M9. `Content-Length: 3` and `Content-Length: 10` used to yield a three-byte body, silently.
+     # RFC 9110 section 8.6 requires the refusal; this is the classic smuggling primitive.
+     "two content lengths that disagree are refused, not silently resolved to the first", 1),
+    ("cast/line-limit-off-by-one", CAST_WIRE,
+     "    if (buffer.size() == MAX_LINE_BYTES) {",
+     "    if (buffer.size() >= MAX_LINE_BYTES - 1) {",
+     # M5. The limit was terminator-dependent (8192 + LF accepted, 8192 + CRLF rejected) and no
+     # test could see it, because nothing observed MAX_LINE_BYTES from the ACCEPTING side at all.
+     # This probe is that missing side: it rejects a line the codec must accept.
+     "a line of exactly the maximum length is accepted whichever terminator the peer chose", 1),
+    ("cast/route-probe-constant", CAST_ADDRESS,
+     "        socket.localAddress.takeUnless { it.isAnyLocalAddress }",
+     "        InetAddress.getLoopbackAddress()",
+     # M7. This is the exact implementation that satisfied `LocalAddressTest` on a loopback-only
+     # host, because its one discriminating assertion sat behind an assumeTrue. The seam added in
+     # M6 is what makes this probe possible at all.
+     #
+     # READ THE NAMES BEFORE CHANGING THIS COUNT. Two of the three are hermetic; the third is
+     # `the route to an address on a real interface is that interface's own address`, which is
+     # this module's only `assumeTrue` and SKIPS on a host with no non-loopback IPv4 interface.
+     # On such a host this probe reports 2 and reads as MISSED while the named test is still red,
+     # which is the claim it actually makes. That is a property of the host, not a regression --
+     # and it is the same degradation the seam above was added to stop mattering.
+     "the address the kernel chose is the answer, whatever address that is", 3),
+    ("cast/userinfo-in-message", CAST_CLIENT,
+     "    if (userInfo == null) toString() else toString().replace(\"$userInfo@\", \"\")",
+     "    toString()",
+     # Minor, from the same review. Task 6 puts Subsonic's u/t/s in these URLs, and an exception
+     # message is the one string in this project that reliably reaches a bug report.
+     "a password in a url's userinfo never reaches an exception message", 1),
     # ---- Plan 6 Task 2: SSDP discovery, the device description, Sonos's embedded renderer -----
     # Every count below was measured by applying the mutation alone against the committed tree and
     # reading the result XML; see task-2-report.md for the transcripts. No entry here needs a
@@ -1038,6 +1289,9 @@ def apply(path, old, new):
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
     RESUME_POLICY,
+    BROWSE_ID,
+    BASE_URL,
+    INTEGRATION_SERVICE,
 ]
 
 
@@ -1098,6 +1352,12 @@ JVM_TEST_RESULT_DIRS = {
     # nothing and "missed" for nothing, and the only way to tell which you have is to make it fail
     # once deliberately.
     "core/cast": "test",
+    # `:integrations:core` joined in Plan 7 Task 1. An Android library (`muplay.android.library` +
+    # `muplay.android.hilt`), so `testDebugUnitTest` -- but its whole JVM tier is reachable here by
+    # construction: `IntegrationBaseUrl` is pure Kotlin over OkHttp's URL parser and names no
+    # Android type, which is exactly why the cleartext decision and the secret-stripping live in
+    # this module rather than inside either service client.
+    "integrations/core": "testDebugUnitTest",
 }
 
 
@@ -1154,7 +1414,8 @@ def run_suite():
     # Room/network-backed collaborators, so their forwarding logic needs no device either.
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
-                    ":core:media:test", ":core:testing:test", ":core:cast:test"],
+                    ":core:media:test", ":core:testing:test", ":core:cast:test",
+                    ":integrations:core:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

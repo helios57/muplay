@@ -24,8 +24,34 @@ dependencies {
   implementation(libs.media3.datasource.okhttp)
   implementation(libs.okhttp)
 
-  // `SubsonicSourceProvider` and, from Task 8, `MediaProgressDao`. `implementation`, not `api`:
-  // nothing this module exposes publicly mentions a `:core:database` type.
+  // `SubsonicSourceProvider` and, from Task 8, `MediaProgressDao`. `implementation`, not `api` --
+  // and NOT because nothing leaks. Something does: `QueueRepository`'s public `@Inject`
+  // constructor takes a `SubsonicSourceProvider`, which is a `:core:database` type, so by the
+  // literal rule stated for `:core:model` six lines above this would be `api`. An earlier version
+  // of this comment claimed the opposite ("nothing this module exposes publicly mentions a
+  // `:core:database` type") and it was simply false.
+  //
+  // Kept as `implementation` on a judgement, recorded here so it can be revisited rather than
+  // rediscovered:
+  //
+  //   * The leak is ONE type. `api` would put the whole module on every consumer's compile
+  //     classpath -- `LibraryDao`, the entities, `MuPlayDatabase`, `SyncEngine`, `CredentialStore`
+  //     -- including `:feature:player`, a UI module that must never see a DAO. That is the same
+  //     argument this file already makes about `media3-exoplayer` never becoming `api`: a feature
+  //     module that *can* build an `ExoPlayer` eventually does, and a feature module that can see
+  //     `LibraryDao` eventually queries it. Widening a module boundary to declare one constructor
+  //     parameter is the larger of the two harms.
+  //   * The failure mode of getting this wrong is LOUD, and it is not reachable in this app's
+  //     graph. A consumer missing `:core:database` fails at compile time in its own Hilt codegen,
+  //     naming `SubsonicSourceProvider` -- never silently, never at runtime. And the only consumer
+  //     that can exist is the module holding `SingletonComponent`, i.e. `:app`, which must depend
+  //     on `:core:database` anyway to bind `CredentialStore`, the `DataStore<Preferences>` and
+  //     `SubsonicSourceFactory` that `SubsonicSourceProvider` itself is built from. It does
+  //     (`app/build.gradle.kts`).
+  //
+  // FLIP THIS TO `api` if a module that does not already depend on `:core:database` ever injects
+  // `QueueRepository` -- a second Hilt component, or a consumer outside this build. That is the
+  // condition, and it is not met today.
   implementation(project(":core:database"))
   // Also what `ProgressTableShapeTest` reflects over: it holds `media_progress` to spec section
   // 3's shape from the JVM tier, and a JVM test sees `implementation` dependencies, so the
