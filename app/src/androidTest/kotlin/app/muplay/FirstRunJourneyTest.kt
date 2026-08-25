@@ -3,6 +3,7 @@ package app.muplay
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
 import app.muplay.setup.LibraryRepositoryEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
@@ -84,12 +86,23 @@ class FirstRunJourneyTest {
    */
   @Before
   fun resetLibraryTagging() = runBlocking {
-    val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
-    val libraryRepository =
-      EntryPointAccessors.fromApplication(context, LibraryRepositoryEntryPoint::class.java)
-        .libraryRepository()
-    libraryRepository.allIds().forEach { id -> libraryRepository.setRole(id, LibraryRole.UNASSIGNED) }
+    val repository = libraryRepository()
+    repository.allIds().forEach { id -> repository.setRole(id, LibraryRole.UNASSIGNED) }
   }
+
+  /**
+   * The real, singleton `LibraryRepository` the app's own `SetupViewModel` writes through --
+   * shared by [resetLibraryTagging] and by [readPersistedLibraries], which
+   * [completingEveryTagReachesReadyAndShowsSetupComplete] uses to prove a role actually got
+   * written, not merely displayed.
+   */
+  private fun libraryRepository() =
+    EntryPointAccessors.fromApplication(
+      InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+      LibraryRepositoryEntryPoint::class.java,
+    ).libraryRepository()
+
+  private fun readPersistedLibraries(): List<MusicLibrary> = runBlocking { libraryRepository().libraries.first() }
 
   @Test
   fun firstRunConnectsToNavidromeAndListsBothSeededLibraries() {
@@ -119,19 +132,30 @@ class FirstRunJourneyTest {
    * there, not just that the state transition happened -- and, more importantly, reads the real
    * persisted role back through [LibraryRepositoryEntryPoint] rather than trusting the screen.
    *
-   * Tags each library the **opposite** of its own name deliberately: the Music library gets
-   * "Tag as Audiobooks", the Audiobooks library gets "Tag as Music". A prior version of this test
-   * tagged each library to match its name, which cannot distinguish the real production wiring
-   * from a mutant that hardcodes (or swaps) the role -- a hardcode that "coincidentally" produces
-   * the name-matching answer for every seeded library would still pass a name-matching assertion.
-   * Confirmed directly: with matching-name tagging, both
-   * `@Inject` ctor: `libraryRepository.setRole(musicFolderId, LibraryRole.MUSIC)` (role
-   * hardcoded) and the two `FilterChip` role literals in `SetupScreen` swapped left this test, and
-   * every other test in both tiers, green. Opposite-of-name tagging plus the read-back below
-   * catches both.
+   * Tags each library **twice**, at two different roles, before moving on -- first to match its
+   * own name, then the opposite -- and reads the persisted role back after each round. A single
+   * observation per library (the original version of this test: opposite-of-name, once) cannot
+   * tell a real per-tap write from a sink that ignores `role` entirely and returns a constant
+   * keyed on the library id (`if (musicFolderId == 1) AUDIOBOOKS else MUSIC`) -- that mutant
+   * "coincidentally" matches whichever single value each library was ever tagged, and previously
+   * left `:feature:setup:test` and `:app:connectedDebugAndroidTest` fully green. Two disjoint
+   * observations of the *same* id at two different roles is what rules that out.
    *
-   * The read-back also closes the coverage gap the state-transition assertion alone found:
-   * without walking to `Ready` at all, JaCoCo reported `SetupScreenKt`'s
+   * The final, opposite-of-name round is also what defeats a hardcoded, inverted, or swapped
+   * role: a mutant that hardcodes (or swaps, or inverts) the role "coincidentally" produces the
+   * name-matching answer the first round asserts, but not the opposite answer the second round
+   * asserts. Confirmed directly: with only matching-name tagging, both the `@Inject` ctor's
+   * `libraryRepository.setRole(musicFolderId, LibraryRole.MUSIC)` (role hardcoded) and the two
+   * `FilterChip` role literals in `SetupScreen` swapped left every test in both tiers green.
+   *
+   * Each tap also asserts [assertIsSelected] on the chip just clicked: the two `FilterChip`
+   * `selected =` predicates are the user's only feedback on which role is recorded, and were
+   * previously unobserved by any test -- a mutant that swapped them would light up the *other*
+   * chip than the one tapped, inviting a user to "correct" it by hand and genuinely mis-tag the
+   * library, while every persisted-role assertion here kept passing.
+   *
+   * The read-back after the final round also closes the coverage gap the state-transition
+   * assertion alone found: without walking to `Ready` at all, JaCoCo reported `SetupScreenKt`'s
    * `is SetupUiState.Ready ->` source line as "covered", because Kotlin compiles an exhaustive
    * sealed `when` as a chain of `instanceof` checks -- the `Ready` check itself runs on *every*
    * composition regardless of which state is current, so the line lit up green while the branch
@@ -141,8 +165,18 @@ class FirstRunJourneyTest {
   fun completingEveryTagReachesReadyAndShowsSetupComplete() {
     connectAs(PASSWORD)
 
-    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[MUSIC_ROW_CHIP].performClick()
-    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick()
+    // First round: each library tagged to match its own name -- the first of two disjoint
+    // observations of each id's role.
+    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick().assertIsSelected()
+    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
+    val afterNameMatchingTaps = readPersistedLibraries()
+    assertEquals(LibraryRole.MUSIC, afterNameMatchingTaps.single { it.id == MUSIC_LIBRARY_ID }.role)
+    assertEquals(LibraryRole.AUDIOBOOKS, afterNameMatchingTaps.single { it.id == AUDIOBOOKS_LIBRARY_ID }.role)
+
+    // Second, final round: each library re-tagged the opposite way -- the second, disjoint
+    // observation of the same two ids, and the state this test's other assertions build on.
+    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[MUSIC_ROW_CHIP].performClick().assertIsSelected()
+    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
     composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
 
     composeRule.onNodeWithText("Setup complete").assertIsDisplayed()
@@ -150,12 +184,7 @@ class FirstRunJourneyTest {
     // The read-back that actually proves it: reached through the real LibraryRepository, the
     // same singleton the app's own SetupViewModel and its @Inject-constructed SetupLibrarySink
     // write through -- not through what the screen merely displays.
-    val libraries = runBlocking {
-      EntryPointAccessors.fromApplication(
-        InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
-        LibraryRepositoryEntryPoint::class.java,
-      ).libraryRepository().libraries.first()
-    }
+    val libraries = readPersistedLibraries()
     assertEquals(LibraryRole.AUDIOBOOKS, libraries.single { it.id == MUSIC_LIBRARY_ID }.role)
     assertEquals(LibraryRole.MUSIC, libraries.single { it.id == AUDIOBOOKS_LIBRARY_ID }.role)
   }
