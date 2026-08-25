@@ -450,13 +450,13 @@ PROBES = [
     # SavedStateHandle/checkNotNull design these two probes originally targeted. Re-measured
     # against the replacement.
     ("album/songs-id-swapped", ALBUM_VM,
-     "combine(album, source.songs(id)) { current, songs ->",
-     'combine(album, source.songs("wrong-id")) { current, songs ->',
+     "combine(album, source.songs(id)) { fetch, songs ->",
+     'combine(album, source.songs("wrong-id")) { fetch, songs ->',
      "the album shown is the one load was called with, not a different one the source also "
      "knows", 4),
     ("album/load-album-id-hardcoded", ALBUM_VM,
-     "viewModelScope.launch { album.value = source.album(albumId) }",
-     'viewModelScope.launch { album.value = source.album("wrong-id") }',
+     "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
+     'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
      "the album shown is the one load was called with, not a different one the source also "
      "knows", 4),
 ]
