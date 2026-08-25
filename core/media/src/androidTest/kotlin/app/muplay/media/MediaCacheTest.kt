@@ -6,8 +6,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -360,14 +358,20 @@ class MediaCacheTest {
    * `PlayerHarness.awaitPlaybackError` versus `PlayerHarness.await`.
    */
   private fun playExpectingFailure(uri: String): PlaybackException {
-    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    // Through `MuPlayerFactory`, like every other player in this project: it is the only
+    // construction site, and `PlayerConstructionTest` (JVM tier) fails if a second one appears.
+    // The reason is not tidiness -- the 429 retry policy attaches to the `MediaSource.Factory` and
+    // `ExoPlayer.Builder` has no setter for it, so a hand-built player silently keeps Media3's own
+    // retry budget and nothing goes red. Nothing about this file's subject changes: the cache and
+    // the client are still this test's own, because they are arguments.
+    val playerFactory = MuPlayerFactory(
+      context = context,
+      dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), cache),
+      loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+    )
     lateinit var harness: PlayerHarness
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(
-        ExoPlayer.Builder(context)
-          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
-          .build(),
-      )
+      harness = PlayerHarness(playerFactory.create())
     }
     try {
       harness.onMain {
@@ -387,14 +391,20 @@ class MediaCacheTest {
     playItemToEnd(MediaItem.Builder().setUri(uri).setCustomCacheKey(cacheKey).build())
 
   private fun playItemToEnd(item: MediaItem) {
-    val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
+    // Through `MuPlayerFactory`, like every other player in this project: it is the only
+    // construction site, and `PlayerConstructionTest` (JVM tier) fails if a second one appears.
+    // The reason is not tidiness -- the 429 retry policy attaches to the `MediaSource.Factory` and
+    // `ExoPlayer.Builder` has no setter for it, so a hand-built player silently keeps Media3's own
+    // retry budget and nothing goes red. Nothing about this file's subject changes: the cache and
+    // the client are still this test's own, because they are arguments.
+    val playerFactory = MuPlayerFactory(
+      context = context,
+      dataSourceFactory = MuPlayDataSourceFactory(OkHttpClient(), cache),
+      loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+    )
     lateinit var harness: PlayerHarness
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      harness = PlayerHarness(
-        ExoPlayer.Builder(context)
-          .setMediaSourceFactory(DefaultMediaSourceFactory(factory.create()))
-          .build(),
-      )
+      harness = PlayerHarness(playerFactory.create())
     }
     try {
       harness.onMain {
