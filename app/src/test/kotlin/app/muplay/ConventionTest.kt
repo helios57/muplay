@@ -23,6 +23,34 @@ class ConventionTest {
     error("could not locate the repository root from ${File(".").absolutePath}")
   }
 
+  /**
+   * The complete argument text of the first `call` in [source], however many lines and nested
+   * parentheses it spans, or `null` when [source] does not contain [call] at all — which every
+   * caller must assert on rather than treat as "nothing to check", the same principle as the first
+   * test in this class.
+   *
+   * No string- or comment-awareness, deliberately: a `(` inside a string literal in one of these
+   * declarations would confuse it, and the honest answer is that these are short, literal build
+   * declarations with none. A parser that handled that case would be more code than the rule it
+   * exists to check.
+   */
+  private fun balancedArgumentOf(source: String, call: String): String? {
+    val callAt = source.indexOf(call)
+    if (callAt < 0) return null
+    val argumentsFrom = callAt + call.length
+    var depth = 1
+    for (i in argumentsFrom until source.length) {
+      when (source[i]) {
+        '(' -> depth++
+        ')' -> {
+          depth--
+          if (depth == 0) return source.substring(argumentsFrom, i)
+        }
+      }
+    }
+    return null
+  }
+
   private fun moduleBuildFiles(): List<File> =
     repoRoot().walkTopDown()
       // `.claude/` is harness state, not project source: it holds git worktrees, so walking into
@@ -457,10 +485,16 @@ class ConventionTest {
       repoRoot(),
       "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
     )
-    val forbiddenAttributesArgs = Regex("""forbiddenAttributes\.set\(listOf\(([^)]*)\)\)""")
-      .find(pluginFile.readText())
-      ?.groupValues
-      ?.get(1)
+    // Read by paren balancing, not by a regex. The regex this replaced was
+    // `forbiddenAttributes\.set\(listOf\(([^)]*)\)\)`, which required the argument to be a single
+    // `listOf(...)` literal -- and Plan 3 Task 5 made it variant-dependent
+    // (`if (variant.buildType == "release") listOf(..) else emptyList()`), at which point the
+    // pattern stopped matching, `forbiddenAttributesArgs` went null, and this test failed on the
+    // `isNotNull()` below. That is the failure this test's own comment above predicted in so many
+    // words ("a refactor of configureReleaseManifestVerification that rewrites the listOf(...)
+    // call") -- it fired exactly as designed, and the fix is to read the argument in a way that
+    // does not care what shape the expression inside it takes.
+    val forbiddenAttributesArgs = balancedArgumentOf(pluginFile.readText(), "forbiddenAttributes.set(")
 
     // A pattern that stops matching the declaration must fail here too, not silently treat a
     // missing match as "nothing to check" -- the same principle as the very first test in this
