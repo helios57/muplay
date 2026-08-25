@@ -1029,8 +1029,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by moving `MediaCacheTest` aside, not by raising the minimum, for exactly the
     // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
     // ratio is a configuration error JaCoCo rejects before it compares anything. Watched failing
-    // at its real minimum: "Rule violated for class app.muplay.media.TrackIdCacheKeyFactory:
-    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    // at its real minimum, with the connected run re-taken under
+    // `-Pandroid.testInstrumentationRunnerArguments.notClass=app.muplay.media.MediaCacheTest`:
+    // "Rule violated for class app.muplay.media.TrackIdCacheKeyFactory: branches covered ratio is
+    // 0.50, but expected minimum is 0.90", BUILD FAILED.
+    //
+    // 0.50 and not 0.00, which is the more interesting number: `MuPlayDataSourceFactoryTest`'s own
+    // playbacks drive the key-present side of the elvis all by themselves. The side that only
+    // `MediaCacheTest` reaches is the *throw* -- the removed fallback, i.e. the entire point of
+    // the class -- so this floor's real job is holding that second branch, and a rule that
+    // settled for one of the two would be gating the half that was never in doubt.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -1053,9 +1061,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // class carries no counter of either kind, so `warnUngatedClasses` skips it and no rule could
     // gate it -- the same standing exception this module already records for its `$Companion`s.
     //
-    // Watched failing the same way, with `MediaCacheTest` moved aside: "Rule violated for class
-    // app.muplay.media.MediaCache: lines covered ratio is 0.00, but expected minimum is 0.90",
-    // BUILD FAILED, once per class.
+    // Watched failing the same way, with `MediaCacheTest` moved aside: BUILD FAILED naming all
+    // three -- "app.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
+    // "app.muplay.media.MissingCacheKeyException: lines covered ratio is 0.00" and
+    // "app.muplay.media.MediaCache: lines covered ratio is 0.83", each against a minimum of 0.90.
+    // `MediaCache`'s 0.83 is 5/6: `MuPlayDataSourceFactoryTest` builds its own cache through the
+    // two-argument overload, so the one line left uncovered is the production default argument --
+    // which is precisely the line `MediaCacheModule` exists to exercise and the one a
+    // `filesDir`-shaped regression would live on.
+    //
+    // And the flag itself is a measurement, not a judgement: with the instrumented `.ec` deleted,
+    // `jacocoJvmCoverageVerification` is green with `requiresInstrumentedData = true` on both new
+    // rules (5 of 11 floors evaluated) and BUILD FAILED with it unset, all four classes at 0.00.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
