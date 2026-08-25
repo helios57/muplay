@@ -232,7 +232,9 @@ class PlaybackJourneyTest {
         moveTo(Offset(LEFT_EDGE_INSET_PX, center.y))
         up()
       }
-    composeRule.waitUntil(TIMEOUT_MILLIS) { secondsOf(timeReadouts().first) == 0 }
+    composeRule.waitUntil("the seek to move the position back to zero", TIMEOUT_MILLIS) {
+      secondsOf(timeReadouts().first) == 0
+    }
 
     composeRule.onNodeWithText(PLAY_LABEL).performClick()
     awaitLabel(PAUSE_LABEL)
@@ -355,11 +357,11 @@ class PlaybackJourneyTest {
       // Re-selecting the library clears the previous shuffle; waiting for the heading to be *gone*
       // is what stops the next wait succeeding on its first poll against the previous draw.
       composeRule.onAllNodesWithText(MUSIC_LIBRARY)[LIBRARY_CHIP].performClick()
-      composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.waitUntil("the previous shuffle to be cleared", TIMEOUT_MILLIS) {
         composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isEmpty()
       }
       composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
-      composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.waitUntil("a fresh shuffle to be drawn", TIMEOUT_MILLIS) {
         composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
       }
 
@@ -393,7 +395,7 @@ class PlaybackJourneyTest {
 
     // The bar is a handle, not decoration: tapping it opens the player.
     composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).performClick()
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
+    composeRule.waitUntil("the mini player to open the full player", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithContentDescription(ARTWORK_DESCRIPTION).fetchSemanticsNodes()
         .isNotEmpty()
     }
@@ -407,24 +409,37 @@ class PlaybackJourneyTest {
     // Explicit rather than relying on the default selection, so this walk does not depend on which
     // library a previously-run test left chosen.
     composeRule.onAllNodesWithText(MUSIC_LIBRARY)[LIBRARY_CHIP].performClick()
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
+    composeRule.waitUntil("the album list to arrive from the mirror", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
     composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
+    composeRule.waitUntil("the album's tracks to be listed", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(MUSIC_TRACKS[0]).notTheMiniPlayer().fetchSemanticsNodes()
         .isNotEmpty()
     }
   }
 
-  /** Taps a track row on the album screen, which plays it and opens the player. */
+  /**
+   * Taps a track row on the album screen, which plays it and opens the player.
+   *
+   * It waits for the player *screen*, not for the `Pause` label, and that is a diagnosability
+   * decision paid for by a measurement: with the stream URL mutated to a 404 this helper's
+   * original wait-for-`Pause` was what timed out, so a run in which **no audio was decoded at all**
+   * failed as a bare `ComposeTimeoutException` naming nothing. Waiting only for the transport row
+   * to exist lets [awaitElapsedAtLeast] be the assertion that fails, and its message says exactly
+   * which of the two things went wrong.
+   */
   private fun playTrackNamed(title: String) {
     composeRule.onAllNodesWithText(title).notTheMiniPlayer()[0].performClick()
-    awaitLabel(PAUSE_LABEL)
+    composeRule.waitUntil("the player screen to open", TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
+        composeRule.onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    }
   }
 
+  /** Blocks until [text] is on screen, naming what it was waiting for if it never arrives. */
   private fun awaitLabel(text: String) {
-    composeRule.waitUntil(TIMEOUT_MILLIS) {
+    composeRule.waitUntil("'$text' to appear on screen", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
     }
   }

@@ -43,7 +43,10 @@ import kotlinx.coroutines.runBlocking
  * exactly one node — the library's *name* — and indices 1 and 2 into it do not exist.
  */
 internal fun ComposeTestRule.reachLibraryScreen() {
-  waitUntil(JOURNEY_TIMEOUT_MILLIS) {
+  // Named, not bare. A missing `adb reverse tcp:4533 tcp:4533` is a *silent* connect timeout --
+  // spike S1's finding -- so this is the wait that expires when the container is unreachable, and
+  // an unnamed `ComposeTimeoutException` here is the least useful message this suite can produce.
+  waitUntil("the app to decide between setup and the library", JOURNEY_TIMEOUT_MILLIS) {
     onAllNodesWithText(SERVER_URL_LABEL).fetchSemanticsNodes().isNotEmpty() ||
       onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
   }
@@ -54,7 +57,7 @@ internal fun ComposeTestRule.reachLibraryScreen() {
     onNodeWithText(PASSWORD_LABEL).performTextInput(PASSWORD)
     onNodeWithText(CONNECT_LABEL).performClick()
 
-    waitUntil(JOURNEY_TIMEOUT_MILLIS) {
+    waitUntil("the server to answer the connect attempt", JOURNEY_TIMEOUT_MILLIS) {
       onAllNodesWithText(CONTINUE_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
     onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick()
@@ -62,13 +65,15 @@ internal fun ComposeTestRule.reachLibraryScreen() {
     onNodeWithText(CONTINUE_LABEL).performClick()
   }
 
-  waitUntil(JOURNEY_TIMEOUT_MILLIS) {
+  waitUntil("the library screen to be reached", JOURNEY_TIMEOUT_MILLIS) {
     onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()
   }
   // The launch sync has committed at least once, so the mirror really holds the seeded content.
   // See this helper's own doc, point 2, and `BrowseJourneyTest.theLibraryCanBeRefreshedFromTheScreen`
   // for why the watermark rather than the on-screen "Checking the server for changes…" message.
-  waitUntil(JOURNEY_TIMEOUT_MILLIS) { runBlocking { journeyWatermarkDao().read() } != null }
+  waitUntil("the launch sync to commit a watermark", JOURNEY_TIMEOUT_MILLIS) {
+    runBlocking { journeyWatermarkDao().read() } != null
+  }
 }
 
 /** The real singleton [SyncWatermarkDao] the app itself syncs through. */
