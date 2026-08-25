@@ -345,13 +345,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // for NaN), and including them is what keeps `warnUngatedClasses` from flagging them on every
     // run. That is honest for these specifically because they contain **no author-written
     // executable code at all** -- read them: `ServerInfo`, `MusicLibrary`, `Album`,
-    // `AlbumWithSongs`, `Artist`, `Song` and `ScanStatus` are `data class` declarations with no
-    // body, and `LibraryRole`/`AlbumListType` are `enum class` declarations whose only members are
-    // constructor properties, so every line JaCoCo counts in them is compiler-generated
-    // `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that would be gating the
-    // Kotlin compiler, the same argument this table already makes about Compose's synthetic
-    // branches. If any of them grows a body, it needs a rule of its own -- which is exactly what
-    // happened to `SearchResults`, and why it is listed above rather than here.
+    // `AlbumWithSongs`, `Artist`, `Song`, `ScanStatus` and `ShuffleResult` are `data class`
+    // declarations with no body, and `LibraryRole`/`AlbumListType` are `enum class` declarations
+    // whose only members are constructor properties, so every line JaCoCo counts in them is
+    // compiler-generated `equals`/`hashCode`/`toString`/`copy`/`values` plumbing. Gating that
+    // would be gating the Kotlin compiler, the same argument this table already makes about
+    // Compose's synthetic branches. If any of them grows a body, it needs a rule of its own --
+    // which is exactly what happened to `SearchResults`, and why it is listed above rather than
+    // here.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -368,6 +369,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.Artist",
         "app.muplay.model.ScanStatus",
         "app.muplay.model.Song",
+        "app.muplay.model.ShuffleResult",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
