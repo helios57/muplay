@@ -34,6 +34,40 @@ check `logcat` for another test class starting before you believe it.
 Serialise device runs across agents, or wrap each in wait-and-retry and confirm
 no other instrumentation is running first.
 
+## Serialise device runs through `ci/device-lock.sh`
+
+The section above says to serialise device runs across agents. Do it with this:
+
+    ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest
+
+It takes an exclusive kernel lock, so runs queue instead of overlapping, and it
+tells you who holds the device while you wait. Exit **75** means the wait ran
+out and *nothing was measured* — never report that as a test failure.
+
+The lock is held on an open file descriptor, so a killed agent releases it. Do
+not replace it with a PID file, and do not add a liveness check that parses one.
+
+## Media3's `@UnstableApi` is invisible to the Kotlin compiler
+
+It is an `androidx.annotation.RequiresOptIn`, not a `kotlin.RequiresOptIn`, so
+Kotlin compiles a use of it clean and `check` then fails much later at
+`lintDebug`. Opt in at the module level. `CacheDataSource`, `SimpleCache` and
+`MediaSessionService` are all annotated, so any task touching them meets this.
+
+## `ExoPlayer.Builder` has no `setLoadErrorHandlingPolicy`
+
+The retry policy attaches to the `MediaSource.Factory`, not the player builder.
+Forgetting it is **silent**: the player quietly keeps Media3's default three
+retries in five seconds while every policy unit test stays green. Whoever
+builds the shipping player owns wiring it, and the test that proves it wired
+has to observe request counts, not the policy object.
+
+## `mockwebserver3-junit5` breaks the androidTest resource merge
+
+It ships a second `META-INF/LICENSE.md` and fails
+`mergeDebugAndroidTestJavaResource`. Use the `mockwebserver3` catalogue alias
+without the JUnit 5 artifact.
+
 ## Wait in bounded foreground commands, not on watchers
 
 Agents here have repeatedly parked waiting for a monitor or background-task
