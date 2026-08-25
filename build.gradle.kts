@@ -1,6 +1,8 @@
 import java.io.File
 import java.math.BigDecimal
 import javax.xml.parsers.DocumentBuilderFactory
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.PathSensitivity
@@ -1784,5 +1786,173 @@ project(":app") {
         // assert on, so a checkout at a different absolute path must still hit the build cache.
         .withPathSensitivity(PathSensitivity.RELATIVE)
     }
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// The resolved-classpath mock guard.
+//
+// `plan-2-inherited.md` item 3, and `ConventionTest`'s own note asking for it. That test bans mock
+// frameworks by scanning *declared* names in the catalogue, module build files and build-logic
+// sources -- which cannot catch one arriving transitively, and this plan adds Room, DataStore,
+// Coil, Hilt-navigation and their transitive graphs, exactly when "declared" and "resolved" stop
+// being the same set. Two guards, deliberately: the textual one runs in seconds with no
+// resolution, this one is the real answer.
+// ------------------------------------------------------------------------------------------------
+
+/**
+ * Every mock framework this project bans, by Maven group. Groups rather than artifact names
+ * because a framework's artifact set changes between versions while its group does not, and
+ * because a group match cannot be defeated by a rename.
+ *
+ * `org.objenesis` is on the list although it is not itself a mock framework: it is the
+ * instantiation engine every JVM mocking library depends on, so its presence on a test runtime
+ * classpath means one of them arrived, whatever it is called.
+ *
+ * **`ConventionTest`'s `no mock framework is declared in any build file or convention plugin`
+ * scans this file too, and would fail on the literals below.** It carves out this one declaration
+ * by name and, in the same rule, asserts that every name *it* bans is covered by a group here --
+ * so the carve-out cannot quietly become a hole, and the two guards cannot drift apart. See that
+ * test.
+ */
+val BANNED_MOCK_GROUPS = listOf(
+  "org.mockito",
+  "io.mockk",
+  "org.easymock",
+  "org.powermock",
+  "dev.mokkery",
+  "io.mockative",
+  "org.jmockit",
+  "org.objenesis",
+)
+
+/**
+ * Which resolvable configurations actually reach a test JVM or a test APK, **matched rather than
+ * listed** -- and that is a correction this task measured, not a preference.
+ *
+ * The brief named three literals: `testRuntimeClasspath`, `testDebugRuntimeClasspath` and
+ * `androidTestDebugRuntimeClasspath`. Only the first exists in this build. Every Android module
+ * calls them `debugUnitTestRuntimeClasspath` and `debugAndroidTestRuntimeClasspath` -- printed
+ * from the build itself, per project:
+ *
+ *     :app, :core:database, :core:designsystem, :feature:setup, :feature:library
+ *         -> [debugAndroidTestRuntimeClasspath, debugRuntimeClasspath,
+ *             debugUnitTestRuntimeClasspath, releaseRuntimeClasspath]
+ *     :core:model, :core:network, :core:testing
+ *         -> [runtimeClasspath, testRuntimeClasspath]
+ *
+ * So the literal list covered **three of eight modules and none of the Android ones** -- including
+ * `:app`, whose `debugUnitTestRuntimeClasspath` `ConventionTest`'s own comment already records as
+ * resolving 141 artifacts. Combined with the brief's `if (resolvedByConfiguration.isEmpty())
+ * return@afterEvaluate`, the guard would simply not have been registered for those five projects:
+ * `./gradlew verifyNoMockFrameworks` would have reported success having inspected the three
+ * modules least likely to acquire a transitive mock, which is a guard reporting safety it did not
+ * measure.
+ *
+ * A pattern rather than a longer list because the failure above was a *name* failure: any
+ * configuration that both mentions a test and is a runtime classpath is in scope, whatever a
+ * future AGP calls it, and a pattern that stops matching in a project still fails loudly through
+ * [MockFrameworkChecker]'s empty-input branch rather than silently shrinking the guard.
+ * `debugRuntimeClasspath`/`releaseRuntimeClasspath`/`runtimeClasspath` are deliberately excluded:
+ * a mock framework on a *production* classpath is a different (worse) problem and one
+ * `ConventionTest`'s declared-name scan already covers.
+ */
+val MOCK_GUARD_CONFIGURATION_PATTERN = Regex("^.*[Tt]est.*RuntimeClasspath$")
+
+/** The name of the guard task, so the workflow step and `ConventionTest` can name the same string. */
+val MOCK_GUARD_TASK_NAME = "verifyNoMockFrameworks"
+
+object MockFrameworkChecker {
+  /**
+   * Fails when any [banned] group appears in [resolved], and **also** fails when [resolved] is
+   * empty. The second half is the point: a check that cannot report its own subject's absence is
+   * not a check, and a guard that silently inspects zero classpaths reads exactly like a guard
+   * that found nothing wrong.
+   */
+  fun check(projectPath: String, resolved: Map<String, List<String>>, banned: List<String>) {
+    if (resolved.isEmpty()) {
+      throw GradleException(
+        "$projectPath: verifyNoMockFrameworks resolved no classpaths at all. Either this project " +
+          "has no test configuration (in which case it should not have this task) or the names " +
+          "MOCK_GUARD_CONFIGURATION_PATTERN matches have drifted. A guard that inspects " +
+          "nothing passes for the wrong reason.",
+      )
+    }
+    val offenders = resolved.flatMap { (configuration, artifacts) ->
+      artifacts.filter { artifact -> banned.any { artifact.startsWith("$it:") } }
+        .map { "$configuration -> $it" }
+    }
+    if (offenders.isNotEmpty()) {
+      throw GradleException(
+        "$projectPath: a mock framework reached a test classpath: $offenders. This project uses " +
+          "hand-written fakes only (see the spec's testing section); a test satisfied by a mock " +
+          "returning what it was told returns no information.",
+      )
+    }
+  }
+}
+
+subprojects {
+  // `afterEvaluate`, because a project's configurations do not exist until its own build script
+  // and its plugins have run -- the same reason the `liveNavidromeTest` registration above uses it.
+  afterEvaluate {
+    // `:core` and `:feature` are container projects: `settings.gradle.kts` includes `:core:model`
+    // and friends, which brings their parents into the build with no plugins, no configurations
+    // and no `check` task. That -- not "a module with no tests" -- is the only legitimate reason
+    // to skip, and it is tested by asking for the thing this guard actually attaches to rather
+    // than by name-matching a path. Confirmed by running it the other way first: with no condition
+    // at all the build died with "Task with name 'check' not found in project ':core'".
+    if (tasks.findByName("check") == null) return@afterEvaluate
+
+    val modulePath = path
+    val banned = BANNED_MOCK_GROUPS
+
+    val guard = tasks.register(MOCK_GUARD_TASK_NAME) {
+      group = "verification"
+      description = "Fails if any mock framework is on a resolved test runtime classpath."
+
+      // **Read here, inside the task's own configuration block, not in `afterEvaluate` above.**
+      // `tasks.register` is lazy, so this runs when the task is realized -- after AGP's variant
+      // callbacks have created `debugUnitTestRuntimeClasspath` and
+      // `debugAndroidTestRuntimeClasspath`. Read one level out, in `afterEvaluate`, and every
+      // Android module reports an entirely empty container: measured, printed per project,
+      // `:app -> []`, `:core:database -> []`, `:core:designsystem -> []`, `:feature:library -> []`,
+      // `:feature:setup -> []`, against `[runtimeClasspath, testRuntimeClasspath]` for the three
+      // JVM modules. With the brief's early return on an empty result that is a guard which
+      // quietly stops existing for five of eight projects while `./gradlew verifyNoMockFrameworks`
+      // still says BUILD SUCCESSFUL.
+      val inputs = configurations
+        .filter { it.isCanBeResolved && MOCK_GUARD_CONFIGURATION_PATTERN.matches(it.name) }
+        .sortedBy { it.name }
+        .map { configuration ->
+          // A lazy Provider captured at configuration time, never a live Configuration read inside
+          // the task action: this is the pattern `Jacoco.kt`'s agent assertion already uses, and it
+          // is what keeps the configuration cache able to serialize this task.
+          //
+          // The **resolution result**, not `incoming.artifacts.resolvedArtifacts`, which the brief
+          // used. Artifacts are files, so asking for them makes this guard build every project
+          // dependency first -- and asking for them from a task action fails outright:
+          // `:core:network:verifyNoMockFrameworks` died with "Querying the mapped value of
+          // provider(java.util.Set) before task ':core:model:jar' has completed is not supported".
+          // A guard on *which components are on the graph* needs the graph, not the jars.
+          configuration.name to configuration.incoming.resolutionResult.rootComponent.map { root ->
+            val seen = LinkedHashSet<String>()
+            val queue = ArrayDeque<ResolvedComponentResult>()
+            queue.add(root)
+            while (queue.isNotEmpty()) {
+              val component = queue.removeFirst()
+              if (!seen.add(component.id.displayName)) continue
+              component.dependencies.filterIsInstance<ResolvedDependencyResult>()
+                .forEach { queue.add(it.selected) }
+            }
+            seen.toList()
+          }
+        }
+
+      doLast {
+        MockFrameworkChecker.check(modulePath, inputs.associate { it.first to it.second.get() }, banned)
+      }
+    }
+    tasks.named("check") { dependsOn(guard) }
   }
 }

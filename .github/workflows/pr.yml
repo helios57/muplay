@@ -32,6 +32,17 @@ jobs:
       - name: Convention rules
         run: ./gradlew :app:testDebugUnitTest --tests '*ConventionTest*'
 
+      - name: No mock framework on any test classpath
+        # ConventionTest scans *declared* names; this resolves every test runtime classpath and
+        # catches one arriving transitively. Two guards, deliberately: the textual one runs in
+        # seconds with no resolution, this one is the real answer.
+        #
+        # The bare (unqualified) task name, like `verifyReleaseNoDestructiveMigration` below: the
+        # root build script registers this task in every project that has a `check` task, and
+        # Gradle resolves an unqualified name against all of them -- so a future module is covered
+        # without anyone remembering to add a line here.
+        run: ./gradlew verifyNoMockFrameworks
+
       - name: Android Lint
         run: ./gradlew lint
 
