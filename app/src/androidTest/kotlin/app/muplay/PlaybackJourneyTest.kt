@@ -238,10 +238,20 @@ class PlaybackJourneyTest {
 
     composeRule.onNodeWithText(PLAY_LABEL).performClick()
     awaitLabel(PAUSE_LABEL)
+    // From a position this test put at zero, so reaching a second is the resume and nothing else.
     awaitElapsedAtLeast(1)
     assertThat(awaitMusicActive(true))
       .describedAs("AudioManager.isMusicActive() after resuming")
       .isTrue
+
+    // Paused again **before** stepping, and that is a measurement rather than tidiness. The seeded
+    // tracks are five seconds long, so a *playing* queue walks itself from Track 2 to Track 3 on
+    // its own: with `next()` mutated to `seekToPreviousMediaItem()` this test was green, because
+    // the wait for Track 3 was satisfied by the auto-advance a few seconds later. With the queue
+    // frozen, the only thing that can change the track is the button.
+    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    awaitLabel(PLAY_LABEL)
+    val frozenAt = timeReadouts().first
 
     // The middle of a three-track album is the one position where both ends are live.
     composeRule.onNodeWithText(NEXT_LABEL).assertIsEnabled().performClick()
@@ -250,6 +260,11 @@ class PlaybackJourneyTest {
     composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsEnabled().performClick()
     awaitLabel(MUSIC_TRACKS[1])
     composeRule.onNodeWithText(MUSIC_TRACKS[2]).assertDoesNotExist()
+    // Still paused throughout, so neither step above can have been the queue advancing itself.
+    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
+    assertThat(secondsOf(timeReadouts().first))
+      .describedAs("the position after two steps, from a queue frozen at '$frozenAt'")
+      .isLessThanOrEqualTo(secondsOf(frozenAt))
   }
 
   /**
@@ -365,7 +380,7 @@ class PlaybackJourneyTest {
         composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
       }
 
-      val tapped = topShuffledRow()
+      val tapped = shuffledRowToTap()
       composeRule.onAllNodesWithText(tapped).notTheMiniPlayer()[0].performClick()
       awaitLabel(PAUSE_LABEL)
       awaitOnMain("the session to report what it is playing") {
@@ -445,21 +460,35 @@ class PlaybackJourneyTest {
   }
 
   /**
-   * The title of the topmost row under the `Shuffled` heading.
+   * The title of the row at [SHUFFLED_ROW_TO_TAP] under the `Shuffled` heading.
    *
    * By **y coordinate**, because the order a finder returns nodes in is nobody's contract, and
    * because the mini player at the bottom of the screen carries the playing track's title too. The
    * heading's own y is the floor and the mini player is excluded by name, so this can neither pick
    * up the bar nor return something from an empty shuffle.
+   *
+   * The candidate titles are **every** seeded title, the audiobook included, not just the three
+   * music ones. Filtering to music would silently renumber the rows if a scope leak ever put the
+   * book among them, and the tapped index would then be wrong for a reason that has nothing to do
+   * with the launcher -- so the one assertion that should fire, `isIn(MUSIC_TRACKS)`, would fire
+   * for the wrong reason or not at all.
+   *
+   * **Not the topmost row, and that is a measurement.** With
+   * `PlaybackLauncher`'s `setMediaItems(items, queue.startIndex, 0L)` mutated to a constant `0`,
+   * a version of this test that tapped the first row stayed green -- the tapped index *was* zero,
+   * so the constant happened to be right. Tapping the second row is what makes this journey able
+   * to fail on a start index that never left the ViewModel.
    */
-  private fun topShuffledRow(): String {
+  private fun shuffledRowToTap(): String {
     val headingY = composeRule.onNodeWithText(SHUFFLE_HEADING).fetchSemanticsNode().positionInRoot.y
-    val rows = MUSIC_TRACKS.flatMap { title ->
+    val rows = SEEDED_TITLES.flatMap { title ->
       composeRule.onAllNodesWithText(title).notTheMiniPlayer().fetchSemanticsNodes()
         .map { it.positionInRoot.y to title }
-    }.filter { it.first > headingY }
-    check(rows.isNotEmpty()) { "a music shuffle put no music on screen" }
-    return rows.minByOrNull { it.first }!!.second
+    }.filter { it.first > headingY }.sortedBy { it.first }
+    check(rows.size > SHUFFLED_ROW_TO_TAP) {
+      "a music shuffle put ${rows.size} rows on screen; this test taps row $SHUFFLED_ROW_TO_TAP"
+    }
+    return rows[SHUFFLED_ROW_TO_TAP].second
   }
 
   /**
@@ -657,6 +686,13 @@ class PlaybackJourneyTest {
     val MUSIC_TRACKS = listOf("Track 1", "Track 2", "Track 3")
     const val ALBUM_ARTIST = "Test Artist"
 
+    /**
+     * The one seeded audiobook. Present here only so [shuffledRowToTap] counts rows correctly if a
+     * scope leak ever drew it into a music shuffle -- never as something this journey expects.
+     */
+    const val AUDIOBOOK_TITLE = "Test Book"
+    val SEEDED_TITLES = MUSIC_TRACKS + AUDIOBOOK_TITLE
+
     const val LAUNCHER_COMPONENT = "app.muplay/app.muplay.MainActivity"
 
     const val LIBRARY_CHIP = 0
@@ -664,6 +700,13 @@ class PlaybackJourneyTest {
 
     /** Five, not Plan 2's ten: each attempt here starts real audio and costs real seconds. */
     const val SHUFFLE_ATTEMPTS = 5
+
+    /**
+     * The **second** row of the shuffle result, not the first. See [shuffledRowToTap]: with a
+     * mutated launcher passing a constant start index of 0, tapping row 0 is green by coincidence.
+     * The seeded music library holds three tracks, so this row always exists.
+     */
+    const val SHUFFLED_ROW_TO_TAP = 1
 
     /** `m:ss` or `h:mm:ss`, which is every shape `formatDuration` produces. */
     val TIME_READOUT = Regex("""\d+:\d\d(:\d\d)?""")
