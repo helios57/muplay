@@ -183,16 +183,24 @@ class BrowseGraph private constructor(
       album("bk-test", AUDIOBOOK_LIBRARY_ID, "Test Book", "ar-narrator", "Bea Bookwright", 3, 300),
     )
 
+    /**
+     * Every book's parts, 100 s each **except `bk-test`'s**, which are 100 s, 200 s and 300 s.
+     *
+     * The uneven one is not decoration. `BookProgress` expresses a file position over the whole
+     * book by adding the durations of the files *before* it, and with equal parts a rule that added
+     * the wrong ones -- or added them in the wrong order -- reaches the same number. `bk-test` is
+     * the book whose stored row sits on part two, so the offset it contributes (100 s) differs from
+     * every other slice of that list.
+     */
     private val BOOK_SONGS = BOOK_ALBUMS.flatMap { book ->
-      val parts = book.songCount
-      (1..parts).map { part ->
+      (1..book.songCount).map { part ->
         song(
           id = "${book.id}-p$part",
           libraryId = AUDIOBOOK_LIBRARY_ID,
           albumId = book.id,
           title = "${book.name} Part $part",
           trackNumber = part,
-          durationSeconds = 100,
+          durationSeconds = if (book.id == "bk-test") part * 100 else 100,
         )
       }
     }
@@ -206,9 +214,10 @@ class BrowseGraph private constructor(
      */
     private val PROGRESS_ROWS = listOf(
       progress("bk-second-p1", positionMs = 50_000, lastPlayedAtEpochMs = 7_000),
-      // The second file of a three-file book: 100 s of part one, then 20 s into part two, so the
-      // book position is 120 s of 300 s. A rule that read the row's own position and ignored the
-      // files before it would report 20 s and a fraction of 0.0667.
+      // The second file of a three-file book whose parts are 100 s, 200 s and 300 s: 100 s of part
+      // one, then 20 s into part two, so the book position is 120 s of 600 s and the fraction is
+      // 0.2. A rule that read the row's own position and ignored the files before it would report
+      // 20 s and 0.033; one that added the files *after* it would report 620 s.
       progress("bk-test-p2", positionMs = 20_000, lastPlayedAtEpochMs = 6_000),
       progress("bk-alpha-p1", positionMs = 20_000, lastPlayedAtEpochMs = 5_000),
       progress("bk-beta-p1", positionMs = 40_000, lastPlayedAtEpochMs = 4_000),

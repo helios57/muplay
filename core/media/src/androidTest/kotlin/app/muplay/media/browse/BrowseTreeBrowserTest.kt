@@ -167,7 +167,7 @@ class BrowseTreeBrowserTest {
     assertThat(childTitles(BrowseSurfaces.HINT_CAR, "muplay/continue", { subtitleOf() }))
       .containsExactly(
         "Cy Chapter · 2 min left",
-        "Bea Bookwright · 3 min left",
+        "Bea Bookwright · 8 min left",
         "Eve Reader · 3 min left",
         "Fay Speaker · 2 min left",
         "Gil Voice · 2 min left",
@@ -227,7 +227,7 @@ class BrowseTreeBrowserTest {
         .map { requireNotNull(it.mediaMetadata.extras) }
         .filter { it.containsKey(BrowseExtras.COMPLETION_PERCENTAGE) }
         .map { it.getDouble(BrowseExtras.COMPLETION_PERCENTAGE) },
-    ).containsExactly(0.1, 0.2, 0.3, 0.5, 0.25, 0.4)
+    ).containsExactly(0.1, 0.2, 0.3, 0.5, 0.25, 0.2)
   }
 
   @Test
@@ -351,6 +351,22 @@ class BrowseTreeBrowserTest {
     assertThat(nonsense.resultCode).isNotEqualTo(LibraryResult.RESULT_SUCCESS)
     assertThat(bookLibraryShuffle.resultCode).isNotEqualTo(LibraryResult.RESULT_SUCCESS)
     assertThat(missingAlbum.resultCode).isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+  }
+
+  @Test
+  fun getItemAnswersForABareTrackIdTheWayAPersistedRecentSendsItBack() {
+    // A track id has no `muplay/` prefix at all (see `BrowseId.Track`), so this is also the
+    // assertion that `onGetItem` does not require one -- the id a car stored last week comes back
+    // exactly like this.
+    val part = awaitResult(browser(null)) { it.getItem("bk-test-p2") }
+    val missing = awaitResult(browser(null)) { it.getItem("no-such-song") }
+
+    assertThat(part.resultCode).isEqualTo(LibraryResult.RESULT_SUCCESS)
+    assertThat(part.value?.mediaId).isEqualTo("bk-test-p2")
+    assertThat(part.value?.mediaMetadata?.title?.toString()).isEqualTo("Test Book Part 2")
+    // 200 s, i.e. that part's own duration and not the book's.
+    assertThat(part.value?.mediaMetadata?.durationMs).isEqualTo(200_000L)
+    assertThat(missing.resultCode).isNotEqualTo(LibraryResult.RESULT_SUCCESS)
   }
 
   @Test
