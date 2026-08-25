@@ -552,9 +552,10 @@ PROBES = [
      '      .addPathSegments("rest/stream")',
      'val builder = "http://elsewhere.example:9999/".toHttpUrl().newBuilder()\n'
      '      .addPathSegments("rest/stream")',
-     # 2: the sub-path test observes the same origin from the other side -- a proxy prefix that
-     # this mutation drops.
-     "the host and scheme come from the credentials", 2),
+     # 3: the sub-path test observes the same origin from the other side -- a proxy prefix that
+     # this mutation drops -- and, since the N-2 fix below, so does the scheme test (2 -> 3: this
+     # mutation swaps https for http as part of the origin, which is now observed on its own).
+     "the host and scheme come from the credentials", 3),
     ("stream/no-auth-params", CLIENT,
      '    }\n    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }\n'
      '    return builder.build().toString()\n  }\n',
@@ -569,9 +570,10 @@ PROBES = [
     ("format/always-raw", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Raw",
-     # 4: the opus case, the ogg case, the case-insensitive pair and the caller's-bitrate pair all
-     # observe a transcode that no longer happens.
-     "an opus source is transcoded rather than streamed raw", 4),
+     # 5: the opus case, the ogg case, the case-insensitive pair, the caller's-bitrate pair and
+     # (since the N-1 fix, 4 -> 5) the whole-family case all observe a transcode that no longer
+     # happens.
+     "an opus source is transcoded rather than streamed raw", 5),
     ("format/always-mp3", STREAM_FORMAT,
      "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
      "      Mp3(transcodeBitRateKbps)",
@@ -642,6 +644,39 @@ PROBES = [
     ("media/no-cross-protocol-redirects", MEDIA_MODULE,
      "      .build()", "      .followSslRedirects(false)\n      .build()",
      "redirects are followed, including across protocols", 1),
+
+    # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
+    # Both are the shape this whole file exists for, and neither was caught by any of the seven
+    # task-1 probes above -- which is the point: a probe list records the questions someone
+    # thought to ask, and nobody had asked either of these.
+    #
+    # N-2. Inserting `.scheme("http")` into the stream URL's builder is a silent HTTPS-to-cleartext
+    # downgrade of the one URL in this codebase that carries an authentication token out of this
+    # client's control (Media3 fetches it with its own HTTP stack, no interceptor of ours in the
+    # path). Measured on the committed tree before the fix: the entire JVM tier stayed green, 217
+    # tests 0 failures, and the live tier could not see it either because `ci-navidrome-1` is
+    # plain `http://localhost:4533`. Distinct from `stream/host-and-scheme` above, which replaces
+    # scheme AND host AND port as one unit and is caught by the host: this one changes the scheme
+    # and nothing else, so only an assertion that observes the scheme by itself can catch it.
+    ("stream/scheme-downgrade", CLIENT,
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .addPathSegments("rest/stream")',
+     'val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()\n'
+     '      .scheme("http")\n'
+     '      .addPathSegments("rest/stream")',
+     "the scheme comes from the credentials and is never downgraded to cleartext", 1),
+    # N-1. `oga` -- the IANA-registered Ogg *audio* extension, which the pinned server's own
+    # audio-extension table carries directly beside `ogg` (read out of `ci-navidrome-1`) -- was
+    # missing from TRANSCODE_ONLY_SUFFIXES, so `forSuffix("oga", ...)` returned Raw and an
+    # Ogg-Opus track would reach the player as Opus mislabelled `audio/ogg`: the exact harm spec
+    # section 4's "never Opus" exists to prevent. It was silent -- StreamFormatTest 9/9 green and
+    # both `format/` probes above CAUGHT -- because every assertion named only suffixes the set
+    # already held. So this probe is an OMISSION, not a wrong answer: the named test carries the
+    # family list independently of the production set, which is the only way a set can be observed
+    # for what is missing from it.
+    ("format/oga-omitted", STREAM_FORMAT,
+     'setOf("opus", "ogg", "oga")', 'setOf("opus", "ogg")',
+     "every suffix the ogg container is indexed under is transcoded, in either case", 1),
 ]
 
 
