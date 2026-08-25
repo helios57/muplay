@@ -1388,8 +1388,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // `$changed`/`$dirty` skip branches into the same method bodies as the author's own `if`s and no
   // class-granular exclusion can separate them.
   ":feature:player" to listOf(
-    // `PlayerUiStateKt` -- `playerUiState` and `formatDuration` -- 8/8 = 1.0000 BRANCH, 13/13 LINE,
-    // from **JVM data alone** (`PlayerUiStateTest`, twelve tests, no emulator). That is the whole
+    // `PlayerUiStateKt` -- `playerUiState`, `displayPosition` and `formatDuration` -- 10/10 =
+    // 1.0000 BRANCH, 14/14 LINE, from **JVM data alone** (`PlayerUiStateTest`, fifteen tests, no
+    // emulator). That is the whole
     // reason this mapping is a top-level function in its own file rather than a `ViewModel` method
     // or a line inside `PlayerScreen.kt`: `:feature:library`'s `CoverArtCacheKey.kt` header records
     // what happens otherwise -- a pure function sharing a file-class with a Composable measures its
