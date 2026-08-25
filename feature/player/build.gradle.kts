@@ -36,6 +36,10 @@ dependencies {
   // file, and for the same reasons; see there for why JUnit 4 is unavoidable on-device and why
   // `androidx-test-espresso` has to be named rather than left transitive at 3.5.0.
   androidTestImplementation(libs.compose.ui.test.junit4)
+  // Manifest only -- it declares the `androidx.activity.ComponentActivity` that
+  // `createComposeRule()` needs to host a composition. `debugImplementation`, because a library
+  // module's test APK merges this module's debug manifest; see the catalogue entry's own note.
+  debugImplementation(libs.compose.ui.test.manifest)
   androidTestImplementation(libs.androidx.test.ext)
   androidTestImplementation(libs.androidx.test.runner)
   androidTestImplementation(libs.androidx.test.espresso)

@@ -55,6 +55,16 @@ compose-bom            = { module = "androidx.compose:compose-bom", version.ref 
 compose-ui             = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling     = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+# Version-less like `compose-ui-test-junit4` above: resolved by the Compose BOM. It contributes
+# nothing but a manifest, declaring the `androidx.activity.ComponentActivity` that
+# `createComposeRule()` launches its composition into -- without it every test in a library
+# module's Compose suite dies with "Unable to resolve activity for: Intent { ...
+# cmp=<module>.test/androidx.activity.ComponentActivity }", which is what `:feature:player`'s
+# first instrumented run did, 21/21. It goes on `debugImplementation`, not
+# `androidTestImplementation`: a library module's instrumented tests are packaged into a
+# self-instrumenting APK whose manifest merges that module's *debug* manifest, so the
+# androidTest configuration is too late to contribute one.
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 compose-material3      = { module = "androidx.compose.material3:material3", version.ref = "material3" }
 activity-compose       = { module = "androidx.activity:activity-compose", version = "1.12.0" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version = "2.10.0" }
