@@ -182,6 +182,25 @@ The assertion message names the offending path — read it before assuming your
 own change caused it. Nothing to fix in the product; it clears when the worktree
 goes away.
 
+## Five-second fixtures let time pass a test that its own defect should fail
+
+Three device tests in Plan 3 were green against the very mutation they existed to
+catch, all for one reason: the fixtures are 5 s long, and any assertion that
+*waits* for a state can be satisfied by playback simply reaching that state on its
+own.
+
+The sharpest case: a `startIndex` test awaited `state.mediaId` after starting a
+queue at index 1. With `setMediaItems(items, 0, 0L)` — the defect — the queue
+started at track 0 and **played into track 1 inside the wait**. Green. The fix was
+to read the index back with **no wait at all** (`MediaController` masks
+`setMediaItems` synchronously), then re-read after a second of real audio.
+
+So: on this fixture set, prefer an observation that is true *immediately* over one
+you wait for. If you must wait, make the waited-for state one that playback cannot
+reach by itself within the fixture's duration. A longer seeded track would kill
+this whole class of defect, and is worth considering when the fixtures are next
+regenerated.
+
 ## Navidrome caches transcodes, so a fixed-bitrate transcode assertion is flaky
 
 `/rest/stream` with `format=mp3` behaves two different ways for the same URL.
