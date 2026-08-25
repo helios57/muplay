@@ -85,6 +85,9 @@ androidx-test-runner   = { module = "androidx.test:runner", version.ref = "andro
 androidx-test-ext      = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
 androidx-test-espresso = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
 openapi-validator      = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
+# Coil 3 publishes under io.coil-kt.coil3, not io.coil-kt.
+coil-compose           = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+coil-network-okhttp    = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 
 # Not in the plan's catalogue draft; added so build-logic/convention can declare these as real
 # `implementation` dependencies and apply them programmatically by class from inside the

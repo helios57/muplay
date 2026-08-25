@@ -19,6 +19,7 @@ dependencies {
   implementation(project(":core:database"))
   implementation(project(":core:designsystem"))
   implementation(project(":feature:setup"))
+  implementation(project(":feature:library"))
 
   implementation(libs.activity.compose)
   implementation(libs.compose.ui)
@@ -32,6 +33,9 @@ dependencies {
   // Backs SetupRoute's @Serializable NavKey — rememberNavBackStack saves the back stack via
   // rememberSaveable, which needs a KSerializer for each key.
   implementation(libs.serialization.json)
+  // Coil's OkHttp network fetcher -- the app is where the image loader is built
+  // (MuPlayApplication), so this is the one module that needs it as a direct dependency.
+  implementation(libs.coil.network.okhttp)
 
   // Tier 2 (.github/workflows/e2e.yml): FirstRunJourneyTest drives the real app on a real
   // emulator against a real Navidrome container. `compose-ui-test-junit4` supplies
