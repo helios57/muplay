@@ -42,7 +42,7 @@ fun MuPlayApp(modifier: Modifier = Modifier) {
       entry<LibraryRoute> {
         LibraryScreen(onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) })
       }
-      entry<AlbumRoute> { AlbumScreen() }
+      entry<AlbumRoute> { route -> AlbumScreen(albumId = route.albumId) }
     },
   )
 }

@@ -1,6 +1,5 @@
 package app.muplay.library
 
-import androidx.lifecycle.SavedStateHandle
 import app.muplay.model.Album
 import app.muplay.model.Song
 import kotlinx.coroutines.Dispatchers
@@ -14,17 +13,20 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Proves [AlbumViewModel] reads the *right* album, not just *an* album: every fake below knows
- * about two disjoint albums so a swapped id -- reading `savedStateHandle`'s value but passing a
- * different one to [AlbumSource.album]/[AlbumSource.songs], or vice versa -- has something to be
- * caught against. A single-album fixture could not tell "forwarded correctly" from "forwarded
- * some constant that happens to match this test's one value".
+ * Proves [AlbumViewModel] shows the *right* album, not just *an* album: every fake below knows
+ * about two disjoint albums so a swapped id -- reading one value but passing a different one to
+ * [AlbumSource.album]/[AlbumSource.songs], or vice versa -- has something to be caught against. A
+ * single-album fixture could not tell "forwarded correctly" from "forwarded some constant that
+ * happens to match this test's one value".
+ *
+ * [AlbumViewModel.load] takes the id as a plain argument rather than this class reading a
+ * `SavedStateHandle` at construction -- see [AlbumViewModel]'s own doc for why: verified on a
+ * real device that Navigation 3 leaves `savedStateHandle["albumId"]` null.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AlbumViewModelTest {
@@ -72,15 +74,22 @@ class AlbumViewModelTest {
 
   /** Same reasoning as `LibraryViewModelTest.warm`: [AlbumViewModel.uiState] is a
    * `combine(...).stateIn(WhileSubscribed(...))`, so it needs an active collector to run at all. */
-  private fun TestScope.warm(albumId: String, source: FakeAlbumSource): AlbumViewModel {
-    val handle = SavedStateHandle(mapOf(AlbumViewModel.ALBUM_ID_KEY to albumId))
-    val vm = AlbumViewModel(handle, source)
+  private fun TestScope.warm(source: FakeAlbumSource): AlbumViewModel {
+    val vm = AlbumViewModel(source)
     backgroundScope.launch { vm.uiState.collect {} }
     return vm
   }
 
   @Test
-  fun `the album shown is the one named by the saved state handle, not a different one the source also knows`() =
+  fun `before load is called the screen is Loading, not a crash or an empty album`() = runTest(dispatcher) {
+    val vm = warm(FakeAlbumSource())
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isEqualTo(AlbumUiState.Loading)
+  }
+
+  @Test
+  fun `the album shown is the one load was called with, not a different one the source also knows`() =
     runTest(dispatcher) {
       val fake = FakeAlbumSource()
       fake.albumsById["a1"] = album("a1", "Correct Album", 1)
@@ -88,34 +97,59 @@ class AlbumViewModelTest {
       fake.setSongs("a1", listOf(song("s1", "Correct Track", "a1", 1)))
       fake.setSongs("a2", listOf(song("s2", "Wrong Track", "a2", 1)))
 
-      val vm = warm("a1", fake)
+      val vm = warm(fake)
+      vm.load("a1")
       dispatcher.scheduler.advanceUntilIdle()
 
       val content = vm.uiState.value as AlbumUiState.Content
       assertThat(content.album.id).isEqualTo("a1")
       assertThat(content.album.name).isEqualTo("Correct Album")
       assertThat(content.songs.map { it.title }).containsExactly("Correct Track")
-      // Both calls carry the same id the handle was constructed with, not "a2" or any other
-      // value the fake also knows an answer for.
+      // Both calls carry the same id load() was given, not "a2" or any other value the fake also
+      // knows an answer for.
       assertThat(fake.albumCalls).containsExactly("a1")
       assertThat(fake.songsCalls).containsExactly("a1")
     }
 
   @Test
-  fun `a different saved state handle id shows the other album, proving the id is read, not hardcoded`() =
+  fun `a different load call shows the other album, proving the id is forwarded, not hardcoded`() =
     runTest(dispatcher) {
       val fake = FakeAlbumSource()
       fake.albumsById["a1"] = album("a1", "Correct Album", 1)
       fake.albumsById["a2"] = album("a2", "Wrong Album", 1)
       fake.setSongs("a2", listOf(song("s2", "Second Album Track", "a2", 1)))
 
-      val vm = warm("a2", fake)
+      val vm = warm(fake)
+      vm.load("a2")
       dispatcher.scheduler.advanceUntilIdle()
 
       val content = vm.uiState.value as AlbumUiState.Content
       assertThat(content.album.id).isEqualTo("a2")
       assertThat(content.songs.map { it.title }).containsExactly("Second Album Track")
     }
+
+  @Test
+  fun `loading a second, different album switches cleanly to it`() = runTest(dispatcher) {
+    // flatMapLatest's own job: without it, the new album could combine with the previous id's
+    // still-collecting songs flow instead of switching to the new one's.
+    val fake = FakeAlbumSource()
+    fake.albumsById["a1"] = album("a1", "First Album", 1)
+    fake.albumsById["a2"] = album("a2", "Second Album", 1)
+    fake.setSongs("a1", listOf(song("s1", "First Track", "a1", 1)))
+    fake.setSongs("a2", listOf(song("s2", "Second Track", "a2", 1)))
+
+    val vm = warm(fake)
+    vm.load("a1")
+    dispatcher.scheduler.advanceUntilIdle()
+    assertThat((vm.uiState.value as AlbumUiState.Content).album.id).isEqualTo("a1")
+
+    vm.load("a2")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val content = vm.uiState.value as AlbumUiState.Content
+    assertThat(content.album.id).isEqualTo("a2")
+    assertThat(content.songs.map { it.title }).containsExactly("Second Track")
+  }
 
   @Test
   fun `song order from the mirror is preserved, not resorted`() = runTest(dispatcher) {
@@ -126,7 +160,8 @@ class AlbumViewModelTest {
       listOf(song("s3", "Third", "a1", 1), song("s1", "First", "a1", 1), song("s2", "Second", "a1", 1)),
     )
 
-    val vm = warm("a1", fake)
+    val vm = warm(fake)
+    vm.load("a1")
     dispatcher.scheduler.advanceUntilIdle()
 
     val content = vm.uiState.value as AlbumUiState.Content
@@ -138,22 +173,11 @@ class AlbumViewModelTest {
     // fake.albumsById has no entry for "gone" -- album() returns null, same as a real deleted
     // album a reconcile has already removed from the mirror.
     val fake = FakeAlbumSource()
-    val vm = warm("gone", fake)
+    val vm = warm(fake)
+    vm.load("gone")
     dispatcher.scheduler.advanceUntilIdle()
 
     assertThat(vm.uiState.value).isEqualTo(AlbumUiState.NotFound)
-  }
-
-  @Test
-  fun `a missing albumId argument fails loudly rather than silently showing an empty album`() {
-    // checkNotNull's whole point: a wrong navigation wiring must crash immediately and namedly,
-    // not render a blank screen nobody can diagnose from a bug report.
-    val fake = FakeAlbumSource()
-    val handle = SavedStateHandle(emptyMap())
-
-    assertThatThrownBy { AlbumViewModel(handle, fake) }
-      .isInstanceOf(IllegalStateException::class.java)
-      .hasMessageContaining(AlbumViewModel.ALBUM_ID_KEY)
   }
 
   @Test
@@ -161,7 +185,8 @@ class AlbumViewModelTest {
     runTest(dispatcher) {
       val fake = FakeAlbumSource()
       fake.albumsById["a1"] = album("a1", "Album", 1)
-      val vm = warm("a1", fake)
+      val vm = warm(fake)
+      vm.load("a1")
       dispatcher.scheduler.advanceUntilIdle()
 
       val first = vm.coverArtUrl("al-abc", 64)
