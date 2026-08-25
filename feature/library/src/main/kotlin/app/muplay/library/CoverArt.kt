@@ -16,22 +16,10 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 
 /**
- * The Coil cache key for one piece of cover art.
- *
- * **Derived from the art id and the requested size, and from nothing else** — in particular not
- * from the request URL. An authenticated Subsonic cover-art URL carries `u`, `t` and a **fresh
- * salt** per request, so Coil's default URL-derived key would miss the memory and disk caches on
- * every single load and re-download every cover on every scroll.
- *
- * This is the same defect Tempo shipped on the playback side (its Media3 cache key included the
- * auth token and the bitrate, so changing bitrate orphaned the entire cache), and the same rule
- * this project's global constraints state for Media3: the key comes from the item id.
- */
-internal fun coverArtCacheKey(coverArtId: String, sizePx: Int?): String =
-  "$coverArtId@${sizePx?.toString() ?: "full"}"
-
-/**
  * One cover image, or a neutral placeholder when the server gave the item no `coverArt` id.
+ *
+ * The cache key it stamps on both caches is [coverArtCacheKey], which lives in its own file — see
+ * that file's own note for why, and do not move it back here.
  *
  * [urlProvider] is a suspending lookup rather than a plain string because building the URL needs
  * the stored credentials, which are read asynchronously.

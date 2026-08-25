@@ -124,6 +124,7 @@ SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
 SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.kt"
 LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt"
 ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
+LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiState.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -452,13 +453,61 @@ PROBES = [
     ("album/songs-id-swapped", ALBUM_VM,
      "combine(album, source.songs(id)) { fetch, songs ->",
      'combine(album, source.songs("wrong-id")) { fetch, songs ->',
+     # 4 -> 6 in Task 9's review round 1: two AlbumViewModelTest tests were added that also load a
+     # real id and read the resulting Content, so they redden here too. See the note on
+     # `expected failures` above -- a count above 1 is a measurement, and it goes stale when tests
+     # are added.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 4),
+     "knows", 6),
     ("album/load-album-id-hardcoded", ALBUM_VM,
      "viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }",
      'viewModelScope.launch { album.value = Fetch.Done(source.album("wrong-id")) }',
+     # 4 -> 7, same cause as the probe above; this one additionally reddens the album-call-count
+     # assertion in `an album still being fetched is Loading...`.
      "the album shown is the one load was called with, not a different one the source also "
-     "knows", 4),
+     "knows", 7),
+
+    # ---- Task 9 / review round 1 (task-9-review.md): the values no test observed ---------------
+    # N-2, N-3 and N-5. Every one of these mutations left all 34 of this module's tests green when
+    # the review applied it. Two of them (`libraries` at no value, and the album that announces
+    # itself deleted while it loads) are user-facing: the first deletes the Music/Audiobooks chip
+    # row outright, which is the only control this app has for the distinction it exists to make.
+    #
+    # N-1 and N-6 from the same review are NOT here and cannot be: both are instrumented-tier
+    # (a navigation callback and the album id's two hops above the view model), this runner is
+    # JVM-only per this file's own header, and their mutants are recorded in task-9-report.md
+    # instead -- the same way task-8-report.md carries SetupViewModel's two device-only mutants.
+    ("library/libraries-not-forwarded", LIBRARY_STATE,
+     "    libraries = libraries,", "    libraries = emptyList(),",
+     "the library selector carries every library, exactly, in the order the mirror gave them", 2),
+    ("library/libraries-reordered", LIBRARY_STATE,
+     "    libraries = libraries,", "    libraries = libraries.reversed(),",
+     "the library selector carries every library, exactly, in the order the mirror gave them", 2),
+    ("library/shuffled-order-reversed", LIBRARY_STATE,
+     "    shuffled = shuffle?.songs.orEmpty(),", "    shuffled = shuffle?.songs.orEmpty().reversed(),",
+     "shuffle order is the order the shuffle produced, not resorted", 2),
+    ("library/search-results-resorted", LIBRARY_STATE,
+     "    albums = if (searching) searchAlbums else albums,",
+     "    albums = if (searching) searchAlbums.sortedBy { it.name } else albums,",
+     "search result order is preserved, not resorted", 2),
+    ("library/selectLibrary-keeps-stale-search", LIBRARY_VM,
+     '    query.value = ""\n    searchAlbums.value = emptyList()\n  }',
+     '    query.value = ""\n  }',
+     "a library switch drops the previous library's search results before the new search "
+     "returns", 1),
+    ("album/double-load-guard-deleted", ALBUM_VM,
+     "    if (this.albumId.value == albumId) return\n", "",
+     "loading the same album twice never fetches it a second time, and keeps what is on "
+     "screen", 1),
+    ("album/loading-reads-as-notfound", ALBUM_VM,
+     "Fetch.Pending -> AlbumUiState.Loading", "Fetch.Pending -> AlbumUiState.NotFound",
+     # 2: `switching to another album shows Loading...` observes the same Pending state at the
+     # other place it is reachable (across an id change), so it reddens too.
+     "an album still being fetched is Loading, not the deleted-album message", 2),
+    ("album/load-keeps-previous-album", ALBUM_VM,
+     "    album.value = Fetch.Pending\n    this.albumId.value = albumId",
+     "    this.albumId.value = albumId",
+     "switching to another album shows Loading, never the previous album under the new id", 1),
 ]
 
 
@@ -495,7 +544,8 @@ def apply(path, old, new):
 
 def revert():
     subprocess.run(
-        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION, LIBRARY_VM, ALBUM_VM],
+        ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE],
         check=True,
     )
 
