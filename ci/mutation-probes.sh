@@ -1290,7 +1290,12 @@ PROBES = [
      "    val player: MuPlayer = playerFactory.create()",
      "    val player: MuPlayer =\n"
      "      MuPlayer(androidx.media3.exoplayer.ExoPlayer.Builder(this).build(), NeverResume)",
-     "an ExoPlayer is constructed in exactly one place", 1),
+     # The named test is `production code constructs an ExoPlayer in exactly one place`, and it was
+     # recorded here under an older name until Task 8b re-ran this probe: `PlayerConstructionTest`
+     # split into a production half and a test-sources half during Task 3's fix round and this line
+     # was not moved with it. The probe therefore reported MISSED while its subject was working
+     # perfectly -- the second-worst outcome for a regression list, after silently passing.
+     "production code constructs an ExoPlayer in exactly one place", 1),
     # `Service.onTaskRemoved` is invoked by the system and by nothing else, so the rule it applies
     # was hoisted out of it. These two probes are why: both halves fail in opposite directions and
     # a policy that lost either one is silently wrong on a device nobody is watching.
