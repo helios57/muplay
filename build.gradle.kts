@@ -12,6 +12,14 @@ import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
 import org.gradle.testing.jacoco.tasks.JacocoReport
 import org.w3c.dom.Element
 
+// The root project has no `check` task of its own without this, and the `build-logic` tests wired
+// in at the bottom of this file need one to hang from -- every other `check` in this build belongs
+// to a subproject, and `build-logic` is not one. `base` and nothing more: no module applies its
+// plugins here (see below), and this adds `check`/`assemble`/`build`/`clean` lifecycle tasks only.
+plugins {
+  base
+}
+
 // Every module applies its plugins through a build-logic convention plugin (`muplay.*`, defined
 // in build-logic/convention), which applies the underlying AGP/Kotlin/KSP/Hilt plugins itself
 // with an explicit, catalogue-pinned version — so nothing needs declaring here beyond the two
@@ -3173,4 +3181,23 @@ subprojects {
     }
     tasks.named("check") { dependsOn(guard) }
   }
+}
+
+/**
+ * `build-logic`'s own JVM tests, wired into the root build's `check`.
+ *
+ * `build-logic` is a **separate Gradle build** (`pluginManagement { includeBuild("build-logic") }`
+ * in settings.gradle.kts), so its tasks are invisible to `./gradlew check` and to every CI job:
+ * nothing in `.github/workflows/` names them, and nothing would. That is not a detail -- until
+ * Plan 3 Task 5's review round, `build-logic` had no test source set at all, and the two security
+ * gates it contains (`VerifyMergedManifestTask`, `VerifyNoDestructiveMigrationTask`) had their
+ * *behaviour* verified nowhere. Adding a test that nothing runs would have been the same defect
+ * with a longer changelog.
+ *
+ * `gradle.includedBuild(..).task(..)` is the supported way to depend across that boundary. Named
+ * from the root's own `check` rather than added to a CI step, for the reason every other gate in
+ * this file is: a check that has to be remembered is a check that stops running.
+ */
+tasks.named("check") {
+  dependsOn(gradle.includedBuild("build-logic").task(":convention:test"))
 }
