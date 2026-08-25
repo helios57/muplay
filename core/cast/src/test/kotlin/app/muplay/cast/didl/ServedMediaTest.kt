@@ -106,6 +106,39 @@ class ServedMediaTest {
     assertThat(ServedMedia.DLNA_FLAGS).hasSize(32)
   }
 
+  /**
+   * **The URL leg of the three-way invariant, as a property of the table rather than of one row.**
+   *
+   * A renderer that ignores `Content-Type` and `protocolInfo` and sniffs `.$fileExtension` off the
+   * URL -- which is what spec section 6 says Sonos does -- has to arrive at the same MIME type the
+   * entry declares. Written as a sweep over every entry because the plausible mistake is a single
+   * reasonable-looking row: `"oga" to ServedMedia("audio/ogg", "mp3")` reads perfectly well and
+   * promises Ogg on a `.mp3` URL. That row fails here, alone, and names itself.
+   */
+  @Test
+  fun `every served format round-trips through the extension it declares`() {
+    val offenders = ServedMedia.rawTypes.filterValues { served ->
+      ServedMedia.forExtension(served.fileExtension)?.mimeType != served.mimeType
+    }
+
+    assertThat(offenders).isEmpty()
+    // The sweep ran over something: an empty table would satisfy the line above vacuously.
+    assertThat(ServedMedia.rawTypes).hasSizeGreaterThanOrEqualTo(12)
+  }
+
+  @Test
+  fun `forExtension answers what a renderer sniffing the url concludes, and does not guess`() {
+    // Two observations, so it cannot be a constant...
+    assertThat(ServedMedia.forExtension("mp3")?.mimeType).isEqualTo("audio/mpeg")
+    assertThat(ServedMedia.forExtension("M4B")?.mimeType).isEqualTo("audio/mp4")
+    // ...and the half that matters: it must NOT fall back to `FALLBACK_MIME` the way `of` does.
+    // `.opus` is the one suffix spec section 4 forbids outright, and a fallback here would make it
+    // agree with every MP3 stream this client serves.
+    assertThat(ServedMedia.forExtension("opus")).isNull()
+    assertThat(ServedMedia.forExtension("xyz")).isNull()
+    assertThat(ServedMedia.forExtension(null)).isNull()
+  }
+
   @Test
   fun `opus never reaches a renderer, by construction`() {
     // Not an assertion about a check, an assertion about the type system: `StreamFormat.forSuffix`
