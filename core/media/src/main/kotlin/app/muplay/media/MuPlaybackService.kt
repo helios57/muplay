@@ -28,10 +28,25 @@ import javax.inject.Inject
  * unit renders that as a library containing nothing, which is a wrong answer rather than an absent
  * one.
  *
- * **Nothing here logs.** A media service is the easiest place in an app to leak a stream URL: every
- * `MediaItem` it holds carries one, complete with an auth token and salt, and the reflex when a
- * track will not play is to log the item. It has not happened yet because there is no logging in
- * this class at all, which is the state to keep it in.
+ * **Who may connect is [ControllerAccessPolicy]'s decision, applied in [LibraryCallback.onConnect].**
+ * The service is exported, and Media3's default callback accepts every connection unconditionally;
+ * see that object for what a connected controller can read, why the gate is the platform's own
+ * trust predicate rather than a package allow-list, and why it costs Plan 5's Auto and Wear
+ * controllers nothing.
+ *
+ * **Nothing in this class logs, and that is narrower than it sounds.** A media service is the
+ * easiest place in an app to leak a stream URL: every `MediaItem` it holds carries one, complete
+ * with an auth token and salt, and the reflex when a track will not play is to log the item. No
+ * source file under `core/media/src/main` names `android.util.Log` or `println`, and
+ * `ConventionTest`'s `nothing in the media module logs` is what keeps it that way rather than this
+ * paragraph.
+ *
+ * It does **not** follow that no URL can reach `logcat`. Two of this module's own dependencies log
+ * on paths this project drives: Media3's `MediaSessionLegacyStub` logs a warning naming the artwork
+ * `Uri` when the session bitmap loader fails to load it, and `DefaultHttpDataSource` embeds the
+ * request URL in the message of the `HttpDataSourceException` it throws on a cross-protocol
+ * redirect. "This code does not log" is a claim about this code; it is not a claim about the
+ * process.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn` -- see `MuPlayerFactory` for the full argument.
 // `MediaLibraryService`, `MediaLibrarySession` and `DefaultMediaNotificationProvider` are all
@@ -107,11 +122,44 @@ class MuPlaybackService : MediaLibraryService() {
   }
 
   /**
-   * No browse overrides, on purpose -- see this class's own documentation. The type exists so Plan 5
-   * has one place to add them, and so the "not supported" answer is a decision with a name rather
-   * than an omission.
+   * The connection gate, and no browse overrides -- see this class's own documentation. The type
+   * also exists so Plan 5 has one place to add the browse answers, and so the "not supported" answer
+   * is a decision with a name rather than an omission.
+   *
+   * `internal` rather than `private`, so `ControllerAccessGateTest` can drive [onConnect] with a
+   * real `ControllerInfo` for a package that is not this one. Nothing else in this project
+   * constructs it: the session is built with `LibraryCallback()` eleven lines above.
    */
-  private class LibraryCallback : MediaLibrarySession.Callback
+  internal class LibraryCallback : MediaLibrarySession.Callback {
+
+    /**
+     * Refuses a controller [ControllerAccessPolicy] does not accept, and otherwise leaves the
+     * decision exactly where Media3 had it.
+     *
+     * **`onConnect` and not `onConnectAsync`, and that is a measurement.**
+     * `MediaSessionImpl.onConnectOnHandler` calls `Callback.onConnect` *first* and only falls
+     * through to `onConnectAsync` when the returned result is accepted **and** carries Media3's
+     * `androidx.media3.session.CALLBACK_NOT_IMPLEMENTED` sentinel in its `sessionExtras` -- which is
+     * precisely what the interface's own default `onConnect` returns. Overriding the async half
+     * alone would leave the sync half answering first; overriding this one gates both, including a
+     * future Plan 5 `onConnectAsync` for the browse tree.
+     *
+     * The accepted arm is `super.onConnect(...)`, i.e. that sentinel, rather than a hand-built
+     * `AcceptedResultBuilder(session, controller).build()`. The two are the same thing today, and
+     * delegating means a legitimate controller keeps whatever Media3's default is -- including the
+     * narrowing it already applies to an untrusted-but-accepted caller -- instead of this file
+     * freezing a copy of it.
+     */
+    override fun onConnect(
+      session: MediaSession,
+      controller: MediaSession.ControllerInfo,
+    ): MediaSession.ConnectionResult =
+      if (ControllerAccessPolicy.accepts(controller.packageName, controller.isTrusted)) {
+        super.onConnect(session, controller)
+      } else {
+        MediaSession.ConnectionResult.reject()
+      }
+  }
 
   companion object {
     /**
