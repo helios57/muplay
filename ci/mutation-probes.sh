@@ -125,6 +125,7 @@ SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.
 LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt"
 ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
 LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiState.kt"
+STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -510,6 +511,52 @@ PROBES = [
      "    album.value = Fetch.Pending\n    this.albumId.value = albumId",
      "    this.albumId.value = albumId",
      "switching to another album shows Loading, never the previous album under the new id", 1),
+
+    # ---- Plan 3 Task 1: /rest/stream, the one URL no Retrofit call site covers ----------------
+    # This URL is handed to Media3, which fetches it with its own HTTP stack and none of this
+    # client's interceptors -- so a parameter missing here has no second chance to be added, and
+    # nothing downstream can notice. Each of the first three below ALSO reddens `LiveNavidromeTest`
+    # (recorded in task-1-report.md); this runner is JVM-only per its own header, so the counts
+    # here are the JVM half only.
+    ("stream/song-id", CLIENT,
+     '.addQueryParameter("id", songId)', '.addQueryParameter("id", "track-1")',
+     "the song id is on the url and is the one the caller asked for", 1),
+    ("stream/format-wire-value", CLIENT,
+     '.addQueryParameter("format", format.wireValue)', '.addQueryParameter("format", "raw")',
+     # The live half of this one is the interesting half: the JVM test proves the parameter is
+     # built, `a live transcode returns no content length and refuses ranges` proves the server
+     # acts on it.
+     "an mp3 request sends format mp3 and the bitrate cap it was given", 1),
+    # Plan 1's own finding -- `authParams()` returning nothing left 81 tests green -- re-armed for
+    # a URL that no Retrofit call site covers. 4: `f`, `c`/`v`, the token and the salt-freshness
+    # test all read parameters this line is the sole source of.
+    ("stream/no-auth-params", CLIENT,
+     '    }\n    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }\n'
+     '    return builder.build().toString()\n  }\n',
+     '    }\n    return builder.build().toString()\n  }\n',
+     "the token on this url is a real md5 of the password and the salt beside it", 4),
+
+    # ---- Plan 3 Task 1: "never Opus" is a decision, not an omission ---------------------------
+    # `format=raw` means the bytes on the wire are whatever the file is, so the rule cannot be
+    # enforced by leaving a parameter off. Both directions of the branch are probed: a policy that
+    # never transcodes and a policy that always does are each caught by a different test, which is
+    # what makes the branch a discrimination rather than a coincidence.
+    ("format/always-raw", STREAM_FORMAT,
+     "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
+     "      Raw",
+     # 4: the opus case, the ogg case, the case-insensitive pair and the caller's-bitrate pair all
+     # observe a transcode that no longer happens.
+     "an opus source is transcoded rather than streamed raw", 4),
+    ("format/always-mp3", STREAM_FORMAT,
+     "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
+     "      Mp3(transcodeBitRateKbps)",
+     "every other suffix streams raw", 1),
+    # The constant-in-a-mapped-field defect in its purest form, and the reason the named test
+    # exists at all: every other test in `StreamFormatTest` passes with the bitrate hardcoded.
+    ("format/bitrate-hardcoded", STREAM_FORMAT,
+     "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(transcodeBitRateKbps) else Raw",
+     "      if (suffix?.lowercase() in TRANSCODE_ONLY_SUFFIXES) Mp3(192) else Raw",
+     "the transcode bitrate is the one the caller passed", 1),
 ]
 
 
@@ -547,7 +594,7 @@ def apply(path, old, new):
 def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
-         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE],
+         LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT],
         check=True,
     )
 
