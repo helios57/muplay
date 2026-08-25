@@ -1517,18 +1517,52 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // app.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
     // 0.90", BUILD FAILED.
     //
-    // **`PlaybackLauncher` itself is deliberately not listed, and it is not an oversight.** The
-    // class measures 0/2 BRANCH and 0/12 LINE here, because every line of it needs a real
-    // `MediaController` bound to a real `MuPlaybackService` -- which only an `@HiltAndroidApp`
-    // application can start, i.e. `:app`'s instrumented tier, i.e. Task 10's journey. It is named,
-    // with those measured ratios, in `warnUngatedClasses`'s output on every run, which is where a
-    // genuinely-deferred class belongs; the same shape `:feature:library` used for `CoverArtKt`
-    // between its Task 9 and its Task 10.
+    // **`PlaybackLauncher` itself is gated by the rule below rather than by this one**, and on LINE
+    // rather than BRANCH. Between Task 9 and Task 10 it was deliberately unlisted, at 0/2 BRANCH
+    // and 0/12 LINE, and named with those ratios in `warnUngatedClasses`'s output on every run --
+    // the shape a genuinely-deferred class should have. Task 10's journey is what reached it.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackLauncherKt"),
+    ),
+    // `PlaybackLauncher` (the class) 12/12 LINE = 1.0000, and `PlaybackLauncher$play$2` -- the
+    // `withContext(mainDispatcher)` body, i.e. the controller handshake itself -- 6/6 = 1.0000.
+    // Both measured from a merged report with Plan 3 Task 10's `PlaybackJourneyTest` in it; this
+    // class was the one named at 0/2 BRANCH, 0/12 LINE in `warnUngatedClasses`'s output on every
+    // run between Task 9 and Task 10, because every line of it needs a `MediaController` bound to a
+    // real `MuPlaybackService`, which only an `@HiltAndroidApp` application can start.
+    //
+    // **LINE and not BRANCH, and that is the honest counter rather than the convenient one.** The
+    // class carries exactly one branch pair, `launchQueue(songs, startIndex) ?: return`, and it
+    // measures 1/2: the null arm is "play a queue with no songs in it", which no path through the
+    // UI can produce -- there is no row to tap in an empty list. A BRANCH floor here would
+    // therefore have to sit at 0.50, which permits anything, and this table already records the
+    // same ruling for `MuPlaybackService`. The *decision* that branch carries is not ungated: it
+    // lives in the top-level `launchQueue`, which the rule above holds at 2/2 BRANCH from JVM data
+    // alone, and which exists as a separate function for exactly this reason. What this rule adds
+    // is that the twelve lines around it -- the format decision, the queue build, the main-thread
+    // hop, `setMediaItems(items, queue.startIndex, 0L)`, `prepare()`, `play()` -- all ran against a
+    // real session.
+    //
+    // Falsified by withholding the covering data rather than by raising the minimum, since both
+    // measure 1.0000: with the instrumented `.ec` files moved aside, `jacocoTestCoverageVerification`
+    // reports `app.muplay.media.PlaybackLauncher: lines covered ratio is 0.00, but expected minimum
+    // is 0.90` and the same for `PlaybackLauncher.play.2`, BUILD FAILED -- which is what
+    // `requiresInstrumentedData = true` claims here.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.PlaybackLauncher",
+        // Matches `$play$2` (6/6) and `$play$1` (a continuation with no counters of either kind,
+        // so JaCoCo's NaN path leaves it unable to move this ratio). A literal `$` never matches;
+        // see this table's own doc, gotcha 3.
+        "app.muplay.media.PlaybackLauncher*play*",
+      ),
+      requiresInstrumentedData = true,
     ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
@@ -1857,6 +1891,33 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.player.PlayerViewModel.1",
       ),
     ),
+    // `PlayerViewModel$1`, the anonymous `PlaybackControls` adapter the `@Inject` constructor
+    // builds: **10/10 LINE = 1.0000**, measured. It is excluded from the rule above and gated here
+    // instead because it is the one class in this module that no JVM test can reach -- this
+    // module's own device suite composes over a hand-built `PlaybackControls` on purpose, so the
+    // adapter that binds the real `PlaybackConnection` is reachable only through Hilt's graph, i.e.
+    // only from `:app`'s `PlaybackJourneyTest`. Between Task 9 and Task 10 it stood at 0/10 and was
+    // named, with that ratio, in `warnUngatedClasses`'s output on every run.
+    //
+    // All ten lines are covered, and getting the last three of them is why
+    // `theOnScreenControlsDriveTheRealSession` exists in the shape it does: `state`, `connect`,
+    // `isPlaying`, `play` and `pause` come free from any journey that plays something, but `next`,
+    // `previous` and `seekTo` need the Next, Previous and seek-bar controls actually driven against
+    // a live session. Without that test this rule would sit at 7/10 = 0.70.
+    //
+    // Falsified by withholding the covering data rather than by raising the minimum, since it
+    // measures 1.0000: with the instrumented `.ec` files moved aside this reports
+    // `app.muplay.player.PlayerViewModel.1: lines covered ratio is 0.00, but expected minimum is
+    // 0.90`, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      // Written `PlayerViewModel.1`, not `PlayerViewModel$1`: a literal `$` in a JaCoCo pattern
+      // never matches, because the report presents the class as `PlayerViewModel.1`.
+      includes = listOf("app.muplay.player.PlayerViewModel.1"),
+      requiresInstrumentedData = true,
+    ),
     // The three `@Composable` file-classes, LINE, instrumented. LINE and not BRANCH per this
     // table's standing ruling, and the numbers say why plainly: these same three measure 0.6364,
     // 0.5865 and 0.4706 BRANCH, and essentially every missing branch is Compose codegen --
@@ -1896,7 +1957,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
+  // 78/81 = 0.9630 LINE across the whole module, re-measured at Plan 3 Task 10 with
+  // `PlaybackJourneyTest` in the run (the module has grown since the 61/63 recorded here before
+  // it; 20/21 = 0.9524 before Task 10's journeys existed at all). The three lines still missing are
+  // `CleartextPolicyModule`'s single release-variant line, `MuPlayAppKt`'s one uncovered line and
+  // the inlined `entryProvider` bridge. The
   // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
   // why there is no BRANCH entry.
