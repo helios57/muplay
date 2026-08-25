@@ -430,8 +430,10 @@ PROBES = [
     ("library/search-libraryId-hardcoded", LIBRARY_VM,
      "else source.search(id, newQuery, SEARCH_LIMIT).albums",
      "else source.search(1, newQuery, SEARCH_LIMIT).albums",
+     # 1 -> 2 in review round 1: `a library switch drops the previous library's search results...`
+     # asserts the second search's own (libraryId, query, limit) triple too.
      "searching forwards the exact query and the currently selected library, not a stale or "
-     "swapped one", 1),
+     "swapped one", 2),
     ("library/shuffle-size-hardcoded", LIBRARY_VM,
      "source.shuffle(id, ShuffleRepository.DEFAULT_SHUFFLE_SIZE)",
      "source.shuffle(id, 10)",
