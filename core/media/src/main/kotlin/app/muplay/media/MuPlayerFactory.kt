@@ -2,6 +2,7 @@ package app.muplay.media
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -58,15 +59,23 @@ import javax.inject.Inject
  * another constructor parameter here, applied inside [create]. It must not arrive as a second
  * construction site somewhere else; that is exactly what `PlayerConstructionTest` refuses.
  *
- * ### The two lines that are silent in the other direction
+ * ### The three lines that are silent in the other direction
  *
- * `setAudioAttributes(.., handleAudioFocus = true)` and `setHandleAudioBecomingNoisy(true)` are one
- * builder call each, and dropping either is silent in exactly the way the retry policy is: the app
- * still plays, every unit test stays green, and the defect is audible only on a device that has
- * something else happening on it -- a phone call played over, or an audiobook coming out of the
- * phone's speaker on a train the moment the headphones come out. `AudioFocusTest` observes both as
- * *playback that stopped*, never as a flag that was set, because a flag assertion is satisfied by a
- * player that ignores the flag.
+ * `setAudioAttributes(.., handleAudioFocus = true)`, `setHandleAudioBecomingNoisy(true)` and
+ * `setWakeMode(C.WAKE_MODE_NETWORK)` are one builder call each, and dropping any of them is silent
+ * in exactly the way the retry policy is: the app still plays, every unit test stays green, and the
+ * defect only appears on a device that has something else happening on it -- a phone call played
+ * over, an audiobook coming out of the phone's speaker the moment the headphones come out, or a
+ * track that stalls once the screen has been off long enough for doze and WiFi power-save to bite.
+ *
+ * The third is the one a bench test can never reproduce, because the device under test is awake and
+ * plugged in. `AudioFocusTest` therefore observes it the only way that is not a flag assertion: the
+ * **power manager's own wake-lock registry**, read back through `dumpsys`, showing this process
+ * holding `ExoPlayer:WakeLockManager` while it plays and giving it up when it pauses.
+ *
+ * The first is observed as *playback that stopped*, never as a flag that was set. The second cannot
+ * be observed as a pause on any emulator this project has -- see that test's own note for the
+ * measured reason -- and is observed as `ActivityManagerService`'s receiver registry instead.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is an
 // `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at all -- Android
@@ -95,6 +104,12 @@ class MuPlayerFactory @Inject constructor(
       // Headphones unplugged, Bluetooth disconnected. Without this, yanking headphones plays an
       // audiobook out loud on a train.
       .setHandleAudioBecomingNoisy(true)
+      // A partial wake lock **and** a WiFi lock, held only while actually playing. `WAKE_MODE_NETWORK`
+      // rather than `WAKE_MODE_LOCAL` because every byte this app plays arrives over the network:
+      // without the WiFi half, WiFi power-save with the screen off starves the loader and playback
+      // stalls mid-track. Both are released the moment playback stops, by Media3, so this is not a
+      // battery decision made once for the process.
+      .setWakeMode(C.WAKE_MODE_NETWORK)
       .build()
       .also { player -> player.addListener(ContentTypeSwitcher(player)) }
 }

@@ -23,13 +23,20 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Focus and becoming-noisy, observed as **playback that stopped**, never as a flag that was set.
+ * The three `MuPlayerFactory` builder calls that are silent when they are missing, each observed as
+ * far from *"the flag was set"* as this hardware allows.
  *
- * `handleAudioFocus = true` and `setHandleAudioBecomingNoisy(true)` are both single builder calls in
- * [MuPlayerFactory], and a test that asserted they were called would be satisfied by a player that
- * ignores both. What is asserted here instead is that `isPlaying` goes false **and the position
- * stops advancing** when another app takes focus and when the system says the audio route became
- * noisy — and, for the transient case, that both resume when focus comes back.
+ * `handleAudioFocus = true`, `setHandleAudioBecomingNoisy(true)` and
+ * `setWakeMode(C.WAKE_MODE_NETWORK)` are one builder call each, and a test that asserted they were
+ * *called* would be satisfied by a player that ignores all three. What is asserted here instead is
+ *
+ *  * **focus** — that `isPlaying` goes false and the position stops advancing when another app
+ *    takes focus, and that both resume when it is given back;
+ *  * **becoming-noisy** — that `ActivityManagerService` holds a receiver registration for the
+ *    broadcast, because the broadcast itself cannot be driven on this platform at all (measured;
+ *    see that test);
+ *  * **wake mode** — that the *power manager* holds a partial wake lock for this process while it
+ *    plays, and does not once it stops.
  *
  * The player is built through [MuPlayerFactory] like every other player in this project: it is the
  * only construction site, `PlayerConstructionTest` refuses a second one, and a hand-built player
@@ -230,17 +237,13 @@ class AudioFocusTest {
     val command = "dumpsys activity broadcasts ${context.packageName}"
     val actions = mutableSetOf<String>()
     var inRegisteredReceivers = false
-    ParcelFileDescriptor.AutoCloseInputStream(
-      InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-    ).bufferedReader().useLines { lines ->
-      for (line in lines) {
-        val trimmed = line.trim()
-        when {
-          trimmed == "Registered Receivers:" -> inRegisteredReceivers = true
-          trimmed == "Receiver Resolver Table:" -> inRegisteredReceivers = false
-          inRegisteredReceivers && trimmed.startsWith("Action: \"") ->
-            actions += trimmed.removePrefix("Action: \"").removeSuffix("\"")
-        }
+    shellLines(command) { line ->
+      val trimmed = line.trim()
+      when {
+        trimmed == "Registered Receivers:" -> inRegisteredReceivers = true
+        trimmed == "Receiver Resolver Table:" -> inRegisteredReceivers = false
+        inRegisteredReceivers && trimmed.startsWith("Action: \"") ->
+          actions += trimmed.removePrefix("Action: \"").removeSuffix("\"")
       }
     }
     // A parse that found nothing at all would make `contains` fail for the wrong reason and
@@ -267,6 +270,75 @@ class AudioFocusTest {
     return harness.onMain { harness.player.currentPosition }
   }
 
+  /**
+   * The player holds a **partial wake lock, in the power manager's own registry**, while it is
+   * playing, and gives it up when it stops.
+   *
+   * `setWakeMode(C.WAKE_MODE_NETWORK)` is the third of this factory's silent builder calls and the
+   * one a bench test structurally cannot reproduce: without it a streaming player holds no wake
+   * lock and no WiFi lock, so background playback stalls under doze and WiFi power-save with the
+   * screen off — and the device running this suite is awake, unlocked and plugged in, which is
+   * exactly the state in which the defect does not appear.
+   *
+   * So the observation is not "playback survived doze" (this suite cannot produce doze) but the
+   * lock itself, read out of `dumpsys power` — `PowerManager`'s own list of held wake locks, with
+   * Media3's `ExoPlayer:WakeLockManager` tag on it. The **release half is the discrimination that
+   * matters**: Media3 acquires the lock only while `playWhenReady` and the player is not idle or
+   * ended, so a lock that stayed held after a pause would be a battery defect of its own, and a tag
+   * matched from some other process could not disappear on this player's pause.
+   *
+   * `android.permission.WAKE_LOCK` comes from `media3-exoplayer`'s own manifest and merges into
+   * this test APK; without it Media3 logs *"WAKE_LOCK permission not granted"* and acquires
+   * nothing, which this test would report as the missing lock it is.
+   */
+  @Test
+  fun theShippingPlayerHoldsAWakeLockWhileItPlaysAndGivesItUpWhenItStops() {
+    // setUp already awaited real audio past 500 ms, so this is a genuinely-playing player.
+    assertThat(heldWakeLockTags())
+      .describedAs("wake lock tags the power manager reports as held")
+      .contains(EXOPLAYER_WAKE_LOCK_TAG)
+
+    harness.onMain { harness.player.pause() }
+
+    val deadline = System.currentTimeMillis() + PAUSE_TIMEOUT_MS
+    while (System.currentTimeMillis() < deadline) {
+      if (EXOPLAYER_WAKE_LOCK_TAG !in heldWakeLockTags()) return
+      Thread.sleep(200L)
+    }
+    throw AssertionError(
+      "the wake lock was still held ${PAUSE_TIMEOUT_MS}ms after the player was paused, so the " +
+        "assertion above cannot be attributed to this player",
+    )
+  }
+
+  /**
+   * Every wake-lock tag the power manager currently reports as **held**.
+   *
+   * Scoped to the `Wake Locks:` block, which ends at `Suspend Blockers:`. The rest of
+   * `dumpsys power` names wake locks that are merely configured or historical, and a substring
+   * search over the whole dump would match those and never fail.
+   */
+  private fun heldWakeLockTags(): Set<String> {
+    val tags = mutableSetOf<String>()
+    var inWakeLocks = false
+    var sawSection = false
+    shellLines("dumpsys power") { line ->
+      val trimmed = line.trim()
+      when {
+        trimmed.startsWith("Wake Locks: size=") -> {
+          inWakeLocks = true
+          sawSection = true
+        }
+        trimmed.startsWith("Suspend Blockers:") -> inWakeLocks = false
+        inWakeLocks -> Regex("'([^']+)'").find(trimmed)?.let { tags += it.groupValues[1] }
+      }
+    }
+    // A parse that never found the section would make `contains` fail for the wrong reason and the
+    // release half pass for the wrong reason -- the second being the assertion that discriminates.
+    check(sawSection) { "`dumpsys power` produced no `Wake Locks:` section this parser understood" }
+    return tags
+  }
+
   private fun takeFocus(gain: Int) {
     val request = AudioFocusRequest.Builder(gain)
       .setAudioAttributes(
@@ -283,6 +355,22 @@ class AudioFocusTest {
     assertThat(result).isEqualTo(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
   }
 
+  /**
+   * Runs a shell command through `UiAutomation` and hands every line of its **standard output** to
+   * [onLine].
+   *
+   * Reading that output is not optional plumbing. This suite's original becoming-noisy test called
+   * `executeShellCommand(..).close()` and discarded it, which is how a `SecurityException` printed
+   * by `am broadcast` went unnoticed through a green run — see
+   * [theShippingPlayerHoldsAnAudioBecomingNoisyReceiverUntilItIsReleased]. Streamed rather than
+   * collected: `dumpsys activity broadcasts` is tens of thousands of lines.
+   */
+  private fun shellLines(command: String, onLine: (String) -> Unit) {
+    ParcelFileDescriptor.AutoCloseInputStream(
+      InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
+    ).bufferedReader().useLines { lines -> lines.forEach(onLine) }
+  }
+
   private fun abandonFocus() {
     focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
     focusRequest = null
@@ -295,5 +383,13 @@ class AudioFocusTest {
      * and look like one.
      */
     const val PAUSE_TIMEOUT_MS = 10_000L
+
+    /**
+     * Media3's own tag, read off `PowerManager.newWakeLock(.., "ExoPlayer:WakeLockManager")` in the
+     * resolved `media3-common-1.11.0` bytecode rather than copied from documentation. Written out
+     * rather than referenced, because there is no constant to reference: it is package-private
+     * inside Media3, and a literal is the only thing that can disagree with it.
+     */
+    const val EXOPLAYER_WAKE_LOCK_TAG = "ExoPlayer:WakeLockManager"
   }
 }

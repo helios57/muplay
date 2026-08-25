@@ -26,9 +26,10 @@ import javax.inject.Singleton
  * **`startIndex` is deliberately not consumed here.** `mediaItems` returns the *whole* queue,
  * whatever `PlaybackQueue.startIndex` names, because that index is an argument to
  * `Player.setMediaItems(items, startIndex, positionMs)`: dropping items here would hand Media3 a
- * truncated queue *and* an index into it. `PlaybackConnection.play` is the one place the two are
+ * truncated queue *and* an index into it. [PlaybackLauncher.play] is the one place the two are
  * joined, and `MuPlaybackServiceTest.aQueueStartsPlayingAtTheTrackItsStartIndexNames` is the
  * assertion that they are -- on a device, because that is the only layer where it is observable.
+ * Until that test existed nothing applied `startIndex` at all and every album started at track 1.
  */
 @Singleton
 class QueueRepository @Inject constructor(

@@ -16,6 +16,7 @@ import androidx.test.rule.GrantPermissionRule
 import app.muplay.database.CredentialStoreEntryPoint
 import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackEntryPoint
+import app.muplay.media.PlaybackLauncher
 import app.muplay.media.PlaybackNotification
 import app.muplay.media.MuPlaybackService
 import app.muplay.media.PlaybackQueue
@@ -111,7 +112,7 @@ class MuPlaybackServiceTest {
     }
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context, queueRepository())
+      connection = PlaybackConnection(context)
     }
     controller = runBlocking { connection.controller() }
   }
@@ -308,8 +309,9 @@ class MuPlaybackServiceTest {
    * second of real audio awaited, after which the index must **still** be the one that was named.
    * That pair is what separates "started there" from "arrived there".
    *
-   * **Two indices, so a hardcoded one satisfies neither.** Both mutations were measured:
-   * `setMediaItems(items, 0, 0L)` fails on the first index read (`expected:<1> but was:<0>`), and
+   * **Two indices, so a hardcoded one satisfies neither.** Both mutations were measured, in
+   * `PlaybackLauncher.play`: `setMediaItems(items, 0, 0L)` fails on the first index read
+   * (`expected:<1> but was:<0>`), and
    * `mediaItems()` returning `queue.songs.drop(queue.startIndex)` — the exact misreading
    * `QueueRepositoryTest` warns about — lands on index 1 of a two-item queue and fails on the id
    * there (`expected:<"lVRD…"> but was:<"nMjR…">`), with `mediaItemCount` a second, independent
@@ -376,7 +378,7 @@ class MuPlaybackServiceTest {
   fun releasingAConnectionThatNeverConnectedIsSafeAndLeavesNothingPlaying() {
     var fresh: PlaybackConnection? = null
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      fresh = PlaybackConnection(context, queueRepository()).also { it.release() }
+      fresh = PlaybackConnection(context).also { it.release() }
     }
 
     assertThat(checkNotNull(fresh).state.value).isEqualTo(PlaybackState.NOTHING_PLAYING)
@@ -404,7 +406,7 @@ class MuPlaybackServiceTest {
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context, queueRepository())
+      connection = PlaybackConnection(context)
     }
     controller = runBlocking { connection.controller() }
     setQueueAndPlay(listOf(songs[1]))
@@ -416,19 +418,30 @@ class MuPlaybackServiceTest {
   }
 
   /**
-   * Starts [items] through the **production** path and hands back the `MediaItem`s built for them.
+   * Starts [items] through **`PlaybackLauncher`, the production entry point**, and hands back the
+   * `MediaItem`s built for them.
    *
-   * `connection.play(queue)`, not a hand-rolled
-   * `setMediaItems(items, 0, 0L); prepare(); play()` -- which is what stood here until Plan 3 Task
-   * 6 and is precisely how `startIndex` came to be applied nowhere: a helper that passes a literal
-   * `0` is a second copy of the production sequence that agrees with it on the only case it ever
-   * exercises. The items are re-derived rather than captured from inside `play`, which costs one
-   * more `mediaItems` call and keeps the connection's signature free of a test-shaped return value.
+   * Not a hand-rolled `setMediaItems(items, 0, 0L); prepare(); play()` -- which is what stood here
+   * until Plan 3 Task 6, and is precisely how `startIndex` came to be applied nowhere: a helper
+   * that passes a literal `0` is a second copy of the production sequence that agrees with it on
+   * the only case it ever exercises, so no assertion in this file could see the real one being
+   * wrong. `PlaybackLauncher` is documented as *"the one way anything in this app starts playing
+   * something"*, and this is the only suite in the project that can run it: every line of it needs
+   * a `MediaController` bound to a real `MuPlaybackService`, which only an `@HiltAndroidApp`
+   * application can start.
+   *
+   * Constructed over **this test's own** [connection] rather than reached through Hilt, for the
+   * reason the connection itself is built by hand here: the singleton is shared with the running
+   * app and cannot be released between tests.
+   *
+   * The items are re-derived rather than captured from inside `play`, which costs one more
+   * `mediaItems` call and keeps the launcher's signature free of a test-shaped return value. Both
+   * derivations produce the same ids and the same endpoints; only the auth salt differs, and
+   * nothing here asserts on one.
    */
   private fun setQueueAndPlay(items: List<Song>, startIndex: Int = 0): List<MediaItem> {
-    val queue = PlaybackQueue.of(items, startIndex)
-    runBlocking { connection.play(queue) }
-    return runBlocking { queueRepository().mediaItems(queue) }
+    runBlocking { PlaybackLauncher(queueRepository(), connection).play(items, startIndex) }
+    return runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items, startIndex)) }
   }
 
   /** The scheme, host and path of a cover-art URL, with the authenticated query string removed. */
