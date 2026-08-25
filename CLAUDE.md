@@ -95,6 +95,13 @@ matched its own command line and so could never report "finished", and a PID
 file containing the literal text `PID=12345` rather than the bare number, which
 made every liveness check structurally incapable of reporting "alive".
 
+**Bound the tool's timeout, not just the shell's.** A `timeout 900 ...` inside a
+harness call that itself caps at two minutes is killed by the harness, and a
+killed mutation run's `finally` never reverts — leaving a stray mutation the
+next run's dirty-tree guard blames on whoever comes along. Two agents hit this
+on the same afternoon. Run one mutation per bounded command, and check
+`git status` immediately after.
+
 ## A subagent's `.output` file mtime is not a liveness signal
 
 The per-agent transcript under the session's `tasks/` directory is flushed at
