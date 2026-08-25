@@ -1745,6 +1745,28 @@ PROBES = [
      # anonymous renderer on a network collapsed into one entry, and the store remembered that
      # empty identity for the fallback to re-fetch.
      "a renderer that declares no udn is not a cast device", 1),
+
+    # ---- Plan 6 Task 2, fix round: the same two defects in the SOAP copy of the same guard ----
+    # Found by the Task 3 review while this lane was fixing their siblings in `DeviceDescription`,
+    # and taken here because they are the same defect in the same module -- two copies of one
+    # security guard is exactly how both came to carry the same 4096-character window.
+    ("soap/unbounded-fault-recursion", SOAP_ENVELOPE,
+     "    if (depth > MAX_FAULT_DEPTH) return null", "    if (false) return null",
+     # WORSE than its `DeviceDescription` sibling, because of where it is called from:
+     # `SoapClient.invoke` runs `parseFault` on EVERY response, outside its try/catch and outside
+     # the runCatching that guards the parse. ~56 KB of nested elements from an unauthenticated
+     # device on the LAN used to answer with a StackOverflowError -- an Error, so the one
+     # `catch (e: IOException)` that `SoapClient`'s KDoc promises Tasks 5, 8 and 9 is complete
+     # misses it entirely and the coroutine dies. 2: the boundary test goes red as well.
+     "a fault nested twenty thousand deep is a plain refusal rather than a stack overflow", 2),
+    ("soap/doctype-scanned-in-a-window", SOAP_ENVELOPE,
+     'internal fun declaresDoctype(xml: String): Boolean = xml.contains("<!DOCTYPE", ignoreCase = true)',
+     'internal fun declaresDoctype(xml: String): Boolean = xml.take(4096).contains("<!DOCTYPE", ignoreCase = true)',
+     # The window as the code actually had it. The named test asserts the PREDICATE and not
+     # `parseFault(...) == null`, and that is what makes this probe possible at all: on the JVM the
+     # `disallow-doctype-decl` feature refuses the document itself, so the end-to-end assertion is
+     # green with the scan looking at four kilobytes, at everything, or at nothing whatsoever.
+     "a doctype hidden behind a five kilobyte comment is still seen by the guard", 1),
 ]
 
 
