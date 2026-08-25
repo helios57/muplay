@@ -11,9 +11,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,7 +45,7 @@ import kotlinx.coroutines.withContext
  *
  * [controller] is a `suspend fun` and may be called from any thread; it hops to the main thread
  * itself rather than making that the caller's problem. That is not politeness -- the natural call
- * site is `runBlocking` from an instrumented test thread, where a `suspendCoroutine` resumed on the
+ * site is `runBlocking` from an instrumented test thread, where a continuation resumed on the
  * main thread would resume the *coroutine* back on the calling thread and every subsequent player
  * read would throw.
  *
@@ -91,6 +93,27 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
   private var controllerFuture: ListenableFuture<MediaController>? = null
   private var controller: MediaController? = null
 
+  /**
+   * The **in-flight** connection, not the resolved controller, and that distinction is the whole of
+   * this field's reason to exist.
+   *
+   * [connect] suspends, which releases the main thread. Caching the resolved `MediaController` -- as
+   * this class did -- therefore leaves a window in which a second caller sees no controller yet and
+   * starts a *second* `MediaController.Builder(..).buildAsync()`. Both complete, the field keeps
+   * whichever landed last, and the other one stays bound forever: the service cannot stop because
+   * something is still connected to it, its `Player.Listener` keeps publishing into the same
+   * [_state], and [release] cannot reach it because [release] can only release one.
+   *
+   * That is not a theoretical interleaving. This is a `@Singleton`; a mini-player and a now-playing
+   * screen starting together is the ordinary case, and both call [controller].
+   *
+   * Cleared when the attempt fails **or is cancelled**, so a connection failure is retried by the
+   * next caller rather than cached and re-thrown forever -- but only if it is still the current
+   * attempt, or a `release()`-then-`controller()` pair would have the old attempt's completion
+   * discard the new one.
+   */
+  private var connection: Deferred<MediaController>? = null
+
   private val listener = object : Player.Listener {
     override fun onEvents(player: Player, events: Player.Events) = publish(player)
   }
@@ -100,14 +123,32 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
    *
    * Callable from any thread; the returned controller is bound to the main thread and every use of
    * it belongs there.
+   *
+   * **One connection, however many concurrent callers.** What is shared is the in-flight
+   * [connection], not the resolved controller -- see that field for the leak the second spelling
+   * produces. Every caller entering this function sees either a connection already under way or
+   * starts the only one there will be, because the whole `?:` runs on the main thread with no
+   * suspension point inside it: `async` returns its `Deferred` before its body is dispatched, so the
+   * assignment cannot be skipped over by a second caller.
+   *
+   * Throws `CancellationException` if [release] is called while this call is still connecting. That
+   * is the honest answer -- the connection the caller asked for was torn down -- and it is what stops
+   * a controller arriving after a release from re-populating the field and restarting the ticker on
+   * a connection that no longer exists.
    */
   suspend fun controller(): MediaController = withContext(mainDispatcher) {
-    controller ?: connect().also { connected ->
-      controller = connected
-      connected.addListener(listener)
-      publish(connected)
-      startTicker(connected)
-    }
+    (
+      connection ?: scope.async { connect() }.also { attempt ->
+        connection = attempt
+        // A failed or cancelled attempt must not be the cached answer for the rest of the process's
+        // life. The identity check is what keeps that from undoing a *newer* attempt: cancellation
+        // resumes through the main dispatcher, so an attempt cancelled by `release()` can complete
+        // one main-loop task after a caller has already started its replacement.
+        attempt.invokeOnCompletion { cause ->
+          if (cause != null && connection === attempt) connection = null
+        }
+      }
+      ).await()
   }
 
   /**
@@ -117,33 +158,60 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
    * reads a released controller. Resetting to [PlaybackState.NOTHING_PLAYING] rather than leaving
    * the last frame behind means a UI that outlives the connection renders "nothing is playing"
    * instead of a track that is no longer loaded, with a progress bar frozen part-way through it.
+   *
+   * `cancelChildren()` covers an in-flight [connect] as well as the ticker, and both halves matter.
+   * Without it, a `controller()` suspended inside `connect()` when this runs resumes afterwards,
+   * assigns [controller], and starts a fresh ticker -- on a connection that was released, against a
+   * `MediaController` that [release] had already handed to `MediaController.releaseFuture`. The
+   * result is a permanent 4 Hz timer reading a dead controller, and it survives every subsequent
+   * `release()` because the field it would have to be reached through was cleared first.
    */
   fun release() {
     scope.coroutineContext.cancelChildren()
+    connection = null
     controller?.removeListener(listener)
     controller?.release()
     controller = null
+    // Releases the controller whenever it arrives, including one still being built by an attempt
+    // the line above just cancelled.
     controllerFuture?.let { MediaController.releaseFuture(it) }
     controllerFuture = null
     _state.value = PlaybackState.NOTHING_PLAYING
   }
 
+  /**
+   * Builds one controller and installs it, or throws.
+   *
+   * Everything after the suspension point -- the field, the listener, the first publish and the
+   * ticker -- is inside this function rather than in [controller]'s `also` block on purpose: it makes
+   * "a released connection installs nothing" a property of *cancellation* rather than of a flag,
+   * because a cancelled coroutine never reaches the line after the suspension point.
+   */
   private suspend fun connect(): MediaController {
     val future = MediaController.Builder(context, MuPlaybackService.sessionToken(context))
       .buildAsync()
     controllerFuture = future
-    return suspendCoroutine { continuation ->
+    val connected = suspendCancellableCoroutine { continuation ->
       future.addListener(
         {
           // Runs on the main thread, which is where `future.get()` hands back a controller already
           // bound to it. `resumeWith(runCatching { .. })` rather than a bare `get()`: a connection
           // failure has to arrive at the caller as its own exception, not as a coroutine that never
           // resumes.
+          //
+          // `suspendCancellableCoroutine`, not `suspendCoroutine`: the latter resumes a *cancelled*
+          // coroutine's continuation normally (`DispatchedContinuation` resumes atomically), so the
+          // installation below would run after `release()` had already torn everything down.
           continuation.resumeWith(runCatching { future.get() })
         },
         mainExecutor,
       )
     }
+    controller = connected
+    connected.addListener(listener)
+    publish(connected)
+    startTicker(connected)
+    return connected
   }
 
   /**
