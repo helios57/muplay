@@ -712,4 +712,86 @@ class ConventionTest {
       .doesNotContain("usesCleartextTraffic")
   }
 
+  /**
+   * Every Kotlin source a release build compiles, except the two files that are allowed to name it.
+   *
+   * `CleartextPolicy`'s own KDoc used to claim that *"no code compiled into the release variant
+   * names [Allowed]"*. That was false when it was written: `IntegrationBaseUrl.permitsCleartext`
+   * has always contained `CleartextPolicy.Allowed -> true`, in a module `:app` depends on with
+   * `implementation` (not `debugImplementation`), so it is compiled into release. The rule above
+   * could not see it — it opens three hardcoded paths and walks nothing — so a screen that passed
+   * `CleartextPolicy.Allowed` from `app/src/main` would have left every gate in this build green.
+   *
+   * The property was holding by luck. This is the scan that makes it hold by construction, and it
+   * is written as a walk rather than as more hardcoded paths for exactly the reason the old rule
+   * failed: a rule that names the files it checks cannot see a file that did not exist when it was
+   * written.
+   *
+   * **Two carve-outs, both matched by canonical path and both checked rather than trusted.**
+   * `app/src/debug/.../CleartextPolicyModule.kt` is the variant source set that provides `Allowed`,
+   * and no release build compiles it. `IntegrationBaseUrl.kt` is the one place the value is
+   * *consumed* — `permitsCleartext`'s exhaustive `when`, which is what makes the policy
+   * unbypassable in the first place and which cannot be written without naming both members. That
+   * carve-out is narrowed to a single occurrence on a single expected line, so widening it to a
+   * second use inside the same file fails this test.
+   *
+   * Test sources are excluded: they are compiled into no release build, and both tiers legitimately
+   * pass `Allowed` to `parse` to exercise the arm a release build must never reach.
+   */
+  @Test
+  fun `nothing a release build compiles names CleartextPolicy Allowed`() {
+    val root = repoRoot()
+    val debugPolicy =
+      File(root, "app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt").canonicalFile
+    val urlParser =
+      File(root, "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt")
+        .canonicalFile
+    val literal = "CleartextPolicy.Allowed"
+
+    val scanned = root.walkTopDown()
+      // The same three skips `moduleBuildFiles` makes, and `.claude` for the same measured reason:
+      // it holds git worktrees, so walking into it finds a second copy of every source file in the
+      // repository and this rule would fail on a file no agent in this session wrote.
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filterNot { it.invariantSeparatorsPath.contains("/src/test/") }
+      .filterNot { it.invariantSeparatorsPath.contains("/src/androidTest/") }
+      .toList()
+
+    // Vacuity, from both ends. A walk that found nothing, or a literal no file in this repository
+    // actually writes, would leave this rule green forever.
+    assertThat(scanned).describedAs("release-compiled Kotlin sources").isNotEmpty()
+    assertThat(scanned.map { it.canonicalFile })
+      .describedAs("the release variant's own policy module must be inside the scanned set")
+      .contains(File(root, "app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt").canonicalFile)
+    assertThat(scanned.filter { kotlinCode(it.readText()).contains(literal) }.map { it.canonicalFile })
+      .describedAs("the carve-outs must actually match, or this rule greps for nothing")
+      .containsExactlyInAnyOrder(debugPolicy, urlParser)
+
+    val offenders = scanned
+      .filterNot { it.canonicalFile == debugPolicy || it.canonicalFile == urlParser }
+      .filter { kotlinCode(it.readText()).contains(literal) }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+
+    assertThat(offenders)
+      .describedAs(
+        "CleartextPolicy.Allowed permits an http:// integration URL, and a release build's " +
+          "manifest forbids cleartext traffic outright -- so naming it outside the debug variant " +
+          "source set produces an app that accepts a URL it can then never connect to. Provide " +
+          "the policy through Hilt from a variant source set instead.",
+      )
+      .isEmpty()
+
+    // The consuming carve-out, narrowed: one occurrence, on the line that makes the `when`
+    // exhaustive. A second use anywhere in this file -- a default argument, a shortcut in a
+    // companion -- is a release-compiled `Allowed` this rule would otherwise wave through.
+    val parserCode = kotlinCode(urlParser.readText())
+    assertThat(parserCode.split(literal).size - 1)
+      .describedAs("${urlParser.name} may name $literal exactly once, in permitsCleartext's `when`")
+      .isEqualTo(1)
+    assertThat(parserCode.lines().map { it.trim() })
+      .describedAs("the one permitted use is permitsCleartext's own `when` arm")
+      .contains("$literal -> true")
+  }
+
 }

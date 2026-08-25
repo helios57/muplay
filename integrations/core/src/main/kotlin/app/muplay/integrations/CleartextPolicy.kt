@@ -8,12 +8,32 @@ package app.muplay.integrations
  * (`app/src/debug/kotlin/...` and `app/src/release/kotlin/...`), which has two properties a
  * runtime branch would not have:
  *
- * - no code compiled into the release variant names [Allowed], so there is no flag to flip and no
- *   branch to reach. (Precisely that, and not "the release binary does not contain [Allowed]":
- *   `minifyEnabled` is off, so the member's own class is packaged like every other class in this
- *   module -- confirmed by `strings` over the release APK's dex. What the variant source sets buy
- *   is that nothing in a release build ever *names* it, which `ConventionTest`'s
- *   `the cleartext policy and the cleartext manifest cannot disagree` is what keeps true.)
+ * - **nothing in a release build can produce an [Allowed] value.** The only `@Provides` that
+ *   returns one lives in `app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt`, and
+ *   variant source sets are mutually exclusive, so a release build has no source of the value and
+ *   therefore no flag to flip.
+ *
+ *   Stated that way deliberately, because a stronger sentence stood here for a while and was
+ *   false. It read *"no code compiled into the release variant names [Allowed]"*, and Plan 7
+ *   Task 1's review found the counter-example in this very module:
+ *   [IntegrationBaseUrl]'s `permitsCleartext` contains `CleartextPolicy.Allowed -> true`, and
+ *   `:app` depends on `:integrations:core` with `implementation`, not `debugImplementation`, so
+ *   that arm is compiled into release. It has to be — an exhaustive `when` over a sealed interface
+ *   cannot be written without naming every member, and that exhaustiveness is the whole reason
+ *   this is a sealed interface rather than a `Boolean`. What matters is that no release-compiled
+ *   code can ever *reach* it, which follows from there being no release binding that produces one.
+ *
+ *   It is also not "the release binary does not contain [Allowed]": `minifyEnabled` is off, so the
+ *   member's own class is packaged like every other class here — confirmed by `strings` over the
+ *   release APK's dex.
+ *
+ *   `ConventionTest`'s `nothing a release build compiles names CleartextPolicy Allowed` is what
+ *   keeps the corrected claim true: it walks every release-compiled Kotlin source in the
+ *   repository and permits the literal in exactly two files — the debug variant's policy module,
+ *   and `permitsCleartext`'s single `when` arm. The older rule,
+ *   `the cleartext policy and the cleartext manifest cannot disagree`, opens three hardcoded paths
+ *   and could not have seen this; it still guards the policy/manifest agreement, which is a
+ *   different question.
  * - **both behaviours are testable from a plain JVM unit test**, by passing the member directly to
  *   [IntegrationBaseUrl.parse]. A `BuildConfig.DEBUG` branch has one arm that no JVM test can ever
  *   reach, which is this project's definition of a gate that cannot fire.
