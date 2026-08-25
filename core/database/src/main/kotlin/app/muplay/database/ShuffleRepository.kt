@@ -24,10 +24,19 @@ class ShuffleRepository @Inject constructor(
   private val sourceProvider: SubsonicSourceProvider,
 ) {
 
+  /**
+   * [requestedSize] is forwarded to [SubsonicSourceProvider.current]'s `getRandomSongs`
+   * unchanged: it is neither validated nor re-clamped here. `SubsonicClient`'s own `size` clamp
+   * (Task 3, `MAX_RANDOM_SONGS` = 500) is what makes "the number on the wire" and "the number a
+   * caller reasons about" the same one -- and it is made there, at the point the request is
+   * built, deliberately not duplicated here: a second clamp at this layer would make those two
+   * numbers different from each other instead. A [requestedSize] above 500 is therefore silently
+   * truncated one layer down from this method, not by it -- see
+   * `aRequestedSizeAbove500ReachesTheSourceUnclampedByThisRepository` for the passthrough this
+   * documents, and `BrowseEndpointsTest`'s wire-level clamp tests for where the truncation
+   * itself is proved.
+   */
   suspend fun shuffle(libraryId: Int, requestedSize: Int): ShuffleResult {
-    // The size clamp lives in SubsonicClient: Navidrome caps `size` at 500 and truncates
-    // silently, so the number on the wire and the number a caller reasons about are made the
-    // same one at the point the request is built, not here.
     val returned = sourceProvider.current().getRandomSongs(libraryId, requestedSize)
     if (returned.isEmpty()) return ShuffleResult(emptyList(), discardedOutOfScope = 0)
 
