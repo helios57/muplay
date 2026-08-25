@@ -10,6 +10,7 @@ import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicErrorException
 import app.muplay.network.SubsonicHttpException
@@ -47,6 +48,7 @@ class SetupViewModelTest {
     override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> =
       error("not used by setup")
     override fun coverArtUrl(coverArtId: String, sizePx: Int?): String = error("not used by setup")
+    override fun streamUrl(songId: String, format: StreamFormat): String = error("not used by setup")
   }
 
   /**

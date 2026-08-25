@@ -8,6 +8,7 @@ import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import app.muplay.network.SubsonicSource
 
 /**
@@ -107,4 +108,13 @@ class FakeSubsonicSource : SubsonicSource {
 
   override fun coverArtUrl(coverArtId: String, sizePx: Int?): String =
     "https://fake.invalid/rest/getCoverArt?id=$coverArtId" + (sizePx?.let { "&size=$it" } ?: "")
+
+  /**
+   * A synthetic stream URL. Deliberately carries **no** `t`/`s`/`u`: a fake that produced a
+   * realistic-looking credential would put one in a test's failure output and, sooner or later,
+   * in a committed expectation. The real thing is `SubsonicClient.streamUrl`, and `StreamUrlTest`
+   * is where its auth parameters are asserted.
+   */
+  override fun streamUrl(songId: String, format: StreamFormat): String =
+    "https://fake.invalid/rest/stream?id=$songId&format=${format.wireValue}"
 }

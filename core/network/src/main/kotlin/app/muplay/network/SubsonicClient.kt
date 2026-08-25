@@ -10,6 +10,7 @@ import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.model.AlbumBody
 import app.muplay.network.model.ArtistBody
@@ -219,6 +220,33 @@ class SubsonicClient(
       .addQueryParameter("id", coverArtId)
     authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }
     if (sizePx != null) builder.addQueryParameter("size", sizePx.toString())
+    return builder.build().toString()
+  }
+
+  /**
+   * An authenticated `/rest/stream` URL — see [SubsonicSource.streamUrl].
+   *
+   * Three parameters are conspicuously absent, and each absence is a decision:
+   *
+   * - **`estimateContentLength`.** It makes a transcoded response carry a *guessed*
+   *   `Content-Length`. ExoPlayer trusts that header for seeking, so a guess produces seeks that
+   *   land in the wrong place with nothing reported anywhere.
+   * - **`timeOffset`.** Only meaningful on a transcode, and only when the server advertises the
+   *   `transcodeOffset` extension. Task 12 adds it as an explicit parameter alongside that
+   *   capability gate; a request that does not ask for an offset must not carry one, because on a
+   *   `format=raw` request the server ignores it and a reader misreads it.
+   * - **`maxBitRate` on a raw request.** `format=raw` disables transcoding, so a bitrate cap
+   *   beside it is a parameter the server ignores and a reader misreads.
+   */
+  override fun streamUrl(songId: String, format: StreamFormat): String {
+    val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()
+      .addPathSegments("rest/stream")
+      .addQueryParameter("id", songId)
+      .addQueryParameter("format", format.wireValue)
+    if (format is StreamFormat.Mp3) {
+      builder.addQueryParameter("maxBitRate", format.maxBitRateKbps.toString())
+    }
+    authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }
     return builder.build().toString()
   }
 
