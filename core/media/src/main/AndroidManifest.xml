@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Declared in :core:media rather than in :app, because these are this module's own requirements:
+  the service class lives here, and a second application module (the roadmap's Wear OS app, Plan 5)
+  that depends on this module must get them too without anyone remembering to copy four lines.
+
+  The manifest merger pulls all of it into the application. That is a claim, not a fact, until
+  something checks it. `verifyDebugManifest`/`verifyReleaseManifest` (build-logic) read AGP's own
+  merged manifest and fail the build if any of these is absent.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- The stream comes over the network. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <!-- Spec section 7. FOREGROUND_SERVICE_MEDIA_PLAYBACK is required from API 34 for a service
+       whose foregroundServiceType includes mediaPlayback; without it startForeground throws
+       SecurityException, and only when the app is actually backgrounded with audio playing. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+  <!-- dangerous from API 33: needs a runtime grant, and without it the media notification is
+       silently not shown rather than reported as an error. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <service
+        android:name="app.muplay.media.MuPlaybackService"
+        android:exported="true"
+        android:foregroundServiceType="mediaPlayback">
+      <!-- exported="true" with this action is how a MediaSessionService is discovered by
+           Android Auto, Wear, Assistant and the system media controls. It is not a lapse: the
+           service exposes only the MediaSession command surface, which Media3 gates through
+           MediaSession.Callback.onConnect. -->
+      <intent-filter>
+        <action android:name="androidx.media3.session.MediaSessionService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>
