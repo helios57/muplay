@@ -555,6 +555,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // any test in the module touches the object at all. That is the unfireable-declaration
         // case the ride-along paragraph above describes, not the `BrowseTree` case.
         "app.muplay.model.browse.BrowseSurfaces",
+        // Plan 3 Task 11, and a ride-along in the strict sense this list's paragraph above
+        // describes: `ReplayGain` is a three-field `data class` with no body, measured with **no
+        // BRANCH counter at all** and 0/4 LINE from this module's own tests -- the only code that
+        // constructs one lives in `:core:network`, `:core:database` and `:core:media`, whose
+        // execution data is not this module's. Exactly `RememberedRenderer`'s situation four
+        // entries up, and given the same answer: included so `warnUngatedClasses` has nothing to
+        // say, gating nothing, with a LINE rule deliberately withheld rather than satisfied by a
+        // `:core:model` test written only to light up compiler-generated `equals`/`copy` plumbing.
+        // The decisions this type carries are gated where they are made -- `ReplayGainPolicy`
+        // (`:core:media`, 12/12 BRANCH) and `ReplayGainMappingTest` (`:core:network`).
+        "app.muplay.model.ReplayGain",
         "app.muplay.model.browse.BrowseNode",
         "app.muplay.model.browse.BrowseCompletion",
         "app.muplay.model.browse.BrowseCompletionStatus",
@@ -1861,13 +1872,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // app.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
     // 0.90", BUILD FAILED.
     //
-    // **`PlaybackLauncher` itself is deliberately not listed, and it is not an oversight.** The
-    // class measures 0/2 BRANCH and 0/12 LINE here, because every line of it needs a real
-    // `MediaController` bound to a real `MuPlaybackService` -- which only an `@HiltAndroidApp`
-    // application can start, i.e. `:app`'s instrumented tier, i.e. Task 10's journey. It is named,
-    // with those measured ratios, in `warnUngatedClasses`'s output on every run, which is where a
-    // genuinely-deferred class belongs; the same shape `:feature:library` used for `CoverArtKt`
-    // between its Task 9 and its Task 10.
+    // **`PlaybackLauncher` itself is gated by the rule below rather than by this one**, and on LINE
+    // rather than BRANCH. Between Task 9 and Task 10 it was deliberately unlisted, at 0/2 BRANCH
+    // and 0/12 LINE, and named with those ratios in `warnUngatedClasses`'s output on every run --
+    // the shape a genuinely-deferred class should have. Task 10's journey is what reached it.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -1963,6 +1971,142 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // Plan 3 Task 11. `ReplayGainPolicy` 12/12 = 1.0000 BRANCH from **JVM data alone** --
+    // `ReplayGainPolicyTest`, twelve tests, no emulator -- which is the whole reason the decibel
+    // arithmetic lives in a file with no Android import. The twelve are `gainDbFor`'s two elvis
+    // arms, and `linearGain`'s null gain, `coerceIn`'s two bounds, the null peak, the `peak <= 0`
+    // guard and `minOf`'s two arms.
+    //
+    // The `requiresInstrumentedData = false` is a measurement: with every project's `.ec` moved
+    // aside, `jacocoJvmCoverageVerification` still evaluated 13 of this module's 30 floors and this
+    // rule was among them, green.
+    //
+    // Falsified by withholding the test rather than by predicting what would happen -- and the
+    // prediction was wrong, which is why it is worth writing the measured number here. This author
+    // guessed 2/12 = 0.17, on the theory that `MediaItems`' instrumented tests would drive
+    // `gainDbFor`'s two elvis arms. They do, but not into *this* task's execution data: with
+    // `ReplayGainPolicyTest` moved aside, `jacocoJvmCoverageVerification` reports "Rule violated
+    // for class app.muplay.media.ReplayGainPolicy: branches covered ratio is **0.00**, but expected
+    // minimum is 0.90", BUILD FAILED. No other JVM test in this module touches the class at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ReplayGainPolicy"),
+    ),
+    // 10/10 and 14/14 = 1.0000 BRANCH, instrumented. Both classes are unreachable from the JVM
+    // tier: `GainAudioProcessor` extends a Media3 `BaseAudioProcessor` and `ReplayGainController`
+    // reads an `android.os.Bundle` off a `MediaItem`, and this project has no Robolectric.
+    //
+    // `GainAudioProcessor`'s ten are the empty-drain guard, `onConfigure`'s encoding check, the
+    // identity fast path and `queueInput`'s per-sample loop with its two `coerceIn` bounds. The
+    // encoding check's refusing arm is **not** reachable through the shipping pipeline -- Media3's
+    // own `ToInt16PcmAudioProcessor` runs ahead of this one -- so it is driven directly by
+    // `anEncodingThisStageCannotHandleIsRefusedRatherThanPassedThrough`, which is what took this
+    // class from 9/10 to 10/10 rather than a floor low enough to tolerate the gap.
+    //
+    // `ReplayGainController`'s fourteen were sixteen until the same review: `mediaItem
+    // ?.mediaMetadata?.extras` emitted an arm nothing can take (`MediaItem.mediaMetadata` is
+    // non-null in Media3), and it was deleted rather than excused -- `ContentTypeSwitcher`'s
+    // treatment, for `ContentTypeSwitcher`'s reason. `ProgressWriter.gainDbOf` had the identical
+    // shape and lost two the same way, which is why that class's own floor above now measures
+    // 22/22 where it measured 24/26.
+    //
+    // Falsified by moving the connected runs' `.ec` aside: "branches covered ratio is 0.00, but
+    // expected minimum is 0.90", BUILD FAILED, for both.
+    //
+    // **Moving this module's own `code_coverage/` is not enough, and getting that wrong the first
+    // time is what produced this paragraph.** `Jacoco.kt`'s `mergedExecutionData` reads *every*
+    // project's `outputs/code_coverage`, so `:app`'s journey and `:core:database`'s suite still
+    // credit these classes: with only `core/media`'s directory moved, `GainAudioProcessor` measured
+    // 5/10 BRANCH and 16/22 LINE and `MuPlayRenderersFactory` a full 13/13 LINE -- the rule fired
+    // for two of the three classes and would have been recorded as falsified while the third was
+    // not. Move `app/`, `core/database/` and `core/media/`'s together.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.GainAudioProcessor",
+        "app.muplay.media.ReplayGainController",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // 22/22, 9/9, 6/6 and 13/13 = 1.0000 LINE. `MuPlayRenderersFactory` is here and in no BRANCH
+    // rule because it has **no branches at all** -- a BRANCH rule over it would match a class with
+    // zero counters of its own kind, which JaCoCo scores NaN and reports as "no violation" at every
+    // minimum, the vacuous-floor shape this table's own doc describes.
+    //
+    // Gating those 13 lines matters more than the count suggests: they are the shipping audio
+    // pipeline. Four of them put `GainAudioProcessor` into `DefaultAudioSink`'s processor chain --
+    // the difference between ReplayGain being applied and being computed and thrown away -- and one
+    // is the `buildVideoRenderers` override that makes spec section 11's *"Video"* non-goal a
+    // property of the renderer array rather than a sentence.
+    //
+    // `ReplayGainPolicy` rides its LINE counter here rather than in the JVM-only rule above,
+    // because these six lines are covered by both tiers and the merged report is where that shows.
+    //
+    // Falsified with **every** project's `code_coverage/` moved aside (see the rule above for why
+    // this module's own is not enough): lines covered ratio 0.00 for `GainAudioProcessor`,
+    // `ReplayGainController` and `MuPlayRenderersFactory`, BUILD FAILED. `ReplayGainPolicy`'s LINE
+    // stays at 6/6 there, because its own JVM test is untouched by that -- it is falsified by
+    // withholding `ReplayGainPolicyTest` instead, which is recorded at its BRANCH rule above.
+    //
+    // That `MuPlayRenderersFactory` measures 13/13 LINE from `:app`'s journey **alone** is itself
+    // the useful fact in this rule: the production service really does build this renderer set.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.GainAudioProcessor",
+        "app.muplay.media.ReplayGainController",
+        "app.muplay.media.ReplayGainPolicy",
+        "app.muplay.media.MuPlayRenderersFactory",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // `DefaultSurfaceResolver` 8/8 = 1.0000 LINE, instrumented. It arrived with Plan 5 Task 3 and
+    // was the one class `warnUngatedClasses` still named on every run at Plan 3 Task 10 -- 8/8 and
+    // gated by nothing, which is the *other* half of that warning's job: not only "this is
+    // uncovered" but "this is covered and no rule is holding it there".
+    //
+    // LINE, not BRANCH, and this is the vacuous-rule case rather than a preference: the class is a
+    // single expression that forwards four values into `BrowseSurfaces.of`, so it carries **no
+    // BRANCH counters at all**, and a BRANCH rule over it would match only zero-total counters,
+    // score NaN, and report no violation at every minimum. `SurfaceResolver` (the `fun interface`)
+    // is listed beside it for the same reason `:core:cast`'s declaration-only types are: zero
+    // counters of either kind, so it cannot move this ratio and `warnUngatedClasses` stops naming
+    // it. All 8 of the counters under this rule are `DefaultSurfaceResolver`'s, so the floor is not
+    // thereby vacuous.
+    //
+    // `requiresInstrumentedData`, measured rather than assumed: the covering test is
+    // `DefaultSurfaceResolverTest` in this module's *instrumented* tier -- a `ControllerInfo` is
+    // not constructible on the JVM. Falsified by withholding execution data rather than by raising
+    // the minimum, since it measures 1.0000.
+    //
+    // **Re-measured by Plan 5 Task 4, and the recorded falsification changed.** When this entry was
+    // written the class had no production consumer at all, so `:core:media`'s own `.ec` was its
+    // only execution data and withholding that alone read 0/8. Task 4's `MediaModule` binds
+    // `SurfaceResolver` to it and `MuPlayLibraryCallback` calls it on every browse request, so
+    // `:app`'s device journey now credits it too: with only `core/media`'s `code_coverage/`
+    // withheld it reads **2/8 = 0.25** -- still red against this minimum, so the floor is still
+    // falsified, but by a different margin than the sentence above claimed. This is the second
+    // caller appearing in another module that CLAUDE.md's own section on stale falsifications
+    // describes, caught by re-running it rather than by trusting it.
+    //
+    // It gained no branches: `surfaceOf` is still one expression, so the "no BRANCH counters"
+    // argument above is unchanged -- re-checked in the merged report, `branch n/a`.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.browse.DefaultSurfaceResolver",
+        "app.muplay.media.browse.SurfaceResolver",
+      ),
+      requiresInstrumentedData = true,
+    ),
     // ---- Plan 5 Task 4: the browse tree on the wire -------------------------------------------
     // `BrowseItems` 23/23, `MuPlayLibraryCallback$onGetChildren$1` 4/4 and
     // `MuPlayLibraryCallback$onGetItem$1` 6/6 = 1.0000 BRANCH, instrumented. (`MuPlayLibraryCallback`
@@ -2026,17 +2170,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
     // 1.0000 LINE, instrumented, on everything this task added to this module: `BrowseItems` 45/45,
-    // `MuPlayLibraryCallback` 22/22 and its three compiled lambdas (`onGetChildren$1` 7/7,
-    // `onGetItem$1` 7/7, `future$1` 5/5), and `DefaultSurfaceResolver` 8/8.
+    // and `MuPlayLibraryCallback` 22/22 with its three compiled lambdas (`onGetChildren$1` 7/7,
+    // `onGetItem$1` 7/7, `future$1` 5/5).
     //
-    // **`DefaultSurfaceResolver` had no floor at all until now**, and printed an ungated-class
-    // warning on every run since Task 3 landed it. It is gated here rather than there because Task
-    // 4 is its first consumer -- the `@Binds` that puts it in the graph is in this task's
-    // `MediaModule` -- and a floor is owed by whoever makes a class reachable. LINE and not BRANCH
-    // because it has **zero BRANCH counters**: it is one expression that reads three values off a
-    // `ControllerInfo` and hands them to `BrowseSurfaces.of`, where every branch lives and where
-    // `:core:model`'s own BRANCH floor already gates them. A BRANCH rule over it would be the
-    // vacuous, NaN-scored shape this table's doc describes.
+    // `DefaultSurfaceResolver` is deliberately **not** listed here: Plan 3 Task 10's ungated-class
+    // sweep gave it a rule of its own, above, and Task 4 dropped its own duplicate rather than
+    // shipping a second rule over one class. What Task 4 owed it instead was a re-measurement, and
+    // that is recorded at that rule.
     //
     // `MuPlayLibraryCallback*` matches the outer class and all three lambdas; the suspend
     // continuation classes it also matches carry zero counters of either kind, so they can never
@@ -2045,11 +2185,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by moving `:core:media`'s connected `.ec` aside -- all six classes fired, BUILD
     // FAILED. The **residual ratios are recorded rather than rounded to zero**, because two of them
     // are not zero and a comment that said they were would be the stale-falsification shape
-    // CLAUDE.md describes: `BrowseItems` 0.00, `MuPlayLibraryCallback` **0.45**,
-    // `.future.1` 0.00, `.onGetChildren.1` 0.00, `.onGetItem.1` 0.00,
-    // `DefaultSurfaceResolver` **0.25**. The non-zero two come from `:app`'s own device journey,
-    // which starts the real service: that builds the callback and resolves a surface for the app's
-    // own controller, and `Jacoco.kt` globs every project's `.ec`. So this floor is enforced by two
+    // CLAUDE.md describes: `BrowseItems` 0.00, `MuPlayLibraryCallback` **0.45**, `.future.1` 0.00,
+    // `.onGetChildren.1` 0.00, `.onGetItem.1` 0.00. The non-zero one comes from `:app`'s own device
+    // journey, which starts the real service: that builds the callback and connects a controller
+    // through it, and `Jacoco.kt` globs every project's `.ec`. So this floor is enforced by two
     // suites, and withholding either one alone is not enough to fire the whole rule.
     CoverageFloor(
       counter = "LINE",
@@ -2058,7 +2197,6 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.browse.BrowseItems",
         "app.muplay.media.browse.MuPlayLibraryCallback*",
-        "app.muplay.media.browse.DefaultSurfaceResolver",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2389,6 +2527,33 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.player.PlayerViewModel.1",
       ),
     ),
+    // `PlayerViewModel$1`, the anonymous `PlaybackControls` adapter the `@Inject` constructor
+    // builds: **10/10 LINE = 1.0000**, measured. It is excluded from the rule above and gated here
+    // instead because it is the one class in this module that no JVM test can reach -- this
+    // module's own device suite composes over a hand-built `PlaybackControls` on purpose, so the
+    // adapter that binds the real `PlaybackConnection` is reachable only through Hilt's graph, i.e.
+    // only from `:app`'s `PlaybackJourneyTest`. Between Task 9 and Task 10 it stood at 0/10 and was
+    // named, with that ratio, in `warnUngatedClasses`'s output on every run.
+    //
+    // All ten lines are covered, and getting the last three of them is why
+    // `theOnScreenControlsDriveTheRealSession` exists in the shape it does: `state`, `connect`,
+    // `isPlaying`, `play` and `pause` come free from any journey that plays something, but `next`,
+    // `previous` and `seekTo` need the Next, Previous and seek-bar controls actually driven against
+    // a live session. Without that test this rule would sit at 7/10 = 0.70.
+    //
+    // Falsified by withholding the covering data rather than by raising the minimum, since it
+    // measures 1.0000: with the instrumented `.ec` files moved aside this reports
+    // `app.muplay.player.PlayerViewModel.1: lines covered ratio is 0.00, but expected minimum is
+    // 0.90`, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      // Written `PlayerViewModel.1`, not `PlayerViewModel$1`: a literal `$` in a JaCoCo pattern
+      // never matches, because the report presents the class as `PlayerViewModel.1`.
+      includes = listOf("app.muplay.player.PlayerViewModel.1"),
+      requiresInstrumentedData = true,
+    ),
     // The three `@Composable` file-classes, LINE, instrumented. LINE and not BRANCH per this
     // table's standing ruling, and the numbers say why plainly: these same three measure 0.6364,
     // 0.5865 and 0.4706 BRANCH, and essentially every missing branch is Compose codegen --
@@ -2428,7 +2593,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
+  // 78/81 = 0.9630 LINE across the whole module, re-measured at Plan 3 Task 10 with
+  // `PlaybackJourneyTest` in the run (the module has grown since the 61/63 recorded here before
+  // it; 20/21 = 0.9524 before Task 10's journeys existed at all). The three lines still missing are
+  // `CleartextPolicyModule`'s single release-variant line, `MuPlayAppKt`'s one uncovered line and
+  // the inlined `entryProvider` bridge. The
   // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
   // why there is no BRANCH entry.
@@ -2813,6 +2982,114 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.didl.ServedMedia",
         "app.muplay.cast.didl.CastItem",
         "app.muplay.cast.didl.MimeDisagreementException",
+      ),
+    ),
+    // Plan 6 Task 6, `app.muplay.cast.proxy`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator and no Navidrome container anywhere -- `LiveNavidromeProxyTest` is `@Tag("live")`
+    // and contributes nothing to this measurement, which is deliberate: a floor that needed a
+    // container would be a floor the Tier 1 job cannot enforce.
+    //
+    // Per class and not as a module blend, and which class goes on which rule is a MEASUREMENT:
+    // a CLASS-element rule over a class carrying no counter of the rule's kind is a `0/0`
+    // COVEREDRATIO, which is `NaN`, which JaCoCo reports as no violation at any minimum.
+    //
+    //   `RangeHeader`                BRANCH 48/48 -- absent/ignored/bounded/suffix on the way in,
+    //                                each of the seven unparseable spellings, both overflow ends,
+    //                                and on the way out the clamp, the suffix clamp, the `>=`
+    //                                boundary from both sides, `bytes=-0`, and the empty entity.
+    //   `MediaProxyServer`           BRANCH 34/34 -- the eleven-row range table, `HEAD` against
+    //                                `GET`, 404/405/400/416/502/503, the truncated relay's
+    //                                early exit, and the accept loop's refusal arm.
+    //   `ProxyRetry`                 BRANCH  8/8  -- not-a-429, out of attempts, the header
+    //                                honoured, the header absent, and both clamps.
+    //   `OkHttpProxyUpstream`        BRANCH  8/8  -- a length present and absent, a 429 retried
+    //                                and a 429 given up on, with and without `Retry-After`.
+    //   `UpstreamThrottledException` BRANCH  2/2  -- the message with a delay and without one.
+    //
+    // 100 BRANCH counters across the five, all covered. The floor is 0.90 and not the measured
+    // 1.0000 for this table's usual reason: JaCoCo validates a minimum is inside 0.0..1.0 before it
+    // reads a ratio, so a floor at the measurement can only ever be falsified by withholding tests
+    // -- which is how these were falsified. Every number below was read off a run; the near-misses
+    // are the interesting part, and the second one is the most interesting thing in this entry:
+    //
+    //   * `RangeHeader`: withholding `everything unparseable is Ignored...` **alone leaves it at
+    //     46/48 = 0.9583 and this floor green**. Adding `a number too large to hold is ignored...`
+    //     and `a range against an empty entity is unsatisfiable` reaches **41/48 = 0.8542** and the
+    //     rule fires -- *"Rule violated for class app.muplay.cast.proxy.RangeHeader: branches
+    //     covered ratio is 0.85, but expected minimum is 0.90"*.
+    //   * `MediaProxyServer`: withholding `the eleven range cases...` -- the ENTIRE range table --
+    //     leaves it at **34/34 = 1.0000**, unchanged. Not a surprise on reflection and worth
+    //     stating anyway, because it is this plan's own thesis about this class of defect: the
+    //     table's value is in what it asserts (the exact status, `Content-Range` and *bytes* of
+    //     eleven requests), and a proxy that ignored `Range` entirely would execute every one of
+    //     these branches. Coverage cannot see that; the mutation probes can, and do. It takes
+    //     **thirteen** withheld tests -- the table plus every 4xx/5xx and both HEAD tests -- to
+    //     reach **28/34 = 0.8235** and fire the rule.
+    //   * `OkHttpProxyUpstream`: withholding `an origin that never stops refusing gives up...`
+    //     together with `an origin that refuses without saying how long...` leaves it at
+    //     **5/8 = 0.6250** and the rule fires.
+    //
+    // NOT here, and named so the omission is a decision rather than an oversight: `ProxyRegistry`
+    // and `ByteRange` carry **no BRANCH counter at all** (`resolve`'s `firstOrNull` predicate and
+    // `length`'s arithmetic compile to no conditional JaCoCo attributes to these classes), so a
+    // BRANCH rule over either would be the silent `NaN` pass -- over the class that decides which
+    // requests this server will answer. They are on the LINE rule below instead, exactly as
+    // `XmlText` and `ServedMedia` are.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.proxy.RangeHeader",
+        "app.muplay.cast.proxy.MediaProxyServer",
+        "app.muplay.cast.proxy.ProxyRetry",
+        "app.muplay.cast.proxy.OkHttpProxyUpstream",
+        "app.muplay.cast.proxy.UpstreamThrottledException",
+      ),
+    ),
+    // The classes in this package with real code and no branches, on LINE:
+    //
+    //   `ProxyRegistry`                LINE 14/14 -- publish, resolve, revoke, revokeAll.
+    //   `PublishedMedia`               LINE  5/5, `ProxyRequest` LINE 1/1, `ByteRange` LINE 2/2,
+    //                                  `RangeRequest$Bounded`/`$Suffix` and
+    //                                  `RangeResolution$Partial` LINE 1/1 each -- the data classes
+    //                                  JaCoCo's Kotlin filters have already stripped the generated
+    //                                  members from, so what is left is the constructor and, for
+    //                                  `ByteRange`, `length`.
+    //   `OkHttpProxyUpstream$open$1`   LINE 4/4 -- the stream wrapper whose `close` closes the
+    //                                  OkHttp response as well, which is what returns the
+    //                                  connection to the pool. Its own class because it is an
+    //                                  object expression, and gated because a `close` override
+    //                                  nothing ever calls is a leaked connection per track.
+    //
+    // Falsified, and this one needed a third test as well: withholding `ProxyRegistryTest`'s `a
+    // revoked token resolves to nothing...` and `revokeAll empties the registry` leaves
+    // `ProxyRegistry` at **13/14 = 0.9286** and this rule green, because `MediaProxyServerTest`'s
+    // `an unknown token is 404 and a revoked one stops working` still calls `revoke`. Withholding
+    // that one too reaches **11/14 = 0.7857** -- *"Rule violated for class
+    // app.muplay.cast.proxy.ProxyRegistry: lines covered ratio is 0.78, but expected minimum is
+    // 0.90"*.
+    //
+    // The remaining classes in this package carry **no counter of either kind** -- `RangeRequest`
+    // and `RangeResolution` (interfaces), their four `data object` members, `ProxyUpstream`
+    // (an interface) and both `Companion`s (`const val`s only). They are deliberately absent from
+    // both rules rather than listed as ride-alongs: `warnUngatedClasses` skips a class with zero
+    // BRANCH and zero LINE counters by construction, so listing them would add names that gate
+    // nothing and silence nothing.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.proxy.ProxyRegistry",
+        "app.muplay.cast.proxy.PublishedMedia",
+        "app.muplay.cast.proxy.ProxyRequest",
+        "app.muplay.cast.proxy.ByteRange",
+        "app.muplay.cast.proxy.RangeRequest*Bounded",
+        "app.muplay.cast.proxy.RangeRequest*Suffix",
+        "app.muplay.cast.proxy.RangeResolution*Partial",
+        "app.muplay.cast.proxy.OkHttpProxyUpstream*open*1",
       ),
     ),
   ),
@@ -3946,82 +4223,89 @@ subprojects {
   }
 }
 
-// `:core:network`'s `LiveNavidromeTest` needs a real Navidrome container listening on
+// `:core:network`'s `LiveNavidromeTest` and `:core:cast`'s `LiveNavidromeProxyTest` need a real
+// Navidrome container listening on
 // localhost:4533 (see ci/navidrome.compose.yml, ci/configure-libraries.sh) — not true for a plain
 // `./gradlew test` in a developer's inner loop, nor for this repo's static-analysis or
 // unit+integration CI jobs. `Testing.kt`'s `configureJUnit5` already excludes anything tagged
 // `"live"` from every ordinary `Test` task project-wide; this is the one task that does the
-// opposite — includes *only* `"live"`-tagged tests — and it exists solely in `:core:network`,
-// since that is the only module with any such test today. Registered here, not in
+// opposite — includes *only* `"live"`-tagged tests — and it is registered for exactly the
+// modules that have such a test. Registered here, not in
 // `core/network/build.gradle.kts`: every module build file contains only `plugins {}` and
 // `dependencies {}` (`ConventionTest` enforces it), so a one-off task like this belongs at the
 // root, next to the coverage floor table it is policy alongside, not mechanism inside
 // build-logic (nothing here is reusable machinery a second module would ever need).
 //
+// A list rather than one `project(...)` block: `:core:cast` joined in Plan 6 Task 6. Both are
+// `muplay.jvm.library` modules, so both have a plain `test` source set with a runtime classpath —
+// which is the same fact that makes `:core:cast` a JVM module in the first place.
+//
 // `LIVE_NAVIDROME_TEST_TASK_NAME` (`Testing.kt`) is the shared constant that keeps this task's own
 // name and `configureJUnit5`'s carve-out for it from drifting apart — see that constant's own doc
 // for the exact failure a plain string literal on each side already caused once.
-project(":core:network") {
-  // `afterEvaluate`, not a bare `project(...) { }` body: this root script's own evaluation runs
-  // before `:core:network`'s build.gradle.kts applies `muplay.jvm.library` (the plugin that
-  // creates the `SourceSetContainer` extension `the<SourceSetContainer>()` below reads) —
-  // confirmed empirically: without `afterEvaluate`, this failed project configuration outright
-  // with "Extension of type 'SourceSetContainer' does not exist", because `project(path) { }`
-  // configures its target eagerly, as part of *this* script's own evaluation, not deferred until
-  // the target project's own build script has run.
-  afterEvaluate {
-    // Captured *here*, at the `afterEvaluate` level, not inside `tasks.register<Test>(...) { }`
-    // below: `the<T>()` resolves against its receiver's own extensions, and a `Task` is itself
-    // `ExtensionAware` (that is how `JacocoTaskExtension` gets attached to it) — calling
-    // `the<SourceSetContainer>()` *inside* the task's configuration lambda resolves it against
-    // that lambda's implicit receiver, the task, not this project, and fails the same way (also
-    // confirmed empirically: the task's own registered extensions at that point were exactly
-    // `[ExtraPropertiesExtension, JacocoTaskExtension]` — never `SourceSetContainer` — because a
-    // `Test` task has no such extension of its own; only the project does).
-    val testSourceSet = the<SourceSetContainer>()["test"]
+listOf(":core:network", ":core:cast").forEach { livePath ->
+  project(livePath) {
+    // `afterEvaluate`, not a bare `project(...) { }` body: this root script's own evaluation runs
+    // before `:core:network`'s build.gradle.kts applies `muplay.jvm.library` (the plugin that
+    // creates the `SourceSetContainer` extension `the<SourceSetContainer>()` below reads) —
+    // confirmed empirically: without `afterEvaluate`, this failed project configuration outright
+    // with "Extension of type 'SourceSetContainer' does not exist", because `project(path) { }`
+    // configures its target eagerly, as part of *this* script's own evaluation, not deferred until
+    // the target project's own build script has run.
+    afterEvaluate {
+      // Captured *here*, at the `afterEvaluate` level, not inside `tasks.register<Test>(...) { }`
+      // below: `the<T>()` resolves against its receiver's own extensions, and a `Task` is itself
+      // `ExtensionAware` (that is how `JacocoTaskExtension` gets attached to it) — calling
+      // `the<SourceSetContainer>()` *inside* the task's configuration lambda resolves it against
+      // that lambda's implicit receiver, the task, not this project, and fails the same way (also
+      // confirmed empirically: the task's own registered extensions at that point were exactly
+      // `[ExtraPropertiesExtension, JacocoTaskExtension]` — never `SourceSetContainer` — because a
+      // `Test` task has no such extension of its own; only the project does).
+      val testSourceSet = the<SourceSetContainer>()["test"]
 
-    tasks.register<Test>(LIVE_NAVIDROME_TEST_TASK_NAME) {
-      group = "verification"
-      description = "Runs LiveNavidromeTest (the \"live\"-tagged tests only) against a real " +
-        "Navidrome container on localhost:4533 -- see ci/navidrome.compose.yml. Run by the " +
-        "live-navidrome job in .github/workflows/pr.yml, after that job starts the container " +
-        "and runs ci/configure-libraries.sh."
+      tasks.register<Test>(LIVE_NAVIDROME_TEST_TASK_NAME) {
+        group = "verification"
+        description = "Runs the \"live\"-tagged tests in $livePath (and only those) against a " +
+          "real Navidrome container on localhost:4533 -- see ci/navidrome.compose.yml. Run by the " +
+          "live-navidrome job in .github/workflows/pr.yml, after that job starts the container " +
+          "and runs ci/configure-libraries.sh."
 
-      testClassesDirs = testSourceSet.output.classesDirs
-      classpath = testSourceSet.runtimeClasspath
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
 
-      useJUnitPlatform {
-        includeTags("live")
+        useJUnitPlatform {
+          includeTags("live")
+        }
+
+        // The eleventh silent gate, and the one guarding the claim the spec singles out ("anything
+        // whose subject is Navidrome's behaviour is tested against a pinned Navidrome container").
+        // Without this the gate passes with **no Navidrome at all**. Measured, container stopped and
+        // port dead:
+        //
+        //     ./gradlew :core:network:liveNavidromeTest                 -> UP-TO-DATE, BUILD SUCCESSFUL
+        //     (delete this task's outputs) ... --build-cache            -> FROM-CACHE, BUILD SUCCESSFUL
+        //
+        // The second is the CI-reachable one: `gradle.properties` sets `org.gradle.caching=true`,
+        // `gradle/actions/setup-gradle@v6` restores the Gradle user home (which holds
+        // `caches/build-cache-1`) between runs, and `Test` is a `@CacheableTask` -- so any later run
+        // whose `:core:network` inputs are unchanged (a docs-only PR, a workflow-only PR, a re-run of
+        // a flaked job) restores this task and never opens a socket, while `Start Navidrome` and
+        // `Configure libraries` above it become decoration.
+        //
+        // A task whose *whole subject* is a live server has no legitimate up-to-date or cached
+        // answer: the inputs Gradle hashes say nothing about whether the container is running or what
+        // it contains. So this task always executes. Verified after adding this line, container still
+        // stopped: `3 tests completed, 3 failed`, BUILD FAILED, under both invocations above.
+        //
+        // Not the same case as the `onlyIf` caveat on the JaCoCo tasks elsewhere in this file: this
+        // is a plain `Test` task with no `onlyIf`, so nothing short-circuits its actions.
+        //
+        // `cacheIf { false }` as well as `upToDateWhen { false }`, rather than trusting one to imply
+        // the other -- they are separate decisions in Gradle (is this task up to date; may its result
+        // be stored/loaded) and the failure this closes came from the second one.
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
       }
-
-      // The eleventh silent gate, and the one guarding the claim the spec singles out ("anything
-      // whose subject is Navidrome's behaviour is tested against a pinned Navidrome container").
-      // Without this the gate passes with **no Navidrome at all**. Measured, container stopped and
-      // port dead:
-      //
-      //     ./gradlew :core:network:liveNavidromeTest                 -> UP-TO-DATE, BUILD SUCCESSFUL
-      //     (delete this task's outputs) ... --build-cache            -> FROM-CACHE, BUILD SUCCESSFUL
-      //
-      // The second is the CI-reachable one: `gradle.properties` sets `org.gradle.caching=true`,
-      // `gradle/actions/setup-gradle@v6` restores the Gradle user home (which holds
-      // `caches/build-cache-1`) between runs, and `Test` is a `@CacheableTask` -- so any later run
-      // whose `:core:network` inputs are unchanged (a docs-only PR, a workflow-only PR, a re-run of
-      // a flaked job) restores this task and never opens a socket, while `Start Navidrome` and
-      // `Configure libraries` above it become decoration.
-      //
-      // A task whose *whole subject* is a live server has no legitimate up-to-date or cached
-      // answer: the inputs Gradle hashes say nothing about whether the container is running or what
-      // it contains. So this task always executes. Verified after adding this line, container still
-      // stopped: `3 tests completed, 3 failed`, BUILD FAILED, under both invocations above.
-      //
-      // Not the same case as the `onlyIf` caveat on the JaCoCo tasks elsewhere in this file: this
-      // is a plain `Test` task with no `onlyIf`, so nothing short-circuits its actions.
-      //
-      // `cacheIf { false }` as well as `upToDateWhen { false }`, rather than trusting one to imply
-      // the other -- they are separate decisions in Gradle (is this task up to date; may its result
-      // be stored/loaded) and the failure this closes came from the second one.
-      outputs.upToDateWhen { false }
-      outputs.cacheIf { false }
     }
   }
 }

@@ -7,35 +7,36 @@ media cache, a player UI and proven gapless playback.
 
 ## Where the plans stand
 
+Master `f0cb47f`, green, pushed. Playback core's last blocking piece (`MuPlayer`
++ `ProgressWriter`) is in.
+
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 11 of 12 | keystone fix in; 8b in flight, 11 and 12 behind it |
-| 6 — Sonos/DLNA casting | 4 of 12 | codec, SSDP, SOAP, DIDL-Lite in; SOAP hardening + proxy in flight |
-| 5 — Auto/Wear | 3 of 11 | `BrowseId`, browse tree, browse surfaces in; T4 queued behind 8b for `MuPlaybackService.kt` |
-| 7 — integrations | 2 of 11 | `:integrations:core` + credential store in; request store in flight |
+| 3 — playback core | 10 of 12 | 11 (ReplayGain) in flight; **12 deferred — needs the fixture window** |
+| 6 — Sonos/DLNA casting | 4 of 12 + SOAP hardening | proxy in flight |
+| 5 — Auto/Wear | 3 of 11 | T4 in flight |
+| 7 — integrations | 3 of 11 | credential store and request store in |
 | 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** — see below |
 
 ## Lanes live now
 
-| Worktree | Task | State |
+| Worktree | Task | Holds |
 | --- | --- | --- |
-| `p3t10` | P3 T10 the gates (Tier 2 journey) | in flight; **holds `ConventionTest.kt`, `app/androidTest/`** |
-| `p3t8b` | P3 T8b `MuPlayer` + `ProgressWriter` | dispatched; **holds `MuPlaybackService.kt`, `MediaModule.kt`** |
-| `p6t3fix` | SOAP hardening: escape argument values, make the "strict" fake actually strict | dispatched |
-| `p6t6` | P6 T6 the media proxy — range serving, the token that is not a track id | dispatched |
-| `p7t3` | P7 T3 the request store | dispatched |
+| `p3t10` | P3 T10 the gates (Tier 2 journey) | `ConventionTest.kt`, `app/androidTest/`, `app/build.gradle.kts`, `e2e.yml` |
+| `p6t6` | P6 T6 the media proxy | `core/cast/proxy/`, `pr.yml` |
+| `p5t4` | P5 T4 `BrowseItems` + `MuPlayLibraryCallback` | `browse/`, `MuPlaybackService.kt` |
+| `p3t11` | P3 T11 ReplayGain | `MediaItems.kt`, `MuPlayerFactory.kt`, `SubsonicClient.kt`, `MuPlayDatabase` v4→5 |
 | `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
 
-**Landed from the keystone lane:** `onConnect` is now gated on
-`isTrusted || packageName == LEGACY_CONTROLLER` — Media3's own platform-computed
-predicate, not a package allow-list. Every Hilt entry point moved from `src/main`
-to `src/debug`, enforced by a new `ConventionTest` rule. `PlaybackConnection`'s
-race is fixed, and **`controller()` now throws `CancellationException` if
-`release()` races it** — Task 8b and anything else holding a controller should
-know. `:core:media` is at 24 floors.
+**`MediaItems.of` arity is a live hazard.** Two lanes each added a fourth
+parameter to it today and collided; `p3t11` is adding a sixth. It was briefed to
+say so explicitly in its report.
 
-**Queued behind `p3t8b`:** Plan 5 Task 4 (`BrowseItems` + `MuPlayLibraryCallback`)
-needs the same `MuPlaybackService.kt`. Dispatch it when 8b lands.
+**Plan 3 Task 12 is deliberately not dispatched.** It adds an Opus file to the
+fixture corpus and edits `ci/seed-fixtures.sh` / `ci/fixtures.md5` /
+`ci/configure-libraries.sh` — the same files the held `p4t1` branch owns. Both
+change the library's scanned-item count, so they land together, in one window,
+or they fight.
 
 ## Merge routine that this session settled on
 
@@ -54,6 +55,29 @@ needs the same `MuPlaybackService.kt`. Dispatch it when 8b lands.
 5. Re-run the merged lane's probe family on master.
 
 ## Open decisions, deliberately not made
+
+- **The shared Navidrome transcode cache is degraded, and the repair is ready
+  but not run.** Plan 6 Task 6 exhausted one seeded MP3 track's low-bitrate
+  transcodes while designing its live suite, so `:core:network`'s
+  `LiveNavidromeTest.coldTranscode` — which picks a **random** Music track and
+  searches for an unused bitrate below source — now has roughly a one-in-three
+  chance of failing, **with its own diagnostic**, for any lane that runs the live
+  suite. It will look like that lane's defect.
+
+  Measured: `/data/cache/transcoding` holds **201 entries / 3.4 MB** against a
+  100 MB `ND_TRANSCODINGCACHESIZE`, so it will never evict on its own.
+
+  The repair is a cache flush, not a reseed, and does **not** violate the
+  never-stop-never-restart-never-reseed rule:
+
+      docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'
+
+  **Precondition: no device or live suite in flight.** Check
+  `cat /tmp/muplay-device.lock` and `pgrep -f liveNavidrome` first. Not run here
+  because `:core:media:connectedDebugAndroidTest` was mid-run, and a stream that
+  flips from cache-served file to live chunked transcode mid-suite changes
+  `Content-Length` and `Accept-Ranges` under an assertion that is reading them.
+
 
 - **M4, casting picker trust.** `RendererDirectory` uses `distinctBy { it.udn }`,
   which keeps the **first** announcement — and arrival order is attacker

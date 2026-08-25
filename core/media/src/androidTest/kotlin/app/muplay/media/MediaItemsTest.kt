@@ -3,6 +3,7 @@ package app.muplay.media
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.model.ReplayGain
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import org.assertj.core.api.Assertions.assertThat
@@ -36,6 +37,7 @@ class MediaItemsTest {
     durationSeconds = 5,
     suffix = "mp3",
     coverArtId = "art-1",
+    replayGain = ReplayGain(trackGainDb = -6.5f, albumGainDb = -3.25f, peakAmplitude = 0.5f),
   )
 
   private val second = Song(
@@ -51,6 +53,7 @@ class MediaItemsTest {
     durationSeconds = 900,
     suffix = "m4b",
     coverArtId = "art-2",
+    replayGain = ReplayGain(trackGainDb = 2.75f, albumGainDb = -11.5f, peakAmplitude = 0.875f),
   )
 
   private val firstItem =
@@ -59,6 +62,96 @@ class MediaItemsTest {
     MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", isAudiobook = false, format = StreamFormat.Raw)
 
   private fun <T> pair(select: (MediaItem) -> T): List<T> = listOf(select(firstItem), select(secondItem))
+
+  /**
+   * The ReplayGain extras, at two values each, the same way every other field in this file is
+   * observed twice.
+   *
+   * The **track** gain is what appears, not the album gain -- both songs above carry both, and the
+   * two are disjoint, so a `MediaItems` that wrote `albumGainDb` would produce -3.25/-11.5 here and
+   * fail. That is `ReplayGainPolicy.gainDbFor`'s decision, made once at this layer so nothing
+   * downstream re-derives it.
+   */
+  @Test
+  fun theReplayGainExtrasCarryTheTrackGainAndThePeak() {
+    assertThat(pair { it.mediaMetadata.extras!!.getFloat(MediaItems.KEY_REPLAY_GAIN_DB) })
+      .containsExactly(-6.5f, 2.75f)
+    assertThat(pair { it.mediaMetadata.extras!!.getFloat(MediaItems.KEY_REPLAY_GAIN_PEAK) })
+      .containsExactly(0.5f, 0.875f)
+  }
+
+  /**
+   * An untagged song leaves the keys **absent**, not present at a sentinel.
+   *
+   * This is the encoding the whole feature's "no decision" case rests on: any float value would be
+   * a number `ReplayGainPolicy.linearGain` would happily clamp and apply, so "the file said
+   * nothing" can only live in the absence of the key. `ReplayGainController` and `ProgressWriter`
+   * both read it with `containsKey` for that reason, and this is what stops a well-meaning
+   * `putFloat(KEY, 0f)` from being added here.
+   */
+  @Test
+  fun anUntaggedSongCarriesNoReplayGainKeysAtAll() {
+    val item = MediaItems.of(
+      first.copy(replayGain = null),
+      "https://host/s",
+      null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+    val extras = item.mediaMetadata.extras
+    // The bundle itself is present -- one question for every reader, not two.
+    assertThat(extras).isNotNull
+    assertThat(extras!!.containsKey(MediaItems.KEY_REPLAY_GAIN_DB)).isFalse
+    assertThat(extras.containsKey(MediaItems.KEY_REPLAY_GAIN_PEAK)).isFalse
+  }
+
+  /**
+   * A file tagged by an album-oriented tool: album gain, no track gain. The gain key appears,
+   * carrying the album value -- the fallback that `gainDbFor` exists for.
+   */
+  @Test
+  fun aSongWithOnlyAnAlbumGainStillCarriesADecision() {
+    val item = MediaItems.of(
+      first.copy(replayGain = ReplayGain(null, -7.5f, null)),
+      "https://host/s",
+      null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+    val extras = item.mediaMetadata.extras!!
+    assertThat(extras.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)).isEqualTo(-7.5f)
+    // ...and no peak was invented for a file that reported none.
+    assertThat(extras.containsKey(MediaItems.KEY_REPLAY_GAIN_PEAK)).isFalse
+  }
+
+  /**
+   * The peak is independent of the gain: a file may report one and not the other, in either
+   * direction, and neither may be manufactured from the other's presence.
+   */
+  @Test
+  fun aPeakWithNoGainIsNoDecisionAndAGainWithNoPeakIsStillADecision() {
+    val peakOnly = MediaItems.of(
+      first.copy(replayGain = ReplayGain(null, null, 0.4f)),
+      "https://host/s",
+      null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    ).mediaMetadata.extras!!
+    val gainOnly = MediaItems.of(
+      first.copy(replayGain = ReplayGain(-2.0f, null, null)),
+      "https://host/s",
+      null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    ).mediaMetadata.extras!!
+
+    assertThat(peakOnly.containsKey(MediaItems.KEY_REPLAY_GAIN_DB)).isFalse
+    assertThat(peakOnly.getFloat(MediaItems.KEY_REPLAY_GAIN_PEAK)).isEqualTo(0.4f)
+    assertThat(gainOnly.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)).isEqualTo(-2.0f)
+    assertThat(gainOnly.containsKey(MediaItems.KEY_REPLAY_GAIN_PEAK)).isFalse
+  }
 
   @Test
   fun theMediaIdIsTheSongId() {

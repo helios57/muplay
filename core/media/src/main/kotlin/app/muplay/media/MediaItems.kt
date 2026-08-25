@@ -1,5 +1,6 @@
 package app.muplay.media
 
+import android.os.Bundle
 import androidx.annotation.OptIn
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
@@ -68,6 +69,29 @@ import app.muplay.model.StreamFormat
 object MediaItems {
 
   /**
+   * The decibel adjustment the file's own tags asked for, already reduced by
+   * [ReplayGainPolicy.gainDbFor] to the one number the gain stage needs.
+   *
+   * **The key is absent when the file said nothing**, rather than carried at a sentinel value. A
+   * `-100f` sentinel is a number [ReplayGainPolicy.linearGain] would happily clamp and apply, so
+   * the difference between "no tag" and "a very quiet tag" has to live in the presence of the key
+   * and nowhere else. `ReplayGainController` and `ProgressWriter` both read it with a
+   * `containsKey` guard for that reason.
+   *
+   * An `extras` key rather than a `MediaMetadata` field because `MediaMetadata` has none for this,
+   * and the value has to ride on the item: the current item changes for reasons no caller
+   * announces -- an automatic transition, a `seekToNext`, a media button on a headset -- so a
+   * gain held anywhere else would be a second thing to keep in step with the queue.
+   */
+  const val KEY_REPLAY_GAIN_DB = "app.muplay.replayGainDb"
+
+  /**
+   * The file's peak as a fraction of full scale, so a *positive* gain can be clamped short of
+   * clipping. Absent, like [KEY_REPLAY_GAIN_DB], when the file did not say.
+   */
+  const val KEY_REPLAY_GAIN_PEAK = "app.muplay.replayGainPeak"
+
+  /**
    * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
    *   inferable from anything the server sends -- see this object's own note above for why the
    *   library id plus the user's own `LibraryRole` is the only mechanism there is.
@@ -127,7 +151,25 @@ object MediaItems {
             if (isAudiobook) MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER
             else MediaMetadata.MEDIA_TYPE_MUSIC,
           )
+          // Spec section 4's "the client applies it", carried to the one place that can. Read off
+          // `song.replayGain` and so **not** a sixth parameter: unlike `isAudiobook` and `format`,
+          // which no `Song` can answer, this one is already on the song. One authority, no second
+          // place for it to drift to.
+          .setExtras(replayGainExtras(song))
           .build(),
       )
       .build()
+
+  /**
+   * The two extras, or an **empty** `Bundle` for an untagged file.
+   *
+   * Empty rather than null so that `MediaMetadata.extras` is always present and the two readers
+   * ask one question (`containsKey`) rather than two. The policy decision -- track gain preferred,
+   * album gain as the fallback -- is made here, once, so that everything downstream of the queue
+   * handles one number instead of re-deriving the choice per consumer.
+   */
+  private fun replayGainExtras(song: Song): Bundle = Bundle().apply {
+    ReplayGainPolicy.gainDbFor(song.replayGain)?.let { putFloat(KEY_REPLAY_GAIN_DB, it) }
+    song.replayGain?.peakAmplitude?.let { putFloat(KEY_REPLAY_GAIN_PEAK, it) }
+  }
 }

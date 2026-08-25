@@ -6,6 +6,7 @@ import app.muplay.model.AlbumWithSongs
 import app.muplay.model.Artist
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.ReplayGain
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerInfo
@@ -15,6 +16,7 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.network.model.AlbumBody
 import app.muplay.network.model.ArtistBody
 import app.muplay.network.model.ChildBody
+import app.muplay.network.model.ReplayGainBody
 import app.muplay.network.model.SubsonicEnvelope
 import app.muplay.network.model.SubsonicResponseBody
 import java.security.SecureRandom
@@ -282,7 +284,30 @@ class SubsonicClient(
     durationSeconds = duration,
     suffix = suffix,
     coverArtId = coverArt,
+    replayGain = replayGain.toDomain(),
   )
+
+  /**
+   * `null` rather than an all-null [ReplayGain]: "this file carries no gain tags" and "this file
+   * carries tags whose every value happens to be absent" are the same fact, and the player's one
+   * question is "is there a decision to apply". Navidrome sends `"replayGain": {}` on every
+   * untagged file, so the empty-object case is the common one rather than a curiosity.
+   *
+   * The peak falls back from the track's to the album's, because a peak is only ever consumed as a
+   * ceiling on a positive gain and an album peak is a safe -- if conservative -- one for a track
+   * inside that album.
+   *
+   * `baseGain` and `fallbackGain` are parsed by [ReplayGainBody] so the oracle keeps validating
+   * the whole object, and are deliberately dropped here: they configure a *server-side* normaliser
+   * this client does not use.
+   */
+  private fun ReplayGainBody?.toDomain(): ReplayGain? {
+    val trackGainDb = this?.trackGain
+    val albumGainDb = this?.albumGain
+    val peak = this?.trackPeak ?: this?.albumPeak
+    if (trackGainDb == null && albumGainDb == null) return null
+    return ReplayGain(trackGainDb = trackGainDb, albumGainDb = albumGainDb, peakAmplitude = peak)
+  }
 
   /**
    * Runs [request] and returns the decoded [SubsonicResponseBody] only once it is proven to

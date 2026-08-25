@@ -5,7 +5,6 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -114,8 +113,22 @@ class MuPlayerFactory @Inject constructor(
 
   /**
    * The **raw** player, for the three device suites whose subject is an `ExoPlayer` behaviour
-   * (audio focus, the cache key, gapless) and for [create] to wrap. [renderersFactory] defaults to
-   * exactly what this player has always used.
+   * (audio focus, the cache key, gapless) and for [create] to wrap.
+   *
+   * ### The two parameters, and why they are a pair
+   *
+   * [gainProcessor] is the ReplayGain stage (Task 11) and [renderersFactory] is what puts it in the
+   * audio chain; the default for the second is built from the first, so a caller that overrides
+   * neither gets a player whose listener and whose chain hold the *same* processor. That coupling
+   * is the thing to preserve: a `ReplayGainController` pointed at a processor which is not in the
+   * chain is the silent failure this whole task exists to remove, and it compiles perfectly.
+   * `GainAudioProcessorTest` overrides both together, passing one processor to both arguments,
+   * which is exactly how production wires it plus a tee.
+   *
+   * A caller overriding only [renderersFactory] -- `GaplessTest`, whose subject is the *queue* --
+   * gets a controller over an orphan processor. That is harmless (an orphan multiplies nothing) and
+   * it is deliberate rather than overlooked: that suite's items carry no gain extras at all, so
+   * every gain it would ever set is [ReplayGainPolicy.UNCHANGED].
    *
    * ### Why the parameter exists, since it is a seam a test asked for
    *
@@ -131,13 +144,13 @@ class MuPlayerFactory @Inject constructor(
    * source factory below and is silent when it is missing. A test measuring a player that is not
    * the one that ships is measuring a copy, and the copy is exactly what drifts.
    *
-   * ### Why the default is not a behaviour change
+   * ### The default is a behaviour change, and this is the one place it is stated
    *
-   * `ExoPlayer.Builder(context)` -- the single-argument form this used to call -- supplies
-   * `DefaultRenderersFactory(context)` itself, from a lazy supplier. Passing the same object
-   * explicitly is the same arrangement, constructed eagerly; the constructor stores a `Context` and
-   * an extension-renderer mode and does nothing else. `MuPlaybackService` calls `create()` with no
-   * argument and gets the player it always got.
+   * It used to be `DefaultRenderersFactory(context)` -- the same object `ExoPlayer.Builder(context)`
+   * supplies for itself. It is now [MuPlayRenderersFactory], which differs in exactly two ways:
+   * the audio sink's processor chain carries [gainProcessor], and there is **no video renderer** in
+   * the array at all. Both are deliberate; see that class's own note for why each is a property of
+   * the shipping player rather than of a test.
    *
    * ### What keeps the seam honest
    *
@@ -148,7 +161,8 @@ class MuPlayerFactory @Inject constructor(
    * frame-count assertion in it red. Measured, not asserted from the armchair: see task-7b-report.md.
    */
   fun createExoPlayer(
-    renderersFactory: RenderersFactory = DefaultRenderersFactory(context),
+    gainProcessor: GainAudioProcessor = GainAudioProcessor(),
+    renderersFactory: RenderersFactory = MuPlayRenderersFactory(context, gainProcessor),
   ): ExoPlayer =
     ExoPlayer.Builder(context, renderersFactory)
       .setMediaSourceFactory(
@@ -169,5 +183,12 @@ class MuPlayerFactory @Inject constructor(
       // battery decision made once for the process.
       .setWakeMode(C.WAKE_MODE_NETWORK)
       .build()
-      .also { player -> player.addListener(ContentTypeSwitcher(player)) }
+      .also { player ->
+        player.addListener(ContentTypeSwitcher(player))
+        // One processor and one controller per player, neither of them a `@Singleton`: they belong
+        // to the player they were built for, and a gain stage shared between two players would
+        // have two sources of truth for one number. The listener is what makes the gain follow the
+        // *item* -- see `ReplayGainController` for why a queue-builder call is not enough.
+        player.addListener(ReplayGainController(gainProcessor))
+      }
 }

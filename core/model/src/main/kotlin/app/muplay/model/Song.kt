@@ -23,4 +23,16 @@ data class Song(
   val durationSeconds: Int,
   val suffix: String?,
   val coverArtId: String?,
+  /**
+   * What the file's own ReplayGain tags say, or `null` for an untagged file.
+   *
+   * Carried on the song rather than on `media_progress` because the player needs it **before** the
+   * track has ever been played: every track in a fresh library-scoped shuffle is a first play, and
+   * a shuffled library is the exact situation ReplayGain exists for. It is also the reason
+   * `MediaItems.of` did **not** grow a sixth parameter for it, the way `isAudiobook` and `format`
+   * each had to: those two are not derivable from a `Song` at all, and this one is already on it.
+   *
+   * Defaulted so that no existing positional construction of this class had to move.
+   */
+  val replayGain: ReplayGain? = null,
 )

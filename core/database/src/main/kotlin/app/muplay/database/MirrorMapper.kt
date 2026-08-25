@@ -5,6 +5,7 @@ import app.muplay.database.entity.ArtistEntity
 import app.muplay.database.entity.SongEntity
 import app.muplay.model.Album
 import app.muplay.model.Artist
+import app.muplay.model.ReplayGain
 import app.muplay.model.Song
 
 /**
@@ -78,6 +79,9 @@ object MirrorMapper {
     suffix = song.suffix,
     coverArtId = song.coverArtId,
     sortTitle = sortKey(song.title),
+    replayGainTrackDb = song.replayGain?.trackGainDb,
+    replayGainAlbumDb = song.replayGain?.albumGainDb,
+    replayGainPeak = song.replayGain?.peakAmplitude,
   )
 
   fun song(entity: SongEntity): Song = Song(
@@ -93,7 +97,27 @@ object MirrorMapper {
     durationSeconds = entity.durationSeconds,
     suffix = entity.suffix,
     coverArtId = entity.coverArtId,
+    replayGain = entity.replayGain(),
   )
+
+  /**
+   * The three mirrored gain columns as one optional decision, or `null` for an untagged file.
+   *
+   * The `null` rule is `SubsonicClient.toDomain`'s, deliberately restated on the way back out of
+   * the mirror rather than inferred: a row whose two gain columns are both absent is a file that
+   * said nothing about its loudness, and reconstructing a `ReplayGain(null, null, null)` here
+   * would make an untagged song mirror back as *something* and force every caller to ask two
+   * questions. Because the client never emits a peak without a gain, that rule loses nothing that
+   * was ever written; it is also what makes `song(songEntity(song))` an identity.
+   */
+  private fun SongEntity.replayGain(): ReplayGain? {
+    if (replayGainTrackDb == null && replayGainAlbumDb == null) return null
+    return ReplayGain(
+      trackGainDb = replayGainTrackDb,
+      albumGainDb = replayGainAlbumDb,
+      peakAmplitude = replayGainPeak,
+    )
+  }
 
   fun artist(entity: ArtistEntity): Artist = Artist(
     id = entity.id,

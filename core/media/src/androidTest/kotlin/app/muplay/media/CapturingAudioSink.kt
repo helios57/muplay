@@ -1,6 +1,8 @@
 package app.muplay.media
 
 import android.content.Context
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
@@ -81,13 +83,43 @@ class CapturingAudioSink : TeeAudioProcessor.AudioBufferSink {
 }
 
 /**
- * The shipping renderer set, with its audio sink tapped by [capture].
+ * The shipping renderer set with its audio sink tapped by [capture], for a suite that has to see
+ * what the decoder produced.
  *
- * A subclass of [DefaultRenderersFactory] rather than a hand-rolled audio-only `RenderersFactory`,
- * and that is the whole point of it: `MuPlayerFactory.create()` with no argument builds
- * `DefaultRenderersFactory(context)`, so the renderers `GaplessTest` measures are produced by the
- * same code, in the same shape, as the ones that ship. The single override replaces the sink's
- * *construction* and adds one processor to its chain; both flags go to the same two setters
+ * `MuPlayRenderersFactory` is what production builds, and this is that factory with one extra
+ * processor appended **after** the gain stage -- so a capture sees the audio exactly as the
+ * `AudioTrack` would have received it, gain included. That ordering is the whole measurement in
+ * `GainAudioProcessorTest`, and it is why the tee is a parameter of the production factory rather
+ * than a factory of its own.
+ *
+ * [gainProcessor] has to be the *same object* the player's `ReplayGainController` was given, which
+ * is why the caller passes it in rather than this function inventing one: a controller pointed at a
+ * processor that is not in the chain is the silent failure this task exists to remove. Pass the
+ * result and the processor to `MuPlayerFactory.createExoPlayer(gainProcessor, renderersFactory)`.
+ */
+@OptIn(UnstableApi::class)
+fun tappedShippingRenderers(
+  context: Context,
+  gainProcessor: GainAudioProcessor,
+  capture: CapturingAudioSink,
+): MuPlayRenderersFactory =
+  MuPlayRenderersFactory(context, gainProcessor, listOf(TeeAudioProcessor(capture)))
+
+/**
+ * The audio pipeline **as it was before the gain stage existed**: `DefaultRenderersFactory` with
+ * its sink tapped, and no `GainAudioProcessor` anywhere in the chain.
+ *
+ * It used to be what `GaplessTest` measured, on the argument that `MuPlayerFactory.create()` built
+ * a plain `DefaultRenderersFactory` and so this was the shipping shape. Task 11 changed what ships,
+ * and `GaplessTest` moved to [tappedShippingRenderers] with it -- measuring the pipeline that no
+ * longer ships would be exactly the "verified at a different layer than it is applied" defect this
+ * project keeps finding.
+ *
+ * What it is *for* now is the **control** in `GainAudioProcessorTest`: the same player, the same
+ * items, the same capture, with the gain stage absent. A ratio between two amplitudes means nothing
+ * without it -- two files that differ for some unrelated reason would produce one too.
+ *
+ * The single override replaces the sink's *construction*; both flags go to the same two setters
  * `DefaultRenderersFactory` itself calls, read off the 1.11.0 bytecode --
  * `setEnableAudioOutputPlaybackParameters`, not the deprecated `setEnableAudioTrackPlaybackParams`
  * the overridden parameter is still named after. Nothing else about the player changes.
