@@ -149,7 +149,7 @@ fi
 # -u: without it Python buffers stdout through a pipe and a four-minute run prints nothing
 # until it is over, which makes an interrupted run impossible to interpret.
 exec python3 -u - "${1:-}" <<'PY'
-import glob, html, re, shutil, subprocess, sys
+import glob, html, pathlib, re, shutil, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 
@@ -1309,10 +1309,12 @@ PROBES = [
      # real, shorter URL. The socket readers reject a truncated head; a datagram cannot.
      "a reply too big for the receive buffer is dropped rather than parsed as a short one", 1),
     ("discovery/no-devicelist-recursion", DISCOVERY_DESC,
-     '    embedded = childElement(element, "deviceList")\n'
-     "      ?.let { list -> childElements(list, \"device\").map { parseDevice(it, base) } }\n"
-     "      .orEmpty(),\n",
-     "    embedded = emptyList(),\n",
+     '      embedded = childElement(element, "deviceList")\n'
+     "        ?.let { list ->\n"
+     "          childElements(list, \"device\").map { parseDevice(it, base, descriptionUrl, depth + 1) }\n"
+     "        }\n"
+     "        .orEmpty(),\n",
+     "      embedded = emptyList(),\n",
      # THE Sonos defect. A Sonos root device is a ZonePlayer; the MediaRenderer carrying AVTransport
      # is nested inside its deviceList beside a MediaServer. A parser that reads
      # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
@@ -1682,6 +1684,91 @@ PROBES = [
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      "an unquoted soapaction is rejected with 401", 10),
+
+    # ---- Plan 6 Task 2, fix round: the review's HIGH and MEDIUM findings ----------------------
+    # Same `revert()` note as the Task 2 block above: `core/cast` is checked out wholesale, so none
+    # of these needs a LATER_PROBE_FILES line. Every count was measured by applying the mutation
+    # alone against the committed tree and reading the result XML.
+    #
+    # The seventh finding in that review, `RendererStore.encode` writing a record whose fields
+    # shift when the UDN carries a tab, has NO probe here and cannot have one: `RendererStore`
+    # needs a DataStore, so its only tier is `connectedDebugAndroidTest`, which this runner cannot
+    # reach. Its falsification is by hand, in task-2-fix-report.md, the same way Plan 3 Task 3's
+    # throw site is.
+    ("discovery/location-host-resolved", DISCOVERY_SSDP,
+     "    if (!isIpLiteral(host)) return null\n", "",
+     # The denial of service. M-SEARCH is multicast, so every device on the segment learns this
+     # phone's source port, and the reply socket is unconnected -- so one datagram naming a host
+     # whose nameserver drops queries parks the read loop in `getByName` for a resolver timeout,
+     # and N distinct labels cost N of them. The window then closes with every real speaker's reply
+     # still unread. The named test uses `localhost` on purpose: it is the one name that resolves
+     # with no network at all, so it cannot pass on this mutation the way an unresolvable one would.
+     "a reply whose location names a host rather than an address is discarded without resolving it", 1),
+    ("discovery/location-not-source-checked", DISCOVERY_SSDP,
+     "    if (address != from) return null\n", "",
+     # The other half: a device may announce its own address and nothing else. Without this, one
+     # datagram from anywhere on the segment redirects the description fetch at a host of the
+     # sender's choosing.
+     "a reply that announces an address it did not come from is discarded", 1),
+    ("discovery/search-ignores-cancellation", DISCOVERY_TRANSPORT,
+     "        ensureActive()\n", "",
+     # Nothing in the read loop suspends, so without this a user who opens the picker and goes
+     # straight back leaves an IO thread and a bound socket working for the rest of the listen
+     # window. The named test's window is twenty times its assertion, so it fails by a factor of
+     # twenty rather than by a margin.
+     "cancelling a search stops the read loop rather than pinning a thread for the whole window", 1),
+    ("discovery/doctype-not-refused", DISCOVERY_DESC,
+     "    rejectDoctype(xml, descriptionUrl)\n", "",
+     # THE probe that did not exist, and the reason MEDIUM 1 of the review was a finding at all:
+     # before the fix round this mutation reddened NOTHING. SAX's own refusal message contains the
+     # word "DOCTYPE", so `withMessageContaining("DOCTYPE")` was satisfied by the parser feature
+     # this guard exists to be independent of -- on Android that feature is expected to be refused
+     # at `setFeature`, so there it is this guard or nothing. All three doctype tests now assert
+     # this function's own sentence, which no parser says.
+     "a description carrying a doctype is refused outright", 3),
+    ("discovery/doctype-scanned-in-a-window", DISCOVERY_DESC,
+     'if (xml.contains("<!DOCTYPE", ignoreCase = true))',
+     'if (xml.take(4096).contains("<!DOCTYPE", ignoreCase = true))',
+     # The 4 KiB blind spot itself, as the code actually had it. A comment is legal Misc in the
+     # prolog, so a doctype can sit at index 5008 of a well-formed document that is five hundred
+     # kilobytes short of the size guard.
+     "a doctype hidden behind a five kilobyte comment is refused too", 1),
+    ("discovery/unbounded-device-recursion", DISCOVERY_DESC,
+     "    if (depth > MAX_DEVICE_DEPTH) {", "    if (false) {",
+     # Ten thousand nested deviceList/device pairs is 420,030 characters -- under every other bound
+     # here -- and the recursive walk answered with a StackOverflowError rather than a refusal.
+     # `parse` is public API whose KDoc enumerates what it throws, and Task 3 tells Tasks 5, 8 and 9
+     # that one `catch (e: IOException)` around a call is complete.
+     "a description nested ten thousand deep is refused rather than overflowing the stack", 2),
+    ("discovery/anonymous-device-is-a-device", DISCOVERY_DEVICE,
+     "      if (root.udn.isEmpty()) return null\n", "",
+     # A description with an AVTransport and no <UDN> used to yield a CastDevice whose udn is "",
+     # and `RendererDirectory` deduplicates the picker with `distinctBy { it.udn }` -- so every
+     # anonymous renderer on a network collapsed into one entry, and the store remembered that
+     # empty identity for the fallback to re-fetch.
+     "a renderer that declares no udn is not a cast device", 1),
+
+    # ---- Plan 6 Task 2, fix round: the same two defects in the SOAP copy of the same guard ----
+    # Found by the Task 3 review while this lane was fixing their siblings in `DeviceDescription`,
+    # and taken here because they are the same defect in the same module -- two copies of one
+    # security guard is exactly how both came to carry the same 4096-character window.
+    ("soap/unbounded-fault-recursion", SOAP_ENVELOPE,
+     "    if (depth > MAX_FAULT_DEPTH) return null", "    if (false) return null",
+     # WORSE than its `DeviceDescription` sibling, because of where it is called from:
+     # `SoapClient.invoke` runs `parseFault` on EVERY response, outside its try/catch and outside
+     # the runCatching that guards the parse. ~56 KB of nested elements from an unauthenticated
+     # device on the LAN used to answer with a StackOverflowError -- an Error, so the one
+     # `catch (e: IOException)` that `SoapClient`'s KDoc promises Tasks 5, 8 and 9 is complete
+     # misses it entirely and the coroutine dies. 2: the boundary test goes red as well.
+     "a fault nested twenty thousand deep is a plain refusal rather than a stack overflow", 2),
+    ("soap/doctype-scanned-in-a-window", SOAP_ENVELOPE,
+     'internal fun declaresDoctype(xml: String): Boolean = xml.contains("<!DOCTYPE", ignoreCase = true)',
+     'internal fun declaresDoctype(xml: String): Boolean = xml.take(4096).contains("<!DOCTYPE", ignoreCase = true)',
+     # The window as the code actually had it. The named test asserts the PREDICATE and not
+     # `parseFault(...) == null`, and that is what makes this probe possible at all: on the JVM the
+     # `disallow-doctype-decl` feature refuses the document itself, so the end-to-end assertion is
+     # green with the scan looking at four kilobytes, at everything, or at nothing whatsoever.
+     "a doctype hidden behind a five kilobyte comment is still seen by the guard", 1),
 ]
 
 
@@ -1917,6 +2004,43 @@ run_auth = FILTER in AUTH_PROBE[0]
 total = len(selected) + (1 if run_auth else 0)
 if total == 0:
     raise SystemExit(f"no probe id matches '{FILTER}'")
+
+# PREFLIGHT: every probe's search text must still match its file exactly once.
+#
+# A probe's `old` text goes stale the moment somebody edits the line it names, and
+# `apply()` then raises SystemExit on the FIRST such probe -- which aborts the whole
+# run and, because every run here is filtered to one family, can sit unnoticed for
+# hours. That has happened twice in one day: a position clamp rewrote the line
+# `player/scrub-position-ignored` searched for, and a depth cap rewrote the line
+# `discovery/no-devicelist-recursion` searched for. Both times the regression list
+# this repo relies on could not be run at all, by anybody, and nothing said so.
+#
+# This checks EVERY probe in the list -- not just the selected ones -- before
+# mutating anything, and reports all the stale ones together. Checking the whole
+# list on a filtered run is deliberate: a filtered run is exactly how the other
+# families' staleness stays invisible.
+stale = []
+for probe_id, path, edit, *_ in PROBES + EXTRA_PROBES:
+    # A table probe's third field is one `old` string; an out-of-table probe's is a
+    # LIST of (old, new) pairs, because it needs more than one substitution. Handle
+    # both -- assuming the string shape is what made the first version of this check
+    # crash on AUTH_PROBE the moment it ran.
+    olds = [e[0] for e in edit] if isinstance(edit, list) else [edit]
+    try:
+        src = pathlib.Path(path).read_text()
+    except FileNotFoundError:
+        stale.append(f"  {probe_id}: file not found: {path}")
+        continue
+    for old_text in olds:
+        n = src.count(old_text)
+        if n != 1:
+            stale.append(f"  {probe_id}: {n} matches in {path} (need exactly 1)")
+if stale:
+    raise SystemExit(
+        "STALE PROBES -- their search text no longer matches the source exactly once.\n"
+        "The list cannot run until these are realigned with the code they name:\n"
+        + "\n".join(stale)
+    )
 
 print(f"Running {total} mutation probe(s). Each is applied alone and reverted.\n")
 results = []
