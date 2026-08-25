@@ -25,7 +25,12 @@ class ConventionTest {
 
   private fun moduleBuildFiles(): List<File> =
     repoRoot().walkTopDown()
-      .onEnter { it.name != "build" && it.name != ".git" }
+      // `.claude/` is harness state, not project source: it holds git worktrees, so walking into
+      // it finds a SECOND copy of every module's `build.gradle.kts` — including the root's, whose
+      // canonical path then defeats the carve-out below and reports the root file as a module.
+      // That turned `:app:testDebugUnitTest` red on master purely because another agent had a
+      // worktree open. It is git-ignored and never contains source this project owns.
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
       .filter { it.name == "build.gradle.kts" }
       .filter { it.parentFile.name != "convention" }
       .toList()
