@@ -423,6 +423,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                         and this floor fails, which is a CLASS-element rule doing exactly
     //                         what a BUNDLE aggregate over this module would have hidden.
     //
+    //   `BrowseTree`            Plan 5 Task 2, and the first class in this module with a real
+    //                         amount of hand-written logic in it. Measured **49/49** BRANCH,
+    //                         130/130 LINE: the surface `when` in `root` (the four-tab limit, the
+    //                         watch's missing Artists tab, the phone-only Libraries tab),
+    //                         `continueNodes`'s `hasStarted && !isFinished` filter, `bookNode`'s
+    //                         `fileCount > 1`, `completionOf`'s three-arm cascade,
+    //                         `bookSubtitle`'s `hasStarted && !isFinished`, the three
+    //                         `?.takeIf(String::isNotBlank) ?: UNKNOWN_ARTIST` chains and
+    //                         `libraryChildren`'s `role == MUSIC` guard -- spec section 1's rule,
+    //                         expressed as the absence of a shuffle row. `BrowseTree*` is not
+    //                         decoration: Kotlin compiles each `compareBy`/`thenBy`/`sortedBy`
+    //                         into its own synthetic class, and two of them
+    //                         (`$continueNodes$$inlined$thenBy$1`, `$bookNodes$$inlined$thenBy$1`)
+    //                         carry **2/2 BRANCH of their own** -- the tie-breaks that keep a car
+    //                         list from reordering itself between two identical requests.
+    //
+    //   `BrowseText`           Plan 5 Task 2. **9/9**: `remainingLabel`'s four bands and
+    //                         `albumCountLabel`'s three arms, each asserted at both sides of its
+    //                         boundary. Its opening `max(0L, remainingMs)` was deleted rather
+    //                         than covered -- measured unfalsifiable, no input including
+    //                         `Long.MIN_VALUE` changed its answer, because the first band's test
+    //                         is `<`.
+    //
+    //   `BookSummary`          Plan 5 Task 2 (see its own KDoc: Plan 4 Task 4 owns the type and
+    //                         had not landed anywhere in the repository). **4/4**:
+    //                         `progressFraction`'s `durationMs <= 0` divide-by-zero guard and its
+    //                         `coerceIn`. Gated by exact name rather than as a ride-along because
+    //                         it is the one `data class` in this module with arithmetic in it.
+    //
     // Everything else in the list rides along, the same way `SetupUiState` rides along in
     // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
     // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
@@ -437,6 +466,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Compose's synthetic branches. If any of them grows a body, it needs a rule of its own --
     // which is exactly what happened to `SearchResults`, and why it is listed above rather than
     // here.
+    //
+    // Plan 5 Task 2 adds five more of exactly that shape, all measured with **no BRANCH counter
+    // at all** and every line of them a declaration: `BrowseNode` and `BrowseCompletion` (`data
+    // class`es with no body, 12/12 and 3/3 LINE), and `BrowseMediaType`, `BrowseStyle`,
+    // `BrowseCompletionStatus` (`enum class`es whose only members are their constants, 9/9, 1/1,
+    // 1/1). `BrowseSurface` joins them despite carrying two constructor properties and a
+    // companion `const`: it is `LibraryRole`'s shape exactly (6/6 LINE, no branches), its three
+    // `continueLimit`/`browsableStyle` values are asserted as values by `BrowseTreeTest` where
+    // that assertion can actually fail, and a LINE floor over an enum's own declaration lines
+    // cannot fail while any test in the module touches the enum at all. `BrowseSurface*` rides
+    // along for `BrowseSurface$Companion`, which carries no counter of either kind.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -475,6 +515,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.RememberedRenderer",
         "app.muplay.model.RememberedRenderers",
         "app.muplay.model.RememberedRenderers*",
+        "app.muplay.model.BookSummary",
+        "app.muplay.model.browse.BrowseTree",
+        "app.muplay.model.browse.BrowseTree*",
+        "app.muplay.model.browse.BrowseText",
+        "app.muplay.model.browse.BrowseSurface",
+        "app.muplay.model.browse.BrowseSurface*",
+        "app.muplay.model.browse.BrowseNode",
+        "app.muplay.model.browse.BrowseCompletion",
+        "app.muplay.model.browse.BrowseCompletionStatus",
+        "app.muplay.model.browse.BrowseMediaType",
+        "app.muplay.model.browse.BrowseStyle",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -512,6 +563,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.model.browse.BrowseId",
         "app.muplay.model.browse.BrowseId*",
+      ),
+    ),
+    // Plan 5 Task 2, and the `BrowseId` argument directly above applied to a bigger class for the
+    // same structural reason: a CLASS-element BRANCH rule can only see the code that branches.
+    // `BrowseTree` is 130 lines of which only a minority sit under a branch -- `bookChildren`,
+    // `artistNodes`, `shuffleNode`, `folder`, `albumChildren`, `artistChildren` and
+    // `albumChildrenOfArtist` contain no `if`/`when`/`?:` at all -- so its BRANCH ratio stays at
+    // 1.0000 while whole builders go untested. That is not hypothetical here: `albumChildren` is
+    // pure delegation to `songNodes`, and delegation-with-the-argument-dropped is one of this
+    // project's own recorded defect classes.
+    //
+    // Measured today, all at 1.0000: `BrowseTree` 130/130, its five synthetic comparator classes
+    // 1/1 or 2/2 each, `BrowseText` 13/13 and `BookSummary` 14/14.
+    //
+    // Verified fireable rather than assumed so, and verified to catch what the BRANCH rule above
+    // cannot: with the two `bookChildren` tests, the `artistNodes` test, the childStyle test and
+    // the tree-wide credential test moved aside -- five tests, none of which uniquely covers any
+    // branch -- this floor fails at `BrowseTree` 106/130 = 0.8154 **while the BRANCH rule above
+    // stays green at 49/49**. Raising the minimum instead would have been vacuous: JaCoCo
+    // validates the minimum before comparing, so `1.01` fails with "given minimum ratio is 1.01,
+    // but must be between 0.0 and 1.0" exactly as it does against zero-coverage code.
+    //
+    // The enums and the bodiless `data class`es are deliberately **not** here -- see the
+    // ride-along paragraph above the BRANCH rule for why a LINE floor over a declaration is a
+    // floor that cannot fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.browse.BrowseTree",
+        "app.muplay.model.browse.BrowseTree*",
+        "app.muplay.model.browse.BrowseText",
+        "app.muplay.model.BookSummary",
       ),
     ),
   ),

@@ -144,6 +144,8 @@ CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
 CAST_ADDRESS = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalAddress.kt"
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
+BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
+BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
@@ -939,7 +941,20 @@ PROBES = [
      # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
      # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
      # property, and it is the property no round trip implies.
-     "every id encodes to its exact documented string", 5),
+     #
+     # 5 as of 953a6ba, when nothing consumed `BrowseId` yet; 11 once Plan 5 Task 2's browse tree
+     # became its first consumer and `BrowseTreeTest` gained six assertions that read
+     # `BrowseId.Book(...).encode()` back as a map key or a list element. The named test failed
+     # exactly as intended both times -- this is the stale-count case the note on `expected
+     # failures` above describes, and Task 1's own report predicted this specific probe going stale
+     # here. Re-measured, not deleted; the six new ones are `the book shelf sorts case-insensitively
+     # and breaks its own ties by id`, `two books last heard in the same millisecond come out in the
+     # same order either way round`, `a single-file book is playable but not browsable, and a
+     # multi-file one is both`, `continue lists only started unfinished books, most recently heard
+     # first`, `a book's completion is one of three distinct values` and `continue is capped by the
+     # surface's own limit` -- every one of them a test that names a book by its encoded id, which
+     # is the right way for a browse test to name one.
+     "every id encodes to its exact documented string", 11),
     ("browse/library-id-non-canonical", BROWSE_ID,
      "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
      "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
@@ -1320,6 +1335,80 @@ PROBES = [
      # those hands back a value that is not a track id -- which is how a credential gets into the
      # message by a second route.
      "a parameter that merely ends in id is not the id", 1),
+
+    # ---- Plan 5 Task 2: the browse tree ------------------------------------------------------
+    # The first three are the mutations that task's brief named by hand. The last two are what a
+    # by-hand sweep of the finished suite actually found -- both were mutations that SURVIVED the
+    # whole green suite until a fixture or an implementation was changed, which is exactly the
+    # class of defect this file exists to remember.
+    #
+    # The plan was warned by name about "an isAutomotiveController test where both branches return
+    # the same tree, so the branch is untested". A `when (surface)` whose arms are equal has 100%
+    # branch coverage and asserts nothing, so this collapses the branch outright: every surface
+    # gets the PHONE root. Reddens three of the root tests plus the tree-wide credential test,
+    # which counts its nodes.
+    ("browse/root-ignores-surface", BROWSE_TREE,
+     """      if (hasMusic) {
+        add(folder(BrowseId.Albums, ALBUMS_TITLE, BrowseMediaType.FOLDER_ALBUMS, surface.browsableStyle))
+        // A watch skips Artists: it is a level of indirection that costs two more crown scrolls to
+        // reach exactly the album the Albums tab already lists.
+        if (surface != BrowseSurface.WATCH) {
+          add(folder(BrowseId.Artists, ARTISTS_TITLE, BrowseMediaType.FOLDER_ARTISTS, BrowseStyle.LIST))
+        }
+        // A library picker is unbounded and is one more level of depth, which is exactly what a
+        // driver must not be handed -- and it would push the car root past its four tabs.
+        if (surface == BrowseSurface.PHONE) {
+          add(folder(BrowseId.Libraries, LIBRARIES_TITLE, BrowseMediaType.FOLDER_MIXED, BrowseStyle.LIST))
+        }
+      }""",
+     """      if (hasMusic) {
+        add(folder(BrowseId.Albums, ALBUMS_TITLE, BrowseMediaType.FOLDER_ALBUMS, BrowseSurface.PHONE.browsableStyle))
+        add(folder(BrowseId.Artists, ARTISTS_TITLE, BrowseMediaType.FOLDER_ARTISTS, BrowseStyle.LIST))
+        add(folder(BrowseId.Libraries, LIBRARIES_TITLE, BrowseMediaType.FOLDER_MIXED, BrowseStyle.LIST))
+      }""",
+     "the three surfaces produce three different roots", 4),
+
+    # Spec section 1: "Hitting shuffle must not pull chapter 14 of a novel into a music session."
+    # On a car surface there is no UI to disable, so the rule is expressed as the absence of a row
+    # -- which means the only thing that can enforce it is a test that asserts the absence.
+    ("browse/shuffle-for-every-library", BROWSE_TREE,
+     """    if (library.role == LibraryRole.MUSIC) {
+      listOf(shuffleNode(library)) + albums.map(::albumNode)
+    } else {
+      albums.map(::albumNode)
+    }""",
+     "    listOf(shuffleNode(library)) + albums.map(::albumNode)",
+     "an audiobook library gets no shuffle node and a music library does", 1),
+
+    # One field fixed to a constant -- the defect class N3-1 found across 20 mapped DTO fields.
+    # Reddens the album field-by-field test and the albums tab's own artwork assertion, and
+    # nothing else: that precision is the point of asserting field by field rather than by
+    # comparing whole objects built from the same fixture.
+    ("browse/album-artwork-constant", BROWSE_TREE,
+     "    mediaType = BrowseMediaType.ALBUM,\n    artworkId = album.coverArtId,",
+     '    mediaType = BrowseMediaType.ALBUM,\n    artworkId = "cov-a",',
+     "an album node carries every field of its album", 2),
+
+    # FOUND BY THE SWEEP, NOT BY THE BRIEF. This mutation survived the entire green suite: both
+    # library-order fixtures had names whose alphabetical order happened to coincide with their id
+    # order, so no test could tell `sortedBy(id)` from `sortedBy(name)`. Fixed by renaming the
+    # fixtures so supplied order, name order and id order are three different orders. The probe
+    # exists because the defect is invisible to coverage -- both sorts are one fully-covered line.
+    ("browse/shuffle-sorted-by-name", BROWSE_TREE,
+     "    musicLibraries.sortedBy(MusicLibrary::id).map(::shuffleNode) + albums.map(::albumNode)",
+     "    musicLibraries.sortedBy(MusicLibrary::name).map(::shuffleNode) + albums.map(::albumNode)",
+     "the albums node puts one shuffle per music library first, in library id order", 1),
+
+    # ALSO FOUND BY THE SWEEP. `remainingLabel` opened with `max(0L, remainingMs)`, and deleting
+    # that clamp changed no output for any input at all, `Long.MIN_VALUE` included -- the first
+    # band's test is `<`, so every negative satisfies it before any division runs. The clamp was
+    # deleted rather than covered, and what actually decides the negative case is the ORDER of the
+    # bands. This probe hoists the second band above the first, which is the real defect the
+    # negative sample now guards.
+    ("browse/remaining-band-order", BROWSE_TEXT,
+     '      remainingMs < MINUTE_MS -> "under a minute left"\n      hours == 0L -> "$minutes min left"',
+     '      hours == 0L -> "$minutes min left"\n      remainingMs < MINUTE_MS -> "under a minute left"',
+     "a negative remaining time is treated as none rather than rendered", 2),
 ]
 
 
@@ -1379,6 +1468,8 @@ LATER_PROBE_FILES = [
     TASK_REMOVAL,
     PLAYBACK_STATE,
     TRACK_ID_KEY,
+    BROWSE_TREE,
+    BROWSE_TEXT,
 ]
 
 
