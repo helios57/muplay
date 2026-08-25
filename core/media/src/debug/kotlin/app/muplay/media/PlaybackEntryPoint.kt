@@ -9,12 +9,25 @@ import dagger.hilt.components.SingletonComponent
  * instrumented tests), which builds its queue with the **same** [QueueRepository] the app itself
  * plays through.
  *
- * Declared in this module's `main` source set rather than in `:app`'s `androidTest` source set
- * because Hilt aggregates `@InstallIn` entry points from a variant's *main* compilation only -- an
- * `@EntryPoint` declared in `androidTest` is not part of the running `MuPlayApplication`'s
- * generated `SingletonComponent` at all. Same reasoning, and same cost, as `SyncWatermarkEntryPoint`
- * (`:core:database`) and `LibraryRepositoryEntryPoint` (`:feature:setup`); see the first of those
- * for the fuller argument.
+ * ### Why `src/debug/`, and why it is not `src/main/`
+ *
+ * Hilt aggregates `@InstallIn` from a variant's **main compilation**, so an `@EntryPoint` declared
+ * in `:app`'s `androidTest` source set is not part of the running `MuPlayApplication`'s generated
+ * `SingletonComponent` at all -- confirmed directly once, as a
+ * `ClassCastException: Cannot cast ...SingletonCImpl to ...EntryPoint`. That is true, and it was
+ * read as "therefore it must be in `src/main/`", which does not follow: a **build-type source set
+ * is part of that same compilation**. `app/src/debug/kotlin/app/muplay/di/CleartextPolicyModule.kt`
+ * and its `src/release/` twin are this repository's own proof, and the instrumented tests run the
+ * debug variant.
+ *
+ * So this file is compiled into debug, is absent from release, and -- the part that actually
+ * matters -- is not public API of its module. In `src/main/` any module depending on this one could
+ * pull the binding below out of the graph instead of injecting it, which is the pattern
+ * constructor injection exists to remove. The confidentiality difference is close to zero either
+ * way (in-process code can already reach what this exposes); the architectural difference is not.
+ *
+ * `ConventionTest`'s `every Hilt entry point is declared in a debug source set` is what keeps this
+ * from drifting back.
  *
  * Why it is worth that cost here: the alternative is for the test to build its own `MediaItem`s,
  * which would exercise `MediaItems.of` but not the chain that actually feeds the service in

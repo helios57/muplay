@@ -6,6 +6,7 @@ import app.muplay.cast.http.HttpHeaders
 import app.muplay.cast.soap.SoapArgument
 import app.muplay.cast.soap.SoapEnvelope
 import app.muplay.cast.soap.UpnpError
+import javax.xml.parsers.DocumentBuilderFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -48,10 +49,35 @@ class FakeRendererStrictnessTest {
     }
   }
 
+  // The metadata is the DIDL document itself, unescaped. Escaping is the envelope's job and
+  // `SoapEnvelope.render` does it -- passing a pre-escaped string here is now the double-escape
+  // defect, and `double-escaped metadata is rejected with 714` below sends exactly that.
+  /** Sends [body] verbatim, so a test may send bytes the real client cannot be made to produce. */
+  private fun postRaw(body: String, soapAction: String, target: FakeRenderer = renderer): Int =
+    http.exchange(
+      target.controlUrl,
+      "POST",
+      HttpHeaders.of("Content-Type" to SoapEnvelope.CONTENT_TYPE, "SOAPACTION" to soapAction),
+      body.toByteArray(Charsets.UTF_8),
+    ).let { response -> SoapEnvelope.parseFault(response.bodyText())?.errorCode ?: response.code }
+
+  /**
+   * A control request whose `CurrentURI` is an ordinary Navidrome stream URL, **built by hand with
+   * the values inserted verbatim** -- which is precisely what `SoapEnvelope.render` did before this
+   * fix, for every caller, on every `SetAVTransportURI`.
+   */
+  private fun envelopeWithVerbatimValues(action: String, arguments: List<SoapArgument>): String =
+    "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+      "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" " +
+      "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" +
+      "<s:Body><u:$action xmlns:u=\"${DeviceDescription.SERVICE_AV_TRANSPORT}\">" +
+      arguments.joinToString("") { "<${it.name}>${it.value}</${it.name}>" } +
+      "</u:$action></s:Body></s:Envelope>"
+
   private val goodArguments = listOf(
     SoapArgument("InstanceID", "0"),
     SoapArgument("CurrentURI", "http://127.0.0.1:9/media/a.mp3"),
-    SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite&gt;&lt;/DIDL-Lite&gt;"),
+    SoapArgument("CurrentURIMetaData", "<DIDL-Lite></DIDL-Lite>"),
   )
 
   @Test
@@ -85,6 +111,80 @@ class FakeRendererStrictnessTest {
     assertThat(SoapEnvelope.parseFault(response.bodyText())?.errorCode).isEqualTo(UpnpError.INVALID_ACTION)
   }
 
+  /**
+   * **The rejection whose absence made Finding 1 invisible.**
+   *
+   * A regex stood in for a parser here, and a regex cannot tell well-formed XML from malformed
+   * XML -- so this renderer, advertised as *"strict by default"*, accepted a document no device
+   * could read, and 311 green tests said nothing. The body below is exactly what
+   * `SoapEnvelope.render` used to emit for a Navidrome stream URL: `&` between query parameters,
+   * inserted verbatim into element content.
+   */
+  @Test
+  fun `a body that is not well-formed xml is rejected with 401`() {
+    val body = envelopeWithVerbatimValues(
+      "SetAVTransportURI",
+      listOf(
+        SoapArgument("InstanceID", "0"),
+        SoapArgument("CurrentURI", "http://127.0.0.1:9/media/a.mp3?u=muplay&t=abc123&s=def456"),
+        SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite&gt;&lt;/DIDL-Lite&gt;"),
+      ),
+    )
+
+    // The premise, asserted rather than assumed: this really is not a document, and the message a
+    // parser gives for it is the one the Task 4 lane reproduced independently.
+    assertThat(
+      runCatching {
+        DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(body.byteInputStream())
+      }.exceptionOrNull(),
+    ).isNotNull().hasMessageContaining("The reference to entity \"t\" must end with the ';' delimiter.")
+
+    assertThat(postRaw(body, quoted("SetAVTransportURI"))).isEqualTo(UpnpError.INVALID_ACTION)
+  }
+
+  @Test
+  fun `a lenient renderer reads no arguments out of a body it could not parse, and answers 200`() {
+    // The knob really is a knob -- and turning it off means "this device salvaged nothing", never
+    // "this device pattern-matched its way to some arguments", which is the behaviour that hid the
+    // defect above.
+    FakeRenderer(FakeRenderer.Strictness(requireWellFormedBody = false)).use { lenient ->
+      lenient.start()
+      val body = envelopeWithVerbatimValues("Stop", listOf(SoapArgument("InstanceID", "0 & 1")))
+
+      assertThat(postRaw(body, quoted("Stop"), lenient)).isEqualTo(200)
+      assertThat(lenient.soapRequests.single().arguments)
+        .describedAs("a body that did not parse has no readable arguments")
+        .isNull()
+    }
+  }
+
+  /**
+   * The fake hardens its parse the way `SoapEnvelope`'s response parse does -- a test double laxer
+   * about XXE than the parser it stands in for teaches the suite the wrong lesson about what is
+   * acceptable.
+   *
+   * **Stated because it is the contract, not because it discriminates on the guard it names**, and
+   * that was measured rather than assumed: deleting the `SoapEnvelope.declaresDoctype` call from
+   * `soapArgumentsOf` reddens **nothing at all**, because on this JVM the `disallow-doctype-decl`
+   * feature refuses the document anyway and the arguments come back `null` either way. It is the
+   * same blind spot `SoapEnvelopeTest`'s own doctype test records for `parseFault`, and for the
+   * same reason: the platform the in-code scan exists for is Android, where that feature is
+   * expected to be refused at `setFeature`, and no tier of this project can observe it.
+   *
+   * What this test does discriminate is the renderer's *answer*: with the fault removed from the
+   * unparseable-body path it goes green at 200 instead of 401, which is the
+   * `soap/fake-accepts-unparseable-body` probe. And the guard's own decision is gated where it can
+   * be -- `declaresDoctype` is shared with `SoapEnvelope` rather than copied, so
+   * `SoapEnvelopeTest`'s falsifiable predicate assertion covers this call site too.
+   */
+  @Test
+  fun `a body carrying a DOCTYPE is refused rather than parsed`() {
+    val body = "<!DOCTYPE s:Envelope [<!ENTITY xxe SYSTEM \"file:///etc/hostname\">]>" +
+      envelopeWithVerbatimValues("Stop", listOf(SoapArgument("InstanceID", "0")))
+
+    assertThat(postRaw(body, quoted("Stop"))).isEqualTo(UpnpError.INVALID_ACTION)
+  }
+
   @Test
   fun `arguments in the wrong order are rejected with 402`() {
     assertThat(
@@ -109,15 +209,18 @@ class FakeRendererStrictnessTest {
 
   @Test
   fun `double-escaped metadata is rejected with 714`() {
-    // `&amp;lt;DIDL-Lite` is what escaping twice produces, and it is the defect a round-trip test
-    // through the real client cannot produce on purpose.
+    // A caller that escaped the document itself before handing it over -- which is what
+    // `DidlLite.renderEscaped` used to make easy -- puts `&lt;DIDL-Lite` into the argument, the
+    // envelope escapes that once more, and `&amp;lt;DIDL-Lite` goes on the wire. The device
+    // decodes one layer and reads `&lt;DIDL-Lite`, which is a track it shows as unknown with no
+    // error reported anywhere.
     assertThat(
       post(
         "SetAVTransportURI",
         listOf(
           goodArguments[0],
           goodArguments[1],
-          SoapArgument("CurrentURIMetaData", "&amp;lt;DIDL-Lite&amp;gt;"),
+          SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite&gt;&lt;/DIDL-Lite&gt;"),
         ),
         quoted("SetAVTransportURI"),
       ),
@@ -140,8 +243,8 @@ class FakeRendererStrictnessTest {
   @Test
   fun `an opus protocolInfo is rejected with 714`() {
     // Spec section 4: "Never Opus. Sonos cannot decode it and Navidrome mislabels it audio/ogg."
-    val opus = "&lt;DIDL-Lite&gt;&lt;item&gt;&lt;res protocolInfo=&quot;http-get:*:audio/ogg:*&quot;&gt;" +
-      "http://127.0.0.1:9/media/a.ogg&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;"
+    val opus = "<DIDL-Lite><item><res protocolInfo=\"http-get:*:audio/ogg:*\">" +
+      "http://127.0.0.1:9/media/a.ogg</res></item></DIDL-Lite>"
 
     assertThat(
       post(
@@ -159,8 +262,8 @@ class FakeRendererStrictnessTest {
   fun `an mp3 protocolInfo on the same shaped document is accepted`() {
     // The other half of the Opus rejection. Without it, `rejectedMimeTypes` could be
     // "reject every document with a protocolInfo in it" and every test above would still pass.
-    val mp3 = "&lt;DIDL-Lite&gt;&lt;item&gt;&lt;res protocolInfo=&quot;http-get:*:audio/mpeg:*&quot;&gt;" +
-      "http://127.0.0.1:9/media/a.mp3&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;"
+    val mp3 = "<DIDL-Lite><item><res protocolInfo=\"http-get:*:audio/mpeg:*\">" +
+      "http://127.0.0.1:9/media/a.mp3</res></item></DIDL-Lite>"
 
     assertThat(
       post(
@@ -301,10 +404,13 @@ class FakeRendererStrictnessTest {
   }
 
   @Test
-  fun `each of the other five knobs turns its own rejection off, and only its own`() {
+  fun `each of the other six knobs turns its own rejection off, and only its own`() {
     // One lenient renderer per knob, each asked for the exact request that knob rejects. Without
-    // this, five of the seven `Strictness` fields could be read nowhere at all -- the "a field
+    // this, six of the eight `Strictness` fields could be read nowhere at all -- the "a field
     // nothing reads" defect, which no coverage number reports because the field is still written.
+    // The two not swept here are the two whose malformed request this helper cannot build through
+    // `SoapEnvelope.render`: `requireQuotedSoapAction` and `requireWellFormedBody`, each of which
+    // has its own lenient test above.
     assertAccepted(
       FakeRenderer.Strictness(requireArgumentOrder = false),
       "SetAVTransportURI",
@@ -340,7 +446,7 @@ class FakeRendererStrictnessTest {
         goodArguments[0], SoapArgument("CurrentURI", "http://127.0.0.1:9/media/a.ogg"),
         SoapArgument(
           "CurrentURIMetaData",
-          "&lt;DIDL-Lite&gt;&lt;res protocolInfo=&quot;http-get:*:audio/ogg:*&quot;&gt;x&lt;/res&gt;&lt;/DIDL-Lite&gt;",
+          "<DIDL-Lite><res protocolInfo=\"http-get:*:audio/ogg:*\">x</res></DIDL-Lite>",
         ),
       ),
     )

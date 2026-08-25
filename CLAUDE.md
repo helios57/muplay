@@ -168,19 +168,23 @@ must stay derived — a hardcoded total has gone stale twice. It refuses to run 
 a dirty tree, and that guard has caught a real stray mutation left behind by a
 killed run.
 
-## A worktree inside the repo reddens `:app`'s mock-framework guard
+## A worktree inside the repo used to redden `:app`'s mock-framework guard — fixed
 
 `ConventionTest`'s `no mock framework is declared in any build file or
-convention plugin` walks the whole repo root and skips only `build/` and
-`.git/`. The one carve-out it makes — the root `build.gradle.kts`, which has to
-name the frameworks in `BANNED_MOCK_GROUPS` — is matched by *canonical path*.
+convention plugin` walks the whole repo root. It used to skip only `build/` and
+`.git/`, and its one carve-out — the root `build.gradle.kts`, which has to name
+the frameworks in `BANNED_MOCK_GROUPS` — is matched by *canonical path*. So a
+git worktree checked out **inside** the repo (`.claude/worktrees/<name>/`)
+brought its own copy of `build.gradle.kts`, which is not the carved-out file,
+and `:app:testDebugUnitTest` failed on a build file nobody had written.
 
-So a git worktree checked out **inside** the repo (`.claude/worktrees/<name>/`)
-brings its own copy of `build.gradle.kts`, which is not the carved-out file, and
-`:app:testDebugUnitTest` fails on a build file no agent in this session wrote.
-The assertion message names the offending path — read it before assuming your
-own change caused it. Nothing to fix in the product; it clears when the worktree
-goes away.
+**`.claude` is now in the `onEnter` skip list, so this no longer happens** — in
+the main repo with worktrees present, and from inside a worktree (where the
+worktree *is* the repo root and contains no nested ones). Left here because the
+warning outlived the defect: it was repeated into five lane briefs after the fix
+had landed, telling each of them to expect a failure that could not occur. If
+you are about to tell an agent to expect a known-benign failure, check first
+that it is still known and still occurs.
 
 ## Five-second fixtures let time pass a test that its own defect should fail
 
@@ -244,3 +248,92 @@ including the pure-JVM ones that have nothing to do with the SDK — because
 `:core:database`'s configuration failure aborts the whole invocation before any
 task runs. It reads like the probe list is broken. Run the script's own gradle
 line by hand and the real message is the first thing printed.
+
+## A lane's report describes master as it was at that lane's last sync
+
+Plan 6 Task 4 reported, correctly and usefully, that *"the brief's claim that
+`isAudiobook` was already a fourth parameter is wrong about master"*. It was
+right when that lane last merged master up, and wrong by the time it reported:
+Plan 3 Task 6 had landed `isAudiobook` in between.
+
+Both lanes were green alone. Both added a **fourth parameter to
+`MediaItems.of`** at the same source line, so git conflicted and the collision
+was visible. It was luck that they collided textually — had one added its
+parameter a few lines away, `ort` would have merged both signatures cleanly into
+a five-argument function while leaving every call site passing four, and the
+break would have surfaced as a Kotlin error attributed to neither lane.
+
+Two things follow, and both cost time here:
+
+- **Re-verify any claim a lane makes about master before acting on it.** The
+  claim is a measurement with a timestamp, not a fact. Check what the lane's
+  last merge commit actually was (`git log --oneline master..<branch>`).
+- **When two lanes extend the same function, the resolution is usually "both".**
+  `isAudiobook` decides `mediaType`, `format` decides `mimeType`; neither is
+  derivable from the other. Reading the merged body first is what shows this —
+  it already called *both* new parameters while the signature declared one.
+
+## A recorded floor falsification goes stale when a second caller appears
+
+Coverage floors here carry a comment recording *how the floor was falsified* —
+"withhold these two tests and it drops to 0.88". That record is a measurement
+with a timestamp, and a new caller **in another module** silently invalidates it.
+
+Measured, twice in one task: withholding `XmlTextTest`'s two `unescape` tests
+left `XmlText` at **12/12 and green**, because Task 4's DIDL round trip had since
+become a second caller and covered the same lines. The comment at that floor had
+*predicted* exactly this and nobody re-ran it. Withholding the three tests
+recorded against `SoapEnvelope` left it at 32/34 = 0.9412, also green; six
+withheld tests were needed to fire it.
+
+So the floor was still enforcing something — but the thing the comment claimed
+would break it no longer would, which means the next person to trust that comment
+learns nothing when they withhold those tests and see green. It is the
+assertion-that-cannot-fail class, aimed at the gates rather than at the product.
+
+**Re-run the falsification when you touch a floor, and correct the comment when
+the number moves.** Do not copy a recorded falsification forward; it is evidence
+of one past run, not a property.
+
+## Backticked test names do not reach the device tier at all
+
+This project's JVM tier uses `` fun `a name with spaces`() ``. On the **device** tier that fails
+the build outright:
+
+    :integrations:core:dexBuilderDebugAndroidTest FAILED
+    D8: Space characters in SimpleName 'the provided clock reads the wall clock in utc' are not
+    allowed prior to DEX version 040 (method name ... on class ...IntegrationsDataModuleTest)
+
+`minSdk 26` compiles DEX 035, which forbids spaces in any SimpleName — method or class. Both were
+measured here; there is no lambda-free exception.
+
+The variant that costs the time is a backticked `runTest`, because Kotlin names the lambda's
+synthetic class after its enclosing method and D8 then reports a **class** nobody wrote:
+
+    Space characters in SimpleName 'app/muplay/integrations/MediaRequestRepositoryTest$setStatus
+    round-trips a status that carries data$1'
+
+Every instrumented test class here is camelCase for this reason. Expect plan documents written
+from the JVM tier's habits to get this wrong, and expect to rename the whole class at once.
+
+## A module that newly applies `muplay.android.room` needs `schemas/` to exist first
+
+`AndroidRoomConventionPlugin.RoomSchemaArgProvider` declares `<module>/schemas` as an
+`@InputDirectory`, and Gradle refuses to *configure* the KSP task against a directory that is not
+there — so the failure arrives before any compilation and does not mention Room:
+
+    A problem was found with the configuration of task ':integrations:core:kspDebugKotlin'
+    Input file does not exist ... property 'commandLineArgumentProviders.$1.schemaDir'
+    specifies directory '.../integrations/core/schemas' which doesn't exist
+
+`mkdir <module>/schemas` once. The first successful build fills it and the JSON is committed, so
+only the module that introduces a database ever meets this.
+
+## `verifyReleaseNoDestructiveMigration` reads comments too
+
+`VerifyNoDestructiveMigrationTask` is a plain `contains` over the whole file text. A KDoc sentence
+explaining that a provider deliberately does *not* call the destructive-migration escape hatch
+fails `check` on its own prose, naming that file as an offender. Describe the hatch without writing
+its method name — the same discipline `AndroidRoomConventionPlugin`'s own header keeps around the
+banned build tool's name, and the second time this repository has cost someone a build over a
+comment.

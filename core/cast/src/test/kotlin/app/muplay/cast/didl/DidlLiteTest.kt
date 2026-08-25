@@ -141,9 +141,10 @@ class DidlLiteTest {
   }
 
   /**
-   * **The round trip spec section 10 names.** Render, escape once, embed as a SOAP argument,
-   * parse the envelope back, decode, re-parse as XML, and read the fields out. Every step is one
-   * a real device performs.
+   * **The round trip spec section 10 names.** Render, embed as a SOAP argument, parse the envelope
+   * back, decode, re-parse as XML, and read the fields out. Every step is one a real device
+   * performs -- and the escaping step that used to be listed here is now the envelope's, which is
+   * why `DidlLite.render`'s output goes straight into the argument.
    */
   @Test
   fun `didl survives being embedded in a soap envelope and read back out`() {
@@ -154,7 +155,7 @@ class DidlLiteTest {
       listOf(
         SoapArgument("InstanceID", "0"),
         SoapArgument("CurrentURI", nasty.resourceUrl),
-        SoapArgument("CurrentURIMetaData", DidlLite.renderEscaped(nasty)),
+        SoapArgument("CurrentURIMetaData", DidlLite.render(nasty)),
       ),
     )
 
@@ -178,11 +179,44 @@ class DidlLiteTest {
     ).isEqualTo(nasty.served.protocolInfo)
   }
 
+  /**
+   * **Escaped exactly once, at the one layer that escapes anything.**
+   *
+   * This property used to live on `DidlLite.renderEscaped`, and it moved here rather than being
+   * deleted with it: what matters is never what a helper returned, it is what
+   * `CurrentURIMetaData` carries on the wire. A device must see `&lt;DIDL-Lite` -- not
+   * `<DIDL-Lite`, which would have made the envelope itself contain the document's elements rather
+   * than its text, and not `&amp;lt;DIDL-Lite`, which is a track shown as unknown with no error
+   * reported anywhere.
+   *
+   * Stated on a real document rather than on `<DIDL-Lite/>`, so a defect in the *fields* is inside
+   * the reach of the same assertion: the title and the URL below each carry an ampersand.
+   */
   @Test
-  fun `renderEscaped is render escaped exactly once`() {
-    assertThat(DidlLite.renderEscaped(item)).isEqualTo(XmlText.escape(DidlLite.render(item)))
-    assertThat(DidlLite.renderEscaped(item)).startsWith("&lt;DIDL-Lite")
-    assertThat(DidlLite.renderEscaped(item)).doesNotContain("&amp;lt;")
+  fun `the metadata argument carries the document escaped exactly once`() {
+    val nasty = item.copy(
+      title = "Rock & Roll",
+      resourceUrl = "http://10.0.0.2:8080/rest/stream.mp3?u=muplay&t=9f2a&s=abc",
+    )
+    val body = SoapEnvelope.render(
+      DeviceDescription.SERVICE_AV_TRANSPORT,
+      "SetAVTransportURI",
+      listOf(SoapArgument("CurrentURIMetaData", DidlLite.render(nasty))),
+    )
+
+    assertThat(body).contains("<CurrentURIMetaData>&lt;DIDL-Lite")
+    assertThat(body).doesNotContain("&amp;lt;")
+    assertThat(body).doesNotContain("<CurrentURIMetaData><DIDL-Lite")
+    // The whole element, exactly, so nothing between those two ends can be wrong unnoticed.
+    assertThat(body).contains(
+      "<CurrentURIMetaData>" + XmlText.escape(DidlLite.render(nasty)) + "</CurrentURIMetaData>",
+    )
+    // ...and the escaping really is one layer deep, not two: the title's `&` reads back as `&`.
+    val decoded = XmlText.unescape(
+      body.substringAfter("<CurrentURIMetaData>").substringBefore("</CurrentURIMetaData>"),
+    )
+    assertThat(decoded).isEqualTo(DidlLite.render(nasty))
+    assertThat(decoded).contains("<dc:title>Rock &amp; Roll</dc:title>")
   }
 
   @Test

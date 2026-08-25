@@ -26,10 +26,12 @@ class SoapClientTest {
   private val avTransport = DeviceDescription.SERVICE_AV_TRANSPORT
   private val renderingControl = DeviceDescription.SERVICE_RENDERING_CONTROL
 
+  // The metadata argument is the DIDL document itself. `SoapEnvelope.render` frames it; nothing
+  // above this line escapes anything, which is the property Tasks 5, 8 and 9 inherit.
   private val setUriArguments = listOf(
     SoapArgument("InstanceID", "0"),
     SoapArgument("CurrentURI", "http://127.0.0.1:9/media/a.mp3"),
-    SoapArgument("CurrentURIMetaData", "&lt;DIDL-Lite&gt;&lt;/DIDL-Lite&gt;"),
+    SoapArgument("CurrentURIMetaData", "<DIDL-Lite></DIDL-Lite>"),
   )
 
   @BeforeEach
@@ -129,15 +131,59 @@ class SoapClientTest {
 
     // Names in order -- the fake would have answered 402 otherwise, so this assertion and the
     // absence of an exception are two independent observations of the same property.
-    assertThat(renderer.soapRequests.single().arguments.map { it.first })
+    assertThat(renderer.soapRequests.single().arguments?.map { it.first })
       .containsExactly("InstanceID", "CurrentURI", "CurrentURIMetaData")
     // And the values, paired with their own names, because a list of names alone would pass with
     // the URL and the metadata swapped between them.
     assertThat(renderer.soapRequests.single().arguments).containsExactly(
       "InstanceID" to "0",
       "CurrentURI" to "http://127.0.0.1:9/media/a.mp3",
-      "CurrentURIMetaData" to "&lt;DIDL-Lite&gt;&lt;/DIDL-Lite&gt;",
+      "CurrentURIMetaData" to "<DIDL-Lite></DIDL-Lite>",
     )
+  }
+
+  /**
+   * **A real Navidrome stream URL, end to end, through a renderer that actually parses.**
+   *
+   * `/rest/stream?u=...&t=...&s=...` is the URL this app already builds for every track, and until
+   * this fix `SoapEnvelope.render` put those ampersands into element content untouched. The
+   * envelope was then not well-formed XML -- *"The reference to entity `t` must end with ';'"* --
+   * so no device could read it and `SoapEnvelope.parseResponse` could not read back what `render`
+   * had just written. Against the old regex-based fake it was invisible; against a fake that
+   * parses, this is a 401.
+   *
+   * Two observations of the same fact, deliberately: the request is accepted at all, and the URL
+   * the device read out is byte-for-byte the one that went in. The first alone would pass with the
+   * ampersand silently dropped.
+   */
+  @Test
+  fun `a navidrome stream url reaches the device intact, ampersands and all`() = runTest {
+    val streamUrl = "http://127.0.0.1:9/rest/stream.mp3?u=muplay&t=9f2a1c&s=abc123&id=tr-7"
+
+    client.invoke(
+      renderer.controlUrl,
+      avTransport,
+      "SetAVTransportURI",
+      listOf(
+        SoapArgument("InstanceID", "0"),
+        SoapArgument("CurrentURI", streamUrl),
+        SoapArgument("CurrentURIMetaData", "<DIDL-Lite><item id=\"tr-7\"></item></DIDL-Lite>"),
+      ),
+    )
+
+    assertThat(renderer.soapRequests.single().arguments).containsExactly(
+      "InstanceID" to "0",
+      "CurrentURI" to streamUrl,
+      "CurrentURIMetaData" to "<DIDL-Lite><item id=\"tr-7\"></item></DIDL-Lite>",
+    )
+    // And what actually went on the wire: escaped exactly once, never twice.
+    val body = renderer.soapRequests.single().bodyText
+    assertThat(body).contains(
+      "<CurrentURI>http://127.0.0.1:9/rest/stream.mp3" +
+        "?u=muplay&amp;t=9f2a1c&amp;s=abc123&amp;id=tr-7</CurrentURI>",
+    )
+    assertThat(body).contains("<CurrentURIMetaData>&lt;DIDL-Lite&gt;")
+    assertThat(body).doesNotContain("&amp;lt;DIDL-Lite")
   }
 
   @Test
@@ -188,6 +234,47 @@ class SoapClientTest {
     assertThat((thrown as UpnpErrorException).fault.errorCode).isEqualTo(UpnpError.ILLEGAL_MIME_TYPE)
     assertThat(thrown.action).isEqualTo("SetAVTransportURI")
   }
+
+  /**
+   * **An unreadable 200 is not an empty result**, and until this fix it was reported as one.
+   *
+   * `parseResponse` answered `emptyMap()` both for *"the device answered this action and it has no
+   * out arguments"* and for *"there is no answer to this action in this body"*. Task 5 reads
+   * `RelTime` out of a `GetPositionInfo`; given the second fact dressed up as the first, it reads
+   * nothing and reports a position of zero for a device that never answered.
+   *
+   * The body here is real rather than contrived: a description whose `controlURL` resolves to the
+   * description document itself is a device-description bug this client cannot rule out, and the
+   * fake answers that endpoint with `200` and an XML document containing no `<s:Body>` at all.
+   *
+   * Both halves are asserted, because only the pair discriminates: the unreadable answer fails,
+   * and a void action whose response element really is empty still succeeds.
+   */
+  @Test
+  fun `a 200 with no response element is a transport failure, while an empty response is a success`() =
+    runTest {
+      val thrown = failureOf {
+        client.invoke(
+          renderer.descriptionUrl,
+          avTransport,
+          "GetPositionInfo",
+          listOf(SoapArgument("InstanceID", "0")),
+        )
+      }
+
+      assertThat(thrown)
+        .isInstanceOf(SoapTransportException::class.java)
+        .isNotInstanceOf(UpnpErrorException::class.java)
+        // The status it carries is the one the device really sent, and it is a success status --
+        // which is the whole point: nothing about the transport failed except the answer.
+        .hasMessageContaining("HTTP 200")
+      assertThat((thrown as SoapTransportException).statusCode).isEqualTo(200)
+
+      // The other half. `Stop` answers `<u:StopResponse/>`: a response element with no children,
+      // which is a result and must not throw.
+      assertThat(client.invoke(renderer.controlUrl, avTransport, "Stop", listOf(SoapArgument("InstanceID", "0"))))
+        .isEmpty()
+    }
 
   @Test
   fun `a renderer that has gone away throws a transport failure and not a upnp error`() = runTest {
