@@ -459,6 +459,182 @@ class RendererDirectoryTest {
     assertThat(transport.searches.map { it.destination }).containsExactly(multicast)
   }
 
+  /**
+   * Beyond the plan: three shapes of remembered record that cannot be recovered, each on its own
+   * `return null`. A store is a file, and a file survives downgrades, partial writes and whatever
+   * a previous version wrote into it.
+   */
+  @Test
+  fun `a remembered url that is not a uri is reported unreachable rather than throwing`() = runTest {
+    val serving = startDescriptions("/nas.xml" to mediaServerDescription("uuid:nas", "NAS"))
+    val transport = RecordingSsdpTransport()
+
+    val result = RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = serving.client(),
+      remembered = FakeRememberedRenderers(
+        listOf(RememberedRenderer("uuid:broken", "Bedroom", "http://[not-a-uri")),
+      ),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.unreachable.map { it.udn }).containsExactly("uuid:broken")
+    assertThat(transport.searches.map { it.destination }).containsExactly(MULTICAST)
+  }
+
+  @Test
+  fun `a remembered url with no host is reported unreachable rather than dialled`() = runTest {
+    val serving = startDescriptions("/nas.xml" to mediaServerDescription("uuid:nas", "NAS"))
+    val transport = RecordingSsdpTransport()
+
+    val result = RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = serving.client(),
+      remembered = FakeRememberedRenderers(
+        listOf(RememberedRenderer("uuid:relative", "Bedroom", "/xml/device_description.xml")),
+      ),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.unreachable.map { it.udn }).containsExactly("uuid:relative")
+    assertThat(transport.searches.map { it.destination }).containsExactly(MULTICAST)
+  }
+
+  /**
+   * Beyond the plan, and the other half of layer 3: what the unicast reply says has to hold up.
+   * A reply whose fresh `LOCATION` serves nothing, and a reply that came from a *different*
+   * device, are two ways the recovery can be led somewhere wrong -- and both would otherwise put
+   * a working-looking entry in the picker that plays to the wrong speaker or to nothing.
+   */
+  @Test
+  fun `a unicast reply whose fresh location serves nothing leaves the device unreachable`() = runTest {
+    val serving = startDescriptions("/nas.xml" to mediaServerDescription("uuid:nas", "NAS"))
+    val transport = RecordingSsdpTransport(
+      mapOf(UNICAST to listOf(response("uuid:moved", serving.url("/not-there.xml")))),
+    )
+
+    val result = RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = serving.client(),
+      remembered = FakeRememberedRenderers(
+        listOf(RememberedRenderer("uuid:moved", "Bedroom", "http://127.0.0.1:1400/gone.xml")),
+      ),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.devices).isEmpty()
+    assertThat(result.unreachable.map { it.udn }).containsExactly("uuid:moved")
+  }
+
+  @Test
+  fun `a unicast reply describing a different device is not accepted for the remembered one`() = runTest {
+    // The response's own USN says `uuid:moved`, and the description it points at says something
+    // else. The description is what decides, because the description is what will be controlled.
+    val serving = startDescriptions("/impostor.xml" to genericDescription("uuid:someone-else", "Impostor"))
+    val transport = RecordingSsdpTransport(
+      mapOf(UNICAST to listOf(response("uuid:moved", serving.url("/impostor.xml")))),
+    )
+
+    val result = RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = serving.client(),
+      remembered = FakeRememberedRenderers(
+        listOf(RememberedRenderer("uuid:moved", "Bedroom", "http://127.0.0.1:1400/gone.xml")),
+      ),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.devices).isEmpty()
+    assertThat(result.unreachable.map { it.udn }).containsExactly("uuid:moved")
+  }
+
+  /**
+   * Beyond the plan: `http` is a function this class is *given*, and the contract on it is
+   * "returns null if it cannot". `DescriptionFetcher` honours that; a future caller passing an
+   * OkHttp lambda might not, and one throwing device must not empty the picker of the rest.
+   */
+  @Test
+  fun `a fetcher that throws is one dead device, not a dead discovery`() = runTest {
+    val serving = startDescriptions(
+      "/good.xml" to genericDescription("uuid:good", "Kitchen"),
+      "/bad.xml" to genericDescription("uuid:bad", "Explodes"),
+      "/nas.xml" to mediaServerDescription("uuid:nas", "NAS"),
+    )
+    val ssdp = startResponder(
+      FakeSsdpResponder.Responder(serving.url("/good.xml"), "uuid:good", listOf(SsdpSearch.TARGET_MEDIA_RENDERER)),
+      FakeSsdpResponder.Responder(serving.url("/bad.xml"), "uuid:bad", listOf(SsdpSearch.TARGET_MEDIA_RENDERER)),
+      FakeSsdpResponder.Responder(serving.url("/nas.xml"), "uuid:nas", listOf(SsdpSearch.TARGET_MEDIA_RENDERER)),
+    )
+    val fetch = serving.client()
+
+    val result = RendererDirectory(
+      transport = DatagramSsdpTransport(),
+      destinations = { listOf(ssdp.endpoint) },
+      http = { url -> if (url.path == "/bad.xml") error("this renderer ate the fetcher") else fetch(url) },
+      remembered = FakeRememberedRenderers(emptyList()),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.devices.map { it.friendlyName }).containsExactly("Kitchen")
+  }
+
+  /**
+   * Beyond the plan, and the last branch in the recovery path: a remembered host that cannot be
+   * resolved. A link-local IPv6 `LOCATION` carries the *device's own* interface name as its scope
+   * id, which is not one of the phone's, so this is what a stored link-local address looks like
+   * from the other side of a reboot. It fails from the literal alone, with no DNS query.
+   */
+  @Test
+  fun `a remembered host that cannot be resolved is unreachable, and no datagram is sent to it`() = runTest {
+    val serving = startDescriptions("/nas.xml" to mediaServerDescription("uuid:nas", "NAS"))
+    val transport = RecordingSsdpTransport()
+
+    val result = RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = serving.client(),
+      remembered = FakeRememberedRenderers(
+        listOf(RememberedRenderer("uuid:linklocal", "Bedroom", "http://[fe80::1%25zzNoSuchIface]:1400/d.xml")),
+      ),
+      listenWindowMs = WINDOW_MS,
+    ).discover(mxSeconds = null)
+
+    assertThat(result.unreachable.map { it.udn }).containsExactly("uuid:linklocal")
+    assertThat(transport.searches.map { it.destination }).containsExactly(MULTICAST)
+  }
+
+  /**
+   * The two defaults that actually ship, observed at the layer they are applied.
+   *
+   * Every other test in this class passes a short window and an explicit `mxSeconds`, so until
+   * this one existed the values production uses were covered by nothing: `DEFAULT_LISTEN_WINDOW_MS`
+   * measured as an uncovered line, and `discover()`'s own default parameter had never been
+   * evaluated. A three-second window with a two-second `MX` is the difference between finding the
+   * slowest speaker in the house and showing an empty picker.
+   */
+  @Test
+  fun `discovery defaults to a two second mx inside a three second window`() = runTest {
+    val transport = RecordingSsdpTransport()
+
+    RendererDirectory(
+      transport = transport,
+      destinations = { listOf(MULTICAST) },
+      http = { null },
+      remembered = FakeRememberedRenderers(emptyList()),
+    ).discover()
+
+    assertThat(transport.searches.single().mxSeconds).isEqualTo(2)
+    assertThat(transport.searches.single().listenWindowMs).isEqualTo(3_000L)
+    // Named as well as measured, so a change to either constant has to be deliberate: the window
+    // must outlast MX or the slowest conformant reply arrives after the socket has closed.
+    assertThat(SsdpSearch.DEFAULT_MX_SECONDS).isEqualTo(2)
+    assertThat(RendererDirectory.DEFAULT_LISTEN_WINDOW_MS).isEqualTo(3_000L)
+  }
+
   // ---- scaffolding -------------------------------------------------------------------------
 
   private fun startResponder(vararg devices: FakeSsdpResponder.Responder) =
@@ -539,5 +715,9 @@ class RendererDirectoryTest {
   private companion object {
     /** Long enough for a loopback round trip, short enough that a dozen of these is not a minute. */
     const val WINDOW_MS = 500L
+
+    /** The group a production search goes to, and the SSDP port a unicast recovery goes to. */
+    val MULTICAST: InetSocketAddress = InetSocketAddress(InetAddress.getByName("239.255.255.250"), 1900)
+    val UNICAST: InetSocketAddress = InetSocketAddress(InetAddress.getByName("127.0.0.1"), 1900)
   }
 }

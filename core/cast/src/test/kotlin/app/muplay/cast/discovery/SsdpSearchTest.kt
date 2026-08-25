@@ -292,6 +292,26 @@ class SsdpSearchTest {
       .isNull()
   }
 
+  /**
+   * Beyond the plan: a `LOCATION` whose host cannot be resolved at all.
+   *
+   * The example is a **link-local IPv6 literal with a scope id**, which is not contrived -- a
+   * renderer that never got a DHCP lease announces exactly that, and the zone it names is its own
+   * interface name, which is not one of the phone's. It is also the one host shape that fails
+   * hermetically: `InetAddress.getByName` rejects it from the literal alone, in single-digit
+   * milliseconds, with no DNS query. A hostname would have needed one, and a unit test that
+   * queries DNS is a unit test that fails on an aeroplane.
+   */
+  @Test
+  fun `a reply whose location names a host that cannot be resolved is discarded`() {
+    assertThat(
+      SsdpSearch.parseResponse(
+        reply(location = "http://[fe80::1%25zzNoSuchIface]:1400/d.xml"),
+        InetAddress.getLoopbackAddress(),
+      ),
+    ).isNull()
+  }
+
   @Test
   fun `a non-200 reply is discarded`() {
     assertThat(
@@ -347,6 +367,23 @@ class SsdpSearchTest {
     )!!
 
     assertThat(parsed.udn).isEqualTo("uuid:terse")
+  }
+
+  /**
+   * Beyond the plan: the header block itself refusing to parse. `HttpWire` rejects a line with no
+   * colon, more than 64 headers, and a line over 8 KiB -- all three are things a device on the LAN
+   * can send, and all three must be a dropped announcement rather than an exception escaping into
+   * whatever is collecting the discovery.
+   */
+  @Test
+  fun `a reply whose header block will not parse is discarded rather than thrown out of`() {
+    assertThat(
+      SsdpSearch.parseResponse(
+        "HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:1400/d.xml\r\nthis-is-not-a-header\r\n" +
+          "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\nUSN: uuid:x\r\n\r\n",
+        InetAddress.getLoopbackAddress(),
+      ),
+    ).isNull()
   }
 
   @Test

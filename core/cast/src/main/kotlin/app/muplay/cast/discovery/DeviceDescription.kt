@@ -178,6 +178,13 @@ object DeviceDescription {
   private fun childElement(parent: Element, localName: String): Element? =
     childElements(parent, localName).firstOrNull()
 
+  /**
+   * The trimmed text of a child element, or `null` when there is no such child or it is empty.
+   *
+   * `.orEmpty()` rather than a `?.` chain through `textContent` and `trim()`: both of those are
+   * platform types, so a chain inserts null checks for values the DOM never produces -- branches
+   * no test can reach, which is a worse thing to leave behind than one extra call.
+   */
   private fun childText(parent: Element, localName: String): String? =
-    childElement(parent, localName)?.textContent?.trim()?.takeIf { it.isNotEmpty() }
+    childElement(parent, localName)?.textContent.orEmpty().trim().takeIf { it.isNotEmpty() }
 }

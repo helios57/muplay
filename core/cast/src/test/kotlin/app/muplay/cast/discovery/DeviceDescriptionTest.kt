@@ -523,11 +523,113 @@ class DeviceDescriptionTest {
     assertThat(DeviceDescription.parse(exact, genericUrl).friendlyName).hasSize(padding)
   }
 
+  /**
+   * Well-formed XML that is not a device description -- a renderer whose HTTP server answers a
+   * 404 page with status 200 is a real thing.
+   *
+   * This *was* the plan's "not XML at all" test, and it was passing for the wrong reason: an HTML
+   * document is perfectly well-formed XML, so it reached the parser fine and was refused for
+   * having no `<device>` element. The parse-failure arm it was supposed to cover measured 0 and
+   * is now covered by the test below it. Found by reading the branch report, not by reading the
+   * test.
+   */
   @Test
-  fun `a description that is not xml at all is refused with a readable message`() {
-    // A renderer whose HTTP server answers a 404 page with status 200 is a real thing.
+  fun `a well-formed document that is not a device description is refused`() {
     assertThatExceptionOfType(MalformedDescriptionException::class.java)
       .isThrownBy { DeviceDescription.parse("<html><body>Not Found</body></html>", genericUrl) }
+      .withMessageContaining("device")
+  }
+
+  @Test
+  fun `a description that is not well-formed xml at all is refused with a readable message`() {
+    assertThatExceptionOfType(MalformedDescriptionException::class.java)
+      .isThrownBy { DeviceDescription.parse("<root><device><deviceType>oops", genericUrl) }
+      .withMessageContaining("not XML")
+  }
+
+  /**
+   * Beyond the plan: a device element that names neither a type nor a UDN, and carries no
+   * `serviceList` at all. All three are `orEmpty()`/`.orEmpty()` arms that no well-formed fixture
+   * reaches, and a real `deviceList` is full of them -- Sonos's own sub-devices name no
+   * manufacturer, and a router's `WANConnectionDevice` often names no UDN.
+   */
+  @Test
+  fun `a device that names no type, no udn and no services parses to empty rather than failing`() {
+    val sparse = """
+      <root xmlns="urn:schemas-upnp-org:device-1-0"><device>
+        <friendlyName>Mystery Box</friendlyName>
+      </device></root>
+    """.trimIndent()
+
+    val device = DeviceDescription.parse(sparse, genericUrl)
+
+    assertThat(device.deviceType).isEmpty()
+    assertThat(device.udn).isEmpty()
+    assertThat(device.services).isEmpty()
+    assertThat(device.embedded).isEmpty()
+    assertThat(device.friendlyName).isEqualTo("Mystery Box")
+    // And it is not castable, which is the point of parsing it rather than throwing.
+    assertThat(CastDevice.from(device, genericUrl)).isNull()
+  }
+
+  /**
+   * Beyond the plan: a `controlURL` that is not a URI. `URI.resolve` throws
+   * `IllegalArgumentException` on one, and an exception here would take down the parse of a
+   * document whose other services are perfectly good.
+   */
+  @Test
+  fun `a service whose control url is not a uri is dropped and its neighbours are kept`() {
+    val broken = generic.replace(
+      "<controlURL>/RenderingControl/ctrl</controlURL>",
+      "<controlURL>http://[not-a-uri</controlURL>",
+    )
+
+    assertThat(DeviceDescription.parse(broken, genericUrl).services.map { it.serviceType })
+      .containsExactly("urn:schemas-upnp-org:service:AVTransport:1")
+  }
+
+  @Test
+  fun `a service whose SCPDURL is not a uri keeps its control url and has a null scpd url`() {
+    val broken = generic.replace(
+      "<SCPDURL>/AVTransport/desc.xml</SCPDURL>",
+      "<SCPDURL>http://[not-a-uri</SCPDURL>",
+    )
+
+    val service = DeviceDescription.parse(broken, genericUrl)
+      .service("urn:schemas-upnp-org:service:AVTransport:1")!!
+
+    assertThat(service.scpdUrl).isNull()
+    assertThat(service.controlUrl.toString()).isEqualTo("http://192.168.1.77:2869/AVTransport/ctrl")
+  }
+
+  @Test
+  fun `a service with no serviceId has an empty one rather than being dropped`() {
+    val anonymous = generic.replace(
+      "<serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>",
+      "",
+    )
+
+    val service = DeviceDescription.parse(anonymous, genericUrl)
+      .service("urn:schemas-upnp-org:service:AVTransport:1")!!
+
+    assertThat(service.serviceId).isEmpty()
+    assertThat(service.controlUrl.toString()).isEqualTo("http://192.168.1.77:2869/AVTransport/ctrl")
+  }
+
+  /**
+   * Beyond the plan: the `manufacturer == null` arm of `isSonos`'s second signal. The plan's
+   * generic fixture names Yamaha, so a `root.manufacturer!!.contains(...)` would pass every test
+   * in the plan's list and throw on the first device that omits the element -- which is most
+   * embedded devices.
+   */
+  @Test
+  fun `a renderer that names no manufacturer at all is not a sonos and does not throw`() {
+    val anonymous = generic.replace("<manufacturer>Yamaha Corporation</manufacturer>", "")
+
+    val device = CastDevice.from(DeviceDescription.parse(anonymous, genericUrl), genericUrl)!!
+
+    assertThat(device.manufacturer).isNull()
+    assertThat(device.isSonos).isFalse
   }
 
   @Test

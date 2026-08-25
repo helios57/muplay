@@ -35,9 +35,15 @@ data class CastDevice(
       // the flattened tree for the first device that carries an AVTransport, whatever its type:
       // a handful of devices advertise AVTransport on a deviceType that is not MediaRenderer:1,
       // and the service is what determines whether casting works.
-      val renderer = root.flatten().firstOrNull { it.service(DeviceDescription.SERVICE_AV_TRANSPORT) != null }
+      //
+      // The device and its service are taken in one pass rather than found and then looked up
+      // again: a second `?: return null` on a service the search has already proved is there is a
+      // branch no test could ever reach.
+      val (renderer, avTransport) = root.flatten()
+        .firstNotNullOfOrNull { device ->
+          device.service(DeviceDescription.SERVICE_AV_TRANSPORT)?.let { device to it }
+        }
         ?: return null
-      val avTransport = renderer.service(DeviceDescription.SERVICE_AV_TRANSPORT) ?: return null
 
       // Identity and name come from the ROOT, not from the renderer. The root's UDN is what SSDP's
       // USN deduplicates on, and its friendlyName is the one a user recognises -- Sonos names its
