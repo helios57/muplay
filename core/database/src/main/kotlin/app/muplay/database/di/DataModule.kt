@@ -5,11 +5,16 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
+import app.muplay.database.LibraryRepository
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.SubsonicSourceProvider
+import app.muplay.database.SyncEngine
 import app.muplay.database.dao.BrowseDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
+import app.muplay.database.dao.SyncWatermarkDao
 import app.muplay.network.DefaultSubsonicSourceFactory
+import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
 import dagger.Module
 import dagger.Provides
@@ -57,6 +62,25 @@ object DataModule {
 
   @Provides
   fun provideBrowseDao(database: MuPlayDatabase): BrowseDao = database.browseDao()
+
+  @Provides
+  fun provideSyncWatermarkDao(database: MuPlayDatabase): SyncWatermarkDao =
+    database.syncWatermarkDao()
+
+  @Provides
+  @Singleton
+  fun provideSyncEngine(
+    libraryRepository: LibraryRepository,
+    browseDao: BrowseDao,
+    watermarkDao: SyncWatermarkDao,
+    sourceProvider: SubsonicSourceProvider,
+  ): SyncEngine = SyncEngine(
+    libraryRepository = libraryRepository,
+    browseDao = browseDao,
+    watermarkDao = watermarkDao,
+    sourceProvider = sourceProvider,
+    albumPageSize = SubsonicClient.MAX_ALBUM_LIST_PAGE,
+  )
 
   /**
    * `:core:network` is a plain Kotlin/JVM module with no Hilt and no Android dependency, and it

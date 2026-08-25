@@ -5,11 +5,13 @@ import androidx.room.RoomDatabase
 import app.muplay.database.dao.BrowseDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
+import app.muplay.database.dao.SyncWatermarkDao
 import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.ArtistEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
+import app.muplay.database.entity.SyncWatermarkEntity
 
 /**
  * Version 1 through Task 3; Task 4 took it to version 2 by adding `libraries`; Task 5 took it to
@@ -23,7 +25,8 @@ import app.muplay.database.entity.SongEntity
  * this list rather than writing a migration. `exportSchema = true` (with the schema directory
  * wired up by `muplay.android.room`) is what makes the *first* post-release migration verifiable
  * — a migration test needs the previous schema JSON, and there is no way to recover one that was
- * never exported. Task 5 leaves this at version 4; Task 6 takes it to whatever comes next.
+ * never exported. Task 6 takes it to version 5 by adding `sync_watermark`, the sync engine's
+ * single-row `lastScan` checkpoint.
  */
 @Database(
   entities = [
@@ -32,8 +35,9 @@ import app.muplay.database.entity.SongEntity
     ArtistEntity::class,
     AlbumEntity::class,
     SongEntity::class,
+    SyncWatermarkEntity::class,
   ],
-  version = 4,
+  version = 5,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {
@@ -43,6 +47,8 @@ abstract class MuPlayDatabase : RoomDatabase() {
   abstract fun libraryDao(): LibraryDao
 
   abstract fun browseDao(): BrowseDao
+
+  abstract fun syncWatermarkDao(): SyncWatermarkDao
 
   companion object {
     const val DATABASE_NAME = "muplay.db"
