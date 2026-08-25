@@ -325,7 +325,14 @@ class ProgressWriterTest {
     assertThat(find("flushed")!!.positionMs).isEqualTo(2_222L)
   }
 
-  /** Both `?: return`s: an inert player has no current item, and neither path may write a row. */
+  /**
+   * Both `?: return`s, and `stop()` before `start()`.
+   *
+   * An inert player has no current item, so neither the flush nor a callback may write a row -- an
+   * inert player that quietly wrote a row keyed on an empty id would be worse than one that threw.
+   * `stop()` is in the same test because it is the same claim: the teardown path in
+   * `MuPlaybackService.onDestroy` runs whether or not `onCreate` got as far as starting the writer.
+   */
   @Test
   fun aPlayerWithNothingLoadedWritesNothingAndDoesNotThrow() {
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
@@ -333,6 +340,28 @@ class ProgressWriterTest {
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
       subject.flushBlocking()
       subject.onIsPlayingChanged(false)
+      subject.stop()
+    }
+    Thread.sleep(ABSENCE_WINDOW_MS)
+
+    assertThat(runBlocking { dao.findAll() }).isEmpty()
+  }
+
+  /**
+   * A discontinuity out of an empty timeline carries no `MediaItem` at all, and there is then no
+   * row to write. Media3 reports one when a queue is cleared while something is playing, so this is
+   * an arm that really is taken -- not a defensive branch nothing can reach.
+   */
+  @Test
+  fun aDiscontinuityOutOfNothingWritesNothing() {
+    val (harness, subject) = parkedPlayerAndWriter("still-here", 500L)
+
+    harness.onMain {
+      subject.onPositionDiscontinuity(
+        Player.PositionInfo(null, 0, null, null, 0, 7_000L, 7_000L, -1, -1),
+        positionInfo("still-here", 0L),
+        Player.DISCONTINUITY_REASON_REMOVE,
+      )
     }
     Thread.sleep(ABSENCE_WINDOW_MS)
 

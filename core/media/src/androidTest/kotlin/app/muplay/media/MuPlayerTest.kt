@@ -58,6 +58,7 @@ class MuPlayerTest {
   private lateinit var context: Context
   private lateinit var cacheDir: File
   private val players = mutableListOf<ExoPlayer>()
+  private val seams = mutableListOf<MuPlayer>()
 
   private fun item(id: String) = MediaItem.Builder().setMediaId(id).setUri("https://host/$id").build()
 
@@ -71,8 +72,12 @@ class MuPlayerTest {
 
   @After
   fun tearDown() {
-    onMain { players.forEach { it.release() } }
+    onMain {
+      players.forEach { it.release() }
+      seams.forEach { it.release() }
+    }
     players.clear()
+    seams.clear()
     cacheDir.deleteRecursively()
   }
 
@@ -261,6 +266,38 @@ class MuPlayerTest {
 
     assertThatThrownBy { onMain { muPlayer.setMediaItems(items.toMutableList(), 0, 0L) } }
       .isInstanceOf(IllegalSeekPositionException::class.java)
+  }
+
+  /**
+   * **What the session is actually given.** `MuPlayerFactory.create()` is the one call
+   * `MuPlaybackService` makes, so it is where "everything outside this module sees a player that
+   * cannot be told where to start" is either true or not.
+   *
+   * The policy handed to the factory answers 7000, and 7000 is what the returned player lands at --
+   * so a `create()` that returned the raw `ExoPlayer`, or that wrapped it in a `MuPlayer` built on
+   * a hardcoded `NeverResume` instead of the injected binding, fails here. Neither would fail any
+   * other test in this file.
+   */
+  @Test
+  fun theFactoryHandsOutTheSeamBuiltOnTheInjectedPolicy() {
+    val policy = RecordingPolicy(ResumeTarget(startIndex = 1, startPositionMs = 7_000L))
+    val player = onMain {
+      MuPlayerFactory(
+        context = context,
+        dataSourceFactory = MuPlayDataSourceFactory(
+          OkHttpClient(),
+          MediaCache.create(context, File(cacheDir, "cache-${System.nanoTime()}")),
+        ),
+        loadErrorPolicy = NavidromeLoadErrorHandlingPolicy(),
+        resumePolicy = policy,
+      ).create().also { seams += it }
+    }
+
+    onMain { player.setMediaItems(items.toMutableList(), 0, 30_000L) }
+
+    assertThat(policy.calls).hasSize(1)
+    assertThat(onMain { player.currentPosition }).isEqualTo(7_000L)
+    assertThat(onMain { player.currentMediaItemIndex }).isEqualTo(1)
   }
 
   @Test

@@ -133,11 +133,16 @@ class ProgressWriter(
     reason: Int,
   ) {
     if (reason == Player.DISCONTINUITY_REASON_SILENCE_SKIP) return
-    val mediaId = oldPosition.mediaItem?.mediaId ?: return
+    // One null check and not two: `mediaItem?.mediaId ?: return` reads the same but emits a second
+    // branch on `mediaId`, which is non-null on every `MediaItem` and so can never take its other
+    // arm. An uncoverable branch is not safety -- it is a reader's false impression that the case
+    // was thought about, and this module deletes them rather than excusing them (see
+    // `ContentTypeSwitcher` and `PlaybackConnection`'s ticker).
+    val leaving = oldPosition.mediaItem ?: return
     // `oldPosition`, never `player.currentPosition`: by the time this arrives the player is already
-    // at the *new* position, so reading it here would write the destination of the seek to the row
-    // of the item that was left.
-    scope.launch { write(mediaId, oldPosition.positionMs, finished = false) }
+    // at the *new* position, so reading it here would write the destination of the seek onto the
+    // row of the item that was left.
+    scope.launch { write(leaving.mediaId, oldPosition.positionMs, finished = false) }
   }
 
   // 4
@@ -158,9 +163,9 @@ class ProgressWriter(
    * launched coroutine would therefore write nothing at all.
    */
   fun flushBlocking() {
-    val mediaId = player.currentMediaItem?.mediaId ?: return
+    val current = player.currentMediaItem ?: return
     val positionMs = player.currentPosition
-    runBlocking { write(mediaId, positionMs, finished = false) }
+    runBlocking { write(current.mediaId, positionMs, finished = false) }
   }
 
   /**
@@ -199,9 +204,9 @@ class ProgressWriter(
    * arrived on, and by the time a launched coroutine ran the player could be somewhere else.
    */
   private fun captureCurrent(finished: Boolean) {
-    val mediaId = player.currentMediaItem?.mediaId ?: return
+    val current = player.currentMediaItem ?: return
     val positionMs = player.currentPosition
-    scope.launch { write(mediaId, positionMs, finished) }
+    scope.launch { write(current.mediaId, positionMs, finished) }
   }
 
   companion object {
