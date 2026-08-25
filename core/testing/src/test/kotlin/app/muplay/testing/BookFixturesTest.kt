@@ -168,6 +168,29 @@ class BookFixturesTest {
   }
 
   @Test
+  fun `a missing table fails by name instead of parsing to nothing`() {
+    // The first of the two vacuity guards, driven rather than described. Without it, a
+    // `BookFixtures` whose resource had vanished would yield empty lists, and every
+    // `containsExactly` above would have to be written with an empty expectation to pass -- which
+    // is precisely the defect the whole corpus exists to make impossible.
+    assertThatThrownBy { BookFixtures.rowsFrom("/fixtures/no-such-table.tsv") }
+      .isInstanceOf(IllegalStateException::class.java)
+      .hasMessageContaining("/fixtures/no-such-table.tsv")
+      .hasMessageContaining("ci/probe-chapters.sh")
+  }
+
+  @Test
+  fun `a table of nothing but comments fails instead of yielding zero rows`() {
+    // The second guard, and a genuinely different failure from the one above: the resource is
+    // present and readable, and still carries no records. `/vacuity/books-comments-only.tsv` is a
+    // TEST resource -- it is deliberately not under `/fixtures/`, so nothing can mistake it for
+    // part of the oracle.
+    assertThatThrownBy { BookFixtures.rowsFrom("/vacuity/books-comments-only.tsv") }
+      .isInstanceOf(IllegalStateException::class.java)
+      .hasMessageContaining("parsed to zero rows")
+  }
+
+  @Test
   fun `the parsed table is the committed resource, not a hardcoded copy of it`() {
     // The resource path is part of the contract with `ci/probe-chapters.sh` (which writes exactly
     // this file) and with the APK's Java resources (which is how the instrumented tier reads it).

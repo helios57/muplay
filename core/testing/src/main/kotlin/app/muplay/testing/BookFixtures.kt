@@ -58,16 +58,27 @@ object BookFixtures {
   private const val TRACK = "track"
   private const val CHAPTER = "chapter"
 
-  private val rows: List<List<String>> by lazy {
-    val text = checkNotNull(BookFixtures::class.java.getResourceAsStream(RESOURCE)) {
-      "$RESOURCE is not on the classpath. Run ci/probe-chapters.sh and commit the result."
+  private val rows: List<List<String>> by lazy { rowsFrom(RESOURCE) }
+
+  /**
+   * [resource], read off the classpath and split into records — comments and blank lines dropped.
+   *
+   * Takes the resource name rather than closing over [RESOURCE] so that its two guards can be
+   * *reached* by a test. Both of them exist to turn a silent vacuum into a loud failure — a
+   * missing resource, and a file that parses to nothing — and a guard no test can enter is the
+   * shape of gate this project keeps finding and deleting. `BookFixturesTest` drives each one
+   * against its own fixture under `/vacuity/`.
+   */
+  internal fun rowsFrom(resource: String): List<List<String>> {
+    val text = checkNotNull(BookFixtures::class.java.getResourceAsStream(resource)) {
+      "$resource is not on the classpath. Run ci/probe-chapters.sh and commit the result."
     }.use { it.readBytes().decodeToString() }
 
-    text.lineSequence()
+    return text.lineSequence()
       .filter { it.isNotBlank() && !it.startsWith("#") }
       .map { it.split('\t') }
       .toList()
-      .also { check(it.isNotEmpty()) { "$RESOURCE parsed to zero rows" } }
+      .also { check(it.isNotEmpty()) { "$resource parsed to zero rows" } }
   }
 
   private val tracksByPath: List<ExpectedTrack> by lazy {

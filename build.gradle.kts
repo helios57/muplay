@@ -601,7 +601,56 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
   ),
   ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
-  ":core:testing" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
+  // One key, three rules -- added INSIDE this entry rather than as a second ":core:testing" key,
+  // which `mapOf` would silently resolve to the later one and quietly disable everything in the
+  // earlier.
+  ":core:testing" to listOf(
+    CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90")),
+    // The BUNDLE rule above cannot see a single class going bad: when `BookFixtures` landed at
+    // 15/18 = 0.8333 the bundle still read 45/48 = 0.9375 and passed, which is exactly what this
+    // table's own doc says the BUNDLE form hides. These two rules are the answer, and they are
+    // the reason the three branches that were uncovered got tests instead of a lower number.
+    //
+    // Measured today, both at 1.0000: `BookFixtures` 18/18 BRANCH and 46/46 LINE, `ExpectedBook`
+    // 2/2 and 6/6. The 18 are the resource-missing guard, the zero-rows guard, the blank/comment
+    // filter, the `track`/`chapter` partition, `bookAt`'s `startsWith` scoping and its
+    // `isNotEmpty` check, and `chaptersOf`'s null-coalesce.
+    //
+    // Verified fireable rather than assumed so: with `a table of nothing but comments fails
+    // instead of yielding zero rows` withheld, `BookFixtures` measures 16/18 = 0.8889 and this
+    // rule fails **while the BUNDLE rule above stays green** at 46/48 = 0.9583. Raising the
+    // minimum instead would have been vacuous -- JaCoCo validates the minimum before comparing,
+    // so `1.01` fails with "given minimum ratio is 1.01, but must be between 0.0 and 1.0" whether
+    // the code is covered or not.
+    //
+    // `BookFixtures*` rides along: Kotlin compiles `MUSIC_TRACKS`'s `sortedBy` into its own
+    // synthetic class. It carries no BRANCH counter of its own, so it can never move the BRANCH
+    // ratio -- it is here so `warnUngatedClasses` never has to flag it.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.testing.BookFixtures",
+        "app.muplay.testing.BookFixtures*",
+        "app.muplay.testing.ExpectedBook",
+      ),
+    ),
+    // LINE as well as BRANCH, for the reason `:core:model`'s `BrowseTree` carries both: deleting
+    // an assertion that is the sole reader of a *statement* moves no branch at all. `ExpectedTrack`
+    // and `ExpectedChapter` are deliberately absent -- they are bodiless `data class`es, and a LINE
+    // floor over a declaration is a floor that cannot fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.testing.BookFixtures",
+        "app.muplay.testing.BookFixtures*",
+        "app.muplay.testing.ExpectedBook",
+      ),
+    ),
+  ),
   // See coverageFloors's own doc above for why three CLASS-element rules, not one BUNDLE rule.
   ":feature:setup" to listOf(
     // 12/12 -- SetupViewModel's own branches: connect's InvalidUrl check and its widened catch
