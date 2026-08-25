@@ -135,6 +135,7 @@ RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
+PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -800,6 +801,48 @@ PROBES = [
     ("pcm/frames-to-ms-rate-unguarded", PCM_ANALYSIS,
      'require(sampleRateHz > 0) { "sampleRateHz must be positive, was $sampleRateHz" }\n', "",
      "a zero sample rate is rejected rather than dividing by zero", 1),
+    # ---- Plan 3 Task 4: the queue, and the one architectural rule a comment cannot keep --------
+    # `PlaybackQueue` is the only one of this task's three types this JVM-only runner can reach.
+    # `MediaItems` and `QueueRepository` are instrumented -- `MediaItem` is built on
+    # `android.net.Uri`, which throws off-device, and Robolectric is banned -- so their five
+    # mutations are recorded in task-4-report.md instead, the same way task-2-report.md carries
+    # the Media3 adapter's and task-8-report.md carries SetupViewModel's two device-only mutants.
+    #
+    # `queue/position-field` is the important one and it is not a field-mapping probe at all: it
+    # asserts that spec section 3's decision -- *the queue is a list of pointers; progress is a
+    # property of the item* -- is still structurally enforced. A `positionMs` on this type is the
+    # single global "now playing position" every other player has, and it is precisely why a user
+    # cannot listen to music between two audiobook sessions without losing their place.
+    ("queue/position-field", PLAYBACK_QUEUE,
+     "data class PlaybackQueue(val songs: List<Song>, val startIndex: Int) {",
+     "data class PlaybackQueue(val songs: List<Song>, val startIndex: Int, val positionMs: Long = 0) {",
+     "the queue carries no playback position of its own", 1),
+    # Deleting the guard still throws -- the `startIndex` guard catches an empty list next -- so
+    # this probe only discriminates because the test asserts the *message*, not just the type.
+    ("queue/empty-guard", PLAYBACK_QUEUE,
+     '    require(songs.isNotEmpty()) { "a playback queue cannot be empty" }\n', "",
+     "an empty queue is rejected", 1),
+    # 2: with `startIndex` pinned to 0, the out-of-range call no longer throws either.
+    ("queue/startIndex-hardcoded", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, 0)",
+     "a start index outside the queue is rejected", 2),
+    ("queue/songAt-index", PLAYBACK_QUEUE,
+     "  fun songAt(index: Int): Song = songs[index]",
+     "  fun songAt(index: Int): Song = songs[0]",
+     "songAt returns the song at that index", 1),
+    # Found by this task's own audit, not by its brief: the brief's test observed `size` at
+    # exactly one value (3, over a three-song queue), so `get() = 3` passed the whole suite.
+    # Measured both ways -- 0 failures before a second, disjoint observation was added, 1 after.
+    ("queue/size-hardcoded", PLAYBACK_QUEUE,
+     "  val size: Int get() = songs.size", "  val size: Int get() = 3",
+     "a queue holds the songs it was given in the order it was given them", 1),
+    # A queue is ordered, and N4-1 (round 5) is this project's record of every list assertion in a
+    # file being order-blind at once. 2: `songAt` reads the reversed list too.
+    ("queue/songs-reversed", PLAYBACK_QUEUE,
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs, startIndex)",
+     "fun of(songs: List<Song>, startIndex: Int = 0): PlaybackQueue = PlaybackQueue(songs.reversed(), startIndex)",
+     "a queue holds the songs it was given in the order it was given them", 2),
 ]
 
 
@@ -859,7 +902,7 @@ def revert():
     subprocess.run(
         ["git", "checkout", "--", CLIENT, AUTH, TYPE, MODEL, MIRROR, SETUP_VM, SYNC_DECISION,
          LIBRARY_VM, ALBUM_VM, LIBRARY_STATE, STREAM_FORMAT, RETRY_POLICY, MEDIA_MODULE,
-         PCM_ANALYSIS],
+         PCM_ANALYSIS, PLAYBACK_QUEUE],
         check=True,
     )
     subprocess.run(["git", "checkout", "--", *LATER_PROBE_FILES], check=True)
