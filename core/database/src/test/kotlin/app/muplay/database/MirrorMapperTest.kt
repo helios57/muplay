@@ -2,6 +2,7 @@ package app.muplay.database
 
 import app.muplay.database.entity.ArtistEntity
 import app.muplay.model.Album
+import app.muplay.model.ReplayGain
 import app.muplay.model.Song
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -70,9 +71,18 @@ class MirrorMapperTest {
       durationSeconds = 5,
       suffix = "mp3",
       coverArtId = "al-a1_0",
+      replayGain = ReplayGain(trackGainDb = -6.5f, albumGainDb = -3.25f, peakAmplitude = 0.5f),
     )
 
     assertThat(MirrorMapper.song(MirrorMapper.songEntity(song))).isEqualTo(song)
+    // The three gain columns are `null` on an entity by default, so a `songEntity` that simply
+    // never set them still satisfies a round trip of an *untagged* song. Asserted on the entity's
+    // own columns, at three values none of which is any other's, so no single hardcode reaches
+    // all three -- and this is the first of two disjoint observations of each.
+    val entity = MirrorMapper.songEntity(song)
+    assertThat(entity.replayGainTrackDb).isEqualTo(-6.5f)
+    assertThat(entity.replayGainAlbumDb).isEqualTo(-3.25f)
+    assertThat(entity.replayGainPeak).isEqualTo(0.5f)
     // N2-3: sortTitle is write-only -- song(entity) never reads it back, so the round trip above
     // cannot see it at all. Before this line it was observed nowhere in the whole repo. First of
     // two disjoint observations.
@@ -230,12 +240,81 @@ class MirrorMapperTest {
       durationSeconds = 777,
       suffix = "m4b",
       coverArtId = "cover-zzz",
+      replayGain = ReplayGain(trackGainDb = 2.75f, albumGainDb = -11.5f, peakAmplitude = 0.875f),
     )
 
     assertThat(MirrorMapper.song(MirrorMapper.songEntity(song))).isEqualTo(song)
+    // The second, disjoint observation of all three gain columns.
+    val entity = MirrorMapper.songEntity(song)
+    assertThat(entity.replayGainTrackDb).isEqualTo(2.75f)
+    assertThat(entity.replayGainAlbumDb).isEqualTo(-11.5f)
+    assertThat(entity.replayGainPeak).isEqualTo(0.875f)
     // N2-3: second, disjoint sortTitle observation.
     assertThat(MirrorMapper.songEntity(song).sortTitle).isEqualTo("chapter seven")
   }
+
+  /**
+   * The absence rule, both ways.
+   *
+   * An untagged file mirrors as three `null` columns and must come back as *no decision at all* --
+   * not as a `ReplayGain(null, null, null)`, which is the same fact spelled as an object and would
+   * make every caller ask two questions instead of one. It is also what keeps the round trip above
+   * an identity for the untagged case, which is every file in a library nobody has tagged.
+   */
+  @Test
+  fun `an untagged song round-trips as no replay gain rather than as an empty one`() {
+    val untagged = song(replayGain = null)
+
+    val entity = MirrorMapper.songEntity(untagged)
+
+    assertThat(entity.replayGainTrackDb).isNull()
+    assertThat(entity.replayGainAlbumDb).isNull()
+    assertThat(entity.replayGainPeak).isNull()
+    assertThat(MirrorMapper.song(entity)).isEqualTo(untagged)
+    assertThat(MirrorMapper.song(entity).replayGain).isNull()
+  }
+
+  /**
+   * A file tagged by an album-oriented tool: an album gain, no track gain. The reverse mapping's
+   * guard is `both gains absent`, not `track gain absent`, and the difference between those two is
+   * every album-tagged library there is.
+   */
+  @Test
+  fun `a song with only an album gain still round-trips as a decision`() {
+    val albumOnly = song(replayGain = ReplayGain(null, -7.5f, 0.6f))
+
+    val roundTripped = MirrorMapper.song(MirrorMapper.songEntity(albumOnly))
+
+    assertThat(roundTripped).isEqualTo(albumOnly)
+    assertThat(checkNotNull(roundTripped.replayGain).albumGainDb).isEqualTo(-7.5f)
+  }
+
+  /** A gain of exactly zero is a decision the file made, and `0.0f` is not `null`. */
+  @Test
+  fun `a zero gain survives the mirror as a decision`() {
+    val zeroed = song(replayGain = ReplayGain(0.0f, null, null))
+
+    val roundTripped = MirrorMapper.song(MirrorMapper.songEntity(zeroed))
+
+    assertThat(roundTripped).isEqualTo(zeroed)
+    assertThat(checkNotNull(roundTripped.replayGain).trackGainDb).isEqualTo(0.0f)
+  }
+
+  private fun song(replayGain: ReplayGain?): Song = Song(
+    id = "s-gain",
+    libraryId = 3,
+    title = "Quiet Track",
+    albumId = "a-gain",
+    albumName = "Gain Album",
+    artistId = "artist-3",
+    artistName = "Test Artist",
+    trackNumber = 1,
+    discNumber = null,
+    durationSeconds = 5,
+    suffix = "mp3",
+    coverArtId = null,
+    replayGain = replayGain,
+  )
 
   @Test
   fun `a second album, every field disjoint from the first, still round-trips`() {

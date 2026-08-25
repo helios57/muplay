@@ -12,7 +12,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.model.ReplayGain
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import java.io.File
 import java.time.Clock
 import java.time.Instant
@@ -108,7 +110,7 @@ class ProgressWriterTest {
     // No player needed: the write is the unit under test here.
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
-    runBlocking { subject.write("song-1", positionMs = 12_345L, finished = false) }
+    runBlocking { subject.write("song-1", positionMs = 12_345L, finished = false, gainDb = null) }
 
     val row = row("song-1")
     assertThat(row.positionMs).isEqualTo(12_345L)
@@ -134,8 +136,8 @@ class ProgressWriterTest {
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
     runBlocking {
-      subject.write("song-1", positionMs = 1_000L, finished = false)
-      subject.write("song-2", positionMs = 9_999L, finished = false)
+      subject.write("song-1", positionMs = 1_000L, finished = false, gainDb = null)
+      subject.write("song-2", positionMs = 9_999L, finished = false, gainDb = null)
     }
 
     assertThat(listOf(row("song-1").positionMs, row("song-2").positionMs))
@@ -147,11 +149,15 @@ class ProgressWriterTest {
   }
 
   /**
-   * The trap. `media_progress` carries `speed`, `skipSilence` and `gainDb` -- none of which this
-   * task writes. `speed` and `skipSilence` are Plan 4's; `gainDb` is this plan's, and Task 11 is
-   * where it starts being written. A writer that constructs a fresh entity and upserts it resets a
-   * listener's per-book speed **every five seconds**, which is a data-loss bug that no test of this
-   * task's own fields would ever catch.
+   * The trap. `media_progress` carries `speed`, `skipSilence` and `gainDb`. `speed` and
+   * `skipSilence` belong to the audiobook plan and this class never writes them; a writer that
+   * constructs a fresh entity and upserts it resets a listener's per-book speed **every five
+   * seconds**, which is a data-loss bug that no test of this class's own fields would ever catch.
+   *
+   * `gainDb` is now written -- Task 11 -- and it is asserted here too, in the case where the player
+   * has **nothing loaded**: there is no item, so there is no gain to record, and the stored value
+   * must survive rather than be reset to `DEFAULT_GAIN_DB`. The gain group below is where the
+   * writing half is measured.
    *
    * Each preserved column is seeded at a value that is **not** its default, so a writer that
    * defaulted them fails on all three rather than passing on a coincidence.
@@ -173,7 +179,7 @@ class ProgressWriterTest {
     }
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
-    runBlocking { subject.write("chapter-14", positionMs = 90_000L, finished = false) }
+    runBlocking { subject.write("chapter-14", positionMs = 90_000L, finished = false, gainDb = null) }
 
     val row = row("chapter-14")
     assertThat(row.positionMs).isEqualTo(90_000L)
@@ -192,8 +198,8 @@ class ProgressWriterTest {
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
     runBlocking {
-      subject.write("chapter-14", positionMs = 900_000L, finished = true)
-      subject.write("chapter-14", positionMs = 1_000L, finished = false)
+      subject.write("chapter-14", positionMs = 900_000L, finished = true, gainDb = null)
+      subject.write("chapter-14", positionMs = 1_000L, finished = false, gainDb = null)
     }
 
     assertThat(row("chapter-14").isFinished).isTrue
@@ -210,9 +216,126 @@ class ProgressWriterTest {
   fun aNegativePositionIsClampedRatherThanStored() {
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
-    runBlocking { subject.write("song-1", positionMs = -9_000L, finished = false) }
+    runBlocking { subject.write("song-1", positionMs = -9_000L, finished = false, gainDb = null) }
 
     assertThat(row("song-1").positionMs).isZero
+  }
+
+  // ---- gainDb: the column this task stops leaving as decoration ---------------------------------
+
+  /**
+   * The gain the item was **actually played at**, recorded on its row.
+   *
+   * Two items at two different tags, so a writer that stamped a constant -- including
+   * `DEFAULT_GAIN_DB`, which is what this line did before Task 11 -- fails. The values are read out
+   * of the `MediaItem`'s own extras, built by the production `MediaItems.of` from a `Song`, so this
+   * is the same encoding `ReplayGainController` reads and not a second one written for a test.
+   *
+   * The writer is never [ProgressWriter.start]ed and the player is parked and never prepared, so
+   * no ticker exists and nothing but the `write` under test can have produced these rows.
+   */
+  @Test
+  fun aWriteRecordsTheGainThePlayingItemWasPlayedAt() {
+    assertThat(gainWrittenFor(taggedItem("tagged-a", -6.5f))).isEqualTo(-6.5f)
+    assertThat(gainWrittenFor(taggedItem("tagged-b", 2.75f))).isEqualTo(2.75f)
+  }
+
+  /**
+   * The album-gain fallback reaches the row too, because the *item* already carries the resolved
+   * decision -- `MediaItems` made it once, and this class re-derives nothing.
+   */
+  @Test
+  fun anAlbumOnlyTagIsRecordedJustTheSame() {
+    val item = MediaItems.of(
+      song = gainSong("album-tagged").copy(replayGain = ReplayGain(null, -7.5f, null)),
+      streamUri = "https://host/album-tagged",
+      artworkUri = null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+    assertThat(gainWrittenFor(item)).isEqualTo(-7.5f)
+  }
+
+  /**
+   * An **untagged** item has no gain to record, and the row's existing value survives.
+   *
+   * That is the difference between "record what was played" and "overwrite with a default", and it
+   * is the case that would silently erase a real measurement: a listener plays a tagged track, then
+   * plays it again after the tag is removed from the file, and the row still says what the last
+   * tagged play used rather than `0.0`. Seeded at a non-default value so a defaulting writer fails.
+   */
+  @Test
+  fun aWriteForAnUntaggedItemPreservesTheGainAlreadyOnTheRow() {
+    runBlocking {
+      dao.upsert(MediaProgressEntity("untagged", 100L, false, 1L, 1.0f, false, -4.25f))
+    }
+    val untagged = MediaItems.of(
+      song = gainSong("untagged"),
+      streamUri = "https://host/untagged",
+      artworkUri = null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+    assertThat(gainWrittenFor(untagged)).isEqualTo(-4.25f)
+  }
+
+  /** A first write for an untagged item falls all the way through to the default. */
+  @Test
+  fun aFirstWriteForAnUntaggedItemGetsTheDefaultGain() {
+    val untagged = MediaItems.of(
+      song = gainSong("untagged-new"),
+      streamUri = "https://host/untagged-new",
+      artworkUri = null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+    assertThat(gainWrittenFor(untagged)).isEqualTo(ProgressWriter.DEFAULT_GAIN_DB)
+  }
+
+  /**
+   * The tag **wins over** whatever the row already said, which is the other half of
+   * [aWriteForAnUntaggedItemPreservesTheGainAlreadyOnTheRow]: a preserve-always writer would pass
+   * that test and fail this one, and a stamp-always writer the reverse.
+   */
+  @Test
+  fun aTagOverwritesAStaleGainOnAnExistingRow() {
+    runBlocking {
+      dao.upsert(MediaProgressEntity("tagged-c", 100L, false, 1L, 1.0f, false, -4.25f))
+    }
+
+    assertThat(gainWrittenFor(taggedItem("tagged-c", 3.5f))).isEqualTo(3.5f)
+  }
+
+  /**
+   * A discontinuity records the gain of the item being **left**, not the gain of the one the player
+   * has already moved to.
+   *
+   * The mirror image of [aDiscontinuityWritesTheItemBeingLeftAndNotTheOneArrivedAt], and the reason
+   * `gainDbOf` takes an item instead of reading `player.currentMediaItem`: by the time this
+   * callback arrives the player names the new item, so a writer that read the player here would
+   * stamp the arriving track's gain onto the departing track's row. Two disjoint tags, so neither
+   * answer can be a coincidence.
+   */
+  @Test
+  fun aDiscontinuityRecordsTheGainOfTheItemBeingLeft() {
+    val leaving = taggedItem("left-behind", -6.5f)
+    val arrivedAt = taggedItem("arrived-at", 2.75f)
+    val harness = rawHarness()
+    harness.onMain { harness.player.setMediaItems(listOf(arrivedAt), 0, 1L) }
+    val subject = ProgressWriter(harness.player, dao, clock, scope)
+
+    harness.onMain {
+      subject.onPositionDiscontinuity(
+        positionInfoFor(leaving, 55_000L),
+        positionInfoFor(arrivedAt, 0L),
+        Player.DISCONTINUITY_REASON_SEEK,
+      )
+    }
+
+    assertThat(awaitRow("left-behind").gainDb).isEqualTo(-6.5f)
   }
 
   // ---- the seven persistence points, one at a time ----------------------------------------------
@@ -551,6 +674,66 @@ class ProgressWriterTest {
       )
     }
     return harness to ProgressWriter(harness.player, dao, clock, scope)
+  }
+
+  private fun positionInfoFor(item: MediaItem, positionMs: Long) = Player.PositionInfo(
+    /* windowUid = */ null,
+    /* mediaItemIndex = */ 0,
+    /* mediaItem = */ item,
+    /* periodUid = */ null,
+    /* periodIndex = */ 0,
+    /* positionMs = */ positionMs,
+    /* contentPositionMs = */ positionMs,
+    /* adGroupIndex = */ -1,
+    /* adIndexInAdGroup = */ -1,
+  )
+
+  /** A production `MediaItem` whose song is tagged at [trackGainDb]. */
+  private fun taggedItem(mediaId: String, trackGainDb: Float): MediaItem =
+    MediaItems.of(
+      song = gainSong(mediaId).copy(replayGain = ReplayGain(trackGainDb, null, null)),
+      streamUri = "https://host/$mediaId",
+      artworkUri = null,
+      isAudiobook = false,
+      format = StreamFormat.Raw,
+    )
+
+  private fun gainSong(id: String): Song = Song(
+    id = id,
+    libraryId = 1,
+    title = "Track",
+    albumId = "album-1",
+    albumName = "Test Album",
+    artistId = "artist-1",
+    artistName = "Test Artist",
+    trackNumber = 1,
+    discNumber = null,
+    durationSeconds = 5,
+    suffix = "mp3",
+    coverArtId = null,
+  )
+
+  /**
+   * Parks a player on [item], drives one persistence point, and returns the row's `gainDb`.
+   *
+   * The writer is never [ProgressWriter.start]ed, so there is no ticker; the player is never
+   * prepared, so nothing moves while the row is read. Whatever is in the row came from this write.
+   */
+  private fun gainWrittenFor(item: MediaItem): Float {
+    val harness = rawHarness()
+    harness.onMain { harness.player.setMediaItems(listOf(item), 0, 1_234L) }
+    val subject = ProgressWriter(harness.player, dao, clock, scope)
+
+    harness.onMain { subject.onIsPlayingChanged(false) }
+
+    // Waits for **this** write, not merely for a row: where a test seeded a starting row first, a
+    // bare `awaitRow` returns that row on the first poll and the assertion measures the seed rather
+    // than the write. `aWriteForAnUntaggedItemPreservesTheGainAlreadyOnTheRow` passed vacuously
+    // that way -- its expected value *is* the seeded one -- and
+    // `aTagOverwritesAStaleGainOnAnExistingRow` is the test that caught it, by expecting a
+    // different one. Every seeded row uses `lastPlayedAtEpochMs = 1L`; only the writer stamps
+    // [FIXED_NOW_MS], because only the writer reads [clock].
+    return awaitRow(item.mediaId) { it.lastPlayedAtEpochMs == FIXED_NOW_MS }.gainDb
   }
 
   /** Invokes one listener callback on a player parked at [positionMs]; returns what was written. */

@@ -39,9 +39,10 @@ import kotlinx.coroutines.withContext
  *
  * ### Every write is a read-modify-write, and that is the trap in this table
  *
- * `media_progress` carries `speed`, `skipSilence` and `gainDb`, **none of which this class writes
- * today**: the first two belong to Plan 4, and `gainDb` becomes a stamp from the playing item when
- * Task 11's ReplayGain lands. Constructing a fresh `MediaProgressEntity` here and upserting it
+ * `media_progress` carries `speed`, `skipSilence` and `gainDb`. The first two belong to Plan 4 and
+ * this class never writes them; `gainDb` **is** written, as of Task 11 -- stamped from the playing
+ * item's own ReplayGain tags, and falling back to the stored value for an untagged item rather than
+ * erasing it. Constructing a fresh `MediaProgressEntity` here and upserting it
  * would reset a listener's per-book speed **every five seconds** -- a data-loss bug that no test of
  * this class's own three fields could ever see. `ProgressWriterTest` asserts exactly that.
  *
@@ -60,9 +61,12 @@ import kotlinx.coroutines.withContext
  *
  * ### Threading, and why the writes leave the caller's dispatcher
  *
- * Every player read ([captureCurrent], [flushBlocking]) happens on the thread the callback arrived
- * on -- the player's application thread -- because that is the only thread a `Player` may be read
- * from. The database work then runs on [Dispatchers.IO] under [writeLock], and both halves of that
+ * Every player read ([captureCurrent], [flushBlocking], and the gain each of them hands to [write])
+ * happens on the thread the callback arrived on -- the player's application thread -- because that
+ * is the only thread a `Player` may be read from. That rule is why `gainDb` is a **parameter** of
+ * [write] rather than something it reads: an earlier draft read `player.currentMediaItem` inside
+ * the `withContext` below and two device tests failed with
+ * `IllegalStateException: Player is accessed on the wrong thread`. The database work then runs on [Dispatchers.IO] under [writeLock], and both halves of that
  * matter:
  *
  *  * the **lock** makes the read-modify-write atomic against itself. Without it, a ticker that has
@@ -149,8 +153,11 @@ class ProgressWriter(
     val leaving = oldPosition.mediaItem ?: return
     // `oldPosition`, never `player.currentPosition`: by the time this arrives the player is already
     // at the *new* position, so reading it here would write the destination of the seek onto the
-    // row of the item that was left.
-    scope.launch { write(leaving.mediaId, oldPosition.positionMs, finished = false) }
+    // row of the item that was left. The **gain** comes off the same `oldPosition.mediaItem` for
+    // exactly the same reason -- `player.currentMediaItem` already names the new one, and the row
+    // being written belongs to the old.
+    val gainDb = gainDbOf(leaving)
+    scope.launch { write(leaving.mediaId, oldPosition.positionMs, finished = false, gainDb) }
   }
 
   // 4
@@ -173,14 +180,26 @@ class ProgressWriter(
   fun flushBlocking() {
     val current = player.currentMediaItem ?: return
     val positionMs = player.currentPosition
-    runBlocking { write(current.mediaId, positionMs, finished = false) }
+    val gainDb = gainDbOf(current)
+    runBlocking { write(current.mediaId, positionMs, finished = false, gainDb) }
   }
 
   /**
-   * The read-modify-write. Public because the four write-shape tests drive it directly, and because
+   * The read-modify-write. Public because the write-shape tests drive it directly, and because
    * every persistence point above is a thin wrapper over it.
+   *
+   * [gainDb] is **passed in rather than read here**, and that is not a style choice. This body runs
+   * on [Dispatchers.IO]; a `Player` may only be read from the thread it was built on, and reading
+   * `player.currentMediaItem` from inside this function throws `IllegalStateException: Player is
+   * accessed on the wrong thread` -- measured on `muplay37`, in two tests, on the first run after
+   * the gain stamp was added. So every caller reads it on the thread its callback arrived on, the
+   * same rule this class already follows for the position, and a discontinuity reads it off the
+   * item it is *leaving* rather than the one the player has already moved to.
+   *
+   * `null` means "the item carries no ReplayGain tag", not "zero decibels" -- see the fallback
+   * chain below.
    */
-  suspend fun write(mediaId: String, positionMs: Long, finished: Boolean) {
+  suspend fun write(mediaId: String, positionMs: Long, finished: Boolean, gainDb: Float?) {
     withContext(Dispatchers.IO) {
       writeLock.withLock {
         val existing = dao.find(mediaId)
@@ -193,17 +212,39 @@ class ProgressWriter(
             // Only ever set, never cleared. See the class documentation.
             isFinished = finished || (existing?.isFinished ?: false),
             lastPlayedAtEpochMs = clock.millis(),
-            // Columns this class does not write. Preserved, not defaulted. `speed` and
-            // `skipSilence` are Plan 4's; `gainDb` is this plan's, and Task 11 turns this one line
-            // into a stamp from the playing item and changes nothing else in this file.
+            // Columns this class does not own the *meaning* of. `speed` and `skipSilence` are
+            // the audiobook plan's and stay preserved-not-written.
             speed = existing?.speed ?: DEFAULT_SPEED,
             skipSilence = existing?.skipSilence ?: DEFAULT_SKIP_SILENCE,
-            gainDb = existing?.gainDb ?: DEFAULT_GAIN_DB,
+            // `gainDb` is this plan's, as of Task 11: a **record of the gain the item was played
+            // at**, so the row stops being decoration and Plan 5's watch snapshot carries something
+            // true. One authority (the file's own tags, mirrored onto the `MediaItem`), one writer
+            // (this class, because Plan 6 needs exactly one following the player switch).
+            //
+            // Still a fallback chain and not an unconditional write: an untagged item has no gain
+            // to record, and overwriting a row with `DEFAULT_GAIN_DB` in that case would erase a
+            // value a *previous, tagged* play had legitimately stored. Preserved, then defaulted.
+            gainDb = gainDb ?: existing?.gainDb ?: DEFAULT_GAIN_DB,
           ),
         )
       }
     }
   }
+
+  /**
+   * One item's ReplayGain decision, or `null` when it carries none.
+   *
+   * Takes the item rather than reading the player, so that each caller hands over the item whose
+   * row it is about to write -- which for a discontinuity is the one being *left*, not the one the
+   * player has already moved to.
+   *
+   * `containsKey` before `getFloat`: see `MediaItems.KEY_REPLAY_GAIN_DB` for why an absent key and
+   * not a sentinel is the encoding.
+   */
+  private fun gainDbOf(item: MediaItem?): Float? =
+    item?.mediaMetadata?.extras
+      ?.takeIf { it.containsKey(MediaItems.KEY_REPLAY_GAIN_DB) }
+      ?.getFloat(MediaItems.KEY_REPLAY_GAIN_DB)
 
   /**
    * Reads where the player is **now** and persists it.
@@ -214,7 +255,8 @@ class ProgressWriter(
   private fun captureCurrent(finished: Boolean) {
     val current = player.currentMediaItem ?: return
     val positionMs = player.currentPosition
-    scope.launch { write(current.mediaId, positionMs, finished) }
+    val gainDb = gainDbOf(current)
+    scope.launch { write(current.mediaId, positionMs, finished, gainDb) }
   }
 
   companion object {

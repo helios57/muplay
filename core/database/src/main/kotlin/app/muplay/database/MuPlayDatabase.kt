@@ -26,7 +26,13 @@ import app.muplay.database.entity.SyncWatermarkEntity
  * wired up by `muplay.android.room`) is what makes the *first* post-release migration verifiable
  * — a migration test needs the previous schema JSON, and there is no way to recover one that was
  * never exported. Task 6 takes it to version 5 by adding `sync_watermark`, the sync engine's
- * single-row `lastScan` checkpoint.
+ * single-row `lastScan` checkpoint. Plan 3 Task 11 takes it to version 6 by adding three nullable
+ * `REAL` columns to `songs` -- the file's own ReplayGain, mirrored because the player needs it
+ * before a track has ever been played and `media_progress` therefore cannot carry it.
+ *
+ * (The brief for that task said "version 4 -> 5". It was written before Task 6's `sync_watermark`
+ * landed; master was already at 5. The number a version bump moves *from* is a measurement, not a
+ * plan value -- read the file.)
  */
 @Database(
   entities = [
@@ -37,7 +43,7 @@ import app.muplay.database.entity.SyncWatermarkEntity
     SongEntity::class,
     SyncWatermarkEntity::class,
   ],
-  version = 5,
+  version = 6,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {

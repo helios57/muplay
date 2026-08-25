@@ -149,6 +149,31 @@ data class ChildBody(
   val coverArt: String? = null,
   val type: String? = null,
   val isDir: Boolean = false,
+  val replayGain: ReplayGainBody? = null,
+)
+
+/**
+ * OpenSubsonic's `ReplayGain` object, as the vendored spec declares it.
+ *
+ * Modelled **whole** rather than trimmed to the four fields this client maps, because the oracle
+ * (`OpenApiFixtureValidator`) validates the whole thing and a partial model is a fixture that
+ * silently stops being validated. `baseGain` and `fallbackGain` are parsed here and deliberately
+ * dropped by `SubsonicClient`'s mapper -- they configure a *server-side* normaliser this client
+ * does not use, and dropping them is a decision recorded at the mapper rather than hidden by a
+ * field that was never declared.
+ *
+ * Every field defaults to `null` and every one of them is genuinely optional: the spec's own words
+ * are *"if the data is not present the field must be ommited in the answer"*, and the captured
+ * fixtures in this repository show Navidrome sending `"replayGain": {}` for every untagged file.
+ */
+@Serializable
+data class ReplayGainBody(
+  val trackGain: Float? = null,
+  val albumGain: Float? = null,
+  val trackPeak: Float? = null,
+  val albumPeak: Float? = null,
+  val baseGain: Float? = null,
+  val fallbackGain: Float? = null,
 )
 
 /** The OpenSubsonic `ArtistID3` schema, narrowed. Only `id` and `name` are required. */

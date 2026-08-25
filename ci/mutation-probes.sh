@@ -167,6 +167,7 @@ STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
 RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
 MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
+GAIN_POLICY = "core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
 PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
 TRACK_ID_KEY = "core/media/src/main/kotlin/app/muplay/media/TrackIdCacheKeyFactory.kt"
@@ -2147,6 +2148,86 @@ PROBES = [
      'else -> Failed("unrecognised stored status \\"$name\\"")',
      'else -> Requested',
      "an unrecognised stored status reads as a failure that names itself", 1),
+
+    # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
+    # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
+    # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
+    # and `MuPlayRenderersFactory` are mutated BY HAND on the device instead, and those transcripts
+    # are in task-11-report.md. Every probe here is production code the JVM suites do execute.
+    #
+    # `gain/sign-inverted` is the one that matters most and the reason this family exists: a sign
+    # error does not break ReplayGain, it makes it exactly backwards -- a track tagged quiet plays
+    # LOUD -- and nothing about that reads as a bug in a listening test.
+    ("gain/sign-inverted", GAIN_POLICY,
+     "    val linear = 10.0f.pow(clamped / DB_PER_AMPLITUDE_DECADE)",
+     "    val linear = 10.0f.pow(-clamped / DB_PER_AMPLITUDE_DECADE)",
+     "minus six dB is half the amplitude and plus six is double", 3),
+    ("gain/always-unchanged", GAIN_POLICY,
+     "    if (gainDb == null) return UNCHANGED",
+     "    if (gainDb == null || true) return UNCHANGED",
+     "minus six dB is half the amplitude and plus six is double", 4),
+    ("gain/album-preferred-over-track", GAIN_POLICY,
+     "    replayGain?.trackGainDb ?: replayGain?.albumGainDb",
+     "    replayGain?.albumGainDb ?: replayGain?.trackGainDb",
+     "the track gain is preferred over the album gain", 1),
+    # The clamp is a CEILING. Dropping it lets a `+6 dB` tag on a file that already peaks at 0.9
+    # of full scale clip -- audible as distortion, and silent in every test of the decibel
+    # arithmetic on its own.
+    ("gain/peak-clamp-dropped", GAIN_POLICY,
+     "    return minOf(linear, 1.0f / peakAmplitude)",
+     "    return linear",
+     "a peak clamps a positive gain to the point of clipping and no further", 1),
+    # The other end of the same clamp: a corrupt `+90 dB` tag.
+    ("gain/corrupt-tag-unclamped", GAIN_POLICY,
+     "    val clamped = gainDb.coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)",
+     "    val clamped = gainDb",
+     "a corrupt tag cannot deafen anyone", 1),
+    # ...and the bounds themselves, which `coerceIn` executing says nothing about. `MAX_GAIN_DB`
+    # narrowed to zero is a clamp that silently switches the feature off for every track that asks
+    # to be made louder, while every relative assertion above stays true of something.
+    ("gain/clamp-bound-narrowed", GAIN_POLICY,
+     "  const val MAX_GAIN_DB: Float = 12.0f",
+     "  const val MAX_GAIN_DB: Float = 0.0f",
+     "the clamp bounds are wide enough to carry a real library and narrow enough to be safe", 3),
+
+    # The wire. A constant `ReplayGain` is this project's signature defect shape, and it passes any
+    # single-value check.
+    ("gain/client-constant", CLIENT,
+     "    return ReplayGain(trackGainDb = trackGainDb, albumGainDb = albumGainDb, peakAmplitude = peak)",
+     "    return ReplayGain(trackGainDb = -6.0f, albumGainDb = null, peakAmplitude = null)",
+     "each field comes from its own key and not from a neighbour", 4),
+    ("gain/client-peak-fallback-swapped", CLIENT,
+     "    val peak = this?.trackPeak ?: this?.albumPeak",
+     "    val peak = this?.albumPeak ?: this?.trackPeak",
+     "a second body, every value disjoint from the first, maps field by field", 2),
+    # "The file said nothing" collapsed into "the file said zero", which would apply a decision
+    # nobody made to every untagged library there is -- and Navidrome sends `"replayGain": {}` for
+    # every untagged file, so this is the common path rather than an edge.
+    ("gain/client-empty-object-is-a-decision", CLIENT,
+     "    if (trackGainDb == null && albumGainDb == null) return null",
+     "    if (false) return null",
+     "an untagged file carries no replay gain at all, rather than zeroes", 3),
+
+    # The mirror, both ways. This is the layer the wire tests cannot see at all: drop the columns
+    # here and every `:core:network` test stays green while the player gets nothing.
+    ("gain/mirror-forward-dropped", MIRROR,
+     "    replayGainTrackDb = song.replayGain?.trackGainDb,",
+     "    replayGainTrackDb = null,",
+     "a second song, every field disjoint from the first, still round-trips", 3),
+    ("gain/mirror-forward-peak-dropped", MIRROR,
+     "    replayGainPeak = song.replayGain?.peakAmplitude,",
+     "    replayGainPeak = null,",
+     "a second song, every field disjoint from the first, still round-trips", 3),
+    ("gain/mirror-reverse-dropped", MIRROR,
+     "    replayGain = entity.replayGain(),",
+     "    replayGain = null,",
+     "a second song, every field disjoint from the first, still round-trips", 4),
+    # The reverse guard's shape: `track gain absent` instead of `both gains absent` drops every
+    # album-tagged file on the way out of the mirror.
+    ("gain/mirror-reverse-album-only-dropped", MIRROR,
+     "    if (replayGainTrackDb == null && replayGainAlbumDb == null) return null",
+     "    if (replayGainTrackDb == null) return null",
+     "a song with only an album gain still round-trips as a decision", 1),
 ]
 
 
@@ -2232,6 +2313,9 @@ LATER_PROBE_FILES = [
     # this list's own comment asks for, and the reason it asks: a mutated file no `git checkout`
     # names is left in the tree when the run ends.
     CONTROLLER_ACCESS,
+    # Plan 3 Task 11, added in the same edit as the `gain/` probes above, per this list's own
+    # comment. `CLIENT` and `MIRROR` are already on the `git checkout` line inside `revert()`.
+    GAIN_POLICY,
 ]
 
 

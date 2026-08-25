@@ -225,7 +225,15 @@ otherwise a failed sync is never retried and the mirror stays permanently stale.
 - **Handle HTTP 429** — Navidrome 0.62.0 added `Transcoding.MaxConcurrent`.
   Unhandled, this looks like random playback failure.
 - **Never Opus.** Sonos cannot decode it and Navidrome mislabels it `audio/ogg`.
-- ReplayGain is exposed but **not applied server-side**; the client applies it.
+- ReplayGain is exposed but **not applied server-side**; the client applies it — as a
+  gain stage in the audio processor chain, upstream of the `AudioTrack`, driven by the
+  file's own `replayGain` tags carried on the library mirror so a shuffled queue has
+  them before a track is first played. Track gain is preferred, album gain is the
+  fallback for a file that carries no track gain, and a positive gain is clamped by the
+  file's peak. **No loudness analysis** is performed here and none is planned: an
+  untagged file is played unchanged, bit for bit. A newly-started item takes up to the
+  sink's own buffer (**measured: 700 ms**) to reach its own gain, because the transition
+  is reported off the playback position while the samples are processed ahead of it.
 - Gapless has **zero** server support. Use a real Media3 `setMediaItems` queue and
   let ExoPlayer read LAME/iTunSMPB. Never hand-roll.
 - **Cache key must derive from the track id alone** via `setCustomCacheKey`. Tempo
@@ -290,6 +298,8 @@ a Navidrome URL end-to-end. First audiobook plan closes this.
   `AudioAttributes.CONTENT_TYPE_SPEECH`, music `CONTENT_TYPE_MUSIC`.
 - **Smart rewind** on resume, scaled to how long the book was paused.
 - Per-item speed, silence skipping and gain, all stored on the progress row.
+  Per-item gain is applied from the file's own ReplayGain tags (§4) and *recorded* on the
+  progress row; the file is the authority, the row is the log.
 - Sleep timer, with a shake-to-extend affordance.
 
 ---

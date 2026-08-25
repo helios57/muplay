@@ -407,7 +407,19 @@ class GaplessTest {
         // feeds is `MuPlayerTest`'s subject, not this file's.
         resumePolicy = NeverResume,
       )
-      harness = PlayerHarness(playerFactory.createExoPlayer(TappedRenderersFactory(context, capture)))
+      // The production chain, tapped -- not a `DefaultRenderersFactory` of this suite's own. Task
+      // 11 put a `GainAudioProcessor` in the shipping chain, and a gapless measurement taken on a
+      // pipeline that no longer ships is a measurement of the wrong thing. The gain is
+      // `ReplayGainPolicy.UNCHANGED` throughout here: these items carry no gain extras, so the
+      // stage copies rather than multiplies and the frame counts below are unaffected. Measured,
+      // not assumed -- the totals in this file's own table were re-run after the change.
+      val gainProcessor = GainAudioProcessor()
+      harness = PlayerHarness(
+        playerFactory.createExoPlayer(
+          gainProcessor,
+          tappedShippingRenderers(context, gainProcessor, capture),
+        ),
+      )
       if (transitions != null) {
         harness.player.addListener(object : Player.Listener {
           override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {

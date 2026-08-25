@@ -41,4 +41,18 @@ data class SongEntity(
   val suffix: String?,
   val coverArtId: String?,
   val sortTitle: String,
+  /**
+   * The file's own ReplayGain, mirrored so the player has it **before** the track is first played.
+   *
+   * That timing is the whole reason these three columns are here rather than on `media_progress`:
+   * a `media_progress` row only exists for an item with a history, and every track in a fresh
+   * library-scoped shuffle is a first play -- which is precisely the queue this feature exists for.
+   *
+   * Three columns rather than an `@Embedded ReplayGain` because two of the three are independently
+   * nullable and an embedded all-null instance is indistinguishable from an absent one -- the exact
+   * collapse `SubsonicClient` refuses to make one layer up.
+   */
+  val replayGainTrackDb: Float? = null,
+  val replayGainAlbumDb: Float? = null,
+  val replayGainPeak: Float? = null,
 )
