@@ -23,6 +23,7 @@ class ConventionTest {
     error("could not locate the repository root from ${File(".").absolutePath}")
   }
 
+
   private fun moduleBuildFiles(): List<File> =
     repoRoot().walkTopDown()
       // `.claude/` is harness state, not project source: it holds git worktrees, so walking into

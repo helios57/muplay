@@ -5,7 +5,9 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 /**
- * There is exactly one place in this module an `ExoPlayer` is built, and it is [MuPlayerFactory].
+ * There is exactly one place in this module's **production** code that an `ExoPlayer` is built,
+ * and it is [MuPlayerFactory]. Test sources are scanned too, against an enumerated list -- see
+ * `only the named test suites build a player of their own` for what is on it and why.
  *
  * ### Why a source scan, and why it is not cargo cult
  *
@@ -89,13 +91,56 @@ class PlayerConstructionTest {
       .contains("MuPlayerFactory.kt", "MuPlayDataSourceFactoryTest.kt", THIS_FILE)
   }
 
+  /**
+   * **The production half, and it is absolute.** Nothing under `src/main` may build a player except
+   * [MuPlayerFactory]. No carve-out belongs here, ever: a second production construction site is
+   * the exact defect this file exists for -- a player that silently keeps Media3's default retry
+   * budget while every test of the policy stays green.
+   */
   @Test
-  fun `an ExoPlayer is constructed in exactly one place`() {
-    val builders = sourcesUnderTest().filter { it.readText().contains(construction) }
+  fun `production code constructs an ExoPlayer in exactly one place`() {
+    val builders = sourcesUnderTest()
+      .filter { it.path.contains("/src/main/") }
+      .filter { it.readText().contains(construction) }
 
     // The premise: if nothing matched, the assertion below would pass on an empty set and this
     // whole rule would be decoration.
-    assertThat(builders).describedAs("files containing `%s`", construction).isNotEmpty()
+    assertThat(builders).describedAs("src/main files containing `%s`", construction).isNotEmpty()
     assertThat(builders.map { it.name }).containsExactly("MuPlayerFactory.kt")
+  }
+
+  /**
+   * The test half: an **enumerated** list, not a ban and not a free pass.
+   *
+   * The rule a review asked for is *"have the instrumented test call [MuPlayerFactory] rather than
+   * hand-building an `ExoPlayer` -- then the test's wiring is the production wiring"*, and that is
+   * right for every suite whose subject is the player. `MuPlayDataSourceFactoryTest` is exactly
+   * that suite and it goes through the factory; `MuPlayerFactoryTest` tests the factory itself.
+   *
+   * There is no longer any exception, and that is a change worth recording rather than a tidy-up.
+   * `MediaCacheTest` was the one carve-out: its subject is the cache key, and it hand-built a
+   * player so that a missing custom cache key surfaced immediately instead of waiting out
+   * `StreamRetryPolicy.MAX_RETRIES` = 5 escalating retries against that harness's 30s ceiling.
+   * Task 3's own follow-up routed it through the factory, and `MuPlayerFactoryTest` was superseded
+   * by this file. So the list emptied out on its own, and the honest rule is now the absolute one.
+   *
+   * The premise moved with it. "Some test file matched" was the anti-vacuity check while a
+   * carve-out existed; now that nothing may match, the premise has to be that the **scan** still
+   * reads test sources -- otherwise a broken scan would report an empty set and pass.
+   */
+  @Test
+  fun `no test suite builds a player of its own`() {
+    val testSources = sourcesUnderTest().filter { !it.path.contains("/src/main/") }
+
+    // The premise, and it has to be about the SCAN rather than about the matches: the assertion
+    // below passes on an empty set, so without this it would be decoration the day the scan broke.
+    // It cannot be "some file matched" any more -- see the KDoc: nothing matches now, deliberately.
+    assertThat(testSources).describedAs("kotlin test sources under core/media/src").isNotEmpty()
+    assertThat(testSources.map { it.name }).contains("MuPlayDataSourceFactoryTest.kt")
+
+    val builders = testSources.filter { it.readText().contains(construction) }
+    assertThat(builders.map { it.name })
+      .describedAs("test files containing `%s`", construction)
+      .isEmpty()
   }
 }

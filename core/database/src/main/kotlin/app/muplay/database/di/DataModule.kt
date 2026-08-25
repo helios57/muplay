@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
+import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.SubsonicSourceProvider
@@ -100,6 +101,26 @@ object DataModule {
   fun provideCredentialDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
     PreferenceDataStoreFactory.create {
       File(context.filesDir, "credentials.preferences_pb")
+    }
+
+  /**
+   * The cast subsystem's own DataStore, over its own **file**.
+   *
+   * Not the unqualified binding above, and the difference is not cosmetic: that one holds the
+   * Navidrome password and `CredentialStore.clear()` empties the whole file on sign-out. A
+   * `RendererStore` reading from it would forget every remembered speaker when a user signed out,
+   * and the symptom -- an empty "not answering" list -- reads as a discovery bug. See
+   * `CastPreferences`' own documentation for why a qualifier alone would not have been enough.
+   *
+   * `@Singleton` for the same correctness reason as the provider above: DataStore refuses a second
+   * instance over one file.
+   */
+  @Provides
+  @Singleton
+  @CastPreferences
+  fun provideCastDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
+    PreferenceDataStoreFactory.create {
+      File(context.filesDir, "cast.preferences_pb")
     }
 
 }

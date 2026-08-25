@@ -137,17 +137,29 @@ MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
 PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
+TRACK_ID_KEY = "core/media/src/main/kotlin/app/muplay/media/TrackIdCacheKeyFactory.kt"
 CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
 CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
 CAST_ADDRESS = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalAddress.kt"
+PLAYER_STATE = "feature/player/src/main/kotlin/app/muplay/player/PlayerUiState.kt"
+PLAYER_VM = "feature/player/src/main/kotlin/app/muplay/player/PlayerViewModel.kt"
+PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/app/muplay/media/PlaybackLauncher.kt"
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
+BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
+BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
+DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
+DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
+DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
+DISCOVERY_DEVICE = "core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt"
+DISCOVERY_DIR = "core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt"
+DISCOVERY_FETCH = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DescriptionFetcher.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -932,7 +944,20 @@ PROBES = [
      # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
      # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
      # property, and it is the property no round trip implies.
-     "every id encodes to its exact documented string", 5),
+     #
+     # 5 as of 953a6ba, when nothing consumed `BrowseId` yet; 11 once Plan 5 Task 2's browse tree
+     # became its first consumer and `BrowseTreeTest` gained six assertions that read
+     # `BrowseId.Book(...).encode()` back as a map key or a list element. The named test failed
+     # exactly as intended both times -- this is the stale-count case the note on `expected
+     # failures` above describes, and Task 1's own report predicted this specific probe going stale
+     # here. Re-measured, not deleted; the six new ones are `the book shelf sorts case-insensitively
+     # and breaks its own ties by id`, `two books last heard in the same millisecond come out in the
+     # same order either way round`, `a single-file book is playable but not browsable, and a
+     # multi-file one is both`, `continue lists only started unfinished books, most recently heard
+     # first`, `a book's completion is one of three distinct values` and `continue is capped by the
+     # surface's own limit` -- every one of them a test that names a book by its encoded id, which
+     # is the right way for a browse test to name one.
+     "every id encodes to its exact documented string", 11),
     ("browse/library-id-non-canonical", BROWSE_ID,
      "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
      "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
@@ -1209,6 +1234,259 @@ PROBES = [
      "      hasNext = false,\n      hasPrevious = false,",
      "      hasNext = true,\n      hasPrevious = false,",
      "nothing playing can step neither forward nor back", 1),
+    # ---- Plan 6 Task 2: SSDP discovery, the device description, Sonos's embedded renderer -----
+    # Every count below was measured by applying the mutation alone against the committed tree and
+    # reading the result XML; see task-2-report.md for the transcripts. No entry here needs a
+    # LATER_PROBE_FILES line: `revert()` already checks out the whole `core/cast` directory, which
+    # is exactly the case that comment anticipated.
+    #
+    # These six defects share a symptom, and it is the worst one this project has: **the speaker is
+    # simply not in the picker**, with no error, no log line and nothing to chase. Four of them
+    # would have shipped green -- the module was at 100% of its *own* tests before the branch
+    # report was read.
+    ("discovery/man-unquoted", DISCOVERY_SSDP,
+     'append("MAN: \\"ssdp:discover\\"")', 'append("MAN: ssdp:discover")',
+     # The quotes are in the protocol. A device that receives MAN unquoted is entitled to ignore
+     # the search entirely -- and many answer anyway, so this passes on the tester's network and
+     # fails on the user's. That is why it is asserted as an exact datagram and not with contains().
+     "a multicast search is the exact datagram the protocol specifies", 3),
+    ("discovery/udn-is-whole-usn", DISCOVERY_SSDP,
+     'val udn: String get() = usn.substringBefore("::")', 'val udn: String get() = usn',
+     # A device answers once per matching search target, so one Sonos answers twice with two USNs
+     # and one LOCATION. Without the split it is two picker entries called "Kuche".
+     "the udn is the uuid half of the usn, which is what deduplicates a device", 5),
+    ("discovery/announcement-not-address-checked", DISCOVERY_SSDP,
+     "    if (!LocalNetworkOnly.isLocal(address)) return null\n", "",
+     # SSDP has no authentication of any kind: anything that can send a UDP datagram chooses what
+     # URL this app fetches next. Task 1's rule has to apply to what a device *claims*, not only to
+     # what the app dials.
+     "a reply whose location is not a local address is discarded", 1),
+    ("discovery/truncated-datagram-accepted", DISCOVERY_TRANSPORT,
+     "        if (packet.length == buffer.size) continue\n", "",
+     # recvfrom truncates silently, and the datagram parser is deliberately tolerant of a block
+     # that ends without its blank line -- so a LOCATION clipped at the buffer boundary parses as a
+     # real, shorter URL. The socket readers reject a truncated head; a datagram cannot.
+     "a reply too big for the receive buffer is dropped rather than parsed as a short one", 1),
+    ("discovery/no-devicelist-recursion", DISCOVERY_DESC,
+     '    embedded = childElement(element, "deviceList")\n'
+     "      ?.let { list -> childElements(list, \"device\").map { parseDevice(it, base) } }\n"
+     "      .orEmpty(),\n",
+     "    embedded = emptyList(),\n",
+     # THE Sonos defect. A Sonos root device is a ZonePlayer; the MediaRenderer carrying AVTransport
+     # is nested inside its deviceList beside a MediaServer. A parser that reads
+     # root/device/serviceList and stops decides a Sonos is not a renderer, and the headline user
+     # requirement is silently absent.
+     "a cast device is built from the sonos root and knows it is a sonos", 8),
+    ("discovery/anything-is-castable", DISCOVERY_DEVICE,
+     "        }\n        ?: return null\n",
+     '        }\n        ?: (root to UpnpService("", "", descriptionUrl, null))\n',
+     # The other direction: a NAS, a router's UPnP IGD and Sonos's own MediaServer all answer SSDP
+     # and none of them can be cast to. Letting one through fails at SetAVTransportURI with UPnP
+     # error 401, long after the user chose it.
+     "a device with no AVTransport anywhere is not a cast device", 13),
+    ("discovery/unsorted-picker", DISCOVERY_DIR,
+     "val devices = (found + recovered).sortedWith(BY_NAME_THEN_UDN)",
+     "val devices = (found + recovered)",
+     # Arrival order is a property of the network, not of the app. A picker whose entries move
+     # between openings is one nobody can build a habit with -- and the four-device test passes by
+     # luck whenever the fake answers in name order, which is why the rename test exists.
+     "the order is by name and not by arrival, proved by renaming one device", 2),
+    ("discovery/no-dedup", DISCOVERY_DIR, "      .distinctBy { it.udn }\n", "",
+     "four devices on the network become two picker entries, in name order", 1),
+    ("discovery/forget-the-missing", DISCOVERY_DIR,
+     "remembered.remember(devices.map { it.remembered() } + stillMissing)",
+     "remembered.remember(devices.map { it.remembered() })",
+     # The store exists so a speaker can be found again when multicast cannot reach it. Writing
+     # back only the devices that answered deletes that fallback on exactly the run it is for.
+     "a remembered device that did not answer is still remembered, so the next run can still name it", 1),
+    ("discovery/unicast-anywhere", DISCOVERY_DIR,
+     "    if (!LocalNetworkOnly.isLocal(address)) return null\n", "",
+     # The remembered URL has been through disk since it was announced. `LocalNetworkOnly` guards
+     # the fetch inside CastHttpClient, but the unicast M-SEARCH is a datagram this class sends on
+     # its own account and nothing else would stop it leaving for the internet.
+     "a remembered url off the local network is never dialled by the unicast fallback", 1),
+    ("discovery/any-status-is-a-description", DISCOVERY_FETCH,
+     "      ?.takeIf { it.code == HTTP_OK }\n", "",
+     # A 404 body parses as "not XML" rather than as "no such device", so the message a user or a
+     # maintainer eventually sees is about XML instead of about a device that has moved.
+     "a 404 is not a description", 1),
+
+    # ---- Plan 3 Task 3, fix round: the one string this module is allowed to say about a URL ----
+    # `MissingCacheKeyException` is thrown inside `CacheDataSource.open`, which runs inside
+    # `Loader$LoadTask.run` -- and that method logs it, then wraps it into an `ExoPlaybackException`
+    # that `ExoPlayerImplInternal` logs again. A Subsonic stream URL carries `u`, `s` and
+    # `t = md5(password + salt)`, and Navidrome tracks no salt nonce, so the triple replays forever:
+    # a URL in that message is a password equivalent in logcat and in every bug report. The message
+    # used to be `dataSpec.uri.toString()`.
+    #
+    # Both probes are on the JVM tier, and that is the whole reason `trackIdIn` takes and returns a
+    # `String`: the reduction of a credential-bearing URL to a safe diagnostic names no Android and
+    # no Media3 type. Same split as `StreamRetryPolicy` against its Media3 adapter. What is NOT
+    # here and cannot be is the throw site itself -- `dataSpec.key ?: throw ..` needs a `DataSpec`,
+    # so mutating it is a device matter and is recorded in task-3-fix-report.md, the same way
+    # `LiveNavidromeTest`'s test-side probes are.
+    ("media/cache-key-error-leaks-url", TRACK_ID_KEY,
+     "      ?: UNKNOWN_TRACK", "      ?: uri",
+     # The natural wrong fix -- "if the id cannot be found, at least print the URL" -- and there is
+     # no shape of URL for which it is the right answer.
+     # 2: the no-query test asserts the same placeholder over two more URLs.
+     "a url with no id says so rather than falling back to the url", 2),
+    ("media/cache-key-id-substring-match", TRACK_ID_KEY,
+     'it.startsWith("$ID_PARAMETER=")', "it.contains(ID_PARAMETER)",
+     # A parameter is matched on its whole name, not on containing one: `contains` also matches
+     # `xid=`, `mediaid=` and any token that happens to hold those two characters, and every one of
+     # those hands back a value that is not a track id -- which is how a credential gets into the
+     # message by a second route.
+     "a parameter that merely ends in id is not the id", 1),
+
+    # ---- Plan 5 Task 2: the browse tree ------------------------------------------------------
+    # The first three are the mutations that task's brief named by hand. The last two are what a
+    # by-hand sweep of the finished suite actually found -- both were mutations that SURVIVED the
+    # whole green suite until a fixture or an implementation was changed, which is exactly the
+    # class of defect this file exists to remember.
+    #
+    # The plan was warned by name about "an isAutomotiveController test where both branches return
+    # the same tree, so the branch is untested". A `when (surface)` whose arms are equal has 100%
+    # branch coverage and asserts nothing, so this collapses the branch outright: every surface
+    # gets the PHONE root. Reddens three of the root tests plus the tree-wide credential test,
+    # which counts its nodes.
+    ("browse/root-ignores-surface", BROWSE_TREE,
+     """      if (hasMusic) {
+        add(folder(BrowseId.Albums, ALBUMS_TITLE, BrowseMediaType.FOLDER_ALBUMS, surface.browsableStyle))
+        // A watch skips Artists: it is a level of indirection that costs two more crown scrolls to
+        // reach exactly the album the Albums tab already lists.
+        if (surface != BrowseSurface.WATCH) {
+          add(folder(BrowseId.Artists, ARTISTS_TITLE, BrowseMediaType.FOLDER_ARTISTS, BrowseStyle.LIST))
+        }
+        // A library picker is unbounded and is one more level of depth, which is exactly what a
+        // driver must not be handed -- and it would push the car root past its four tabs.
+        if (surface == BrowseSurface.PHONE) {
+          add(folder(BrowseId.Libraries, LIBRARIES_TITLE, BrowseMediaType.FOLDER_MIXED, BrowseStyle.LIST))
+        }
+      }""",
+     """      if (hasMusic) {
+        add(folder(BrowseId.Albums, ALBUMS_TITLE, BrowseMediaType.FOLDER_ALBUMS, BrowseSurface.PHONE.browsableStyle))
+        add(folder(BrowseId.Artists, ARTISTS_TITLE, BrowseMediaType.FOLDER_ARTISTS, BrowseStyle.LIST))
+        add(folder(BrowseId.Libraries, LIBRARIES_TITLE, BrowseMediaType.FOLDER_MIXED, BrowseStyle.LIST))
+      }""",
+     "the three surfaces produce three different roots", 4),
+
+    # Spec section 1: "Hitting shuffle must not pull chapter 14 of a novel into a music session."
+    # On a car surface there is no UI to disable, so the rule is expressed as the absence of a row
+    # -- which means the only thing that can enforce it is a test that asserts the absence.
+    ("browse/shuffle-for-every-library", BROWSE_TREE,
+     """    if (library.role == LibraryRole.MUSIC) {
+      listOf(shuffleNode(library)) + albums.map(::albumNode)
+    } else {
+      albums.map(::albumNode)
+    }""",
+     "    listOf(shuffleNode(library)) + albums.map(::albumNode)",
+     "an audiobook library gets no shuffle node and a music library does", 1),
+
+    # One field fixed to a constant -- the defect class N3-1 found across 20 mapped DTO fields.
+    # Reddens the album field-by-field test and the albums tab's own artwork assertion, and
+    # nothing else: that precision is the point of asserting field by field rather than by
+    # comparing whole objects built from the same fixture.
+    ("browse/album-artwork-constant", BROWSE_TREE,
+     "    mediaType = BrowseMediaType.ALBUM,\n    artworkId = album.coverArtId,",
+     '    mediaType = BrowseMediaType.ALBUM,\n    artworkId = "cov-a",',
+     "an album node carries every field of its album", 2),
+
+    # FOUND BY THE SWEEP, NOT BY THE BRIEF. This mutation survived the entire green suite: both
+    # library-order fixtures had names whose alphabetical order happened to coincide with their id
+    # order, so no test could tell `sortedBy(id)` from `sortedBy(name)`. Fixed by renaming the
+    # fixtures so supplied order, name order and id order are three different orders. The probe
+    # exists because the defect is invisible to coverage -- both sorts are one fully-covered line.
+    ("browse/shuffle-sorted-by-name", BROWSE_TREE,
+     "    musicLibraries.sortedBy(MusicLibrary::id).map(::shuffleNode) + albums.map(::albumNode)",
+     "    musicLibraries.sortedBy(MusicLibrary::name).map(::shuffleNode) + albums.map(::albumNode)",
+     "the albums node puts one shuffle per music library first, in library id order", 1),
+
+    # ALSO FOUND BY THE SWEEP. `remainingLabel` opened with `max(0L, remainingMs)`, and deleting
+    # that clamp changed no output for any input at all, `Long.MIN_VALUE` included -- the first
+    # band's test is `<`, so every negative satisfies it before any division runs. The clamp was
+    # deleted rather than covered, and what actually decides the negative case is the ORDER of the
+    # bands. This probe hoists the second band above the first, which is the real defect the
+    # negative sample now guards.
+    ("browse/remaining-band-order", BROWSE_TEXT,
+     '      remainingMs < MINUTE_MS -> "under a minute left"\n      hours == 0L -> "$minutes min left"',
+     '      hours == 0L -> "$minutes min left"\n      remainingMs < MINUTE_MS -> "under a minute left"',
+     "a negative remaining time is treated as none rather than rendered", 2),
+    # ---- Plan 3 Task 9: the player. -----------------------------------------------------------
+    # Everything below is a value a user meets on the first tap, and every one of them is on the
+    # JVM tier by construction: the state mapping is a pure top-level function, `PlayerViewModel`
+    # is built over a `PlaybackControls` seam, and `launchQueue` was split out of
+    # `PlaybackLauncher` precisely so the queue decision does not need a device.
+
+    # The seek bar's thumb following the player instead of the finger. Obvious on a device --
+    # the thumb springs back every 250ms and the bar cannot be used -- and invisible in a
+    # screenshot, which is exactly the kind of defect a probe list is for.
+    ("player/scrub-position-ignored", PLAYER_STATE,
+     "displayPositionMs = scrubPositionMs ?: playback.positionMs,",
+     "displayPositionMs = playback.positionMs,",
+     "the displayed position is the scrub position while scrubbing", 5),
+    # ...and the flag that goes with it, which the screen reads to decide whether a drag is in
+    # progress at all.
+    ("player/is-scrubbing-constant", PLAYER_STATE,
+     "isScrubbing = scrubPositionMs != null,", "isScrubbing = false,",
+     "the displayed position is the scrub position while scrubbing", 3),
+    # The discriminator between "render this track" and "render nothing". Reading `title` instead
+    # of `mediaId` is the plausible slip -- both are null in NOTHING_PLAYING, so it passes every
+    # other case in the suite -- and it empties the player for any track whose server sent no
+    # title.
+    ("player/content-discriminator", PLAYER_STATE,
+     "if (playback.mediaId == null) {", "if (playback.title == null) {",
+     "the media id alone decides, not the metadata around it", 1),
+    # Found by looking at the screen on `muplay37`: an MP3's duration is a container estimate and
+    # the player's position runs past it, so the last moment of every seeded track rendered
+    # "0:05 / 0:04". Each number was individually right; nothing was watching the pair.
+    ("player/position-clamp", PLAYER_STATE,
+     "if (durationMs > 0) positionMs.coerceIn(0L, durationMs) else positionMs.coerceAtLeast(0L)",
+     "positionMs.coerceAtLeast(0L)",
+     "the displayed position never runs past the end of the track", 1),
+    # `Player.getDuration()` is a large negative until the extractor has read the container.
+    # Without the clamp that renders as "-9223372036854:775" on a lock screen.
+    ("player/duration-clamp", PLAYER_STATE,
+     "val totalSeconds = (millis.coerceAtLeast(0L)) / 1000",
+     "val totalSeconds = millis / 1000",
+     "an unknown duration formats as a placeholder rather than a negative time", 1),
+    # The play/pause button doing the opposite of what it says.
+    ("player/playpause-inverted", PLAYER_VM,
+     "if (controls.isPlaying()) controls.pause() else controls.play()",
+     "if (controls.isPlaying()) controls.play() else controls.pause()",
+     "play pause pauses a playing player", 3),
+    # A copy-paste swap between two one-line delegating methods: both run, both measure fully
+    # covered, and the transport buttons walk the queue backwards. This project records
+    # "argument passthrough on a delegating method" as its own defect class; this is its sibling.
+    ("player/next-is-previous", PLAYER_VM,
+     "viewModelScope.launch { controls.next() }",
+     "viewModelScope.launch { controls.previous() }",
+     "next and previous each ask for their own direction", 1),
+    # The seek target coming from somewhere other than the finger.
+    ("player/seek-target-constant", PLAYER_VM,
+     "controls.seekTo(target)", "controls.seekTo(0L)",
+     "committing a scrub seeks to where the finger stopped", 1),
+    # Without the connect, the screen renders "Nothing playing" forever while audio is audibly
+    # playing -- the state flow never starts.
+    ("player/never-connects", PLAYER_VM,
+     "viewModelScope.launch { controls.connect() }", "Unit",
+     "constructing the view model connects to the session", 1),
+    # Which item the queue starts on. Tapping track 7 and hearing track 1.
+    ("player/launch-start-index", PLAYBACK_LAUNCHER,
+     "PlaybackQueue.of(songs, startIndex.coerceIn(songs.indices))",
+     "PlaybackQueue.of(songs, 0)",
+     "the start index is the one the caller asked for", 2),
+    # The same value, one layer up, at each of the two screens that supply it. Both are here
+    # rather than one representative: they are separate code paths through separate view models,
+    # and the album one is the one a user meets on every album screen.
+    ("player/album-play-index", ALBUM_VM,
+     "viewModelScope.launch { source.play(content.songs, startIndex) }",
+     "viewModelScope.launch { source.play(content.songs, 0) }",
+     "playing a track launches this album's songs from that track", 2),
+    ("player/shuffle-play-index", LIBRARY_VM,
+     "viewModelScope.launch { source.play(content.shuffled, startIndex) }",
+     "viewModelScope.launch { source.play(content.shuffled, 0) }",
+     "playing a shuffled row launches the shuffle result from that row", 1),
 ]
 
 
@@ -1267,6 +1545,16 @@ LATER_PROBE_FILES = [
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,
+    TRACK_ID_KEY,
+    BROWSE_TREE,
+    BROWSE_TEXT,
+    # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
+    # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
+    # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
+    # Exactly the "fails in the worst direction" this list's own comment above warns about.
+    PLAYER_STATE,
+    PLAYER_VM,
+    PLAYBACK_LAUNCHER,
 ]
 
 
@@ -1333,6 +1621,15 @@ JVM_TEST_RESULT_DIRS = {
     # Android type, which is exactly why the cleartext decision and the secret-stripping live in
     # this module rather than inside either service client.
     "integrations/core": "testDebugUnitTest",
+    # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
+    # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
+    # top-level function in its own file, and `PlayerViewModel` is constructed over a
+    # `PlaybackControls` seam, so neither needs a device. What is NOT reachable here is the
+    # module's Compose half -- 24 instrumented tests that compose the real screens -- so a mutation
+    # only those can catch (a swapped title/artist, a mini player that navigates when its own
+    # button is tapped) is recorded in task-9-report.md instead, the same way `LiveNavidromeTest`'s
+    # test-side probes already are.
+    "feature/player": "testDebugUnitTest",
 }
 
 
@@ -1390,7 +1687,7 @@ def run_suite():
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
-                    ":integrations:core:test"],
+                    ":integrations:core:test", ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -96,6 +97,13 @@ class LibraryViewModelTest {
 
     var ids: List<Int> = emptyList()
     override suspend fun allIds(): List<Int> = ids
+
+    /** Song **ids** and the start index, so a test can assert which queue was launched and from
+     *  where -- not merely that something was played. */
+    val playCalls = mutableListOf<Pair<List<String>, Int>>()
+    override suspend fun play(songs: List<Song>, startIndex: Int) {
+      playCalls += songs.map { it.id } to startIndex
+    }
   }
 
   private val dispatcher = StandardTestDispatcher()
@@ -481,5 +489,78 @@ class LibraryViewModelTest {
       assertThat(fake.coverArtCalls).containsExactly("al-abc" to 64, "al-xyz" to 256)
       assertThat(first).isEqualTo("cover:al-abc:64")
       assertThat(second).isEqualTo("cover:al-xyz:256")
+    }
+
+  /**
+   * The shuffle result, from the row that was tapped.
+   *
+   * Two disjoint observations of the index, because one is exactly the defect this project keeps
+   * finding: `playShuffled(0)` and a `startIndex` hardcoded to 0 are indistinguishable from a
+   * single case, and the symptom -- every tap on a shuffle list playing the first track -- is one
+   * a user meets immediately.
+   */
+  @Test
+  fun `playing a shuffled row launches the shuffle result from that row`() = runTest(dispatcher) {
+    val source = FakeLibrarySource(listOf(music))
+    source.shuffleAnswer = {
+      ShuffleResult(
+        listOf(song("s1", "One", 1), song("s2", "Two", 1), song("s3", "Three", 1)),
+        discardedOutOfScope = 0,
+      )
+    }
+    val vm = warm(source)
+    // Before `shuffle()`: `currentLibraryId()` reads `uiState`, which is still `Loading` until the
+    // library flow has combined, and a shuffle launched then returns without asking the source.
+    advanceUntilIdle()
+    vm.shuffle()
+    advanceUntilIdle()
+
+    vm.playShuffled(0)
+    advanceUntilIdle()
+    assertThat(source.playCalls).containsExactly(listOf("s1", "s2", "s3") to 0)
+
+    vm.playShuffled(2)
+    advanceUntilIdle()
+    assertThat(source.playCalls)
+      .containsExactly(listOf("s1", "s2", "s3") to 0, listOf("s1", "s2", "s3") to 2)
+  }
+
+  /**
+   * The whole shuffle, not just the tapped song. A launcher handed one song would play that track
+   * and stop, which is the difference between a shuffle and a single -- and it is invisible to any
+   * assertion that only checks the start index.
+   */
+  @Test
+  fun `playing a shuffled row launches the whole queue, not the one song`() = runTest(dispatcher) {
+    val source = FakeLibrarySource(listOf(music))
+    source.shuffleAnswer = {
+      ShuffleResult(listOf(song("s1", "One", 1), song("s2", "Two", 1)), discardedOutOfScope = 0)
+    }
+    val vm = warm(source)
+    // Before `shuffle()`: `currentLibraryId()` reads `uiState`, which is still `Loading` until the
+    // library flow has combined, and a shuffle launched then returns without asking the source.
+    advanceUntilIdle()
+    vm.shuffle()
+    advanceUntilIdle()
+
+    vm.playShuffled(1)
+    advanceUntilIdle()
+
+    assertThat(source.playCalls.single().first).containsExactly("s1", "s2")
+  }
+
+  /** A tap that arrives while the screen is not `Content` -- see `playShuffled`'s own doc for how
+   *  that happens -- must do nothing rather than launch an empty queue. */
+  @Test
+  fun `playing a shuffled row before the library has loaded touches nothing`() =
+    runTest(dispatcher) {
+      val source = FakeLibrarySource()
+      val vm = warm(source)
+      advanceUntilIdle()
+
+      vm.playShuffled(0)
+      advanceUntilIdle()
+
+      assertThat(source.playCalls).isEmpty()
     }
 }

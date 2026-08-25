@@ -423,6 +423,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                         and this floor fails, which is a CLASS-element rule doing exactly
     //                         what a BUNDLE aggregate over this module would have hidden.
     //
+    //   `BrowseTree`            Plan 5 Task 2, and the first class in this module with a real
+    //                         amount of hand-written logic in it. Measured **49/49** BRANCH,
+    //                         130/130 LINE: the surface `when` in `root` (the four-tab limit, the
+    //                         watch's missing Artists tab, the phone-only Libraries tab),
+    //                         `continueNodes`'s `hasStarted && !isFinished` filter, `bookNode`'s
+    //                         `fileCount > 1`, `completionOf`'s three-arm cascade,
+    //                         `bookSubtitle`'s `hasStarted && !isFinished`, the three
+    //                         `?.takeIf(String::isNotBlank) ?: UNKNOWN_ARTIST` chains and
+    //                         `libraryChildren`'s `role == MUSIC` guard -- spec section 1's rule,
+    //                         expressed as the absence of a shuffle row. `BrowseTree*` is not
+    //                         decoration: Kotlin compiles each `compareBy`/`thenBy`/`sortedBy`
+    //                         into its own synthetic class, and two of them
+    //                         (`$continueNodes$$inlined$thenBy$1`, `$bookNodes$$inlined$thenBy$1`)
+    //                         carry **2/2 BRANCH of their own** -- the tie-breaks that keep a car
+    //                         list from reordering itself between two identical requests.
+    //
+    //   `BrowseText`           Plan 5 Task 2. **9/9**: `remainingLabel`'s four bands and
+    //                         `albumCountLabel`'s three arms, each asserted at both sides of its
+    //                         boundary. Its opening `max(0L, remainingMs)` was deleted rather
+    //                         than covered -- measured unfalsifiable, no input including
+    //                         `Long.MIN_VALUE` changed its answer, because the first band's test
+    //                         is `<`.
+    //
+    //   `BookSummary`          Plan 5 Task 2 (see its own KDoc: Plan 4 Task 4 owns the type and
+    //                         had not landed anywhere in the repository). **4/4**:
+    //                         `progressFraction`'s `durationMs <= 0` divide-by-zero guard and its
+    //                         `coerceIn`. Gated by exact name rather than as a ride-along because
+    //                         it is the one `data class` in this module with arithmetic in it.
+    //
     // Everything else in the list rides along, the same way `SetupUiState` rides along in
     // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
     // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
@@ -437,6 +466,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Compose's synthetic branches. If any of them grows a body, it needs a rule of its own --
     // which is exactly what happened to `SearchResults`, and why it is listed above rather than
     // here.
+    //
+    // Plan 5 Task 2 adds five more of exactly that shape, all measured with **no BRANCH counter
+    // at all** and every line of them a declaration: `BrowseNode` and `BrowseCompletion` (`data
+    // class`es with no body, 12/12 and 3/3 LINE), and `BrowseMediaType`, `BrowseStyle`,
+    // `BrowseCompletionStatus` (`enum class`es whose only members are their constants, 9/9, 1/1,
+    // 1/1). `BrowseSurface` joins them despite carrying two constructor properties and a
+    // companion `const`: it is `LibraryRole`'s shape exactly (6/6 LINE, no branches), its three
+    // `continueLimit`/`browsableStyle` values are asserted as values by `BrowseTreeTest` where
+    // that assertion can actually fail, and a LINE floor over an enum's own declaration lines
+    // cannot fail while any test in the module touches the enum at all. `BrowseSurface*` rides
+    // along for `BrowseSurface$Companion`, which carries no counter of either kind.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -458,6 +498,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.StreamFormat*",
         "app.muplay.model.browse.BrowseId",
         "app.muplay.model.browse.BrowseId*",
+        // Plan 6 Task 2. `RememberedRenderer` is a three-field record and `RememberedRenderers` is
+        // an interface whose only member with a body is a `const val`; between them they carry
+        // zero branch counters, so they ride along here exactly the way `Album` and `Song` do
+        // above -- included so `warnUngatedClasses` has nothing to say, never gating anything.
+        //
+        // Their LINE counters are deliberately left ungated, and that needs saying rather than
+        // hiding: `RememberedRenderer` measures 0/4 LINE from this module's own tests, because
+        // the only code that constructs one lives in `:core:cast` and `:core:database`, whose
+        // execution data is not this module's. That is the exact trap `SubsonicCredentials` fell
+        // into below -- but the answer there was a real test for a real security control, and the
+        // answer here is that those 4 lines are compiler-generated `equals`/`hashCode`/`copy`
+        // plumbing on a class with no body. Gating them would be gating the Kotlin compiler, and
+        // writing a `:core:model` test that constructs one just to light them up would be gating
+        // it dishonestly. If this record ever grows a member, it needs a rule of its own.
+        "app.muplay.model.RememberedRenderer",
+        "app.muplay.model.RememberedRenderers",
+        "app.muplay.model.RememberedRenderers*",
+        "app.muplay.model.BookSummary",
+        "app.muplay.model.browse.BrowseTree",
+        "app.muplay.model.browse.BrowseTree*",
+        "app.muplay.model.browse.BrowseText",
+        "app.muplay.model.browse.BrowseSurface",
+        "app.muplay.model.browse.BrowseSurface*",
+        "app.muplay.model.browse.BrowseNode",
+        "app.muplay.model.browse.BrowseCompletion",
+        "app.muplay.model.browse.BrowseCompletionStatus",
+        "app.muplay.model.browse.BrowseMediaType",
+        "app.muplay.model.browse.BrowseStyle",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -495,6 +563,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.model.browse.BrowseId",
         "app.muplay.model.browse.BrowseId*",
+      ),
+    ),
+    // Plan 5 Task 2, and the `BrowseId` argument directly above applied to a bigger class for the
+    // same structural reason: a CLASS-element BRANCH rule can only see the code that branches.
+    // `BrowseTree` is 130 lines of which only a minority sit under a branch -- `bookChildren`,
+    // `artistNodes`, `shuffleNode`, `folder`, `albumChildren`, `artistChildren` and
+    // `albumChildrenOfArtist` contain no `if`/`when`/`?:` at all -- so its BRANCH ratio stays at
+    // 1.0000 while whole builders go untested. That is not hypothetical here: `albumChildren` is
+    // pure delegation to `songNodes`, and delegation-with-the-argument-dropped is one of this
+    // project's own recorded defect classes.
+    //
+    // Measured today, all at 1.0000: `BrowseTree` 130/130, its five synthetic comparator classes
+    // 1/1 or 2/2 each, `BrowseText` 13/13 and `BookSummary` 14/14.
+    //
+    // Verified fireable rather than assumed so, and verified to catch what the BRANCH rule above
+    // cannot: with the two `bookChildren` tests, the `artistNodes` test, the childStyle test and
+    // the tree-wide credential test moved aside -- five tests, none of which uniquely covers any
+    // branch -- this floor fails at `BrowseTree` 106/130 = 0.8154 **while the BRANCH rule above
+    // stays green at 49/49**. Raising the minimum instead would have been vacuous: JaCoCo
+    // validates the minimum before comparing, so `1.01` fails with "given minimum ratio is 1.01,
+    // but must be between 0.0 and 1.0" exactly as it does against zero-coverage code.
+    //
+    // The enums and the bodiless `data class`es are deliberately **not** here -- see the
+    // ride-along paragraph above the BRANCH rule for why a LINE floor over a declaration is a
+    // floor that cannot fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.browse.BrowseTree",
+        "app.muplay.model.browse.BrowseTree*",
+        "app.muplay.model.browse.BrowseText",
+        "app.muplay.model.BookSummary",
       ),
     ),
   ),
@@ -874,16 +976,66 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // Plan 6 Task 2. `RendererStore`, the remembered-speaker store, measured **4/4 BRANCH** and
+    // **14/14 LINE** against a real DataStore file on the emulator. Its four branches are the two
+    // that decide whether a record on disk is usable at all -- `decode`'s `parts.size != 3` and
+    // `forget`'s `decode(it)?.udn` safe call -- plus `load`/`forget`'s `orEmpty()` on an absent
+    // key, and every one of them was closed by a test that writes the raw preference set by hand
+    // (`aRecordThatIsNotAWholeTripleIsSkippedAndItsNeighboursAreKept`,
+    // `forgettingWorksAlongsideARecordThatCannotBeDecoded`,
+    // `forgettingFromAStoreThatWasNeverWrittenIsHarmless`).
+    //
+    // `requiresInstrumentedData` because DataStore is an Android type: there is no JVM tier for
+    // this class at all, and every number above came from `connectedDebugAndroidTest`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.database.RendererStore"),
+      requiresInstrumentedData = true,
+    ),
+    // The same class's LINE, and its coroutine artefacts, at the full 0.90 rather than at the
+    // 0.50 the rule above this one carries for `CredentialStore`'s and `BrowseRepository`'s --
+    // because these measure 1.0000 and there is no reason to gate them lower than they are.
+    // `RendererStore$remember$2` (1/1) and `RendererStore$forget$2` (5/5) are the `dataStore.edit`
+    // lambda bodies; `$load$1`/`$remember$1`/`$forget$1` are suspend continuations carrying no
+    // LINE counter at all (0/0, JaCoCo's isNaN pass, which is not the same as excluded).
+    //
+    // Their BRANCH is deliberately not gated: `remember$2` measures 1/2 and `forget$2` 5/6, and
+    // in both cases the missing branch is the coroutine state machine's own `label` check, whose
+    // other arm throws `IllegalStateException("call to 'resume' before 'invoke' with coroutine")`
+    // and is unreachable by construction. That is the same "gating the compiler" argument this
+    // table already makes about Compose codegen.
+    //
+    // `CastPreferences` rides along: a `@Qualifier` annotation class with no counters of any kind,
+    // included so `warnUngatedClasses` never has to mention it.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.RendererStore*",
+        "app.muplay.database.CastPreferences",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
-  // `:core:media`. Four `"CLASS"`-element rules, and the split across the two tiers is the point:
-  // the *decision* about a 429 is a plain object the fast tier can hold to a floor, and everything
-  // Media3 or OkHttp touches is only reachable on a device. Re-measure in Task 10, once the
-  // service, the queue and the progress writer are in.
+  // `:core:media`. Every rule here is `"CLASS"`-element, and the split across the two tiers is the
+  // point: the *decision* about a 429 is a plain object the fast tier can hold to a floor, and
+  // everything Media3 or OkHttp touches is only reachable on a device. Re-measure in Task 10, once
+  // the service, the queue and the progress writer are in. (The count of rules is deliberately not
+  // written down. It said "Four" from Task 2 until Task 3's fix round, through three tasks that
+  // each added rules -- the same staleness `ci/mutation-probes.sh`'s header describes about its
+  // own probe count, and the same remedy: do not carry a number nothing derives.)
   //
   // Every class this module compiles that carries a counter at all is matched by exactly one rule
-  // below; the only classes left over are `MuPlayDataSourceFactory$Companion` and
-  // `NavidromeLoadErrorHandlingPolicy$Companion`, which measure zero branches *and* zero lines, so
-  // [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them anyway.
+  // below; the only classes left over are `MuPlayDataSourceFactory$Companion`,
+  // `NavidromeLoadErrorHandlingPolicy$Companion`, `QueueRepository$Companion`,
+  // `QueueRepository$mediaItems$1`, the `ResumePolicy` interface and the `@Qualifier` annotation
+  // class `app.muplay.media.di.MediaHttpClient`, every one of which measures zero branches *and*
+  // zero lines, so [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them
+  // anyway. (`MediaHttpClient` was named only inside one rule's own comment before this round,
+  // which is the wrong place for it: this paragraph is the list a reader checks.)
   // Dagger's `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder` -- the holder it emits for
   // a *scoped, no-argument* `@Inject` constructor -- was in this report until
   // `generatedCodeExcludes` (`Jacoco.kt`) grew the pattern for that shape; see its own note.
@@ -936,11 +1088,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NavidromeLoadErrorHandlingPolicy"),
       requiresInstrumentedData = true,
     ),
-    // 3/3 and 12/12 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries no branches, so
-    // LINE is the only counter that can gate it at all -- same argument as `MediaModule` above,
-    // reached from the other tier. `NavidromeLoadErrorHandlingPolicy` rides here as well as
-    // carrying its own BRANCH rule: its `getRetryDelayMsFor` body is the module's one place where
-    // a line can be added that adds no branch.
+    // 11/11, 14/14, 16/16 and 2/2 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries
+    // no branches, so LINE is the only counter that can gate it at all -- same argument as
+    // `MediaModule` above, reached from the other tier. `NavidromeLoadErrorHandlingPolicy` rides
+    // here as well as carrying its own BRANCH rule: its `getRetryDelayMsFor` body is the module's
+    // one place where a line can be added that adds no branch.
+    //
+    // `RequestedUriDataSource*` joined in Task 3's fix round -- the wrapper that stops a redirect
+    // target reaching `exo_redir`, and its `Factory`. The pattern covers both classes and both are
+    // branchless by construction: `getUri()` returns the requested URI unconditionally rather than
+    // falling back to the delegate's, which is one fewer branch *and* an unconditional guarantee
+    // instead of a stateful one. Ten forwarding methods is ten chances to forget one, and Media3
+    // ships no `ForwardingDataSource` to inherit from, so
+    // `MediaCacheTest.theUpstreamWrapperAnswersTheRequestedUriAndForwardsEverythingElse` drives
+    // every one of them through a hand-written recording delegate -- which is what takes it to
+    // 16/16 rather than the 6-of-10 an end-to-end playback alone reaches.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -948,6 +1110,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.MuPlayDataSourceFactory",
         "app.muplay.media.NavidromeLoadErrorHandlingPolicy",
+        "app.muplay.media.RequestedUriDataSource*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1078,13 +1241,27 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
-    // 2/2 = 1.0000 BRANCH, instrumented. BRANCH and not LINE because this class is *all* branch:
-    // its single line is `dataSpec.key ?: throw MissingCacheKeyException(...)`, and the two sides
-    // of that elvis are the whole task. A LINE floor over it would be satisfied by covering
-    // either one, which is the difference between "the cache key comes from the track id" and
-    // "the missing-key fallback Tempo ships is gone". Counter picked by reading the merged report
-    // rather than from the non-UI default -- this class is one of the few in the module that
-    // genuinely carries both.
+    // 11/12 = 0.9167 BRANCH, instrumented. BRANCH and not LINE because the part of this class that
+    // matters is *all* branch: `dataSpec.key ?: throw MissingCacheKeyException(..)`, whose two
+    // sides are the whole task, and `trackIdIn`, which is a chain of safe calls. A LINE floor over
+    // it would be satisfied by covering either side of that elvis, which is the difference between
+    // "the cache key comes from the track id" and "the missing-key fallback Tempo ships is gone".
+    // Counter picked by reading the merged report rather than from the non-UI default -- this
+    // class is one of the few in the module that genuinely carries both.
+    //
+    // 2/2 until Task 3's fix round, when `trackIdIn` arrived: the pure String -> String reduction
+    // of a stream URL to the track id, so that the exception message names a track and not a
+    // replayable credential. Its branches come from `TrackIdCacheKeyFactoryTest` on the **JVM**
+    // tier -- deliberately, that is why it takes a `String` -- while the elvis above it still
+    // needs a `DataSpec` and a device, which is why `requiresInstrumentedData` stays on: with the
+    // instrumented `.ec` deleted this class measures 9/12 = 0.75 and the rule would fire on a
+    // JVM-only invocation that was never owed it.
+    //
+    // The one missed branch is unreachable and stays in the denominator honestly, the same way
+    // `StreamRetryPolicy`'s does: the safe-call chain emits a null check per `?.`, and once
+    // `firstOrNull` has returned null control jumps straight to the `?:`, so the second check's
+    // null arm cannot be selected. 0.90 leaves that single dead branch of room and no more -- one
+    // genuinely-uncovered branch takes this to 10/12 = 0.8333 and fails.
     //
     // Falsified by moving `MediaCacheTest` aside, not by raising the minimum, for exactly the
     // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
@@ -1106,20 +1283,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
       requiresInstrumentedData = true,
     ),
-    // 6/6, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
+    // 8/8, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
     // counter -- read off the merged report, not assumed -- so LINE is the only counter that can
     // gate them at all; a BRANCH rule here would score NaN and pass at every minimum, the vacuous
     // shape this table's own doc describes and `warnVacuousFloors` reports.
     //
-    // Instrumented-only, and all three reduce to "needs a real device": `MediaCache` builds a
-    // `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite);
-    // `MediaCacheModule` calls it; and `MissingCacheKeyException`'s message is only ever
-    // constructed from a `DataSpec`, which holds an `android.net.Uri`. No Robolectric here, so
-    // there is no JVM path to any of them.
+    // `MediaCache` was 6/6 and is 8/8 since Task 3's fix round: `create` grew a `maxBytes`
+    // parameter beside `directory`, which is what turns "there is an evictor and it is bounded"
+    // from a comment into something a test can fill. Neither `SimpleCache` nor
+    // `LeastRecentlyUsedCacheEvictor` exposes the bound (checked in 1.11.0), so before that
+    // parameter existed a `NoOpCacheEvictor` left every test in this module green.
     //
-    // `app.muplay.media.di.MediaHttpClient` is deliberately absent: a `@Qualifier` annotation
-    // class carries no counter of either kind, so `warnUngatedClasses` skips it and no rule could
-    // gate it -- the same standing exception this module already records for its `$Companion`s.
+    // Instrumented-only, and two of the three reduce to "needs a real device": `MediaCache` builds
+    // a `SimpleCache` over `context.cacheDir` and a `StandaloneDatabaseProvider` (real SQLite),
+    // and `MediaCacheModule` calls it. `MissingCacheKeyException` is the exception: it takes a
+    // `String` and `TrackIdCacheKeyFactoryTest` builds one on the JVM tier, so its two lines are
+    // covered from both tiers now. It stays in this rule rather than moving to a JVM one because
+    // the throw *site* is still device-only, and a rule that gated the message on the fast tier
+    // while the only real caller lived on the slow one would be gating the half that was never in
+    // doubt -- the same argument the BRANCH rule above makes about its own elvis.
     //
     // Watched failing the same way, with `MediaCacheTest` moved aside: BUILD FAILED naming all
     // three -- "app.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
@@ -1295,6 +1477,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.85"),
       includes = listOf("app.muplay.media.MuPlaybackService"),
       requiresInstrumentedData = true,
+    ),
+    // Plan 3 Task 9: `PlaybackLauncherKt` -- `launchQueue`, the one decision `PlaybackLauncher`
+    // makes before it touches a `MediaController`. 2/2 = 1.0000 BRANCH and 1/1 LINE from **JVM data
+    // alone** (`PlaybackLauncherTest`, six tests, no emulator), which is the entire reason it is a
+    // top-level function rather than a private method: everything else in `PlaybackLauncher.play`
+    // is a controller handshake that needs a bound media session, but *which item the caller asked
+    // to start from* is what a user notices immediately when it is wrong -- tapping track 7 and
+    // hearing track 1 -- and it should not cost a device run to notice. Same argument
+    // `StreamRetryPolicy` and `ResumePolicy` above already make in this module.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum (at a measured
+    // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing):
+    // with `PlaybackLauncherTest` moved aside, "Rule violated for class
+    // app.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
+    // 0.90", BUILD FAILED.
+    //
+    // **`PlaybackLauncher` itself is deliberately not listed, and it is not an oversight.** The
+    // class measures 0/2 BRANCH and 0/12 LINE here, because every line of it needs a real
+    // `MediaController` bound to a real `MuPlaybackService` -- which only an `@HiltAndroidApp`
+    // application can start, i.e. `:app`'s instrumented tier, i.e. Task 10's journey. It is named,
+    // with those measured ratios, in `warnUngatedClasses`'s output on every run, which is where a
+    // genuinely-deferred class belongs; the same shape `:feature:library` used for `CoverArtKt`
+    // between its Task 9 and its Task 10.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackLauncherKt"),
     ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
@@ -1518,6 +1728,150 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
+  // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
+  // `connectedDebugAndroidTest` run (instrumented) at commit time.
+  //
+  // The BRANCH/LINE split is this table's standing ruling, applied to a module that is mostly
+  // Compose: the author-written logic (the pure state mapping, the formatter, the ViewModel) gets
+  // BRANCH, and the `@Composable` file-classes get LINE, because the Compose compiler weaves
+  // `$changed`/`$dirty` skip branches into the same method bodies as the author's own `if`s and no
+  // class-granular exclusion can separate them.
+  ":feature:player" to listOf(
+    // `PlayerUiStateKt` -- `playerUiState`, `displayPosition` and `formatDuration` -- 10/10 =
+    // 1.0000 BRANCH, 14/14 LINE, from **JVM data alone** (`PlayerUiStateTest`, fifteen tests, no
+    // emulator). That is the whole
+    // reason this mapping is a top-level function in its own file rather than a `ViewModel` method
+    // or a line inside `PlayerScreen.kt`: `:feature:library`'s `CoverArtCacheKey.kt` header records
+    // what happens otherwise -- a pure function sharing a file-class with a Composable measures its
+    // own branches drowned in the Composable's synthetic ones, and no floor can reach it.
+    //
+    // `PlayerUiState`/`PlayerUiState*` ride along, carrying zero BRANCH counters of their own (a
+    // sealed interface, a `data object` and a `data class` with no body), so they cannot move this
+    // ratio; they are listed only so `warnUngatedClasses` has nothing to say about them on every
+    // run. The floor is not thereby vacuous: all 8 branches come from `PlayerUiStateKt`.
+    //
+    // Falsified by withholding the covering test, not by raising the minimum: at a measured 1.0000
+    // a higher minimum is rejected by JaCoCo before it compares anything ("given minimum ratio is
+    // 1.01, but must be between 0.0 and 1.0"), which is the same configuration error zero-coverage
+    // code would produce. With `PlayerUiStateTest` moved aside this floor reports "Rule violated
+    // for class app.muplay.player.PlayerUiStateKt: branches covered ratio is 0.00, but expected
+    // minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerUiStateKt",
+        "app.muplay.player.PlayerUiState",
+        "app.muplay.player.PlayerUiState*",
+      ),
+    ),
+    // `PlayerViewModel`'s own decisions, both measuring 1.0000 BRANCH from **JVM data alone**
+    // (`PlayerViewModelTest`, thirteen tests, no emulator) -- which is the whole reason the class
+    // is constructed over a `PlaybackControls` seam rather than over `PlaybackConnection` directly.
+    //
+    //   `PlayerViewModel`                 2/2 -- `commitScrub`'s `?: return` (the tap that moved
+    //                                     nothing must not seek) and `scrubTo`'s coerce-at-zero.
+    //   `PlayerViewModel$playPause$1`     2/2 -- pause-if-playing / play-if-paused, the one
+    //                                     decision in the class a user meets on every tap.
+    //
+    // **Exact names beside a narrow wildcard, not `"PlayerViewModel*"`** -- the same ruling
+    // `:feature:library` records for its own two view models. That wildcard cannot hold a BRANCH
+    // floor here: it matches `PlayerViewModel$1`, the Hilt-only `PlaybackControls` adapter, which
+    // no JVM test can reach. `*playPause*` is narrow enough to name the one nested class that
+    // carries branches, and it also matches `PlayerViewModel$1$play$1`/`$pause$1` (zero counters of
+    // either kind, JaCoCo's NaN pass) which is harmless.
+    //
+    // Falsified by withholding the covering test rather than by raising the minimum -- at a
+    // measured 1.0000 JaCoCo rejects a minimum above 1.0 before it compares anything, which is the
+    // same configuration error zero-coverage code produces and proves nothing. With
+    // `PlayerViewModelTest` moved aside: "Rule violated for class app.muplay.player.PlayerViewModel:
+    // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerViewModel",
+        "app.muplay.player.PlayerViewModel*playPause*",
+      ),
+    ),
+    // The view model's coroutine and `Flow` codegen -- `$2` (the `init` block's connect launch),
+    // `$next$1`, `$previous$1`, `$playPause$1`, `$commitScrub$1`. All 1.0000 LINE from JVM data
+    // alone (1/1, 1/1, 1/1, 2/2, 3/3), floored at 0.90.
+    //
+    // LINE, for the reason `:core:database`'s and `:feature:library`'s equivalent rules are LINE:
+    // what is worth knowing about compiler-generated continuation machinery is whether it ran, not
+    // which state-machine arms the compiler emitted.
+    //
+    // Two exclusions, and both are load-bearing:
+    //
+    //  * `PlayerViewModel` itself, because a `"...*"` include matches the bare name too (JaCoCo's
+    //    `*` matches the empty string) and it would arrive here at 23/26 = 0.8846, dragging a floor
+    //    that every class it is meant to gate clears at 1.0000. Its three missing lines are the
+    //    `@Inject` secondary constructor's own body, reachable only through Hilt -- exactly the
+    //    shape, and the ratio, `:feature:library` records for `LibraryViewModel` at 36/39.
+    //  * `PlayerViewModel$1` -- written `PlayerViewModel.1`, because a literal `$` in a pattern
+    //    never matches (see this table's own doc, gotcha 3: JaCoCo presents the class as
+    //    `PlayerViewModel.1`). It is the anonymous `PlaybackControls` adapter the `@Inject`
+    //    constructor builds, 0/10 LINE, reachable **only** through Hilt's DI graph: this module's
+    //    own instrumented suite composes the screens over a hand-built view model, which is what
+    //    covers everything else here and is deliberately not a Hilt graph. Task 10's end-to-end
+    //    journey is what reaches it, and until then it is named, at 0.0000, in
+    //    `warnUngatedClasses`'s output on every run -- the same shape `:feature:library` used for
+    //    `CoverArtKt` between its own Task 9 and Task 10.
+    //
+    // Falsified with `PlayerViewModelTest` withheld: BUILD FAILED naming each of the five at 0.00.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.player.PlayerViewModel*"),
+      excludes = listOf(
+        "app.muplay.player.PlayerViewModel",
+        "app.muplay.player.PlayerViewModel.1",
+      ),
+    ),
+    // The three `@Composable` file-classes, LINE, instrumented. LINE and not BRANCH per this
+    // table's standing ruling, and the numbers say why plainly: these same three measure 0.6364,
+    // 0.5865 and 0.4706 BRANCH, and essentially every missing branch is Compose codegen --
+    // `$changed`/`$dirty` skip bitmasks the compiler weaves into the author's own method bodies,
+    // which no class-granular exclusion can separate and no user-reachable behaviour corresponds
+    // to. Gating those would be gating the Compose compiler.
+    //
+    // MEASURED from a merged JVM + instrumented report, `:feature:player:connectedDebugAndroidTest`
+    // 24/24 green:
+    //
+    //   PlayerScreenKt  58/61 = 0.9508     MiniPlayerKt  47/49 = 0.9592
+    //   ArtworkKt       20/21 = 0.9524
+    //
+    // This module carries its own instrumented suite rather than waiting for Task 10's journey,
+    // and that is what makes 0.90 an honest number here instead of the 0.7377/0.7551 these two
+    // measured before it existed. Both stateless overloads are `internal` for exactly that reason,
+    // and both Hilt-bound entry points are composed over a hand-built `PlayerViewModel`, which is
+    // what covers the `collectAsStateWithLifecycle` hop the JVM tier cannot see.
+    //
+    // The lines still missing are the `hiltViewModel()` default-argument expressions and their
+    // `$default` bridges -- the one thing in these files that genuinely needs a Hilt graph, i.e.
+    // Task 10. A fourth missed line takes `MiniPlayerKt` to 46/49 = 0.9388 and a fifth to 0.9184,
+    // so the headroom here is real but thin: somebody should look before lowering it.
+    //
+    // Watched failing at its real minimum with the instrumented `.ec` deleted, which is what
+    // `requiresInstrumentedData = true` claims: all three drop to 0.00 and
+    // `jacocoTestCoverageVerification` names each one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.player.PlayerScreenKt",
+        "app.muplay.player.MiniPlayerKt",
+        "app.muplay.player.ArtworkKt",
+      ),
+      requiresInstrumentedData = true,
+    ),
+  ),
   // 61/63 = 0.9683 LINE across the whole module (20/21 = 0.9524 before Task 10's journeys). The
   // one BUNDLE-element rule in this table -- see
   // coverageFloors's own doc above for why an aggregate is the right shape here specifically, and
@@ -1593,6 +1947,82 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.cast.net.LocalAddress"),
+    ),
+    // Plan 6 Task 2, `app.muplay.cast.discovery`. Every class below with an author-written branch
+    // measures **1.0000** today, and each number is from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`
+    // -- no emulator anywhere, which is the whole point of this module being pure JVM:
+    //
+    //   `SsdpSearch`            28/28 -- the M-SEARCH renderer's `MX` branch and every one of
+    //                           `parseResponse`'s six rejections. Its last two branches were the
+    //                           `UnknownHostException` arm of `InetAddress.getByName`, which
+    //                           looked unreachable without a DNS query; a link-local IPv6 literal
+    //                           with a scope id the host does not have fails from the literal
+    //                           alone, in single-digit milliseconds, with no query.
+    //   `DeviceDescription`     56/56 -- `URLBase` present/absent/unparseable, every `orEmpty()`
+    //                           arm on a device that names no type, no UDN and no serviceList,
+    //                           both `URI.resolve` failures, and the DOCTYPE refusal in both
+    //                           cases. Was 47/58 when first measured.
+    //   `CastDevice*`           22/22 on the `Companion` (both `isSonos` signals independently,
+    //                           the no-AVTransport refusal, the empty-friendlyName fallback);
+    //                           `CastDevice`, `CastDeviceKt` and the record types below carry no
+    //                           branches and ride along.
+    //   `DescriptionFetcher`    10/10 -- 200 against 404, a non-local URL, an `https` URL and a
+    //                           URL with no host, each of which must be `null` rather than an
+    //                           exception escaping a whole discovery pass.
+    //   `RendererDirectory`     30/30 -- deduplication, the three fallback layers, the UDN check
+    //                           that stops a recycled DHCP lease being mistaken for a speaker,
+    //                           and the local-network guard on the unicast search. Was 23/30.
+    //
+    // `SsdpResponse`, `DiscoveryResult`, `UpnpDevice`, `UpnpService` and
+    // `MalformedDescriptionException` ride along at zero branches each, the same way `:core:model`
+    // and `:feature:setup` carry theirs -- included so `warnUngatedClasses` stays quiet, gating
+    // nothing (a CLASS rule over a zero-counter class yields NaN, which JaCoCo reports as no
+    // violation). The floor is not vacuous regardless: 146 of its BRANCH counters come from the
+    // five classes above.
+    //
+    // `DatagramSsdpTransport` is **not** here, and that is the brief's own ruling rather than a
+    // convenience: its branches are socket timeouts and network-interface enumeration, so a floor
+    // over it would be a number nothing in CI could move. It is gated on LINE below instead.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.discovery.SsdpSearch",
+        "app.muplay.cast.discovery.SsdpResponse",
+        "app.muplay.cast.discovery.DeviceDescription",
+        "app.muplay.cast.discovery.MalformedDescriptionException",
+        "app.muplay.cast.discovery.UpnpDevice",
+        "app.muplay.cast.discovery.UpnpService",
+        "app.muplay.cast.discovery.CastDevice*",
+        "app.muplay.cast.discovery.DescriptionFetcher",
+        "app.muplay.cast.discovery.RendererDirectory",
+        "app.muplay.cast.discovery.DiscoveryResult",
+      ),
+    ),
+    // The transport, and the coroutine artefacts of the two suspend classes, on LINE.
+    //
+    // `DatagramSsdpTransport` measures 3/3, its `Companion` 4/4 and its `search$2` body 23/23
+    // LINE -- every line runs, against a real `DatagramSocket` and a real responder on loopback.
+    // Its BRANCH (5/8 on the companion, 10/12 in the read loop) is the interface filter
+    // (`isUp && !isLoopback && supportsMulticast`, whose arms depend on the host's own hardware)
+    // and the socket-timeout poll, and lowering a floor to fit those is what this table refuses to
+    // do -- so LINE gates what can honestly be gated, exactly as it does for `LocalAddress` above.
+    //
+    // `RendererDirectory*` catches `describe$xml$1` (1/1 LINE; its BRANCH is 3/4, the missing one
+    // being the coroutine `label` check whose other arm is unreachable by construction) and four
+    // suspend continuations carrying no counters at all. `SsdpTransport`, the interface, has no
+    // counters either and is here so nothing in this package is left unmatched.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.discovery.DatagramSsdpTransport*",
+        "app.muplay.cast.discovery.RendererDirectory*",
+        "app.muplay.cast.discovery.SsdpTransport",
+      ),
     ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL

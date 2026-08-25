@@ -3,6 +3,7 @@ package app.muplay.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.muplay.database.BrowseRepository
+import app.muplay.media.PlaybackLauncher
 import app.muplay.model.Album
 import app.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,6 +29,9 @@ interface AlbumSource {
   fun songs(albumId: String): Flow<List<Song>>
   suspend fun album(albumId: String): Album?
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
+
+  /** See [LibrarySource.play]: on the seam because a `MediaController` handshake needs a device. */
+  suspend fun play(songs: List<Song>, startIndex: Int)
 }
 
 /**
@@ -55,12 +59,14 @@ class AlbumViewModel(
 ) : ViewModel() {
 
   @Inject
-  constructor(browseRepository: BrowseRepository) : this(
+  constructor(browseRepository: BrowseRepository, playbackLauncher: PlaybackLauncher) : this(
     object : AlbumSource {
       override fun songs(albumId: String): Flow<List<Song>> = browseRepository.songs(albumId)
       override suspend fun album(albumId: String): Album? = browseRepository.album(albumId)
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
+      override suspend fun play(songs: List<Song>, startIndex: Int) =
+        playbackLauncher.play(songs, startIndex)
     },
   )
 
@@ -130,6 +136,18 @@ class AlbumViewModel(
     album.value = Fetch.Pending
     this.albumId.value = albumId
     viewModelScope.launch { album.value = Fetch.Done(source.album(albumId)) }
+  }
+
+  /**
+   * Plays this album from [startIndex], in the track order the screen is showing.
+   *
+   * The index names a row in `AlbumUiState.Content.songs`, which is the same list the screen
+   * rendered -- so "the seventh row" and "the seventh song" cannot drift apart. The early return
+   * covers a tap arriving after `stateIn(WhileSubscribed)` has dropped back to `Loading`.
+   */
+  fun play(startIndex: Int) {
+    val content = uiState.value as? AlbumUiState.Content ?: return
+    viewModelScope.launch { source.play(content.songs, startIndex) }
   }
 
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =

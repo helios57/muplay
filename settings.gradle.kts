@@ -27,6 +27,7 @@ include(":core:designsystem")
 include(":core:cast")
 include(":feature:setup")
 include(":feature:library")
+include(":feature:player")
 
 // Plan 7's own top-level source directory. Kept out of `core/` deliberately: `ConventionTest`'s
 // `nothing outside integrations depends on an integration` makes "Plan 7 can be dropped" a checked

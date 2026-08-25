@@ -17,6 +17,16 @@ import okhttp3.Request
  *
  * One helper for the whole module rather than a private copy per test class: two ways to fetch the
  * same bytes is two things to keep pointing at the same container.
+ *
+ * **One client, and the fixtures fetched once.** Every method here used to build a fresh
+ * `OkHttpClient` *and* a fresh `SubsonicClient` (which builds a second `OkHttpClient` of its own
+ * inside Retrofit) per call, from a `@Before` that runs per test method: twenty-two real HTTP
+ * fetches for one run of [MediaCacheTest], and as many connection pools and dispatcher thread
+ * pools, none of them ever shut down. The bytes cannot change while a suite runs -- the container
+ * is seeded once and this project's own note forbids reseeding it underneath a live run -- so
+ * they are fetched once per process and handed out afterwards. Deliberately not thread-safe:
+ * instrumented tests run their lifecycle methods on one thread, and a lock here would be
+ * machinery for a concurrency that does not exist.
  */
 object RealTrackBytes {
 
@@ -24,22 +34,30 @@ object RealTrackBytes {
   const val NAVIDROME_URL = "http://localhost:4533"
   const val MUSIC_LIBRARY_ID = 1
 
-  fun client(): SubsonicClient = SubsonicClient(
-    SubsonicCredentials(baseUrl = NAVIDROME_URL, username = "admin", password = "testpass"),
-  )
+  private val http: OkHttpClient by lazy { OkHttpClient() }
+
+  private val client: SubsonicClient by lazy {
+    SubsonicClient(
+      SubsonicCredentials(baseUrl = NAVIDROME_URL, username = "admin", password = "testpass"),
+    )
+  }
+
+  private var tracks: List<Song>? = null
+  private val bytesById = mutableMapOf<String, ByteArray>()
 
   /** The three seeded music tracks, in title order — "Track 1", "Track 2", "Track 3". */
   suspend fun musicTracks(): List<Song> =
-    client().getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = MAX_LIBRARY_PAGE)
+    tracks ?: client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
       .sortedBy { it.title }
+      .also { tracks = it }
 
   /** One seeded mp3 — the single track `MuPlayDataSourceFactoryTest` plays. */
   suspend fun oneMp3Track(): ByteArray =
     bytesOf(musicTracks().first { it.suffix?.lowercase() == "mp3" })
 
-  suspend fun bytesOf(song: Song): ByteArray {
-    val request = Request.Builder().url(client().streamUrl(song.id, StreamFormat.Raw)).build()
-    return OkHttpClient().newCall(request).execute().use { checkNotNull(it.body).bytes() }
+  suspend fun bytesOf(song: Song): ByteArray = bytesById.getOrPut(song.id) {
+    val request = Request.Builder().url(client.streamUrl(song.id, StreamFormat.Raw)).build()
+    http.newCall(request).execute().use { checkNotNull(it.body).bytes() }
   }
 
   /** Two genuinely different tracks' bytes — the pair [MediaCacheTest] needs for its control. */
@@ -50,6 +68,4 @@ object RealTrackBytes {
     }
     return bytesOf(tracks[0]) to bytesOf(tracks[1])
   }
-
-  private const val MAX_LIBRARY_PAGE = 500
 }
