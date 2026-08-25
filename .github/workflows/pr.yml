@@ -46,13 +46,20 @@ jobs:
       - name: Android Lint
         run: ./gradlew lint
 
-      - name: Release manifest
+      - name: Merged manifest
         # `usesCleartextTraffic` exists in this repository only in `app/src/debug/
         # AndroidManifest.xml`, for the Tier 2 journey's plain-HTTP container. This proves it does
         # not reach the *merged* release manifest — the artifact that actually ships, and the one
         # a dependency's own manifest could inject it into. See `verifyReleaseManifest` in
         # AndroidApplicationConventionPlugin.
-        run: ./gradlew :app:verifyReleaseManifest
+        #
+        # Both variants, since Plan 3 Task 5. The same task now also proves a set of declarations is
+        # *present* -- the playback service and its three permissions, which reach the application
+        # from `:core:media`'s own manifest through the merger -- and that half runs for every
+        # variant, because a missing FOREGROUND_SERVICE_MEDIA_PLAYBACK is wrong in debug too. It
+        # fails no build, no install and no foreground test; it throws SecurityException from
+        # `startForeground` the first time the app is backgrounded with audio playing.
+        run: ./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest
 
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a
