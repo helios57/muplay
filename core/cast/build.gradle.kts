@@ -28,4 +28,14 @@ dependencies {
 
   testImplementation(libs.coroutines.test)
   testImplementation(libs.turbine)
+
+  // Test-only, and only for `LiveNavidromeProxyTest` (Task 6): that class needs a real Subsonic
+  // stream URL for a real seeded track, and `SubsonicClient.streamUrl` is the one that Task 7 will
+  // hand this proxy in production -- so the live test exercises the real pairing rather than a
+  // second, hand-rolled implementation of Subsonic's md5 auth living in this module.
+  //
+  // `testImplementation`, never `implementation`: nothing in `:core:cast`'s main source set knows
+  // that Navidrome exists. The proxy takes a URL string and relays it, which is what keeps this
+  // module a protocol module and lets Task 7 decide where the URL comes from.
+  testImplementation(project(":core:network"))
 }

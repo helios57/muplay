@@ -2404,6 +2404,101 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.didl.MimeDisagreementException",
       ),
     ),
+    // Plan 6 Task 6, `app.muplay.cast.proxy`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator and no Navidrome container anywhere -- `LiveNavidromeProxyTest` is `@Tag("live")`
+    // and contributes nothing to this measurement, which is deliberate: a floor that needed a
+    // container would be a floor the Tier 1 job cannot enforce.
+    //
+    // Per class and not as a module blend, and which class goes on which rule is a MEASUREMENT:
+    // a CLASS-element rule over a class carrying no counter of the rule's kind is a `0/0`
+    // COVEREDRATIO, which is `NaN`, which JaCoCo reports as no violation at any minimum.
+    //
+    //   `RangeHeader`                BRANCH 48/48 -- absent/ignored/bounded/suffix on the way in,
+    //                                each of the seven unparseable spellings, both overflow ends,
+    //                                and on the way out the clamp, the suffix clamp, the `>=`
+    //                                boundary from both sides, `bytes=-0`, and the empty entity.
+    //   `MediaProxyServer`           BRANCH 34/34 -- the eleven-row range table, `HEAD` against
+    //                                `GET`, 404/405/400/416/502/503, the truncated relay's
+    //                                early exit, and the accept loop's refusal arm.
+    //   `ProxyRetry`                 BRANCH  8/8  -- not-a-429, out of attempts, the header
+    //                                honoured, the header absent, and both clamps.
+    //   `OkHttpProxyUpstream`        BRANCH  8/8  -- a length present and absent, a 429 retried
+    //                                and a 429 given up on, with and without `Retry-After`.
+    //   `UpstreamThrottledException` BRANCH  2/2  -- the message with a delay and without one.
+    //
+    // 100 BRANCH counters across the five, all covered. The floor is 0.90 and not the measured
+    // 1.0000 for this table's usual reason: JaCoCo validates a minimum is inside 0.0..1.0 before it
+    // reads a ratio, so a floor at the measurement can only ever be falsified by withholding tests
+    // -- which is how these were falsified. Recorded in task-6-report.md, and the near-misses are
+    // the interesting part:
+    //
+    //   * `RangeHeader`: withholding `everything unparseable is Ignored...` alone leaves it at
+    //     **43/48 = 0.8958** and the rule fires. Five branches of forty-eight is the whole margin.
+    //   * `MediaProxyServer`: withholding `the eleven range cases...` -- the whole table -- leaves
+    //     it at **27/34 = 0.7941** and the rule fires.
+    //   * `OkHttpProxyUpstream`: withholding `an origin that never stops refusing gives up...`
+    //     together with `an origin that refuses without saying how long...` leaves it at
+    //     **6/8 = 0.75**.
+    //
+    // NOT here, and named so the omission is a decision rather than an oversight: `ProxyRegistry`
+    // and `ByteRange` carry **no BRANCH counter at all** (`resolve`'s `firstOrNull` predicate and
+    // `length`'s arithmetic compile to no conditional JaCoCo attributes to these classes), so a
+    // BRANCH rule over either would be the silent `NaN` pass -- over the class that decides which
+    // requests this server will answer. They are on the LINE rule below instead, exactly as
+    // `XmlText` and `ServedMedia` are.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.proxy.RangeHeader",
+        "app.muplay.cast.proxy.MediaProxyServer",
+        "app.muplay.cast.proxy.ProxyRetry",
+        "app.muplay.cast.proxy.OkHttpProxyUpstream",
+        "app.muplay.cast.proxy.UpstreamThrottledException",
+      ),
+    ),
+    // The classes in this package with real code and no branches, on LINE:
+    //
+    //   `ProxyRegistry`                LINE 14/14 -- publish, resolve, revoke, revokeAll.
+    //   `PublishedMedia`               LINE  5/5, `ProxyRequest` LINE 1/1, `ByteRange` LINE 2/2,
+    //                                  `RangeRequest$Bounded`/`$Suffix` and
+    //                                  `RangeResolution$Partial` LINE 1/1 each -- the data classes
+    //                                  JaCoCo's Kotlin filters have already stripped the generated
+    //                                  members from, so what is left is the constructor and, for
+    //                                  `ByteRange`, `length`.
+    //   `OkHttpProxyUpstream$open$1`   LINE 4/4 -- the stream wrapper whose `close` closes the
+    //                                  OkHttp response as well, which is what returns the
+    //                                  connection to the pool. Its own class because it is an
+    //                                  object expression, and gated because a `close` override
+    //                                  nothing ever calls is a leaked connection per track.
+    //
+    // Falsified: withholding `ProxyRegistryTest`'s `a revoked token resolves to nothing...` and
+    // `revokeAll empties the registry` drops `ProxyRegistry` to **12/14 = 0.8571** and this rule
+    // fires.
+    //
+    // The remaining classes in this package carry **no counter of either kind** -- `RangeRequest`
+    // and `RangeResolution` (interfaces), their four `data object` members, `ProxyUpstream`
+    // (an interface) and both `Companion`s (`const val`s only). They are deliberately absent from
+    // both rules rather than listed as ride-alongs: `warnUngatedClasses` skips a class with zero
+    // BRANCH and zero LINE counters by construction, so listing them would add names that gate
+    // nothing and silence nothing.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.proxy.ProxyRegistry",
+        "app.muplay.cast.proxy.PublishedMedia",
+        "app.muplay.cast.proxy.ProxyRequest",
+        "app.muplay.cast.proxy.ByteRange",
+        "app.muplay.cast.proxy.RangeRequest*Bounded",
+        "app.muplay.cast.proxy.RangeRequest*Suffix",
+        "app.muplay.cast.proxy.RangeResolution*Partial",
+        "app.muplay.cast.proxy.OkHttpProxyUpstream*open*1",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
@@ -3394,82 +3489,89 @@ subprojects {
   }
 }
 
-// `:core:network`'s `LiveNavidromeTest` needs a real Navidrome container listening on
+// `:core:network`'s `LiveNavidromeTest` and `:core:cast`'s `LiveNavidromeProxyTest` need a real
+// Navidrome container listening on
 // localhost:4533 (see ci/navidrome.compose.yml, ci/configure-libraries.sh) — not true for a plain
 // `./gradlew test` in a developer's inner loop, nor for this repo's static-analysis or
 // unit+integration CI jobs. `Testing.kt`'s `configureJUnit5` already excludes anything tagged
 // `"live"` from every ordinary `Test` task project-wide; this is the one task that does the
-// opposite — includes *only* `"live"`-tagged tests — and it exists solely in `:core:network`,
-// since that is the only module with any such test today. Registered here, not in
+// opposite — includes *only* `"live"`-tagged tests — and it is registered for exactly the
+// modules that have such a test. Registered here, not in
 // `core/network/build.gradle.kts`: every module build file contains only `plugins {}` and
 // `dependencies {}` (`ConventionTest` enforces it), so a one-off task like this belongs at the
 // root, next to the coverage floor table it is policy alongside, not mechanism inside
 // build-logic (nothing here is reusable machinery a second module would ever need).
 //
+// A list rather than one `project(...)` block: `:core:cast` joined in Plan 6 Task 6. Both are
+// `muplay.jvm.library` modules, so both have a plain `test` source set with a runtime classpath —
+// which is the same fact that makes `:core:cast` a JVM module in the first place.
+//
 // `LIVE_NAVIDROME_TEST_TASK_NAME` (`Testing.kt`) is the shared constant that keeps this task's own
 // name and `configureJUnit5`'s carve-out for it from drifting apart — see that constant's own doc
 // for the exact failure a plain string literal on each side already caused once.
-project(":core:network") {
-  // `afterEvaluate`, not a bare `project(...) { }` body: this root script's own evaluation runs
-  // before `:core:network`'s build.gradle.kts applies `muplay.jvm.library` (the plugin that
-  // creates the `SourceSetContainer` extension `the<SourceSetContainer>()` below reads) —
-  // confirmed empirically: without `afterEvaluate`, this failed project configuration outright
-  // with "Extension of type 'SourceSetContainer' does not exist", because `project(path) { }`
-  // configures its target eagerly, as part of *this* script's own evaluation, not deferred until
-  // the target project's own build script has run.
-  afterEvaluate {
-    // Captured *here*, at the `afterEvaluate` level, not inside `tasks.register<Test>(...) { }`
-    // below: `the<T>()` resolves against its receiver's own extensions, and a `Task` is itself
-    // `ExtensionAware` (that is how `JacocoTaskExtension` gets attached to it) — calling
-    // `the<SourceSetContainer>()` *inside* the task's configuration lambda resolves it against
-    // that lambda's implicit receiver, the task, not this project, and fails the same way (also
-    // confirmed empirically: the task's own registered extensions at that point were exactly
-    // `[ExtraPropertiesExtension, JacocoTaskExtension]` — never `SourceSetContainer` — because a
-    // `Test` task has no such extension of its own; only the project does).
-    val testSourceSet = the<SourceSetContainer>()["test"]
+listOf(":core:network", ":core:cast").forEach { livePath ->
+  project(livePath) {
+    // `afterEvaluate`, not a bare `project(...) { }` body: this root script's own evaluation runs
+    // before `:core:network`'s build.gradle.kts applies `muplay.jvm.library` (the plugin that
+    // creates the `SourceSetContainer` extension `the<SourceSetContainer>()` below reads) —
+    // confirmed empirically: without `afterEvaluate`, this failed project configuration outright
+    // with "Extension of type 'SourceSetContainer' does not exist", because `project(path) { }`
+    // configures its target eagerly, as part of *this* script's own evaluation, not deferred until
+    // the target project's own build script has run.
+    afterEvaluate {
+      // Captured *here*, at the `afterEvaluate` level, not inside `tasks.register<Test>(...) { }`
+      // below: `the<T>()` resolves against its receiver's own extensions, and a `Task` is itself
+      // `ExtensionAware` (that is how `JacocoTaskExtension` gets attached to it) — calling
+      // `the<SourceSetContainer>()` *inside* the task's configuration lambda resolves it against
+      // that lambda's implicit receiver, the task, not this project, and fails the same way (also
+      // confirmed empirically: the task's own registered extensions at that point were exactly
+      // `[ExtraPropertiesExtension, JacocoTaskExtension]` — never `SourceSetContainer` — because a
+      // `Test` task has no such extension of its own; only the project does).
+      val testSourceSet = the<SourceSetContainer>()["test"]
 
-    tasks.register<Test>(LIVE_NAVIDROME_TEST_TASK_NAME) {
-      group = "verification"
-      description = "Runs LiveNavidromeTest (the \"live\"-tagged tests only) against a real " +
-        "Navidrome container on localhost:4533 -- see ci/navidrome.compose.yml. Run by the " +
-        "live-navidrome job in .github/workflows/pr.yml, after that job starts the container " +
-        "and runs ci/configure-libraries.sh."
+      tasks.register<Test>(LIVE_NAVIDROME_TEST_TASK_NAME) {
+        group = "verification"
+        description = "Runs the \"live\"-tagged tests in $livePath (and only those) against a " +
+          "real Navidrome container on localhost:4533 -- see ci/navidrome.compose.yml. Run by the " +
+          "live-navidrome job in .github/workflows/pr.yml, after that job starts the container " +
+          "and runs ci/configure-libraries.sh."
 
-      testClassesDirs = testSourceSet.output.classesDirs
-      classpath = testSourceSet.runtimeClasspath
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
 
-      useJUnitPlatform {
-        includeTags("live")
+        useJUnitPlatform {
+          includeTags("live")
+        }
+
+        // The eleventh silent gate, and the one guarding the claim the spec singles out ("anything
+        // whose subject is Navidrome's behaviour is tested against a pinned Navidrome container").
+        // Without this the gate passes with **no Navidrome at all**. Measured, container stopped and
+        // port dead:
+        //
+        //     ./gradlew :core:network:liveNavidromeTest                 -> UP-TO-DATE, BUILD SUCCESSFUL
+        //     (delete this task's outputs) ... --build-cache            -> FROM-CACHE, BUILD SUCCESSFUL
+        //
+        // The second is the CI-reachable one: `gradle.properties` sets `org.gradle.caching=true`,
+        // `gradle/actions/setup-gradle@v6` restores the Gradle user home (which holds
+        // `caches/build-cache-1`) between runs, and `Test` is a `@CacheableTask` -- so any later run
+        // whose `:core:network` inputs are unchanged (a docs-only PR, a workflow-only PR, a re-run of
+        // a flaked job) restores this task and never opens a socket, while `Start Navidrome` and
+        // `Configure libraries` above it become decoration.
+        //
+        // A task whose *whole subject* is a live server has no legitimate up-to-date or cached
+        // answer: the inputs Gradle hashes say nothing about whether the container is running or what
+        // it contains. So this task always executes. Verified after adding this line, container still
+        // stopped: `3 tests completed, 3 failed`, BUILD FAILED, under both invocations above.
+        //
+        // Not the same case as the `onlyIf` caveat on the JaCoCo tasks elsewhere in this file: this
+        // is a plain `Test` task with no `onlyIf`, so nothing short-circuits its actions.
+        //
+        // `cacheIf { false }` as well as `upToDateWhen { false }`, rather than trusting one to imply
+        // the other -- they are separate decisions in Gradle (is this task up to date; may its result
+        // be stored/loaded) and the failure this closes came from the second one.
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
       }
-
-      // The eleventh silent gate, and the one guarding the claim the spec singles out ("anything
-      // whose subject is Navidrome's behaviour is tested against a pinned Navidrome container").
-      // Without this the gate passes with **no Navidrome at all**. Measured, container stopped and
-      // port dead:
-      //
-      //     ./gradlew :core:network:liveNavidromeTest                 -> UP-TO-DATE, BUILD SUCCESSFUL
-      //     (delete this task's outputs) ... --build-cache            -> FROM-CACHE, BUILD SUCCESSFUL
-      //
-      // The second is the CI-reachable one: `gradle.properties` sets `org.gradle.caching=true`,
-      // `gradle/actions/setup-gradle@v6` restores the Gradle user home (which holds
-      // `caches/build-cache-1`) between runs, and `Test` is a `@CacheableTask` -- so any later run
-      // whose `:core:network` inputs are unchanged (a docs-only PR, a workflow-only PR, a re-run of
-      // a flaked job) restores this task and never opens a socket, while `Start Navidrome` and
-      // `Configure libraries` above it become decoration.
-      //
-      // A task whose *whole subject* is a live server has no legitimate up-to-date or cached
-      // answer: the inputs Gradle hashes say nothing about whether the container is running or what
-      // it contains. So this task always executes. Verified after adding this line, container still
-      // stopped: `3 tests completed, 3 failed`, BUILD FAILED, under both invocations above.
-      //
-      // Not the same case as the `onlyIf` caveat on the JaCoCo tasks elsewhere in this file: this
-      // is a plain `Test` task with no `onlyIf`, so nothing short-circuits its actions.
-      //
-      // `cacheIf { false }` as well as `upToDateWhen { false }`, rather than trusting one to imply
-      // the other -- they are separate decisions in Gradle (is this task up to date; may its result
-      // be stored/loaded) and the failure this closes came from the second one.
-      outputs.upToDateWhen { false }
-      outputs.cacheIf { false }
     }
   }
 }

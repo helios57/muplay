@@ -180,7 +180,10 @@ jobs:
         run: ./ci/configure-libraries.sh
 
       - name: Live Navidrome tests
-        run: ./gradlew :core:network:liveNavidromeTest
+        # `:core:cast` joined in Plan 6 Task 6: `LiveNavidromeProxyTest` puts the whole media proxy
+        # in front of this same container and asserts the relayed bytes are byte-identical to a
+        # direct fetch, which is the one assertion a fake upstream cannot make.
+        run: ./gradlew :core:network:liveNavidromeTest :core:cast:liveNavidromeTest
 
       - name: Stop Navidrome
         if: always()
@@ -191,7 +194,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: live-navidrome-reports
-          path: core/network/build/reports/tests/liveNavidromeTest/**
+          path: |
+            core/network/build/reports/tests/liveNavidromeTest/**
+            core/cast/build/reports/tests/liveNavidromeTest/**
 
   # "Contract": this job proves the *oracle* is sound -- `OpenApiFixtureValidator` and its own test
   # suite, both of which live entirely in :core:testing, over inline JSON of its own. Isolated from
