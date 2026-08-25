@@ -8,6 +8,7 @@ import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
@@ -166,6 +167,42 @@ class DataModuleTest {
     // the real production provider actually runs and reaches a real SubsonicSourceProvider,
     // rather than merely type-checking the constructor call.
     assertThat(engine.syncIfStale()).isInstanceOf(SyncState.Failed::class.java)
+    credentialStore.clear()
+    file.delete()
+  }
+
+  /**
+   * F-2 in task-6-review.md: `theProvidedSyncEngineIsWiredToTheRealCollaborators` above saves no
+   * credentials on purpose and returns `Failed` before a single page is even requested, so it
+   * cannot observe `albumPageSize` at all -- and `SyncEngineTest`'s own constructor call was the
+   * *only* place in the whole repository that ever did, at exactly one value (1), never the
+   * production one `DataModule.provideSyncEngine` actually wires (`SubsonicClient.
+   * MAX_ALBUM_LIST_PAGE`, 500). This signs in for real and reads the size that reached the fake.
+   */
+  @Test
+  fun theProvidedSyncEngineRequestsTheProductionPageSize() = runTest {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val file = File(context.filesDir, "data-module-test-sync-engine-pagesize.preferences_pb")
+    file.delete()
+    val credentialStore = CredentialStore(PreferenceDataStoreFactory.create { file })
+    credentialStore.save(SubsonicCredentials("http://localhost:4533", "admin", "testpass"))
+    val source = FakeSubsonicSource().apply {
+      musicFolders = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+      albumsByLibrary = mapOf(1 to emptyList())
+    }
+    val sourceProvider = SubsonicSourceProvider(credentialStore, SubsonicSourceFactory { source })
+    val libraryRepository = LibraryRepository(DataModule.provideLibraryDao(database), sourceProvider)
+
+    val engine = DataModule.provideSyncEngine(
+      libraryRepository = libraryRepository,
+      browseDao = DataModule.provideBrowseDao(database),
+      watermarkDao = DataModule.provideSyncWatermarkDao(database),
+      sourceProvider = sourceProvider,
+    )
+    engine.syncIfStale()
+
+    assertThat(source.callLog)
+      .contains("getAlbumList2(1, offset=0, size=${SubsonicClient.MAX_ALBUM_LIST_PAGE})")
     credentialStore.clear()
     file.delete()
   }

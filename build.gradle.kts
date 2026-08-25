@@ -558,12 +558,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.database.CredentialStore"),
       requiresInstrumentedData = true,
     ),
-    // LibraryRepository's only author-written branch, confirmed at the method level (not
-    // assumed): both of the 2 branches this measures are JaCoCo's own instrumentation of
-    // `hasUnassignedLibraries`'s `.isNotEmpty()` boolean check (`unassignedLibrariesAreReported...`
-    // exercises it both true and false). Every other method here is either a straight-line
-    // suspend delegation to `LibraryDao` or the `Flow.map` in `libraries`, whose own lambda
-    // classes are covered by the LINE catch-all below, not this rule. Measured 2/2.
+    // LibraryRepository's author-written branches. Originally just `hasUnassignedLibraries`'s
+    // `.isNotEmpty()` boolean check (2/2, `unassignedLibrariesAreReported...` exercises it both
+    // true and false); Task 6's fix round 1 (task-6-review.md F-1) added a second,
+    // `refreshFromServer`'s `folders.isEmpty() && libraryDao.allIds().isNotEmpty()` guard against
+    // an empty `getMusicFolders` response deleting every already-tagged library --
+    // `refreshingWithNoLibrariesReportedRefusesToDeleteTheOnesAlreadyTagged` and
+    // `refreshingWithNoLibrariesOnAFreshMirrorSucceeds` cover both operands both ways. Every other
+    // method here is either a straight-line suspend delegation to `LibraryDao` or the `Flow.map`
+    // in `libraries`, whose own lambda classes are covered by the LINE catch-all below, not this
+    // rule. Measured 8/8 (JaCoCo counts each `&&` operand as its own branch pair).
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -614,17 +618,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
     // `SyncEngine`'s own author-written conditionals: the `SyncDecision` `when`, the null check on
-    // an absent watermark, and `fetchAllAlbums`'s paging loop (the short-page early return and the
-    // `MAX_PAGES` bound). Room and SQLite make this instrumented-only. Measured 12/12 --
+    // an absent watermark, `fetchAllAlbums`'s paging loop (the short-page early return and the
+    // `MAX_PAGES` bound), and -- as of Task 6's fix round 1 (task-6-review.md F-3) -- the
+    // constructor's `require(albumPageSize in 1..SubsonicClient.MAX_ALBUM_LIST_PAGE)` guard.
+    // Room and SQLite make this instrumented-only. Originally 12/12 --
     // `aServerWithNoLastScanReconcilesButStoresNoWatermark` (the null-watermark branch, previously
     // uncovered: `watermark?.let { watermarkDao.store(it) }` collapsed to
     // `watermarkDao.store(watermark!!)` passed every other test in this file) and
     // `aServerThatNeverSendsAShortPageFailsAtTheBoundRatherThanHanging` (the `MAX_PAGES` exit,
     // genuinely reached with `SyncEngine.MAX_PAGES` fake in-memory calls, not asserted on the
-    // constant) are what closed the last two branches. `SyncEngine*` (not the bare name): the four
-    // suspend-body continuation classes it compiles to carry zero counters of any kind here (not
-    // the partial 0.50-0.67 the `Flow.map`/suspend families below measure), so they ride along for
-    // free rather than needing their own lower-floor rule.
+    // constant) were what closed the original two gaps -- now 18/18, `constructingWithAPageSize
+    // OutsideTheClientsClampFailsLoudly` exercising the new `require`'s two ends. `SyncEngine*`
+    // (not the bare name): the four suspend-body continuation classes it compiles to carry zero
+    // counters of any kind here (not the partial 0.50-0.67 the `Flow.map`/suspend families below
+    // measure), so they ride along for free rather than needing their own lower-floor rule.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -644,19 +651,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // author-written conditional, so a BRANCH rule would match only zero-total counters and pass
     // silently at every minimum through JaCoCo's isNaN branch.
     //
-    // Task 6 adds four more, all instrumented-only for the same reason (Room/SQLite): `SyncEngine`
-    // itself (dual-listed for LINE alongside its own BRANCH rule above, 42/44 measured -- the two
-    // misses are both inside the `catch (e: CancellationException) { throw e }` clause, never
-    // exercised because nothing in this suite cancels the engine's own coroutine; a `BRANCH` rule
-    // does not see this gap at all, since a `catch` clause is an exception-table entry rather than
-    // a conditional jump -- it costs nothing to leave two genuinely-uncovered LINEs here rather
-    // than manufacture a cancellation test only to move a number);
+    // Task 6 adds five more, all instrumented-only for the same reason (Room/SQLite): `SyncEngine`
+    // itself (dual-listed for LINE alongside its own BRANCH rule above -- originally 42/44, the
+    // two misses both inside `catch (e: CancellationException) { throw e }`, never exercised
+    // because nothing in the suite cancelled the engine's own coroutine; fix round 1's F-6 closed
+    // that with `cancellationPropagatesRatherThanBecomingAFailure`, now 48/48);
     // `SyncWatermarkEntity` (5/5, a plain `data class` like the three mirror entities, but reached
     // only through `SyncWatermarkDao.store` -- nothing JVM-side constructs it, confirmed with the
     // instrumented `.ec` physically absent); `SyncWatermarkDao` (2/2, its own `store` is the only
-    // author-written line, `read`/`clear`/`upsert` are Room-generated); and `SyncState*` (the
+    // author-written line, `read`/`clear`/`upsert` are Room-generated); `SyncState*` (the
     // wildcard for `Synced`/`Failed`, both 1/1 -- `UpToDate`/`ScanInProgress` are zero-counter
-    // `data object`s that ride along the same way `SyncDecision`'s own sealed subtypes do above).
+    // `data object`s that ride along the same way `SyncDecision`'s own sealed subtypes do above);
+    // and, new in fix round 1, `EmptyLibraryListException` (2/2 -- the same shape as
+    // `NotConfiguredException` alongside it, a typed exception with no branches of its own,
+    // constructed by `LibraryRepository.refreshFromServer`'s F-1 guard and read back by both
+    // `LibraryRepositoryTest` and `SyncEngineTest`).
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -677,6 +686,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.SubsonicSourceProvider",
         "app.muplay.database.BrowseRepository",
         "app.muplay.database.NotConfiguredException",
+        "app.muplay.database.EmptyLibraryListException",
         "app.muplay.database.SyncEngine*",
         "app.muplay.database.SyncState*",
       ),

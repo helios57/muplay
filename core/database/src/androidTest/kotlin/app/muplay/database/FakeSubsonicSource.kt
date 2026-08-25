@@ -37,10 +37,21 @@ class FakeSubsonicSource : SubsonicSource {
   /** After this many calls to any method, every further call throws. `null` disables it. */
   var failAfterCalls: Int? = null
 
+  /**
+   * When set, every further call throws exactly this -- unlike [failAfterCalls] (a forced
+   * `IOException`, standing in for a network failure), this exists so a test can throw a specific
+   * type, most importantly a real `CancellationException` (task-6-review.md F-6): no other path
+   * in this fake can produce one, and `SyncEngine.syncIfStale`'s own cancellation clause needs a
+   * genuine instance to prove it rethrows rather than being silently swallowed by the generic
+   * `catch (e: Exception)` beneath it.
+   */
+  var failWith: Throwable? = null
+
   val callLog: MutableList<String> = mutableListOf()
 
   private fun record(call: String) {
     callLog += call
+    failWith?.let { throw it }
     val limit = failAfterCalls
     if (limit != null && callLog.size > limit) {
       throw java.io.IOException("FakeSubsonicSource: forced failure after $limit calls")
@@ -68,7 +79,7 @@ class FakeSubsonicSource : SubsonicSource {
     size: Int,
     offset: Int,
   ): List<Album> {
-    record("getAlbumList2($musicFolderId, offset=$offset)")
+    record("getAlbumList2($musicFolderId, offset=$offset, size=$size)")
     return albumsByLibrary[musicFolderId].orEmpty().drop(offset).take(size)
   }
 

@@ -35,9 +35,19 @@ class LibraryRepository @Inject constructor(
    * Re-reads `getMusicFolders` and merges it into the mirror: names are updated, new libraries
    * arrive [LibraryRole.UNASSIGNED], libraries the server no longer reports are removed, and the
    * roles the user already chose are untouched.
+   *
+   * @throws EmptyLibraryListException if the server reports **no** libraries at all while the
+   * local mirror already has at least one. See that exception's own kdoc for why this is a
+   * permanent refusal rather than a transient-error heuristic: `getMusicFolders` maps an absent
+   * payload to an empty list rather than throwing, so this is the one place in the merge that can
+   * still catch the ambiguity before [LibraryDao.mergeFromServer]'s delete makes it irreversible.
+   * A first-ever sync (nothing known locally yet) is unaffected -- there is nothing to protect.
    */
   suspend fun refreshFromServer() {
     val folders = sourceProvider.current().getMusicFolders()
+    if (folders.isEmpty() && libraryDao.allIds().isNotEmpty()) {
+      throw EmptyLibraryListException()
+    }
     libraryDao.mergeFromServer(
       folders.map { LibraryEntity(musicFolderId = it.id, name = it.name, role = it.role) },
     )

@@ -12,11 +12,14 @@ import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
+import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -340,8 +343,123 @@ class SyncEngineTest {
 
     // Library 1 reconciles first (ascending musicFolderId) and library 2's insert of the same
     // album id then replaces library 1's row outright -- library 1 silently loses the album its
-    // own getAlbumList2 call actually returned.
+    // own getAlbumList2 call actually returned. Note (task-6-review.md, "minor notes"):
+    // `MirrorReplacement` itself does not see this -- it is measured inside library 1's own
+    // transaction, before library 2 ever runs, so `SyncState.Synced.libraries[1]` still reports
+    // `albumsAfter = 1` for a library that ends this test with zero rows.
     assertThat(db.browseDao().observeAlbums(1).first()).isEmpty()
     assertThat(db.browseDao().observeAlbums(2).first().map { it.name }).containsExactly("Book Copy")
+  }
+
+  /**
+   * F-1 in task-6-review.md, the full chain through `SyncEngine`. Before the fix, an empty
+   * `getMusicFolders` response reached `LibraryRepository.refreshFromServer` unguarded, deleted
+   * every library row via `mergeFromServer`'s `DELETE FROM libraries WHERE musicFolderId NOT IN
+   * ()` -- the user's irreplaceable [LibraryRole] tags with it, since the (now zero-iteration)
+   * reconcile loop never threw -- and then still advanced the watermark, reporting the wipe as a
+   * successful sync. `refreshFromServer` now refuses that merge (`EmptyLibraryListException`);
+   * this proves the refusal reaches `syncIfStale` as `SyncState.Failed` with the roles, the
+   * libraries, the mirrored albums, and the watermark all left exactly as they were.
+   */
+  @Test
+  fun anEmptyMusicFolderListNeverDestroysTaggedLibrariesOrAdvancesTheWatermark() = runTest {
+    engine.syncIfStale()
+    db.libraryDao().setRole(1, LibraryRole.MUSIC)
+    db.libraryDao().setRole(2, LibraryRole.AUDIOBOOKS)
+    val watermarkBefore = db.syncWatermarkDao().read()
+
+    source.musicFolders = emptyList()
+    source.scanStatus = source.scanStatus.copy(lastScan = "s2")
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Failed::class.java)
+    assertThat((state as SyncState.Failed).cause).isInstanceOf(EmptyLibraryListException::class.java)
+    assertThat(db.libraryDao().find(1)!!.role).isEqualTo(LibraryRole.MUSIC)
+    assertThat(db.libraryDao().find(2)!!.role).isEqualTo(LibraryRole.AUDIOBOOKS)
+    assertThat(db.libraryDao().allIds()).containsExactlyInAnyOrder(1, 2)
+    assertThat(db.browseDao().observeAlbums(1).first()).isNotEmpty
+    assertThat(db.syncWatermarkDao().read()).isEqualTo(watermarkBefore)
+  }
+
+  /**
+   * F-5 in task-6-review.md: `aFailureMidReconcileDoesNotAdvanceTheWatermark` above fails inside
+   * library 1's *own* paging, before `replaceLibraryContents` is ever called for it -- so it
+   * cannot discriminate "the watermark advances only after *every* library's transaction has
+   * committed" (the brief's own words for the invariant this project calls the single worst
+   * outcome available) from the coarser "the watermark advances only after the *first* commit".
+   * Moving `watermarkDao.store(it)` from after the loop to the end of each iteration passed all
+   * 14 tests in this file before this one was added -- verified live below, not assumed.
+   *
+   * `failAfterCalls = 8` lands the failure inside library 2's own paging: calls 1-2 are
+   * `getScanStatus`/`getMusicFolders`, 3-5 page library 1 to its short (terminal) page, 6-7 fetch
+   * its two albums' songs, library 1's `replaceLibraryContents` commits between calls 7 and 8, and
+   * 8 opens library 2's own paging -- after which the fake's `failAfterCalls` throws.
+   */
+  @Test
+  fun aFailureAfterOneLibraryCommitsStillDoesNotAdvanceTheWatermark() = runTest {
+    source.failAfterCalls = 8
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Failed::class.java)
+    assertThat(db.syncWatermarkDao().read()).isNull()
+    assertThat(db.browseDao().observeAlbums(1).first()).hasSize(2)
+    assertThat(db.browseDao().observeAlbums(2).first()).isEmpty()
+  }
+
+  /**
+   * F-3 in task-6-review.md: `fetchAllAlbums` decides "short page" by comparing the batch it got
+   * back against `albumPageSize`, but `SubsonicClient.getAlbumList2` silently clamps whatever it
+   * is sent to `1..MAX_ALBUM_LIST_PAGE`. Above the clamp, a full page from the server (500 rows)
+   * always looks "short" against the uncomparable `albumPageSize`, so every library is silently
+   * truncated to 500 albums and the reconcile deletes the rest; below it (0 or negative), no page
+   * is ever short and every sync fails at `MAX_PAGES` after 200 round trips. `SyncEngine`'s
+   * constructor now rejects both ends before either failure mode can happen at runtime.
+   */
+  @Test
+  fun constructingWithAPageSizeOutsideTheClientsClampFailsLoudly() {
+    val sourceProvider = SubsonicSourceProvider(credentialStore, SubsonicSourceFactory { source })
+    val libraryRepository = LibraryRepository(db.libraryDao(), sourceProvider)
+
+    assertThatThrownBy {
+      SyncEngine(
+        libraryRepository = libraryRepository,
+        browseDao = db.browseDao(),
+        watermarkDao = db.syncWatermarkDao(),
+        sourceProvider = sourceProvider,
+        albumPageSize = SubsonicClient.MAX_ALBUM_LIST_PAGE + 1,
+      )
+    }.isInstanceOf(IllegalArgumentException::class.java)
+
+    assertThatThrownBy {
+      SyncEngine(
+        libraryRepository = libraryRepository,
+        browseDao = db.browseDao(),
+        watermarkDao = db.syncWatermarkDao(),
+        sourceProvider = sourceProvider,
+        albumPageSize = 0,
+      )
+    }.isInstanceOf(IllegalArgumentException::class.java)
+  }
+
+  /**
+   * F-6 in task-6-review.md: `catch (e: CancellationException) { throw e }` is correct by
+   * inspection, but `java.util.concurrent.CancellationException` **extends
+   * `IllegalStateException`**, so deleting that clause is caught silently by the generic
+   * `catch (e: Exception)` below it and turns a cancelled coroutine into `SyncState.Failed` --
+   * exactly the contract `syncIfStale`'s own kdoc promises will not happen, with nothing here to
+   * notice the regression. `failWith` on the fake makes this a real cancellation, not a stand-in.
+   */
+  @Test
+  fun cancellationPropagatesRatherThanBecomingAFailure() = runTest {
+    source.failWith = CancellationException("test cancellation")
+
+    // `runCatching`, not `assertThatThrownBy`: the same reason `LibraryRepositoryTest` gives for
+    // its own suspend-call exception assertions -- this stays on the test coroutine and captures
+    // the exception as a `Result` instead of letting it cancel `runTest`'s own scope.
+    val thrown = runCatching { engine.syncIfStale() }.exceptionOrNull()
+
+    assertThat(thrown).isInstanceOf(CancellationException::class.java)
   }
 }

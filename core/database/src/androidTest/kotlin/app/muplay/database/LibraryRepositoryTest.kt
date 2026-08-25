@@ -85,6 +85,49 @@ class LibraryRepositoryTest {
     assertThat(thrown).isInstanceOf(NotConfiguredException::class.java)
   }
 
+  /**
+   * F-1 in task-6-review.md: `SubsonicClient.getMusicFolders` maps an absent payload to an empty
+   * list, not an exception (unlike `getScanStatus`/`getAlbum`), so a `refreshFromServer` that
+   * trusted every fetch the way the album layer does would delete every library row -- and the
+   * user's irreplaceable [LibraryRole] tags with it -- on the same kind of malformed-but-200
+   * response every other endpoint here turns into a loud failure instead. This pins the refusal.
+   */
+  @Test
+  fun refreshingWithNoLibrariesReportedRefusesToDeleteTheOnesAlreadyTagged() = runTest {
+    signIn()
+    source.musicFolders = listOf(
+      MusicLibrary(1, "Music", LibraryRole.UNASSIGNED),
+      MusicLibrary(2, "Audiobooks", LibraryRole.UNASSIGNED),
+    )
+    repository.refreshFromServer()
+    repository.setRole(1, LibraryRole.MUSIC)
+    repository.setRole(2, LibraryRole.AUDIOBOOKS)
+
+    source.musicFolders = emptyList()
+    val thrown = runCatching { repository.refreshFromServer() }.exceptionOrNull()
+
+    assertThat(thrown).isInstanceOf(EmptyLibraryListException::class.java)
+    // Not merely "a different exception wasn't thrown" -- the roles the user chose are still
+    // there, on both libraries, not merely on one of them.
+    assertThat(repository.libraries.first().map { it.role })
+      .containsExactlyInAnyOrder(LibraryRole.MUSIC, LibraryRole.AUDIOBOOKS)
+    assertThat(repository.allIds()).containsExactlyInAnyOrder(1, 2)
+  }
+
+  /**
+   * The mirror image: a server that has never had any libraries locally (the first-ever sync)
+   * must not be refused just because it currently reports none -- there is nothing to protect.
+   */
+  @Test
+  fun refreshingWithNoLibrariesOnAFreshMirrorSucceeds() = runTest {
+    signIn()
+    source.musicFolders = emptyList()
+
+    repository.refreshFromServer()
+
+    assertThat(repository.allIds()).isEmpty()
+  }
+
   @Test
   fun refreshingStoresEveryLibraryTheServerReports() = runTest {
     signIn()
