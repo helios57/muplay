@@ -141,6 +141,9 @@ CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
 CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
 CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
 CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
+PLAYER_STATE = "feature/player/src/main/kotlin/app/muplay/player/PlayerUiState.kt"
+PLAYER_VM = "feature/player/src/main/kotlin/app/muplay/player/PlayerViewModel.kt"
+PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/app/muplay/media/PlaybackLauncher.kt"
 BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
@@ -1011,6 +1014,75 @@ PROBES = [
      '  LIDARR("Lidarr"),\n  BINDERY("Bindery"),',
      '  BINDERY("Bindery"),\n  LIDARR("Lidarr"),',
      "the service display names are the ones a user reads", 1),
+
+    # ---- Plan 3 Task 9: the player. -----------------------------------------------------------
+    # Everything below is a value a user meets on the first tap, and every one of them is on the
+    # JVM tier by construction: the state mapping is a pure top-level function, `PlayerViewModel`
+    # is built over a `PlaybackControls` seam, and `launchQueue` was split out of
+    # `PlaybackLauncher` precisely so the queue decision does not need a device.
+
+    # The seek bar's thumb following the player instead of the finger. Obvious on a device --
+    # the thumb springs back every 250ms and the bar cannot be used -- and invisible in a
+    # screenshot, which is exactly the kind of defect a probe list is for.
+    ("player/scrub-position-ignored", PLAYER_STATE,
+     "displayPositionMs = scrubPositionMs ?: playback.positionMs,",
+     "displayPositionMs = playback.positionMs,",
+     "the displayed position is the scrub position while scrubbing", 5),
+    # ...and the flag that goes with it, which the screen reads to decide whether a drag is in
+    # progress at all.
+    ("player/is-scrubbing-constant", PLAYER_STATE,
+     "isScrubbing = scrubPositionMs != null,", "isScrubbing = false,",
+     "the displayed position is the scrub position while scrubbing", 3),
+    # The discriminator between "render this track" and "render nothing". Reading `title` instead
+    # of `mediaId` is the plausible slip -- both are null in NOTHING_PLAYING, so it passes every
+    # other case in the suite -- and it empties the player for any track whose server sent no
+    # title.
+    ("player/content-discriminator", PLAYER_STATE,
+     "if (playback.mediaId == null) {", "if (playback.title == null) {",
+     "the media id alone decides, not the metadata around it", 1),
+    # `Player.getDuration()` is a large negative until the extractor has read the container.
+    # Without the clamp that renders as "-9223372036854:775" on a lock screen.
+    ("player/duration-clamp", PLAYER_STATE,
+     "val totalSeconds = (millis.coerceAtLeast(0L)) / 1000",
+     "val totalSeconds = millis / 1000",
+     "an unknown duration formats as a placeholder rather than a negative time", 1),
+    # The play/pause button doing the opposite of what it says.
+    ("player/playpause-inverted", PLAYER_VM,
+     "if (controls.isPlaying()) controls.pause() else controls.play()",
+     "if (controls.isPlaying()) controls.play() else controls.pause()",
+     "play pause pauses a playing player", 3),
+    # A copy-paste swap between two one-line delegating methods: both run, both measure fully
+    # covered, and the transport buttons walk the queue backwards. This project records
+    # "argument passthrough on a delegating method" as its own defect class; this is its sibling.
+    ("player/next-is-previous", PLAYER_VM,
+     "viewModelScope.launch { controls.next() }",
+     "viewModelScope.launch { controls.previous() }",
+     "next and previous each ask for their own direction", 1),
+    # The seek target coming from somewhere other than the finger.
+    ("player/seek-target-constant", PLAYER_VM,
+     "controls.seekTo(target)", "controls.seekTo(0L)",
+     "committing a scrub seeks to where the finger stopped", 1),
+    # Without the connect, the screen renders "Nothing playing" forever while audio is audibly
+    # playing -- the state flow never starts.
+    ("player/never-connects", PLAYER_VM,
+     "viewModelScope.launch { controls.connect() }", "Unit",
+     "constructing the view model connects to the session", 1),
+    # Which item the queue starts on. Tapping track 7 and hearing track 1.
+    ("player/launch-start-index", PLAYBACK_LAUNCHER,
+     "PlaybackQueue.of(songs, startIndex.coerceIn(songs.indices))",
+     "PlaybackQueue.of(songs, 0)",
+     "the start index is the one the caller asked for", 2),
+    # The same value, one layer up, at each of the two screens that supply it. Both are here
+    # rather than one representative: they are separate code paths through separate view models,
+    # and the album one is the one a user meets on every album screen.
+    ("player/album-play-index", ALBUM_VM,
+     "viewModelScope.launch { source.play(content.songs, startIndex) }",
+     "viewModelScope.launch { source.play(content.songs, 0) }",
+     "playing a track launches this album's songs from that track", 2),
+    ("player/shuffle-play-index", LIBRARY_VM,
+     "viewModelScope.launch { source.play(content.shuffled, startIndex) }",
+     "viewModelScope.launch { source.play(content.shuffled, 0) }",
+     "playing a shuffled row launches the shuffle result from that row", 1),
 ]
 
 
@@ -1132,6 +1204,15 @@ JVM_TEST_RESULT_DIRS = {
     # Android type, which is exactly why the cleartext decision and the secret-stripping live in
     # this module rather than inside either service client.
     "integrations/core": "testDebugUnitTest",
+    # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
+    # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
+    # top-level function in its own file, and `PlayerViewModel` is constructed over a
+    # `PlaybackControls` seam, so neither needs a device. What is NOT reachable here is the
+    # module's Compose half -- 24 instrumented tests that compose the real screens -- so a mutation
+    # only those can catch (a swapped title/artist, a mini player that navigates when its own
+    # button is tapped) is recorded in task-9-report.md instead, the same way `LiveNavidromeTest`'s
+    # test-side probes already are.
+    "feature/player": "testDebugUnitTest",
 }
 
 
@@ -1189,7 +1270,7 @@ def run_suite():
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
-                    ":integrations:core:test"],
+                    ":integrations:core:test", ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)
