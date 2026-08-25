@@ -383,6 +383,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //                         different module's execution data and contributes nothing here --
     //                         the same trap `SubsonicCredentials` fell into below.
     //
+    //   `StreamFormat`         Plan 3 Task 1. Two hand-written branches, both of them decisions
+    //                         this project argues about in prose: `forSuffix`'s membership test
+    //                         (the "never Opus" rule, which `format=raw` makes impossible to
+    //                         enforce by omission) and `Mp3`'s `require` on the bitrate range.
+    //                         Listed here as a gated class, not as a ride-along, and matched by
+    //                         both an exact name and a `*` pattern because the branches live in
+    //                         the nested `Companion` and `Mp3` classes rather than in the
+    //                         interface itself.
+    //
     // Everything else in the list rides along, the same way `SetupUiState` rides along in
     // `:feature:setup`'s rule: they carry zero branches, so they cannot move any ratio (a
     // CLASS-element rule over a zero-counter class yields NaN, and JaCoCo reports no violation
@@ -414,6 +423,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.ScanStatus",
         "app.muplay.model.Song",
         "app.muplay.model.ShuffleResult",
+        "app.muplay.model.StreamFormat",
+        "app.muplay.model.StreamFormat*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
