@@ -111,7 +111,9 @@ class IntegrationsDataModuleTest {
    */
   @Test
   fun theProvidedRequestsDatabaseWritesToItsOwnFile() = runTest {
-    requestsDatabase.requestDao().upsert(
+    // Written through `provideMediaRequestDao`, not through `requestsDatabase.requestDao()`, so
+    // both shipped providers are on the path this assertion measures.
+    IntegrationsDataModule.provideMediaRequestDao(requestsDatabase).upsert(
       MediaRequestEntity(
         id = MARKER_REQUEST_ID, service = IntegrationService.LIDARR.name,
         externalId = "marker", title = MARKER_TITLE, subtitle = "s", remoteId = null,
@@ -124,6 +126,12 @@ class IntegrationsDataModuleTest {
 
     // The control first: the write really did land on disk, so the negative below is a negative
     // result rather than a search of a file that was never created.
+    // A control, not a claim: the row really is readable back through the database the DAO came
+    // from. No production mutation available to this module reddens it (there is no second
+    // database in `provideMediaRequestDao`'s scope to return a DAO from), and it is recorded as a
+    // control in task-3-report.md rather than left looking like a discriminating assertion.
+    assertThat(requestsDatabase.requestDao().find(MARKER_REQUEST_ID)?.title).isEqualTo(MARKER_TITLE)
+
     assertThat(requestsFile).describedAs("the integrations' own database file").exists()
     assertThat(onDisk(requestsFile)).contains(MARKER_TITLE)
     assertThat(requestsFile.path).isNotEqualTo(libraryFile.path)
@@ -144,25 +152,6 @@ class IntegrationsDataModuleTest {
     listOf(database, File(database.path + "-wal"))
       .filter { it.exists() }
       .joinToString("") { it.readBytes().toString(Charsets.ISO_8859_1) }
-
-  /**
-   * The DAO provider hands back **this** database's DAO, not one over a second instance.
-   *
-   * A `provideMediaRequestDao` that ignored its argument and opened its own database would satisfy
-   * "a DAO was returned"; it fails a row written through one handle and read through the other.
-   */
-  @Test
-  fun theProvidedDaoReadsTheDatabaseItWasBuiltFrom() = runTest {
-    IntegrationsDataModule.provideMediaRequestDao(requestsDatabase).upsert(
-      MediaRequestEntity(
-        id = MARKER_REQUEST_ID, service = IntegrationService.LIDARR.name,
-        externalId = "marker", title = MARKER_TITLE, subtitle = "s", remoteId = null,
-        status = "REQUESTED", statusDetail = null, requestedAtEpochMs = 1L, updatedAtEpochMs = 1L,
-      ),
-    )
-
-    assertThat(requestsDatabase.requestDao().find(MARKER_REQUEST_ID)?.title).isEqualTo(MARKER_TITLE)
-  }
 
   /**
    * The shipped clock reads the wall clock in UTC.
