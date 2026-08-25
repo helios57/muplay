@@ -155,7 +155,7 @@ class SsdpSearchTest {
       "St: urn:schemas-upnp-org:device:MediaRenderer:1\r\n" +
       "Usn: uuid:RINCON_ABC::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
 
-    val parsed = SsdpSearch.parseResponse(reply, InetAddress.getLoopbackAddress())!!
+    val parsed = SsdpSearch.parseResponse(reply, InetAddress.getByName("192.168.1.50"))!!
 
     assertThat(parsed.location.toString()).isEqualTo("http://192.168.1.50:1400/d.xml")
     assertThat(parsed.searchTarget).isEqualTo("urn:schemas-upnp-org:device:MediaRenderer:1")
@@ -252,9 +252,14 @@ class SsdpSearchTest {
     // A hostile or misconfigured device on the LAN can announce any LOCATION it likes, including
     // one on the public internet, and this client would then fetch it in cleartext. The address
     // rule from Task 1 applies to announcements as well as to connections.
+    //
+    // The datagram is made to arrive **from that same address**, so the source-match guard below
+    // is satisfied and the local-network rule is the only thing left that can refuse it. With a
+    // loopback source this test would go green with `isLocal` deleted, which is the shape the
+    // review this fix came from went looking for.
     val remote = reply(location = "http://93.184.216.34/desc.xml")
 
-    assertThat(SsdpSearch.parseResponse(remote, InetAddress.getLoopbackAddress())).isNull()
+    assertThat(SsdpSearch.parseResponse(remote, InetAddress.getByName("93.184.216.34"))).isNull()
   }
 
   /**
@@ -301,6 +306,9 @@ class SsdpSearchTest {
    * hermetically: `InetAddress.getByName` rejects it from the literal alone, in single-digit
    * milliseconds, with no DNS query. A hostname would have needed one, and a unit test that
    * queries DNS is a unit test that fails on an aeroplane.
+   *
+   * It is a literal, so it gets past the IP-literal guard below and reaches `getByName` -- which
+   * is what keeps that arm of the parser reachable at all.
    */
   @Test
   fun `a reply whose location names a host that cannot be resolved is discarded`() {
@@ -310,6 +318,71 @@ class SsdpSearchTest {
         InetAddress.getLoopbackAddress(),
       ),
     ).isNull()
+  }
+
+  /**
+   * **The denial of service, and the reason the host must be an IP literal.**
+   *
+   * The M-SEARCH is multicast, so every device on the segment learns the phone's source address
+   * and ephemeral port, and the reply socket is unconnected: anything on the segment can write to
+   * it, with no spoofing. A `LOCATION` naming a **host name** used to be handed to
+   * `InetAddress.getByName` from inside the transport's read loop -- so one datagram naming a
+   * label whose nameserver drops queries parked that loop for a resolver timeout, and N datagrams
+   * naming N distinct labels cost N of them. The listen window then closed with every real
+   * speaker's reply still unread, and the picker came up empty with nothing logged.
+   *
+   * `localhost` is the example on purpose, and it is the only one that makes this test
+   * **discriminate**: it resolves from the machine's own hosts file, with no network and no DNS
+   * server, to an address that is loopback and therefore local and therefore accepted. Without the
+   * literal guard this reply parses. With any off-machine name the parse would fail on a DNS
+   * lookup that returned nothing, and the test would pass on the defect -- which is exactly the
+   * vacuity this fix round exists to remove.
+   */
+  @Test
+  fun `a reply whose location names a host rather than an address is discarded without resolving it`() {
+    val named = reply(location = "http://localhost:1400/d.xml")
+
+    // Proof that the name really does resolve, and resolves somewhere this parser would otherwise
+    // accept: an assertion that "localhost" is unresolvable would make the test above vacuous.
+    assertThat(InetAddress.getByName("localhost").isLoopbackAddress).isTrue
+
+    assertThat(SsdpSearch.parseResponse(named, InetAddress.getLoopbackAddress())).isNull()
+  }
+
+  /**
+   * Beyond the plan, and the other half of the same fix: a device may announce **its own** address
+   * and nothing else.
+   *
+   * Every check before this one passes here -- `192.168.4.7` is a literal, it is on the local
+   * network, and the reply is otherwise perfect. What it is not is the address the datagram
+   * arrived from. Without the source-match guard, one datagram from anywhere on the segment
+   * redirects the description fetch at any host the sender likes, which is how an impostor gets
+   * this app to fetch a document of its choosing from a third party.
+   */
+  @Test
+  fun `a reply that announces an address it did not come from is discarded`() {
+    val elsewhere = reply(location = "http://192.168.4.7:1400/d.xml")
+
+    assertThat(SsdpSearch.parseResponse(elsewhere, InetAddress.getByName("192.168.4.8"))).isNull()
+    // The same datagram from the address it names is kept, so this pins the guard and not the
+    // address: one observation of a rule that refuses is not a rule.
+    assertThat(SsdpSearch.parseResponse(elsewhere, InetAddress.getByName("192.168.4.7"))).isNotNull
+  }
+
+  /**
+   * Beyond the plan: an IPv6 renderer. A literal in brackets is what `URI.getHost` hands back --
+   * brackets included -- so an IP-literal check that only knew dotted quads would refuse every
+   * IPv6 speaker on the network while every IPv4 test in this class stayed green.
+   */
+  @Test
+  fun `a reply whose location is an ipv6 literal is kept`() {
+    val parsed = SsdpSearch.parseResponse(
+      reply(location = "http://[::1]:1400/d.xml"),
+      InetAddress.getByName("[::1]"),
+    )
+
+    assertThat(parsed).isNotNull
+    assertThat(parsed!!.location.toString()).isEqualTo("http://[::1]:1400/d.xml")
   }
 
   @Test
