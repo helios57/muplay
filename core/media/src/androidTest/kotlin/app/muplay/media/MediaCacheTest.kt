@@ -213,6 +213,42 @@ class MediaCacheTest {
       .isEqualTo(otherAudio.size.toLong())
   }
 
+  /**
+   * A cache entry that cannot be read degrades to the network instead of killing the track.
+   *
+   * This test exists because a mutation sweep found the value it covers unobserved: deleting
+   * `.setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)` from `MuPlayDataSourceFactory` left
+   * all nineteen instrumented tests green. Without the flag, a damaged entry permanently breaks
+   * one specific song with no way for a user to tell why -- every retry reopens the same
+   * unreadable span -- and nothing in the build noticed.
+   *
+   * The damage is done the way real damage happens: the span files are removed from disk behind
+   * `SimpleCache`'s back, so its index still claims the resource is held while the bytes are
+   * gone. The recovery being asserted is a *second network fetch*, not merely "no exception":
+   * `server.requestCount` going from 1 to 2 is the only evidence that the player went upstream
+   * rather than, say, silently playing zero samples.
+   */
+  @Test
+  fun aCacheEntryThatCannotBeReadFallsBackToTheNetworkInsteadOfBreakingTheTrack() {
+    server.enqueue(audioResponse(audio))
+    playToEnd(server.url("/stream?id=track-1&s=111").toString(), cacheKey = "track-1")
+    assertThat(server.requestCount).isEqualTo(1)
+
+    val spans = cacheDir.walkTopDown().filter { it.isFile && it.name.endsWith(".exo") }.toList()
+    // Not vacuous: if `SimpleCache` ever stops using this file naming, deleting nothing would
+    // leave the cache perfectly healthy and this test would pass while measuring nothing at all.
+    assertThat(spans).isNotEmpty()
+    assertThat(spans).allSatisfy { assertThat(it.delete()).isTrue() }
+
+    server.enqueue(audioResponse(audio))
+    playToEnd(server.url("/stream?id=track-1&s=999").toString(), cacheKey = "track-1")
+
+    // Upstream was reached. Without the flag the player retries the same missing span until the
+    // load-error budget runs out and reports a playback error, which `playToEnd` surfaces as a
+    // failed wait.
+    assertThat(server.requestCount).isEqualTo(2)
+  }
+
   @Test
   fun theCachedBytesOnDiskAreTheWholeTrack() {
     server.enqueue(audioResponse(audio))
