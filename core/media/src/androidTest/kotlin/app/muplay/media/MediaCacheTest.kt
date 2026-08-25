@@ -12,6 +12,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.media.di.MediaCacheModule
+import app.muplay.model.Song
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
@@ -143,6 +144,46 @@ class MediaCacheTest {
       .describedAs("MissingCacheKeyException in %s", chain.map { "${'$'}{it.javaClass.name}: ${'$'}{it.message}" })
       .isNotEmpty()
     assertThat(cache.keys).isEmpty()
+  }
+
+  /**
+   * The key [MediaItems] sets is the key the cache **files under**.
+   *
+   * Task 4 could only observe `setCustomCacheKey` at one layer -- `MediaItemsTest` asserts the
+   * value sitting on the built `MediaItem` -- because `TrackIdCacheKeyFactory` and this file did
+   * not exist on its branch. That is the classic split this project tracks by name: "the key is
+   * set here" and "the key that is set is the key the cache reads" are different facts, and the
+   * first one alone is satisfied by a cache that never consults it.
+   *
+   * `containsExactly` rather than `contains`, deliberately: a cache that filed the item under
+   * *both* the song id and the URL -- which is what a second, URL-derived write would look like --
+   * passes `contains` and fails this.
+   */
+  @Test
+  fun theCustomCacheKeyMediaItemsSetsIsTheKeyTheCacheFilesUnder() {
+    server.enqueue(audioResponse(audio))
+    val song = Song(
+      id = "song-1",
+      libraryId = 1,
+      title = "Track 1",
+      albumId = null,
+      albumName = null,
+      artistId = null,
+      artistName = null,
+      trackNumber = null,
+      discNumber = null,
+      durationSeconds = 5,
+      suffix = "mp3",
+      coverArtId = null,
+    )
+    // A URL shaped like the real thing: `SubsonicClient.streamUrl` stamps a fresh `s` salt on
+    // every call, so the URI is exactly the thing that must not become the key.
+    val streamUri = server.url("/rest/stream?id=song-1&t=aaa&s=111").toString()
+
+    playItemToEnd(MediaItems.of(song, streamUri, artworkUri = null))
+
+    assertThat(cache.keys).containsExactly(song.id)
+    assertThat(cache.getCachedBytes(song.id, 0L, Long.MAX_VALUE)).isEqualTo(audio.size.toLong())
   }
 
   /**
@@ -342,7 +383,10 @@ class MediaCacheTest {
   }
 
   /** Builds a fresh player over the shared cache, plays one item to the end, and releases it. */
-  private fun playToEnd(uri: String, cacheKey: String) {
+  private fun playToEnd(uri: String, cacheKey: String) =
+    playItemToEnd(MediaItem.Builder().setUri(uri).setCustomCacheKey(cacheKey).build())
+
+  private fun playItemToEnd(item: MediaItem) {
     val factory = MuPlayDataSourceFactory(OkHttpClient(), cache)
     lateinit var harness: PlayerHarness
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
@@ -354,9 +398,7 @@ class MediaCacheTest {
     }
     try {
       harness.onMain {
-        harness.player.setMediaItem(
-          MediaItem.Builder().setUri(uri).setCustomCacheKey(cacheKey).build(),
-        )
+        harness.player.setMediaItem(item)
         harness.player.prepare()
         harness.player.play()
       }
