@@ -893,6 +893,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // Plan 3 Task 8a: the resume policy. 1/1 = 1.0000 LINE each for `NeverResume` and
+    // `ResumeTarget`, from **JVM data alone** (`ResumePolicyTest`, nine tests, no emulator) --
+    // which is the whole reason `ResumePolicy` takes media ids and an index rather than
+    // `MediaItem`s: the one thing in this application allowed to choose a playback position is
+    // gated by the fast tier.
+    //
+    // LINE and not BRANCH, and that is a measurement rather than a preference: both classes have
+    // **zero BRANCH counters** (`NeverResume.resolve` is one unconditional expression, and JaCoCo's
+    // Kotlin data-class filter removes `ResumeTarget`'s generated equals/hashCode/copy entirely, so
+    // it reports a single line and no branches at all). A BRANCH rule over them was written and
+    // run before this one: `warnVacuousFloors` reported it as enforcing nothing -- "all 2 classes
+    // it matches have zero BRANCH counters ... JaCoCo reports no violation for it and never will,
+    // at this or any other minimum" -- which is exactly the vacuous shape this table's own doc
+    // describes. Same argument as `MediaModule` above, reached from a different direction.
+    //
+    // Watched failing, with `ResumePolicyTest` moved aside: both classes drop to 0/1 and the build
+    // fails naming the ratio -- "Rule violated for class app.muplay.media.NeverResume: lines
+    // covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class. That is
+    // the only way to watch a floor already measuring 1.0000 fail, and it is worth writing down
+    // why: raising `minimum` above the measured ratio, which is how every fractional floor in this
+    // table was falsified, is not available here. JaCoCo validates the minimum before it compares
+    // anything, so `BigDecimal("1.01")` fails with "given minimum ratio is 1.01, but must be
+    // between 0.0 and 1.0" -- a configuration error that would have gone red against *any* code,
+    // including code with no coverage at all, and therefore proves nothing about this floor.
+    //
+    // `ResumePolicy` itself is deliberately not listed: an interface with a single abstract method
+    // compiles to zero counters of either kind, so `warnUngatedClasses` skips it and no rule could
+    // gate it anyway -- the same reason the two `$Companion` classes noted above are absent.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey

@@ -61,15 +61,39 @@ class ResumePolicyTest {
   }
 
   @Test
-  fun `the resolved index names an item in the order the caller passed`() {
-    // `startIndex` is only meaningful against the list it was resolved over, so this is the
-    // assertion written the way a caller reads it. Two orderings of the same five ids, because an
-    // index chosen from a mirrored view of the queue -- `lastIndex - requestedIndex`, the shape a
-    // "resume from the end" implementation reaches for -- answers 4 and 0 here and names the wrong
-    // track both times, while agreeing with a single-ordering check that only looked at the number.
-    assertThat(queue[NeverResume.resolve(queue, requestedIndex = 3).startIndex]).isEqualTo("d")
-    assertThat(queue.reversed()[NeverResume.resolve(queue.reversed(), requestedIndex = 3).startIndex])
-      .isEqualTo("b")
+  fun `neither the queue's contents nor its order changes the answer`() {
+    // The other axis of the index, and the one the index-varying test above cannot reach: that
+    // test holds the queue fixed and moves the index, so an implementation reading `mediaIds` --
+    // `mediaIds.lastIndex - requestedIndex`, the shape a "resume from the end" attempt reaches for,
+    // or an `indexOf` over a canonicalised copy of the queue -- can agree with it and still name a
+    // different track once the queue changes. Three queues at one index: the same five ids in two
+    // orders, then five different ids.
+    //
+    // It is stated as "the order changes nothing" rather than "index 3 means the fourth item"
+    // because that is what is actually true of this policy. Plan 4's policy *does* read the queue,
+    // and inherits this assertion with the stronger meaning.
+    val answers = listOf(
+      NeverResume.resolve(queue, requestedIndex = 3),
+      NeverResume.resolve(queue.reversed(), requestedIndex = 3),
+      NeverResume.resolve(listOf("v", "w", "x", "y", "z"), requestedIndex = 3),
+    )
+
+    assertThat(answers).containsOnly(ResumeTarget(startIndex = 3, startPositionMs = 0L))
+  }
+
+  @Test
+  fun `the same question always gets the same answer`() {
+    // A policy is asked again every time a queue is set, and Plan 6 (casting) sets the same queue
+    // onto a *second*, remote player when playback moves to a Sonos or DLNA renderer. If the
+    // answer depended on anything the policy remembered between calls, the track would land
+    // somewhere else on the renderer than it did locally -- the casting bug a listener notices
+    // first. `NeverResume` is a stateless `object` and must stay one; an intervening call over a
+    // different queue is here so "stateless" is observed rather than assumed.
+    val first = NeverResume.resolve(queue, requestedIndex = 3)
+    NeverResume.resolve(listOf("x", "y"), requestedIndex = 1)
+    val again = NeverResume.resolve(queue, requestedIndex = 3)
+
+    assertThat(again).isEqualTo(first).isEqualTo(ResumeTarget(startIndex = 3, startPositionMs = 0L))
   }
 
   @Test
