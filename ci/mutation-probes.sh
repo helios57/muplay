@@ -2020,14 +2020,21 @@ if total == 0:
 # list on a filtered run is deliberate: a filtered run is exactly how the other
 # families' staleness stays invisible.
 stale = []
-for probe_id, path, old_text, *_ in PROBES + EXTRA_PROBES:
+for probe_id, path, edit, *_ in PROBES + EXTRA_PROBES:
+    # A table probe's third field is one `old` string; an out-of-table probe's is a
+    # LIST of (old, new) pairs, because it needs more than one substitution. Handle
+    # both -- assuming the string shape is what made the first version of this check
+    # crash on AUTH_PROBE the moment it ran.
+    olds = [e[0] for e in edit] if isinstance(edit, list) else [edit]
     try:
-        n = pathlib.Path(path).read_text().count(old_text)
+        src = pathlib.Path(path).read_text()
     except FileNotFoundError:
         stale.append(f"  {probe_id}: file not found: {path}")
         continue
-    if n != 1:
-        stale.append(f"  {probe_id}: {n} matches in {path} (need exactly 1)")
+    for old_text in olds:
+        n = src.count(old_text)
+        if n != 1:
+            stale.append(f"  {probe_id}: {n} matches in {path} (need exactly 1)")
 if stale:
     raise SystemExit(
         "STALE PROBES -- their search text no longer matches the source exactly once.\n"
