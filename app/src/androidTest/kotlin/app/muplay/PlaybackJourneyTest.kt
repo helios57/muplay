@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.service.notification.StatusBarNotification
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -30,6 +31,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackNotification
+import kotlin.math.abs
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -380,8 +382,8 @@ class PlaybackJourneyTest {
         composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
       }
 
-      val tapped = shuffledRowToTap()
-      composeRule.onAllNodesWithText(tapped).notTheMiniPlayer()[0].performClick()
+      val (rowY, tapped) = shuffledRowToTap()
+      clickRow(tapped, rowY)
       awaitLabel(PAUSE_LABEL)
       awaitOnMain("the session to report what it is playing") {
         controller.mediaMetadata.title != null
@@ -419,15 +421,42 @@ class PlaybackJourneyTest {
 
   // ---- the walk -------------------------------------------------------------------------------
 
+  /**
+   * Opens the album named [MUSIC_ALBUM], found by **name**, never by list position.
+   *
+   * `onAllNodesWithText("Open")[0]` names whichever album the mirror happens to sort first, which
+   * is a fixture-coupled way of saying "the one with Track 1 in it". Every album row carries an
+   * identical `Open` button, so the row is identified by pairing that button with the album name
+   * beside it: same `Row`, so the two are vertically centred on each other. The pairing is
+   * `check`ed, which is what stops this silently opening the wrong album when the seeded library
+   * grows.
+   */
   private fun openTheMusicAlbum() {
     composeRule.reachLibraryScreen()
     // Explicit rather than relying on the default selection, so this walk does not depend on which
     // library a previously-run test left chosen.
     composeRule.onAllNodesWithText(MUSIC_LIBRARY)[LIBRARY_CHIP].performClick()
     composeRule.waitUntil("the album list to arrive from the mirror", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(MUSIC_ALBUM).notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty() &&
+        composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
-    composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
+
+    val albumCentre = composeRule.onAllNodesWithText(MUSIC_ALBUM).notTheMiniPlayer()
+      .fetchSemanticsNodes().first().boundsInRoot.center.y
+    val distances = composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes()
+      .map { abs(it.boundsInRoot.center.y - albumCentre) }
+    val onTheSameRow = distances.indices.minByOrNull { distances[it] }!!
+    // Unambiguous, rather than merely nearest: the runner-up has to be a whole row further away.
+    // A pixel tolerance was tried first and is the wrong tool -- it has to be re-guessed for every
+    // density and every future row layout, and it was wrong on `muplay37` at the first attempt.
+    val runnerUp = distances.filterIndexed { i, _ -> i != onTheSameRow }.minOrNull()
+    check(runnerUp == null || runnerUp > distances[onTheSameRow] * ROW_SEPARATION_FACTOR) {
+      "the Open button next to '$MUSIC_ALBUM' cannot be told from another album's " +
+        "(distances $distances); this walk would open the wrong album"
+    }
+    composeRule.onAllNodesWithText(OPEN_LABEL)[onTheSameRow].performClick()
+
     composeRule.waitUntil("the album's tracks to be listed", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(MUSIC_TRACKS[0]).notTheMiniPlayer().fetchSemanticsNodes()
         .isNotEmpty()
@@ -460,35 +489,68 @@ class PlaybackJourneyTest {
   }
 
   /**
-   * The title of the row at [SHUFFLED_ROW_TO_TAP] under the `Shuffled` heading.
+   * Every row of the shuffle result, top to bottom, as (y, title).
    *
-   * By **y coordinate**, because the order a finder returns nodes in is nobody's contract, and
-   * because the mini player at the bottom of the screen carries the playing track's title too. The
-   * heading's own y is the floor and the mini player is excluded by name, so this can neither pick
-   * up the bar nor return something from an empty shuffle.
+   * **Structural, not a list of titles this test expects.** An earlier version gathered the nodes
+   * matching the three seeded music titles, which silently renumbered the rows the moment anything
+   * else could appear among them — so a scope leak would have moved the row this test taps rather
+   * than failing the assertion that exists to catch it, and any change to the seeded library would
+   * have broken the indexing rather than the claim. A row here is *whatever the screen put between
+   * the `Shuffled` heading and the album list*: a clickable text node, which the search field, the
+   * library chips and the three action buttons are not (they are all above the heading), and which
+   * the out-of-scope warning is not (it has no click action).
    *
-   * The candidate titles are **every** seeded title, the audiobook included, not just the three
-   * music ones. Filtering to music would silently renumber the rows if a scope leak ever put the
-   * book among them, and the tapped index would then be wrong for a reason that has nothing to do
-   * with the launcher -- so the one assertion that should fire, `isIn(MUSIC_TRACKS)`, would fire
-   * for the wrong reason or not at all.
-   *
-   * **Not the topmost row, and that is a measurement.** With
-   * `PlaybackLauncher`'s `setMediaItems(items, queue.startIndex, 0L)` mutated to a constant `0`,
-   * a version of this test that tapped the first row stayed green -- the tapped index *was* zero,
-   * so the constant happened to be right. Tapping the second row is what makes this journey able
-   * to fail on a start index that never left the ViewModel.
+   * The mini player is excluded by name — its `Modifier.clickable` merges descendants, so the
+   * playing track's title resolves to the bar node itself, and the bar is a clickable text node
+   * below the heading like any row.
    */
-  private fun shuffledRowToTap(): String {
+  private fun shuffledRows(): List<Pair<Float, String>> {
     val headingY = composeRule.onNodeWithText(SHUFFLE_HEADING).fetchSemanticsNode().positionInRoot.y
-    val rows = SEEDED_TITLES.flatMap { title ->
-      composeRule.onAllNodesWithText(title).notTheMiniPlayer().fetchSemanticsNodes()
-        .map { it.positionInRoot.y to title }
-    }.filter { it.first > headingY }.sortedBy { it.first }
+    val albumListY = composeRule.onAllNodesWithText(OPEN_LABEL).fetchSemanticsNodes()
+      .minOfOrNull { it.positionInRoot.y } ?: Float.MAX_VALUE
+    return composeRule
+      .onAllNodes(
+        SemanticsMatcher("is a clickable text row that is not the mini player") { node ->
+          node.config.contains(SemanticsActions.OnClick) &&
+            node.config.getOrNull(SemanticsProperties.Text).orEmpty().isNotEmpty() &&
+            node.config.getOrNull(SemanticsProperties.ContentDescription)
+              ?.contains(MINI_PLAYER_LABEL) != true
+        },
+      )
+      .fetchSemanticsNodes()
+      .filter { it.positionInRoot.y > headingY && it.positionInRoot.y < albumListY }
+      .map { it.positionInRoot.y to it.config[SemanticsProperties.Text].first().text }
+      .sortedBy { it.first }
+  }
+
+  /**
+   * The row at [SHUFFLED_ROW_TO_TAP], and its y so the click can find it again unambiguously.
+   *
+   * **Not the topmost row, and that is a measurement.** With `PlaybackLauncher`'s
+   * `setMediaItems(items, queue.startIndex, 0L)` mutated to a constant `0`, a version of this test
+   * that tapped the first row stayed green — the tapped index *was* zero, so the constant happened
+   * to be right. Tapping the second row is what makes this journey able to fail on a start index
+   * that never left the ViewModel: the same mutation now fails it with *expected "Track 3" but was
+   * "Track 2"*.
+   */
+  private fun shuffledRowToTap(): Pair<Float, String> {
+    val rows = shuffledRows()
     check(rows.size > SHUFFLED_ROW_TO_TAP) {
-      "a music shuffle put ${rows.size} rows on screen; this test taps row $SHUFFLED_ROW_TO_TAP"
+      "a music shuffle put ${rows.size} row(s) on screen; this test taps row $SHUFFLED_ROW_TO_TAP"
     }
-    return rows[SHUFFLED_ROW_TO_TAP].second
+    return rows[SHUFFLED_ROW_TO_TAP]
+  }
+
+  /**
+   * Clicks the node carrying [text] that sits at [y], so two rows sharing a title cannot confuse
+   * it. [y] came from [shuffledRows] a moment earlier and nothing has re-laid the screen out, so
+   * the match is on the same coordinate rather than on a tolerance.
+   */
+  private fun clickRow(text: String, y: Float) {
+    val matches = composeRule.onAllNodesWithText(text).notTheMiniPlayer()
+    val index = matches.fetchSemanticsNodes().indexOfFirst { it.positionInRoot.y == y }
+    check(index >= 0) { "the row '$text' at y=$y is no longer on screen" }
+    matches[index].performClick()
   }
 
   /**
@@ -685,18 +747,17 @@ class PlaybackJourneyTest {
     /** The seeded content, per `ci/seed-fixtures.sh` and `ci/configure-libraries.sh`. */
     val MUSIC_TRACKS = listOf("Track 1", "Track 2", "Track 3")
     const val ALBUM_ARTIST = "Test Artist"
+    const val MUSIC_ALBUM = "Test Album"
 
     /**
-     * The one seeded audiobook. Present here only so [shuffledRowToTap] counts rows correctly if a
-     * scope leak ever drew it into a music shuffle -- never as something this journey expects.
+     * How much further away the runner-up has to be before a nearest-node pairing is trusted.
+     * A ratio, not a pixel count, so it needs no re-measuring at another screen density.
      */
-    const val AUDIOBOOK_TITLE = "Test Book"
-    val SEEDED_TITLES = MUSIC_TRACKS + AUDIOBOOK_TITLE
+    const val ROW_SEPARATION_FACTOR = 2f
 
     const val LAUNCHER_COMPONENT = "app.muplay/app.muplay.MainActivity"
 
     const val LIBRARY_CHIP = 0
-    const val FIRST_ALBUM = 0
 
     /** Five, not Plan 2's ten: each attempt here starts real audio and costs real seconds. */
     const val SHUFFLE_ATTEMPTS = 5

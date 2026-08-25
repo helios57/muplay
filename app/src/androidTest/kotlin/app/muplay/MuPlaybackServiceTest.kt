@@ -333,6 +333,15 @@ class MuPlaybackServiceTest {
       controller.stop()
       controller.clearMediaItems()
       connection.release()
+      // The **application's** own connection too, and without this line the rest of this test is
+      // theatre. `MuPlayApp` renders `MiniPlayer` in every screen's `bottomBar`, so any journey
+      // that ran before this one in the same process left a `PlayerViewModel`'s `MediaController`
+      // bound to the service -- and a service with a bound client is precisely what `stopService`
+      // does not destroy. Measured on `muplay37`: this class alone covers `MuPlaybackService`
+      // 27/31 LINE; with `BrowseJourneyTest` ahead of it, 20/31, and the seven lines lost are
+      // `onDestroy`'s. The test stayed green throughout, because a service that was never
+      // destroyed still answers a fresh controller.
+      playbackConnection().release()
     }
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
@@ -447,6 +456,10 @@ class MuPlaybackServiceTest {
    */
   private fun queueRepository() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).queueRepository()
+
+  /** The application's own `@Singleton` connection -- see [PlaybackEntryPoint.playbackConnection]. */
+  private fun playbackConnection() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).playbackConnection()
 
   private fun credentialStore() =
     EntryPointAccessors.fromApplication(context, CredentialStoreEntryPoint::class.java)
