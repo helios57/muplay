@@ -922,7 +922,20 @@ PROBES = [
      # that matters most is `no two nodes in the whole hierarchy encode to the same string`, which
      # reports the duplicate ("muplay/book" twice) rather than a mismatch -- injectivity is the
      # property, and it is the property no round trip implies.
-     "every id encodes to its exact documented string", 5),
+     #
+     # 5 as of 953a6ba, when nothing consumed `BrowseId` yet; 11 once Plan 5 Task 2's browse tree
+     # became its first consumer and `BrowseTreeTest` gained six assertions that read
+     # `BrowseId.Book(...).encode()` back as a map key or a list element. The named test failed
+     # exactly as intended both times -- this is the stale-count case the note on `expected
+     # failures` above describes, and Task 1's own report predicted this specific probe going stale
+     # here. Re-measured, not deleted; the six new ones are `the book shelf sorts case-insensitively
+     # and breaks its own ties by id`, `two books last heard in the same millisecond come out in the
+     # same order either way round`, `a single-file book is playable but not browsable, and a
+     # multi-file one is both`, `continue lists only started unfinished books, most recently heard
+     # first`, `a book's completion is one of three distinct values` and `continue is capped by the
+     # surface's own limit` -- every one of them a test that names a book by its encoded id, which
+     # is the right way for a browse test to name one.
+     "every id encodes to its exact documented string", 11),
     ("browse/library-id-non-canonical", BROWSE_ID,
      "        KIND_LIBRARY -> canonicalInt(payload)?.let(::Library)\n        KIND_SHUFFLE -> canonicalInt(payload)?.let(::Shuffle)",
      "        KIND_LIBRARY -> payload.toIntOrNull()?.let(::Library)\n        KIND_SHUFFLE -> payload.toIntOrNull()?.let(::Shuffle)",
