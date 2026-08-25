@@ -2714,6 +2714,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // at **LINE 0/4** here, in a class 0.90 fails outright and a 0.00 minimum could never fail --
     // the unfireable floor this project has shipped once and does not intend to ship again. See
     // the KDoc on those two properties.
+    //
+    // Falsified, not assumed, and the withholding is recorded because a record like this goes
+    // stale the moment a second caller appears (see CLAUDE.md's note on exactly that): withholding
+    // `every member round-trips to an equal value` **and** `the detail column carries the member's
+    // data and nothing else` from `RequestStatusTest` drops `RequestStatusKt` to **8/18 = 0.4444**
+    // BRANCH and `RequestStatus$Companion` to **10/16 = 0.6250**, and
+    // `jacocoJvmCoverageVerification` fails on both. One of the two alone is not enough --
+    // `roundTrip` in the first reads `storedDetail` for every member, which is what the second
+    // asserts about.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -2729,6 +2738,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // tier, since `RequestStatusTest` constructs each member at two values and calls `idFor` at
     // three. `RequestStatus` itself and its two `data object` members carry no counter of either
     // kind and ride along, exactly as `IntegrationCredentials` does in the rule above.
+    //
+    // Falsified by withholding `the request id is derived from the service and the external id`
+    // alone: `MediaRequest$Companion` drops to **LINE 0/1 = 0.0000** and this rule fails. (The two
+    // withheld tests recorded against the BRANCH rule above also take `RequestStatusKt` to LINE
+    // 7/14 = 0.5000 and the companion to 6/8 = 0.7500, so this rule has two independent
+    // falsifications rather than one.)
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -2756,6 +2771,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // LINE for the row's storage shapes in the same rule set below rather than here: this class
     // measures 43/43 LINE, and the entity, the database and the model have no branches at all.
+    //
+    // Falsified by withholding `reRequestingTheSameThingUpdatesTheRowRatherThanDuplicatingIt` and
+    // `reRecordingKeepsTheStatusTheRowAlreadyReached` from `MediaRequestRepositoryTest`: those two
+    // are the only tests that re-record an existing row, so all three `existing?.x ?: y` arms go
+    // uncovered and this class drops to **5/12 = 0.4167**, failing at its real minimum.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -2774,6 +2794,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // along. Room's generated `MediaRequestDao_Impl`/`IntegrationRequestsDatabase_Impl` are not in
     // the report at all -- generated code is excluded before it gets here -- which is what keeps
     // this rule's `db.*` wildcard from gating a code generator's output.
+    //
+    // Falsified, and the **first attempt failed to falsify it**, which is worth recording rather
+    // than quietly fixing: withholding the four `setStatus*` tests and `forgetRemovesOnlyTheRowIt
+    // Names` left this class at **42/43 = 0.9767 and green**, because
+    // `reRecordingKeepsTheStatusTheRowAlreadyReached` is a *second caller* of `setStatus` and kept
+    // its body covered -- exactly the stale-falsification-record shape CLAUDE.md describes.
+    // Withholding that sixth test as well drops it to **36/43 = 0.8372** and the rule fires. If a
+    // seventh caller of `setStatus` ever arrives, this record needs re-measuring.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -2794,6 +2822,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // `excludes` keeps `MediaRequestRepository` itself out, so its real 0.90 rules above stay the
     // ones that gate it.
+    //
+    // Falsified by withholding the four tests that collect `requests(service)` --
+    // `nothingIsStoredBeforeAnythingIsRecorded`, `requestsForOneServiceComeBackNewestFirstToo`,
+    // `requestsFilteredByServiceReturnsThatServicesRowsAndOnlyThose` and
+    // `aServiceWithNoRowsOfItsOwnReadsAsEmptyEvenWhenTheTableIsNot`: `requests$$inlined$map$2`
+    // goes to **0/3** and `$2$2` to **0/2**, and the rule fails on both.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
