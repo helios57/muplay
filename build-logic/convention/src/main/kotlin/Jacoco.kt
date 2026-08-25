@@ -244,6 +244,19 @@ private val generatedCodeExcludes = listOf(
   // "silent gate" shape this list is otherwise careful about. Same generated-code argument as
   // every pattern above it, just anchored to the one shape it is actually justified by.
   "**/*Module_*Factory\$InstanceHolder.*",
+  // The same nested holder, one binding shape further out. Dagger emits an `$InstanceHolder`
+  // for a *scoped, no-argument* `@Inject` constructor too, not only for a `@Provides` method:
+  // `:core:media`'s `@Singleton class NavidromeLoadErrorHandlingPolicy @Inject constructor()`
+  // generates `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder`, which appeared in a
+  // report for the first time when that module landed. `**/*_Factory.*` above does not reach it
+  // for exactly the reason recorded for the `Module_` case: that pattern is anchored on the
+  // literal `_Factory.`, and this class's name reads `_Factory$InstanceHolder.` -- there is no
+  // `_Factory.` substring in it at all. Anchored on the same `_Factory` the outer class is,
+  // which is no wider a claim than `**/*_Factory.*` already makes: an author-written class whose
+  // name ends in `_Factory` is not idiomatic Kotlin, whereas the bare `*Factory$InstanceHolder`
+  // form this deliberately avoids would also swallow a hand-written
+  // `class ArtworkFactory { object InstanceHolder }`.
+  "**/*_Factory\$InstanceHolder.*",
 )
 
 /**

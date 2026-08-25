@@ -806,16 +806,81 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:core:media`. Measured in this task's Step 11 and re-measured in Task 10 once the service,
-  // the queue and the progress writer are in. `StreamRetryPolicy` is a pure object with real
-  // branches and no Android dependency at all -- that is why it exists as a separate type from
-  // the Media3 adapter, and why this is the module's one Tier-1-enforceable floor.
+  // `:core:media`. Four `"CLASS"`-element rules, and the split across the two tiers is the point:
+  // the *decision* about a 429 is a plain object the fast tier can hold to a floor, and everything
+  // Media3 or OkHttp touches is only reachable on a device. Re-measure in Task 10, once the
+  // service, the queue and the progress writer are in.
+  //
+  // Every class this module compiles that carries a counter at all is matched by exactly one rule
+  // below; the only classes left over are `MuPlayDataSourceFactory$Companion` and
+  // `NavidromeLoadErrorHandlingPolicy$Companion`, which measure zero branches *and* zero lines, so
+  // [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them anyway.
+  // Dagger's `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder` -- the holder it emits for
+  // a *scoped, no-argument* `@Inject` constructor -- was in this report until
+  // `generatedCodeExcludes` (`Jacoco.kt`) grew the pattern for that shape; see its own note.
   ":core:media" to listOf(
+    // 15/16 = 0.9375 BRANCH from **JVM data alone** -- `StreamRetryPolicyTest`, ten tests, no
+    // emulator. Confirmed by deleting the instrumented `.ec` and running
+    // `jacocoJvmCoverageVerification`, which is what `requiresInstrumentedData = false` claims
+    // here. That is the whole reason `StreamRetryPolicy` exists as a separate type from the Media3
+    // adapter: the branch that decides whether a 429 kills playback is gated by the fast tier.
+    //
+    // The one missed branch is unreachable and stays in the denominator honestly: the `?.` the
+    // compiler emits after `String.trim()` in
+    // `retryAfterHeader?.trim()?.toLongOrNull()?.takeIf { .. }` can never take its null path,
+    // because `trim()` returns a non-null `String`. 0.90 leaves that single dead branch of room
+    // and no more -- one genuinely-uncovered branch takes this to 15/17 = 0.88 and fails. Watched
+    // failing at a minimum of 0.95: "branches covered ratio is 0.93, but expected minimum is
+    // 0.95", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.StreamRetryPolicy"),
+    ),
+    // 4/4 = 1.0000 LINE, also JVM-only (`MediaModuleTest`). LINE and not BRANCH because
+    // `MediaModule` has **no branches at all** -- a BRANCH rule over it would match a class with
+    // zero counters of its own kind, which JaCoCo scores `NaN` and reports as "no violation" at
+    // every minimum. That is the vacuous-floor shape this table's own doc describes, and
+    // `warnVacuousFloors` would have said so on every run.
+    //
+    // Gating it matters more than four lines suggests: those four lines are the media layer's
+    // timeout policy, and the decision they encode is *not* setting a `callTimeout` -- a limit
+    // that would cut off any track longer than the cap. Until `MediaModuleTest` existed that
+    // decision was protected by a comment. Watched failing with that test moved aside: 0/4.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.di.MediaModule"),
+    ),
+    // 6/6 = 1.0000 BRANCH, instrumented. `NavidromeLoadErrorHandlingPolicy` is the adapter between
+    // Media3's `LoadErrorInfo` and the decision above, and its branches are the passthrough:
+    // is-an-`InvalidResponseCodeException`, and did the policy have an opinion. Both are driven by
+    // `NavidromeLoadErrorHandlingPolicyTest`, on a device, because every input type in that
+    // signature is a Media3 or Android type (`DataSpec` holds an `android.net.Uri`) and this
+    // project has no Robolectric.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.NavidromeLoadErrorHandlingPolicy"),
+      requiresInstrumentedData = true,
+    ),
+    // 3/3 and 12/12 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries no branches, so
+    // LINE is the only counter that can gate it at all -- same argument as `MediaModule` above,
+    // reached from the other tier. `NavidromeLoadErrorHandlingPolicy` rides here as well as
+    // carrying its own BRANCH rule: its `getRetryDelayMsFor` body is the module's one place where
+    // a line can be added that adds no branch.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.MuPlayDataSourceFactory",
+        "app.muplay.media.NavidromeLoadErrorHandlingPolicy",
+      ),
+      requiresInstrumentedData = true,
     ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
