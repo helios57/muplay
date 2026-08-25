@@ -128,7 +128,10 @@ class MuPlayLibraryCallback @Inject constructor(
       val children: List<BrowseNode> = treeRepository.children(id, surface)
         ?: return@future LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
       // Paged *before* the artwork URLs are resolved, so a host asking for ten rows of a thousand
-      // pays for ten.
+      // pays for ten -- and paged at all, because `MediaLibrarySessionImpl.verifyResultItems`
+      // throws `IllegalStateException("Invalid size=.., pageSize=..")` on the session's own handler
+      // for an over-long result, which is a process death rather than an error a controller sees.
+      // Measured on the emulator; see `BrowsePaging`'s own note.
       val items = BrowsePaging.page(children, page, pageSize).map { node ->
         BrowseItems.of(node, treeRepository.artworkUri(node.artworkId))
       }

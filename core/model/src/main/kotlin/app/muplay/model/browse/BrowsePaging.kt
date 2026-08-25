@@ -11,6 +11,14 @@ package app.muplay.model.browse
  *
  * In `:core:model` rather than beside the callback so that the arithmetic is Tier 1: the overflow
  * above is a pure-`Int` fact and needs no emulator to be held to account.
+ *
+ * **Returning more than `pageSize` items kills the app's process.** Measured, not deduced:
+ * `MediaLibrarySessionImpl.verifyResultItems` (read out of the 1.11.0 bytecode) throws
+ * `IllegalStateException("Invalid size=8, pageSize=3")` when a successful `onGetChildren` result is
+ * longer than the page that was asked for -- and it throws on the *session's own handler thread*,
+ * outside any future this project can catch, so the process dies. Driven on the emulator by
+ * mutating this function to ignore its arguments: `Test run failed to complete. Instrumentation run
+ * failed due to Process crashed.` after two tests. The upper clamp below is therefore not tidiness.
  */
 object BrowsePaging {
 
@@ -29,6 +37,8 @@ object BrowsePaging {
     // `pageSize = Int.MAX_VALUE` and `page = 1`, the Int product is -2147483648.
     val from = page.toLong() * pageSize.toLong()
     if (from >= items.size) return emptyList()
+    // Clamped at the list's end, which also keeps the slice at most `pageSize` long -- see this
+    // object's own note on what Media3 does to a longer one.
     val to = minOf(from + pageSize.toLong(), items.size.toLong())
     return items.subList(from.toInt(), to.toInt())
   }

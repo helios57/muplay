@@ -214,18 +214,31 @@ class BrowseGraph private constructor(
      */
     private val PROGRESS_ROWS = listOf(
       progress("bk-second-p1", positionMs = 50_000, lastPlayedAtEpochMs = 7_000),
+      // `bk-test`'s **older** row, on part one. It exists so that "the listener is where their most
+      // recently written row says" is observed against a book with two rows on two files: with one
+      // row per book, "the first row" and "the most recent row" are the same object and a rule that
+      // took the wrong one is invisible. 90 s into part one would be a book position of 90 s; the
+      // right answer is part two's, 120 s.
+      progress("bk-test-p1", positionMs = 90_000, lastPlayedAtEpochMs = 5_500),
       // The second file of a three-file book whose parts are 100 s, 200 s and 300 s: 100 s of part
       // one, then 20 s into part two, so the book position is 120 s of 600 s and the fraction is
       // 0.2. A rule that read the row's own position and ignored the files before it would report
       // 20 s and 0.033; one that added the files *after* it would report 620 s.
       progress("bk-test-p2", positionMs = 20_000, lastPlayedAtEpochMs = 6_000),
+      // `bk-alpha` carries two rows written in the **same millisecond**, which a batch write really
+      // does produce. The tie has to resolve to the *later file*, deterministically, or the same
+      // shelf orders itself differently between two identical requests: 110 s, not 20 s.
       progress("bk-alpha-p1", positionMs = 20_000, lastPlayedAtEpochMs = 5_000),
+      progress("bk-alpha-p2", positionMs = 10_000, lastPlayedAtEpochMs = 5_000),
       progress("bk-beta-p1", positionMs = 40_000, lastPlayedAtEpochMs = 4_000),
-      progress("bk-gamma-p1", positionMs = 60_000, lastPlayedAtEpochMs = 3_000),
+      // Finished on part one of two. The book is **not** finished: a rule reading `isFinished`
+      // alone would take a part-heard book off the Continue shelf the first time a chapter ran out.
+      progress("bk-gamma-p1", positionMs = 60_000, lastPlayedAtEpochMs = 3_000, isFinished = true),
       // Position zero *in the third file*: started, at exactly half of a four-part book. The one
       // case where "the row says 0" and "the listener has not started" are different answers.
       progress("bk-multi-p3", positionMs = 0, lastPlayedAtEpochMs = 2_000),
-      // The only finished book, and it is finished on its last (only) file.
+      // The only *actually* finished book, and it is finished on its last (here, only) file --
+      // which is what makes it different from `bk-gamma` above.
       progress("bk-tail-p1", positionMs = 100_000, lastPlayedAtEpochMs = 1_000, isFinished = true),
     )
 

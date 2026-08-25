@@ -27,9 +27,12 @@ import org.junit.runner.RunWith
  * What that buys: every value `DefaultSurfaceResolver` reads is now observed at two or more values
  * against the real type, so a resolver that hardcoded a package name, read the wrong `Bundle` key,
  * or ignored its `Context` fails here rather than on a head unit. What remains unobservable is
- * nothing at all -- `isCarController` is wired to a literal `false` precisely because Media3 1.11.0
- * ships no car predicate to read (verified by absence: neither `isAutomotiveController` nor
- * `isAutomobileController`, nor even the string "automotive", occurs anywhere in that aar).
+ * nothing at all -- `isCarController` is wired to a literal `false`, and **Plan 5 Task 4 corrected
+ * why**: Media3 1.11.0 does ship car predicates, but on `MediaSession` rather than on
+ * `ControllerInfo`, and both are package-name comparisons against names already in
+ * `BrowseSurfaces.CAR_PACKAGES`. See `SurfaceResolver`'s own header for the measurement; the
+ * sentence that used to stand here -- that neither predicate occurs anywhere in the aar -- was
+ * false.
  *
  * Note the package this app answers to here is **not** `app.muplay`: a library module's
  * instrumented tests are self-instrumenting, so `context.packageName` is `app.muplay.media.test`.

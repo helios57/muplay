@@ -168,7 +168,7 @@ class BrowseTreeBrowserTest {
       .containsExactly(
         "Cy Chapter · 2 min left",
         "Bea Bookwright · 8 min left",
-        "Eve Reader · 3 min left",
+        "Eve Reader · 1 min left",
         "Fay Speaker · 2 min left",
         "Gil Voice · 2 min left",
         "Dee Narrator · 3 min left",
@@ -227,7 +227,7 @@ class BrowseTreeBrowserTest {
         .map { requireNotNull(it.mediaMetadata.extras) }
         .filter { it.containsKey(BrowseExtras.COMPLETION_PERCENTAGE) }
         .map { it.getDouble(BrowseExtras.COMPLETION_PERCENTAGE) },
-    ).containsExactly(0.1, 0.2, 0.3, 0.5, 0.25, 0.2)
+    ).containsExactly(0.55, 0.2, 0.3, 0.5, 0.25, 0.2)
   }
 
   @Test
@@ -262,6 +262,74 @@ class BrowseTreeBrowserTest {
       .containsExactly("bk-test-p1", "bk-test-p2", "bk-test-p3")
     assertThat(childTitles(BrowseSurfaces.HINT_CAR, "muplay/book/bk-test", { subtitleOf() }))
       .containsExactly("Part 1 of 3", "Part 2 of 3", "Part 3 of 3")
+  }
+
+  @Test
+  fun aPlayableLeafIsNotAFolderRatherThanAnEmptyOne() {
+    // The distinction `BrowseTreeRepository.children` returns `null` for, and the one this suite
+    // could not see until a surviving mutation said so: replacing that `null` with `emptyList()`
+    // left every assertion in this file green, because the only leaf being asked about was asked
+    // through `getItem`. A shuffle row and a track are the two playable leaves the tree serves, and
+    // "there is nothing inside this" is a *wrong* answer for both -- a car renders an empty folder,
+    // not a row it can play.
+    assertThat(childrenResult(hint = null, parentId = "muplay/shuffle/1").resultCode)
+      .isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+    assertThat(childrenResult(hint = null, parentId = "bk-test-p1").resultCode)
+      .isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+    // And the control: the same call on something that *is* a folder succeeds, so the two
+    // assertions above are not satisfied by a callback that refuses everything.
+    assertThat(childrenResult(hint = null, parentId = "muplay/books").resultCode)
+      .isEqualTo(LibraryResult.RESULT_SUCCESS)
+  }
+
+  @Test
+  fun aMusicAlbumIsNotABookHoweverItsIdIsSpelled() {
+    // `BrowseId.Book` and `BrowseId.Album` are two spellings of the same server album id, and the
+    // *only* thing that separates a book from a record is the library the user tagged (spec section
+    // 4 -- Navidrome reports no audiobook flag at all). A controller that guessed the book spelling
+    // for a music album must be refused, not answered with the album.
+    assertThat(childrenResult(hint = null, parentId = "muplay/book/al-abbey").resultCode)
+      .isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+    assertThat(awaitResult(browser(null)) { it.getItem("muplay/book/al-abbey") }.resultCode)
+      .isNotEqualTo(LibraryResult.RESULT_SUCCESS)
+    // The control, so the two above are not satisfied by a tree that refuses `al-abbey` outright.
+    assertThat(childrenResult(hint = null, parentId = "muplay/album/al-abbey").resultCode)
+      .isEqualTo(LibraryResult.RESULT_SUCCESS)
+  }
+
+  @Test
+  fun aBookFinishedOnAnEarlierFileIsStillOnTheContinueShelf() {
+    // `bk-gamma` has a finished row on part one of two. "Finished" is a fact about the *book*, and
+    // reading it off whichever row happens to be most recent takes a part-heard book off the shelf
+    // the first time a chapter runs out -- a defect that survives every other assertion here,
+    // measured, because no other book in the fixture is finished anywhere but its last file.
+    val books = children(BrowseSurfaces.HINT_CAR, "muplay/books")
+    val gamma = books.single { it.mediaId == "muplay/book/bk-gamma" }
+    val tail = books.single { it.mediaId == "muplay/book/bk-tail" }
+
+    assertThat(requireNotNull(gamma.mediaMetadata.extras).getInt(BrowseExtras.COMPLETION_STATUS))
+      .isEqualTo(BrowseExtras.STATUS_PARTIALLY_PLAYED)
+    // The pair: same finished flag, different file position within the book, different answer.
+    assertThat(requireNotNull(tail.mediaMetadata.extras).getInt(BrowseExtras.COMPLETION_STATUS))
+      .isEqualTo(BrowseExtras.STATUS_FULLY_PLAYED)
+    assertThat(childIds(BrowseSurfaces.HINT_CAR, "muplay/continue"))
+      .contains("muplay/book/bk-gamma")
+      .doesNotContain("muplay/book/bk-tail")
+  }
+
+  @Test
+  fun aBooksPositionComesFromItsMostRecentlyWrittenFileNotItsFirst() {
+    // `bk-test` carries two rows: part one at 90 s written earlier, part two at 20 s written later.
+    // The book position is part one's whole 100 s plus 20 s = 120 s of 600 s, i.e. 0.2 -- and the
+    // wrong rule (take the first row) answers 90 s and 0.15. `bk-alpha` is the tie: two rows in the
+    // same millisecond, resolved to the later file, 110 s of 200 s.
+    val books = children(BrowseSurfaces.HINT_CAR, "muplay/books")
+    fun fractionOf(id: String) =
+      requireNotNull(books.single { it.mediaId == id }.mediaMetadata.extras)
+        .getDouble(BrowseExtras.COMPLETION_PERCENTAGE)
+
+    assertThat(listOf(fractionOf("muplay/book/bk-test"), fractionOf("muplay/book/bk-alpha")))
+      .containsExactly(0.2, 0.55)
   }
 
   @Test

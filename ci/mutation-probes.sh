@@ -182,6 +182,8 @@ BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
 BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
 BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
+BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
+BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -1871,6 +1873,79 @@ PROBES = [
     ("browse/surface-car-package-dropped", BROWSE_SURFACE,
      '    "com.android.car.carlauncher",\n', "",
      "every known car and watch package maps to its surface", 1),
+    # ---- Plan 5 Task 4: paging, and the extras a car head unit reads -------------------------
+    # Every count below was measured by applying the mutation alone against the committed tree and
+    # reading `core/model/build/test-results/test/TEST-*.xml`; see task-4-report.md for the
+    # transcript. The rest of Task 4 -- `BrowseItems`, `MuPlayLibraryCallback`,
+    # `BrowseTreeRepository`, `MirrorBookshelf`, `BookProgress` -- has NO probe here and cannot have
+    # one: every test of those lives in `connectedDebugAndroidTest`, which this runner cannot reach,
+    # and an androidTest-only mutation reports MISSED with zero failures because androidTest sources
+    # are not inputs to the JVM test task (this file's own header, "AND A HARDER LIMIT THAN
+    # production code only"). Thirty-five such mutations were applied by hand against the emulator
+    # instead and the transcript is in task-4-report.md -- the same treatment Plan 3 Tasks 6 and 8b
+    # gave theirs. THREE of them survived the suite as first written, which is what those by-hand
+    # runs bought.
+    #
+    # `page` is four lines, and its whole job is the arithmetic a car's `Int.MAX_VALUE` page size
+    # breaks. Two of its probes are worth reading twice: at page 1 with that size the Int product is
+    # -2147483648, and a result LONGER than pageSize is not an error a controller sees but a process
+    # death -- `MediaLibrarySessionImpl.verifyResultItems` throws on the session's own handler.
+    ("browse/page-ignores-the-page", BROWSE_PAGING,
+     "    if (page < 0 || pageSize <= 0) return emptyList()\n",
+     "    if (page < 0 || pageSize <= 0) return emptyList()\n    if (true) return items\n",
+     "pages divide the list and the last page is short", 4),
+    ("browse/page-int-overflow", BROWSE_PAGING,
+     "    val from = page.toLong() * pageSize.toLong()",
+     "    val from = (page * pageSize).toLong()",
+     "a page size of Int MAX_VALUE returns everything and does not overflow", 1),
+    ("browse/page-no-upper-clamp", BROWSE_PAGING,
+     "    val to = minOf(from + pageSize.toLong(), items.size.toLong())",
+     "    val to = from + pageSize.toLong()",
+     "pages divide the list and the last page is short", 4),
+    ("browse/page-negative-page-accepted", BROWSE_PAGING,
+     "    if (page < 0 || pageSize <= 0) return emptyList()",
+     "    if (pageSize <= 0) return emptyList()",
+     "a nonsensical page or size is empty rather than a crash", 1),
+    # Order is a property: a `page` over a Set, or one that reversed its slice, satisfies every size
+    # assertion in that file and only this one.
+    ("browse/page-reorders-within-a-page", BROWSE_PAGING,
+     "    return items.subList(from.toInt(), to.toInt())",
+     "    return items.subList(from.toInt(), to.toInt()).reversed()",
+     "paging preserves order within a page", 4),
+    # The extras are a contract with software this project does not own. Each of these is a value a
+    # car reads and nothing else in this build inspects.
+    ("browse/extras-style-is-a-constant", BROWSE_EXTRAS,
+     "      put(CONTENT_STYLE_BROWSABLE, styleValue(node.childStyle))",
+     "      put(CONTENT_STYLE_BROWSABLE, STYLE_GRID)",
+     "a browsable node carries its own child style and a list style for its playables", 2),
+    ("browse/extras-leaf-gets-style-hints", BROWSE_EXTRAS,
+     "    if (node.isBrowsable) {", "    if (true) {",
+     "a playable leaf carries no style extras at all", 2),
+    # Sending a percentage alongside NOT_PLAYED draws an empty progress pip on every unheard book,
+    # which is a wrong answer no coverage counter can see -- the branch runs either way.
+    ("browse/extras-percentage-always-present", BROWSE_EXTRAS,
+     "      if (completion.status == BrowseCompletionStatus.PARTIALLY_PLAYED) {\n        put(COMPLETION_PERCENTAGE, completion.fraction)\n      }",
+     "      put(COMPLETION_PERCENTAGE, completion.fraction)",
+     "only a partially played item carries a percentage", 1),
+    ("browse/extras-percentage-is-a-constant", BROWSE_EXTRAS,
+     "        put(COMPLETION_PERCENTAGE, completion.fraction)",
+     "        put(COMPLETION_PERCENTAGE, 0.5)",
+     "the percentage is the node's own fraction and not a constant", 3),
+    ("browse/extras-status-is-a-constant", BROWSE_EXTRAS,
+     "      put(COMPLETION_STATUS, statusValue(completion.status))",
+     "      put(COMPLETION_STATUS, STATUS_PARTIALLY_PLAYED)",
+     "only a partially played item carries a percentage", 1),
+    ("browse/extras-root-ignores-the-surface", BROWSE_EXTRAS,
+     "    CONTENT_STYLE_BROWSABLE to styleValue(surface.browsableStyle),",
+     "    CONTENT_STYLE_BROWSABLE to STYLE_GRID,",
+     "the root advertises content style support and the surface's own default", 1),
+    # The wire keys themselves. A re-valued key is invisible to every other assertion in that file,
+    # because they all reference the constant -- which is exactly why one test asserts the literals,
+    # and why this probe reddens exactly one test rather than several.
+    ("browse/extras-browsable-key-swapped", BROWSE_EXTRAS,
+     '  const val CONTENT_STYLE_BROWSABLE: String = "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT"',
+     '  const val CONTENT_STYLE_BROWSABLE: String = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"',
+     "the wire keys and values are exactly the ones Android Auto documents", 1),
     # ---- Plan 6 Task 2, fix round: the review's HIGH and MEDIUM findings ----------------------
     # Same `revert()` note as the Task 2 block above: `core/cast` is checked out wholesale, so none
     # of these needs a LATER_PROBE_FILES line. Every count was measured by applying the mutation
@@ -2218,6 +2293,10 @@ LATER_PROBE_FILES = [
     BROWSE_TREE,
     BROWSE_TEXT,
     BROWSE_SURFACE,
+    # Plan 5 Task 4, added in the same edit as the twelve `browse/page-*` and
+    # `browse/extras-*` probes -- never after, per this list's own comment.
+    BROWSE_PAGING,
+    BROWSE_EXTRAS,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
