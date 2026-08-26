@@ -251,10 +251,20 @@ leaves every key pointing at a file that is gone, and each one then answers,
      open /data/cache/transcoding/xx/yy/...: no such file or directory"}}}
 
 Measured: permanent, not a transient race — four retries each of seven poisoned
-bitrates gave 28 errors and no recoveries. Proven causal by deleting **one**
-file for a known-warm key and watching that key alone go from `Accept-Ranges:
-bytes` to the error document and stay there. Only recreating the container
-clears the index, and the container is shared, so *do not flush.*
+bitrates gave 28 errors and no recoveries. Proven causal in **both** directions:
+
+- Deleting **one** file for a known-warm key sent that key alone from
+  `Accept-Ranges: bytes` to the error document, and it stayed there.
+- **Restarting the container heals every poisoned key.** After an unrelated host
+  reboot restarted `ci-navidrome-1`, all **8 of 8** bitrates that had been
+  permanently dead came back as live transcodes. The cache *files* live in the
+  writable layer and survive a stop — 200 entries were still on disk — but the
+  poison never lived on disk. It is the in-memory index, so a restart is the
+  repair and a file deletion is the injury. Do not reason about this cache from
+  what is on disk; the two disagree exactly when it matters.
+
+So: *do not flush.* If a container is already poisoned, a plain restart fixes it
+without a recreate or a reseed.
 
 Note the third state. `Accept-Ranges` is `none` for a live transcode, `bytes`
 for a cache hit, and **absent entirely** for this. A predicate of
