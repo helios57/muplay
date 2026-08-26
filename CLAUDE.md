@@ -234,38 +234,56 @@ is not always a transcode.
 cold entry.** Measured in Plan 6 Task 6: `HEAD` on an uncached transcode answers
 `Accept-Ranges: none` with no `Content-Length` — it reports "cold" correctly —
 and starts a background transcode that has populated the cache about a second
-later. Two `HEAD`s back to back both say cold; the same URL a few hundred
-milliseconds afterwards is warm. So a probe that finds a cold entry has warmed
-the entry it found, and the assertion after it races the transcoder: a live suite
-built that way passed once and then failed three runs running with `expected: 502
-but was: 200`.
+later. So a probe that finds a cold entry has warmed the entry it found. Search
+*through the thing under test*, so the search's own GET is the response you
+assert on and there is no second request to race.
 
-Searching *through the thing under test*, so the search's own response is the
-observation, is correct and is worse: a run that finds nothing has requested
-**every** bitrate below the source and cached all of them.
+### Never delete the transcoding cache files. That is what breaks `coldTranscode`
 
-**And flushing the cache does not repair `coldTranscode`.** That was measured
-here after Plan 6 Task 6 reported having exhausted a track's entries and named
-recreating the container as the only fix. `docker exec ci-navidrome-1 sh -c 'rm
--rf /data/cache/transcoding/*'` empties it (201 entries → 0, container stays
-healthy, no restart, no reseed) and the test still fails **about one run in
-three, from a completely cold cache** — three flush-then-run cycles gave green,
-green, red. Nor is it the track: all three seeded Music fixtures are the *same*
-encoding, 64 kbps / 5.04 s mp3, so "it picked a random track" cannot explain a
-one-in-three split.
+`docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'` was
+recorded here as a safe diagnostic. **It is the opposite.** Navidrome keeps an
+in-memory index of that cache; deleting the files underneath a running server
+leaves every key pointing at a file that is gone, and each one then answers,
+*forever*:
 
-What is left is the race in the paragraph above, inside a single run: the search
-probes a bitrate, correctly sees cold, and the assertion that follows re-requests
-the same URL after the background transcode has landed. Cache state is a red
-herring; **the fix is to make the searching request itself the asserted one**, so
-there is no second request to lose the race. Until that lands, a `coldTranscode`
-failure is a flake and is not evidence about the branch under test.
+    200  Content-Type: application/json  (~292 bytes)
+    {"...":{"status":"failed","error":{"message":"Internal Server Error:
+     open /data/cache/transcoding/xx/yy/...: no such file or directory"}}}
 
-So: prefer a live assertion that needs no cold entry. `:core:cast`'s
-`LiveNavidromeProxyTest` gets a real `Content-Range`-less response out of
-Navidrome by stripping the credentials from a stream URL instead (200,
-`Content-Type: application/json`, a real `Content-Length`, no `Content-Range`),
-which is stable, costs nothing, and is a sharper assertion besides.
+Measured: permanent, not a transient race — four retries each of seven poisoned
+bitrates gave 28 errors and no recoveries. Proven causal by deleting **one**
+file for a known-warm key and watching that key alone go from `Accept-Ranges:
+bytes` to the error document and stay there. Only recreating the container
+clears the index, and the container is shared, so *do not flush.*
+
+Note the third state. `Accept-Ranges` is `none` for a live transcode, `bytes`
+for a cache hit, and **absent entirely** for this. A predicate of
+`header("Accept-Ranges") == "none"` reads the error as "already cached, keep
+looking" — which is how the old search walked all 63 bitrates and failed
+blaming cache *exhaustion*, and how "recreate the container" got written down as
+the diagnosis for what was really "somebody flushed the cache".
+
+### `coldTranscode`'s "one run in three" was which track got drawn
+
+Not a probability and not a race. The old body took
+`getRandomSongs(...).first()` — one of the three music fixtures — and after the
+flush the census was **63 of 63** bitrates unusable on Track 1, 6 of 10 sampled
+on Track 2, 4 of 10 on Track 3. Drawing the dead track is a certain failure and
+the other two are near-certain passes: a weighted coin that reads exactly like a
+race. Neither half of the test was ever racing the transcoder — the searching
+GET's own response is what the cold half asserts on, and over **54** freshly
+cold keys the cache-hit re-fetch came back seekable **54** times.
+
+The search space is now the whole music library crossed with the bitrate range,
+so one unusable track cannot decide a run, and the failure message reports the
+LIVE/CACHED/UNAVAILABLE census so a red is diagnostic. Measured after the fix:
+**10 consecutive green runs** of `:core:network:` and `:core:cast:liveNavidromeTest`
+(35 tests each) against the warm, partially-poisoned shared container — no flush,
+because flushing is the defect.
+
+`:core:cast`'s `LiveNavidromeProxyTest` remains the cheaper pattern where it
+fits: it gets a real `Content-Range`-less response by stripping the credentials
+from a stream URL, which needs no cold entry at all.
 
 ## A fresh worktree has no `local.properties`, and the failure names the wrong thing
 
