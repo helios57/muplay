@@ -83,16 +83,20 @@ class TransportStateTest {
     val uris = listOf(
       "x-rincon:RINCON_000E58ABCDEF01400",
       "http://192.168.1.9:8080/media/t.mp3",
+      // Two real Sonos `x-` schemes that are NOT group membership: a line-in or TV source, and a
+      // file on an SMB share. A prefix loosened to `x-` -- the plausible way to get this wrong --
+      // calls both of them followers and refuses to cast to a speaker that is perfectly free.
+      "x-rincon-stream:RINCON_000E58ABCDEF01400",
       "x-file-cifs://server/music/t.mp3",
       "",
       null,
     )
 
     assertThat(uris.map { PositionInfo(0L, 0L, it).isFollowingAnotherSpeaker })
-      .containsExactly(true, false, false, false, false)
+      .containsExactly(true, false, false, false, false, false)
     // ...and the coordinator is the URI itself, not a boolean dressed up as one: Task 10 puts it
     // in front of the user.
     assertThat(uris.map { PositionInfo(0L, 0L, it).followedCoordinator })
-      .containsExactly("x-rincon:RINCON_000E58ABCDEF01400", null, null, null, null)
+      .containsExactly("x-rincon:RINCON_000E58ABCDEF01400", null, null, null, null, null)
   }
 }

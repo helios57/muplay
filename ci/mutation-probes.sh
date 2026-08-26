@@ -2310,11 +2310,20 @@ PROBES = [
      "a sonos following another speaker is detected and named", 1),
 
     # `x-rincon:` is stated ONCE, in `PositionInfo`, and `UpnpRenderer` asks the property rather than
-    # carrying a second copy of the prefix. A `contains` in place of `startsWith` would call a
-    # line-in source (`x-rincon-stream:`) a group follower and refuse to cast to it.
-    ("control/rincon-matched-anywhere", CONTROL_STATE,
+    # carrying a second copy of the prefix. Loosening the prefix to `x-` -- the plausible way to get
+    # this wrong -- calls a line-in source (`x-rincon-stream:`) and an SMB file (`x-file-cifs:`) group
+    # followers, and this app then refuses to cast to a speaker that is perfectly free.
+    #
+    # A `contains`-instead-of-`startsWith` probe was WRITTEN HERE FIRST AND REMOVED, because it was
+    # run and came back MISSED with zero failures in the whole suite. That is not a gap in the test:
+    # `contains` and `startsWith` can only differ for a `TrackURI` carrying `x-rincon:` somewhere
+    # other than at its start, and no value a renderer produces looks like that. The mutation was
+    # undetectable because it is not a defect, which is a different thing from an assertion that
+    # cannot fail -- and worth writing down, because the next person to reach for it will reach for
+    # `contains` too.
+    ("control/rincon-prefix-too-loose", CONTROL_STATE,
      "  val followedCoordinator: String? get() = trackUri?.takeIf { it.startsWith(FOLLOW_SCHEME) }",
-     "  val followedCoordinator: String? get() = trackUri?.takeIf { it.contains(FOLLOW_SCHEME) }",
+     '  val followedCoordinator: String? get() = trackUri?.takeIf { it.startsWith("x-") }',
      "a follower is recognised by its scheme and nothing else is", 1),
 
     # `UNKNOWN` folded into `STOPPED`. Task 8 reads `STOPPED` after `PLAYING` as "the track ended,
