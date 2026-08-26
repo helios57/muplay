@@ -2335,18 +2335,19 @@ PROBES = [
     #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
     ("integrations/lidarr-api-key-header", LIDARR_INT,
      '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
-     # 4, measured: it also reddens the three other tests that read the header back off a
-     # RecordedRequest, including the redirect one.
-     "the header carries whichever key the client was given", 4),
+     # 5, measured: it also reddens the four other tests that read the header back off a
+     # RecordedRequest -- the redirect one, and `LidarrWiringTest`'s factory test among them.
+     "the header carries whichever key the client was given", 5),
 
     # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
     #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
     #    Adding the query parameter while LEAVING the header in place is deliberate: every
     #    response assertion in the module still passes, because the request still authenticates.
     ("integrations/lidarr-api-key-on-url", LIDARR_INT,
-     'chain.request().newBuilder()\n        .header("X-Api-Key", apiKey)',
-     'chain.request().newBuilder()\n        .url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build())\n        .header("X-Api-Key", apiKey)',
-     "no request this client makes carries the key on its url", 1),
+     '.header("X-Api-Key", apiKey)',
+     '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
+     # 2, measured: `LidarrWiringTest`'s factory test asserts the same negative one layer up.
+     "no request this client makes carries the key on its url", 2),
 
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
