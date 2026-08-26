@@ -19,9 +19,17 @@ import kotlinx.coroutines.flow.first
  * [Bookshelf], and swapping the binding in `DataModule` swaps the whole implementation without
  * touching a browse decision.
  *
- * Three methods and no more. The browse tree asks "which books", "this one book" and "this book's
- * files"; every other audiobook question -- chapters, speed, silence skipping, where to resume from
- * -- is Plan 4's and is deliberately absent here rather than stubbed.
+ * Four methods and no more. The browse tree asks "which books", "this one book", "this book's
+ * files" and "which file was the listener in"; every other audiobook question -- chapters, speed,
+ * silence skipping, and **at what second** to resume -- is Plan 4's and is deliberately absent here
+ * rather than stubbed.
+ *
+ * **The fourth method was three when Task 4 wrote this, and the correction is worth reading rather
+ * than reverting.** That doc said "where to resume from" was Plan 4's, and half of it still is:
+ * Plan 4's `AudiobookResumePolicy` owns the *position*. What Plan 5 Task 5 needs is the *file*,
+ * because `ResumePolicy.resolve(mediaIds, requestedIndex)` cannot tell "play this book" from "play
+ * chapter 1 from the top" -- the caller picks the index and the policy picks the position, which is
+ * Plan 4's own seam correction. [resumeFileId] is that index's input and carries no offset at all.
  */
 interface Bookshelf {
 
@@ -33,6 +41,16 @@ interface Bookshelf {
 
   /** One book's files, in disc/track order -- the same order `BrowseDao.observeSongs` imposes. */
   suspend fun files(bookId: String): List<Song>
+
+  /**
+   * The id of the file the listener was last in, or `null` when nothing has been written for this
+   * book at all.
+   *
+   * A **file id**, never an offset. `BrowseTreeRepository.expand` turns it into a queue index; the
+   * second within that file is `ResumePolicy`'s and reaches the player through `MuPlayer`, which is
+   * the seam spec section 3 exists for.
+   */
+  suspend fun resumeFileId(bookId: String): String?
 }
 
 /**
@@ -95,4 +113,18 @@ class MirrorBookshelf @Inject constructor(
 
   override suspend fun files(bookId: String): List<Song> =
     browseDao.observeSongs(bookId).first().map(MirrorMapper::song)
+
+  /**
+   * Answered through [BookProgress] rather than by a `MAX(lastPlayedAtEpochMs)` query, and the
+   * reason is the same one [book] gives for going through [books]: the rule that decides which row
+   * is the listener's -- most recently written, ties to the later file -- is one rule, and a second
+   * query would be a second copy of it that drifts. A book the shelf draws a pip on and a queue
+   * that starts on a different file is exactly the disagreement that produces.
+   */
+  override suspend fun resumeFileId(bookId: String): String? {
+    val files = files(bookId)
+    if (files.isEmpty()) return null
+    val rows = mediaProgressDao.findAll().associateBy { it.mediaId }
+    return BookProgress.of(files, rows).fileMediaId
+  }
 }

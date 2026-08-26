@@ -7,11 +7,13 @@ import app.muplay.database.BrowseTreeRepository
 import app.muplay.database.LibraryRepository
 import app.muplay.database.MirrorBookshelf
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.ShuffleRepository
 import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.ArtistEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
+import app.muplay.media.QueueRepository
 import app.muplay.media.fixedSubsonicSourceProvider
 import app.muplay.model.Album
 import app.muplay.model.AlbumListType
@@ -53,6 +55,7 @@ class BrowseGraph private constructor(
   val libraryRepository: LibraryRepository,
   val browseRepository: BrowseRepository,
   val treeRepository: BrowseTreeRepository,
+  val queueRepository: QueueRepository,
   /** Records every cover-art resolution the tree asked for -- see `artworkIsResolvedPerPage`. */
   val artSource: RecordingArtSource,
 ) {
@@ -64,7 +67,7 @@ class BrowseGraph private constructor(
   }
 
   fun callback(resolver: SurfaceResolver): MuPlayLibraryCallback =
-    MuPlayLibraryCallback(treeRepository, resolver)
+    MuPlayLibraryCallback(treeRepository, resolver, queueRepository)
 
   /** The production resolver, reading a real `ControllerInfo`. */
   fun callback(context: Context): MuPlayLibraryCallback = callback(DefaultSurfaceResolver(context))
@@ -124,16 +127,22 @@ class BrowseGraph private constructor(
         if (withProgress) PROGRESS_ROWS.forEach { database.mediaProgressDao().upsert(it) }
       }
 
+      val libraryRepository = LibraryRepository(database.libraryDao(), provider)
       return BrowseGraph(
         database = database,
         storeFile = storeFile,
-        libraryRepository = LibraryRepository(database.libraryDao(), provider),
+        libraryRepository = libraryRepository,
         browseRepository = BrowseRepository(database.browseDao(), provider),
         treeRepository = BrowseTreeRepository(
           LibraryRepository(database.libraryDao(), provider),
           BrowseRepository(database.browseDao(), provider),
           MirrorBookshelf(database.libraryDao(), database.browseDao(), database.mediaProgressDao()),
+          ShuffleRepository(database.browseDao(), provider),
         ),
+        // The **real** `QueueRepository`, over the same fake source: Plan 5 Task 5 makes the
+        // browse callback build playable items, and a hand-written stand-in here would prove the
+        // callback calls something rather than that a tapped row becomes the queue the app plays.
+        queueRepository = QueueRepository(provider, libraryRepository),
         artSource = artSource,
       )
     }
@@ -335,6 +344,22 @@ class RecordingArtSource : SubsonicSource {
 
   val coverArtCalls: MutableList<Pair<String, Int?>> = mutableListOf()
 
+  /** Every stream URL the queue asked this source to build, in order. */
+  val streamCalls: MutableList<Pair<String, StreamFormat>> = mutableListOf()
+
+  /**
+   * What `getRandomSongs` answers, keyed by the library id it was asked for.
+   *
+   * Keyed rather than a single list, because the assertion a shuffle row has to support is that the
+   * **library id from the tapped id** reaches the repository: a source that answered the same songs
+   * for every library would satisfy a test that only checked what came back. An unlisted library
+   * answers an empty list, which is the other observation.
+   */
+  val randomSongsByLibrary: MutableMap<Int, List<Song>> = mutableMapOf()
+
+  /** Every (libraryId, size) pair `getRandomSongs` was called with, in order. */
+  val randomSongsCalls: MutableList<Pair<Int, Int>> = mutableListOf()
+
   /**
    * Art ids this source refuses to build a URL for.
    *
@@ -350,8 +375,21 @@ class RecordingArtSource : SubsonicSource {
     return "http://art.invalid/$coverArtId/$sizePx"
   }
 
-  override fun streamUrl(songId: String, format: StreamFormat): String =
-    error("the browse tree must never build a stream url; it builds identities")
+  /**
+   * A deterministic, **credential-free** stand-in for the real stream URL.
+   *
+   * It used to `error(...)` with *"the browse tree must never build a stream url; it builds
+   * identities"*, and that was true of Plan 5 Task 4. Task 5 makes the same callback answer
+   * `onAddMediaItems`, which is the browse tree handing a queue to a player -- so building one is
+   * now the subject rather than a violation. What has not changed is the reason the old line
+   * existed: the value below carries **no `u`, `s` or `t` parameter of any kind**, so no assertion
+   * in this suite can become the place a real Subsonic token is written down. The real URL is built
+   * by the real `SubsonicClient` and is asserted nowhere, here or anywhere else.
+   */
+  override fun streamUrl(songId: String, format: StreamFormat): String {
+    streamCalls += songId to format
+    return "http://stream.invalid/$songId"
+  }
 
   override suspend fun ping(): ServerInfo = error("not used by the browse suite")
   override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by the browse suite")
@@ -371,6 +409,8 @@ class RecordingArtSource : SubsonicSource {
     albumCount: Int,
     songCount: Int,
   ): SearchResults = error("not used by the browse suite")
-  override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> =
-    error("not used by the browse suite")
+  override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> {
+    randomSongsCalls += musicFolderId to size
+    return randomSongsByLibrary[musicFolderId].orEmpty()
+  }
 }

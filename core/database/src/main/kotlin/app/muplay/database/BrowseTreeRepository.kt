@@ -4,8 +4,10 @@ import app.muplay.model.Album
 import app.muplay.model.Artist
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.Song
 import app.muplay.model.browse.BrowseId
 import app.muplay.model.browse.BrowseNode
+import app.muplay.model.browse.BrowseSelection
 import app.muplay.model.browse.BrowseSurface
 import app.muplay.model.browse.BrowseTree
 import javax.inject.Inject
@@ -39,6 +41,7 @@ class BrowseTreeRepository @Inject constructor(
   private val libraryRepository: LibraryRepository,
   private val browseRepository: BrowseRepository,
   private val bookshelf: Bookshelf,
+  private val shuffleRepository: ShuffleRepository,
 ) {
 
   suspend fun children(id: BrowseId, surface: BrowseSurface): List<BrowseNode>? = when (id) {
@@ -108,6 +111,88 @@ class BrowseTreeRepository @Inject constructor(
   }
 
   /**
+   * The queue a playable browse id stands for, or `null` if the id is not playable.
+   *
+   * One rule: **a playable id becomes the queue it belongs to, positioned at itself.** A track
+   * expands through its own album, which makes "play this track" mean "play this album from here"
+   * for music and "play this book from this file" for a book -- the same code, because a book *is*
+   * an album in a library the user tagged Audiobooks and spec section 4 says the server will never
+   * distinguish them.
+   *
+   * **No position is computed here and none may be.** Spec section 3 puts the position behind
+   * `MuPlayer`'s seam so that no code path can set a wrong one; this is a code path. The *index* is
+   * this method's, because `ResumePolicy.resolve(mediaIds, requestedIndex)` cannot tell "play this
+   * book" from "play chapter 1 from the top" -- the caller picks the index and the policy picks the
+   * second.
+   *
+   * `null` and not [BrowseSelection.EMPTY] for a browsable-only id: `MuPlayLibraryCallback` turns
+   * `null` into no items at all, which a car renders as "this is not something to play" rather than
+   * as a queue it then fails to start.
+   */
+  suspend fun expand(id: BrowseId): BrowseSelection? = when (id) {
+    is BrowseId.Album -> songsIn(id.albumId)?.let { BrowseSelection(it, startIndex = 0) }
+
+    // Scoped through the shelf, the same way `children` is: a *music* album id spelled
+    // `muplay/book/<id>` must not expand, or the one mechanism spec section 4 leaves this app --
+    // the library role -- would be bypassed by an id a controller can type.
+    is BrowseId.Book -> bookshelf.book(id.bookId)?.let {
+      val files = bookshelf.files(id.bookId)
+      files.takeIf { it.isNotEmpty() }?.let { songs ->
+        // The caller picks the index; the policy picks the position. `resumeFileId` answers
+        // "which file was I in", never "at what second".
+        val resumeFileId = bookshelf.resumeFileId(id.bookId)
+        BrowseSelection(songs, startIndex = resumeFileId?.let { startIndexOf(songs, it) } ?: 0)
+      }
+    }
+
+    is BrowseId.Track -> {
+      val song = browseRepository.song(id.songId)
+      val albumId = song?.albumId
+      when {
+        song == null -> null
+        // A loose track with no album is still playable; it is just a queue of one.
+        albumId == null -> BrowseSelection(listOf(song), startIndex = 0)
+        else -> songsIn(albumId)
+          ?.let { siblings -> BrowseSelection(siblings, startIndexOf(siblings, song.id)) }
+          // The album row is gone from the mirror but the song is not -- a sync that ran between
+          // the browse and the tap. One track is a worse answer than the album and a better one
+          // than silence.
+          ?: BrowseSelection(listOf(song), startIndex = 0)
+      }
+    }
+
+    is BrowseId.Shuffle -> shuffleSongs(id.libraryId)?.let { BrowseSelection(it, startIndex = 0) }
+
+    // Browsable-only ids. The callback turns null into no items, which reads as "this is not
+    // something to play" rather than as an empty queue.
+    BrowseId.Root, BrowseId.Continue, BrowseId.Books, BrowseId.Albums, BrowseId.Artists,
+    BrowseId.Libraries, is BrowseId.Library, is BrowseId.Artist,
+    -> null
+  }
+
+  /** An album's songs in play order, or `null` when the mirror holds none. */
+  private suspend fun songsIn(albumId: String): List<Song>? =
+    browseRepository.songs(albumId).first().takeIf { it.isNotEmpty() }
+
+  /**
+   * The songs Plan 2's library-scoped shuffle produced, or `null` if it produced none.
+   *
+   * **`ShuffleResult` is a `data class`, not a sealed interface.** The plan asked for an exhaustive
+   * `when` over its arms with no `else`, so that a new failure kind would fail to compile here
+   * rather than be read as "no music"; there are no arms. What it carries instead is
+   * `discardedOutOfScope`, a count of songs the server returned that this mirror does not place in
+   * the requested library -- already dropped from `songs` by `ShuffleRepository` itself, which is
+   * spec section 1's rule and the reason a shuffle row can be trusted in a car. Nothing here
+   * re-filters it, and nothing here reads the count: a shuffle whose scope guard fired is still a
+   * shuffle of in-scope music, and the count exists for a screen to explain a short list with.
+   * If that type ever becomes sealed, this is the call site the plan meant.
+   */
+  private suspend fun shuffleSongs(libraryId: Int): List<Song>? =
+    shuffleRepository.shuffle(libraryId, ShuffleRepository.DEFAULT_SHUFFLE_SIZE)
+      .songs
+      .takeIf { it.isNotEmpty() }
+
+  /**
    * A `coverArt` id turned into a URL, or `null` when nothing is configured.
    *
    * `runCatching`, because `SubsonicSourceProvider.current()` throws `NotConfiguredException` when
@@ -141,6 +226,17 @@ class BrowseTreeRepository @Inject constructor(
     librariesWithRole(LibraryRole.MUSIC).flatMap { browseRepository.artists(it.id).first() }
 
   companion object {
+    /**
+     * Where in [songs] the item with [mediaId] sits, or `0` if it is not there at all.
+     *
+     * Never `-1`: `indexOfFirst` returns that for a miss, and `PlaybackQueue.of(songs, -1)` throws
+     * inside a `ListenableFuture`, where the exception reaches a car as unexplained silence. A
+     * missing id means the mirror moved under a stale browse row, and starting at the beginning is
+     * the right answer to that.
+     */
+    fun startIndexOf(songs: List<Song>, mediaId: String): Int =
+      songs.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)
+
     /**
      * The cover-art edge length a browse row asks for.
      *
