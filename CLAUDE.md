@@ -521,3 +521,25 @@ Two consequences:
 It is also what makes a release build drivable against the CI container at all:
 `adb reverse tcp:4533 tcp:4533` plus `http://localhost:4533` is the only way to
 put a real library in front of a release APK on this emulator.
+
+## A revert built on `git checkout --` destroys uncommitted work
+
+Plan 6 Task 5 lost about forty minutes and four finished tests to its own
+falsification harness: the harness applied a mutation, ran the suite, and
+reverted with `git checkout -- <file>`. That is correct for the mutated file and
+catastrophic for everything else the author had not committed yet — `git
+checkout` does not distinguish "the mutation I just made" from "the test I wrote
+twenty minutes ago and have not committed".
+
+`ci/mutation-probes.sh` avoids this by refusing to run on a dirty tree at all,
+which is the same guard from the other side. A hand-rolled harness needs the
+same discipline:
+
+- **commit before you mutate**, so the revert has a clean baseline to return to,
+  or
+- snapshot the file's bytes in memory and write them back, rather than asking git.
+
+The same rule applies to clearing a stray mutation by hand. `git checkout -- .`
+is safe only once you have looked at `git status` and confirmed the *only*
+modified file is the one you mean to revert. Read the diff first; it costs one
+command and it is the difference between undoing a mutation and undoing an hour.
