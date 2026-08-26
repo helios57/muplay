@@ -423,3 +423,32 @@ The general shape, which has now cost this repository three separate gates: **a
 list written by hand in one file, describing something discoverable from the
 tree, drifts and nothing notices.** When you find one, do not just fix the list
 — derive it, or assert it against what it claims to describe.
+
+## Neither the emulator nor the container survives a session restart
+
+Measured 2026-08-27, after the parent Claude Code process exited: `adb devices`
+was empty and `docker ps` showed no `ci-navidrome-1`. Both looked destroyed.
+Neither was.
+
+- **The container had `Exited (0)`, not gone.** `docker start ci-navidrome-1`
+  brought it back healthy in seconds, and because the restart is not a recreate,
+  its **writable layer survived** — the seeded library still reported all 9 items
+  and the transcoding cache was still populated.
+- **The emulator's `qemu-system-x86_64` was still running**; it was the *adb
+  server* that had died with the session. `adb start-server` found the device
+  `offline`, and it reached `device` and then `sys.boot_completed=1` about a
+  minute later. The AVD is still `muplay37`.
+- **The app was no longer installed**, so the next `connectedDebugAndroidTest`
+  pays a full install.
+
+So the recovery is `docker start ci-navidrome-1` and `adb start-server`, then wait
+for `sys.boot_completed`. It is restoration, not the recreate-or-reseed this file
+forbids, and nothing is lost.
+
+Why this is worth a section: for about ten minutes every device and live suite
+failed with a connection error, and five resumed lanes were about to read those
+failures as defects in their own branches. That is the same shape as the reviewer
+who marked an entire instrumented tier unverified because `adb` was not on
+`PATH`. **Before concluding that a tier cannot be verified — or that a test you
+just wrote is broken — check that the emulator and the container are actually
+up.**
