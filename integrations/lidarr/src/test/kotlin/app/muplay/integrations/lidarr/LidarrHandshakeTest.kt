@@ -87,7 +87,7 @@ class LidarrHandshakeTest {
         200,
         """
         {"appName":"Sonarr","instanceName":"Media","version":"9.9.9.9","urlBase":"/lidarr",
-         "authentication":"none"}
+         "authentication":"forms"}
         """.trimIndent(),
       ),
     )
@@ -98,6 +98,12 @@ class LidarrHandshakeTest {
     assertThat(status.instanceName).isEqualTo("Media")
     assertThat(status.version).isEqualTo("9.9.9.9")
     assertThat(status.urlBase).isEqualTo("/lidarr")
+    // `forms`, not the fixture's `none`. Measured with `authentication = "none"` hardcoded into
+    // the mapping: this test stayed GREEN because the synthetic body originally repeated the
+    // fixture's own value, so the "second observation" was not a second observation at all. The
+    // only test that caught it was the omitted-fields one, by accident. Both real values
+    // (`none` on a fresh install, `forms` once a user sets a password) are now used, once each.
+    assertThat(status.authentication).isEqualTo("forms")
     // And the identity check is a real comparison, not a constant `true`. This is the whole reason
     // the handshake is `system/status` and not `ping`: a user who pastes their Sonarr URL into the
     // Lidarr field must not get a green tick.
@@ -190,6 +196,27 @@ class LidarrHandshakeTest {
 
     assertThat(runCatching { client().status() }.exceptionOrNull())
       .isInstanceOf(LidarrHttpException::class.java)
+  }
+
+  /**
+   * A **successful** response with no body at all. Retrofit hands back a `Response` whose
+   * `body()` is null for a 204/205, and `call()`'s `?: throw` is what stops that becoming a
+   * `NullPointerException` from inside the client.
+   *
+   * Written because the sweep found it: the mutation `response.body() ?: throw …` → `body()!!`
+   * left the entire suite **green**. No endpoint in Task 4 can produce a 204, so this was an arm
+   * with no observation at all — and Tasks 5-7 add `POST`s that can. An uncovered guard is a
+   * guard that gets deleted as dead code.
+   */
+  @Test
+  fun `a successful response with no body is a failure carrying the status`() = runTest {
+    server.enqueue(MockResponse.Builder().code(204).build())
+
+    val raised = runCatching { client().status() }.exceptionOrNull()
+
+    assertThat(raised).isInstanceOf(LidarrHttpException::class.java)
+    // 204, not a constant: the guard has to carry the code it actually saw.
+    assertThat((raised as LidarrHttpException).status).isEqualTo(204)
   }
 
   @Test
