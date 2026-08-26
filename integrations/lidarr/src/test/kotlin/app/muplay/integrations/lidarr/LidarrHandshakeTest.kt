@@ -196,6 +196,15 @@ class LidarrHandshakeTest {
 
     assertThat(runCatching { client().status() }.exceptionOrNull())
       .isInstanceOf(LidarrHttpException::class.java)
+
+    // ...nor is a 503 whose JSON parses and carries no `errorMessage` at all. Lidarr's serializer
+    // omits null-valued fields entirely, so this is the shape an *absent* message actually takes
+    // on the wire -- and it is the arm `?.contains(...) == true` exists for. Found by measuring:
+    // this branch was 1/2 until this assertion was written.
+    server.enqueue(json(503, "{}"))
+
+    assertThat(runCatching { client().status() }.exceptionOrNull())
+      .isInstanceOf(LidarrHttpException::class.java)
   }
 
   /**
@@ -280,6 +289,28 @@ class LidarrHandshakeTest {
   }
 
   /**
+   * A failure element with **no `errorMessage`**, which is what Lidarr's serializer produces for a
+   * null one (`DefaultIgnoreCondition = WhenWritingNull` omits the field rather than writing
+   * `null`). `isAlreadyAdded` must answer `false` rather than throwing on the null.
+   *
+   * Found by measuring: `isAlreadyAdded`'s `?.contains(...) == true` was 3/4 branches until this
+   * existed, and the missing arm was the null one — the only arm a real Lidarr response can
+   * actually take by omission.
+   */
+  @Test
+  fun `a validation failure with no message is not an already-added`() = runTest {
+    server.enqueue(json(400, """[{"propertyName":"ForeignAlbumId"}]"""))
+
+    val raised = runCatching { client().status() }.exceptionOrNull()
+
+    val failures = (raised as LidarrValidationException).failures
+    assertThat(failures).hasSize(1)
+    assertThat(failures.single().propertyName).isEqualTo("ForeignAlbumId")
+    assertThat(failures.single().errorMessage).isNull()
+    assertThat(raised.isAlreadyAdded).isFalse()
+  }
+
+  /**
    * A 400 whose body is not a FluentValidation array at all — a reverse proxy's HTML error page —
    * must still reach the caller as something it can render, not as a `SerializationException` from
    * inside the client.
@@ -316,6 +347,21 @@ class LidarrHandshakeTest {
     // A 200 with no `status` field at all is also not an OK ping, and reaches a different arm:
     // `body()?.status` is null rather than a mismatching string.
     server.enqueue(json(200, "{}"))
+    assertThat(client().ping()).isFalse()
+  }
+
+  /**
+   * A **successful** ping with no body: Retrofit hands back a null body for a 204, and
+   * `response.body()?.status` is then null rather than `"OK"`.
+   *
+   * Found by measuring: `isSuccessful && body()?.status.equals("OK", …)` was 7/8 branches, and
+   * the missing arm was this one. A 204 from something that is not a Lidarr must not read as a
+   * Lidarr answering its ping.
+   */
+  @Test
+  fun `a successful ping with no body at all is false`() = runTest {
+    server.enqueue(MockResponse.Builder().code(204).build())
+
     assertThat(client().ping()).isFalse()
   }
 
