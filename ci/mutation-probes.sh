@@ -217,6 +217,9 @@ PROXY_RANGE = "core/cast/src/main/kotlin/app/muplay/cast/proxy/RangeHeader.kt"
 PROXY_REGISTRY = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyRegistry.kt"
 PROXY_UPSTREAM = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyUpstream.kt"
 PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt"
+CONTROL_STATE = "core/cast/src/main/kotlin/app/muplay/cast/control/TransportState.kt"
+CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabilities.kt"
+CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -1746,6 +1749,19 @@ PROBES = [
      "    val requireInstanceIdZero: Boolean = true,\n"
      "    /** What `A_ARG_TYPE_SeekMode` allows. Anything else: 710. */\n"
      '    val supportedSeekModes: List<String> = listOf("REL_TIME"),\n'
+     # Task 5's knob. It is NOT one of the strictness switches this probe turns off -- it models an
+     # SCPD that lies, and `null` is the honest device -- but it sits inside the block this probe
+     # matches, so it has to be carried through both halves or the preflight aborts the whole list.
+     "    /**\n"
+     "     * What the SCPD **advertises**, when that differs from what the device actually accepts.\n"
+     "     *\n"
+     "     * `null` -- the default -- means the two agree, which is the honest device. Setting it models\n"
+     "     * **an SCPD that lies**, which is the reason `UpnpRenderer.seek` catches `710` at all despite\n"
+     "     * reading the capability first: firmware has advertised modes it then refuses. Without this\n"
+     "     * knob the two lists cannot disagree, and the `710` arm of that catch is unreachable from any\n"
+     "     * test -- which is a strictness the fake would be claiming and not providing.\n"
+     "     */\n"
+     "    val declaredSeekModes: List<String>? = null,\n"
      '    /** Spec section 4: *"Never Opus. Sonos cannot decode it."* Violation: 714. */\n'
      '    val rejectedMimeTypes: Set<String> = setOf("audio/ogg", "audio/opus", "audio/webm"),\n'
      "  )",
@@ -1757,6 +1773,7 @@ PROBES = [
      "    val requireUrlExtension: Boolean = false,\n"
      "    val requireInstanceIdZero: Boolean = false,\n"
      '    val supportedSeekModes: List<String> = listOf("REL_TIME", "ABS_TIME"),\n'
+     "    val declaredSeekModes: List<String>? = null,\n"
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      # 12, up from 10: an eighth knob (`requireWellFormedBody`) and the two tests that drive it.
@@ -2228,6 +2245,151 @@ PROBES = [
      "  internal val acceptConnection: (ServerSocket) -> Socket? = LocalNetworkOnly::acceptLocal,",
      "  internal val acceptConnection: (ServerSocket) -> Socket? = { it.accept() },",
      "connections are taken through the inbound local-network guard", 1),
+
+    # ---- Plan 6 Task 5: AVTransport, RenderingControl, and the Sonos quirks -------------------
+    #
+    # The defect this task is written against is the one named in the plan's own defect-class
+    # section: *"a SOAP test that asserts a request was sent"*. `assertThat(fake.soapRequests)
+    # .hasSize(1)` is green against an unquoted SOAPACTION, arguments in the wrong order, doubly
+    # escaped metadata and a URL with no extension -- every one of which a real Sonos rejects. So
+    # every probe below is a mutation whose ONLY visible effect is which bytes reached the device,
+    # and every named test reads those bytes back off `FakeRenderer`'s recording rather than off a
+    # convenience object.
+    #
+    # Every count here was MEASURED, one mutation at a time, against `:core:cast:test` before it was
+    # written down -- not predicted. The four with a count above one are the honest ones: a
+    # mutation that reddens a neighbour as well is still a precise discrimination if the named
+    # test is the one that names the defect, and the count is what notices when that stops being
+    # true. Four further mutations were run and are NOT in this list because they redden 20+ tests
+    # each (`INSTANCE_ID` -> "1"; a `followedCoordinator` that always fires; pre-escaping the
+    # metadata; swapping `CurrentURI` and `CurrentURIMetaData`) -- a count that large is drift
+    # waiting to happen, and their transcripts are in task-5-report.md instead.
+
+    # QUIRK 1. `TransportPlaySpeed` is an argument of `Play` and its allowed value list is `{"1"}`
+    # on every renderer this plan targets. Sonos answers 402 when it is missing and **717 Play speed
+    # not supported** for anything else -- which is why the fake sends a code rather than a plain
+    # 500, and why this probe's transcript reads `UPnP error 717`. It is also the shape a future
+    # "just pass the book's 1.3x speed through" change would take, and this is what stops it.
+    ("control/play-speed-not-one", CONTROL_RENDERER,
+     'const val PLAY_SPEED: String = "1"',
+     'const val PLAY_SPEED: String = "1.0"',
+     "play sends speed 1 and moves the device into PLAYING", 3),
+
+    # QUIRK 3, and the reason the SCPD is READ rather than tried. A `seek` that hardcodes REL_TIME
+    # passes every seek assertion against a device that accepts it, and produces `710` on the first
+    # drag of the bar against an ABS_TIME-only one -- while ALSO sending a Seek to a device that
+    # declared it cannot seek by time at all, which is the "offer a control that silently fails"
+    # defect this whole plan is written against.
+    ("control/seek-mode-hardcoded", CONTROL_RENDERER,
+     "    val mode = capabilities().preferredSeekMode ?: return false",
+     "    val mode = RendererCapabilities.REL_TIME",
+     "a device that only accepts ABS_TIME is seeked with ABS_TIME", 2),
+
+    # ...and the other half of that decision: an SCPD can lie, so `710` and `711` are still caught
+    # and answered `false`. Removing the catch turns a dragged progress bar into an exception the
+    # `Player` above has to interpret, which is a session torn down over a seek.
+    ("control/seek-refusal-not-caught", CONTROL_RENDERER,
+     "      if (refused.fault.errorCode in SEEK_REFUSALS) false else throw refused",
+     "      throw refused",
+     "a seek past the end returns false rather than throwing", 2),
+
+    # The seek TARGET, which is the value a status assertion cannot see: a `Seek` that always aims
+    # at the same place is answered 200 by every renderer there is.
+    ("control/seek-target-is-a-constant", CONTROL_RENDERER,
+     '          SoapArgument("Target", UpnpTime.formatClock(positionMs)),',
+     '          SoapArgument("Target", UpnpTime.formatClock(83_000L)),',
+     "a second seek lands somewhere else", 1),
+
+    # QUIRK 4, and the one that is a scope decision. A Sonos grouped in the Sonos app ACCEPTS
+    # `SetAVTransportURI` and plays nothing, because it keeps following its coordinator. Without the
+    # check the cast succeeds at every layer and the user hears silence with no explanation -- which
+    # is why detecting it is in scope even though fixing it is not.
+    ("control/no-rincon-check", CONTROL_RENDERER,
+     "    positionInfo().followedCoordinator?.let { throw RendererFollowsAnotherException(it) }",
+     "    positionInfo()",
+     "a sonos following another speaker is detected and named", 1),
+
+    # `x-rincon:` is stated ONCE, in `PositionInfo`, and `UpnpRenderer` asks the property rather than
+    # carrying a second copy of the prefix. A `contains` in place of `startsWith` would call a
+    # line-in source (`x-rincon-stream:`) a group follower and refuse to cast to it.
+    ("control/rincon-matched-anywhere", CONTROL_STATE,
+     "  val followedCoordinator: String? get() = trackUri?.takeIf { it.startsWith(FOLLOW_SCHEME) }",
+     "  val followedCoordinator: String? get() = trackUri?.takeIf { it.contains(FOLLOW_SCHEME) }",
+     "a follower is recognised by its scheme and nothing else is", 1),
+
+    # `UNKNOWN` folded into `STOPPED`. Task 8 reads `STOPPED` after `PLAYING` as "the track ended,
+    # advance" -- so a renderer sending a state this enum has not seen would skip a track, every
+    # time, silently. Both arms of the `when` still execute under the mutation, so no coverage
+    # number moves.
+    ("control/unknown-reads-as-stopped", CONTROL_STATE,
+     "      else -> UNKNOWN",
+     "      else -> STOPPED",
+     "an unrecognised or missing value is UNKNOWN and not STOPPED", 1),
+
+    # `CurrentTransportStatus` is a SECOND state variable, and a renderer that could not fetch or
+    # decode what it was given answers `ERROR_OCCURRED` there while `CurrentTransportState` still
+    # reads an ordinary `STOPPED`. Hardcoding `hasError = false` turns "the speaker refused these
+    # bytes" into "the track finished", which is a queue that advances past a track nobody heard.
+    ("control/transport-error-ignored", CONTROL_STATE,
+     "      hasError = STATUS_ERROR_OCCURRED.equals(status.orEmpty().trim(), ignoreCase = true),",
+     "      hasError = false,",
+     "a device reporting ERROR_OCCURRED is distinguished from one that merely stopped", 2),
+
+    # The volume clamp. A slider's rounding must not become a `402`, and the fake answers exactly
+    # that to anything outside 0..100 -- as real hardware does.
+    ("control/volume-not-clamped", CONTROL_RENDERER,
+     '        SoapArgument("DesiredVolume", level.coerceIn(MIN_VOLUME, MAX_VOLUME).toString()),',
+     '        SoapArgument("DesiredVolume", level.toString()),',
+     "a volume outside 0 to 100 is clamped rather than sent and refused", 1),
+
+    # `RenderingControl` actions must carry `RenderingControl`'s service type, in the SOAPACTION and
+    # in the envelope's `xmlns:u`. A copy-paste of the transport's is a `401` on a conformant device
+    # and is invisible to every assertion about arguments -- this fake accepts it, which is exactly
+    # why the assertion is on the raw header value rather than on the answer.
+    ("control/rendering-uses-transport-service", CONTROL_RENDERER,
+     "    soap.invoke(controlUrl, DeviceDescription.SERVICE_RENDERING_CONTROL, action, arguments)",
+     "    soap.invoke(controlUrl, DeviceDescription.SERVICE_AV_TRANSPORT, action, arguments)",
+     "volume is read and written, and the value that comes back is the one that went in", 1),
+
+    # Reading the wrong out-argument out of a right answer. `GetVolume` answers `CurrentVolume`;
+    # `CurrentMute` is a real argument name on the same service, so this is the neighbouring-field
+    # defect rather than a typo, and it renders as a volume slider that is always at zero.
+    ("control/volume-reads-the-mute-argument", CONTROL_RENDERER,
+     '    )["CurrentVolume"]?.toIntOrNull()',
+     '    )["CurrentMute"]?.toIntOrNull()',
+     "volume is read and written, and the value that comes back is the one that went in", 2),
+
+    # `SetNextAVTransportURI` is called only where the device DECLARED it. Calling it anyway returns
+    # `401` and, on some firmware, clears the queue that is already playing -- in the middle of an
+    # album, which is the worst possible moment.
+    ("control/setnext-capability-ignored", CONTROL_RENDERER,
+     "    if (!capabilities().supportsSetNextUri) return",
+     "    if (false) return",
+     "a device that declares no such action is never asked, rather than asked and refused", 1),
+
+    # ...and the value it carries. A `NextURI` that is always empty queues nothing while answering
+    # 200, which is a gap between every pair of tracks and nothing in a log.
+    ("control/next-uri-is-a-constant", CONTROL_RENDERER,
+     '        SoapArgument("NextURI", item?.resourceUrl.orEmpty()),',
+     '        SoapArgument("NextURI", ""),',
+     "a device that declares SetNextAVTransportURI is given the next track, in order", 1),
+
+    # The SCPD read, cached once per renderer. Re-fetching adds an HTTP round trip to every drag of
+    # the seek bar, and the ONLY place that is visible is the device's own request count -- an
+    # identity check on the returned object goes green against a client that re-fetches and memoises
+    # the second answer.
+    ("control/capabilities-refetched", CONTROL_RENDERER,
+     "    cachedCapabilities ?: loadCapabilities().also { cachedCapabilities = it }",
+     "    loadCapabilities()",
+     "capabilities are fetched once and not on every seek", 1),
+
+    # ORDER IS A PROPERTY, here as in the three other places this plan says so. `preferredSeekMode`
+    # falls back to the device's own first choice, so a sorted `allowedValueList` silently changes
+    # which mode an ABS_TIME-and-TRACK_NR device gets asked for.
+    ("control/scpd-order-sorted", CONTROL_CAPS,
+     "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList()",
+     "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList().sorted()",
+     "the declared seek modes are read, in the order the device declared them", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
