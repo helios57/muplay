@@ -1,10 +1,10 @@
 package app.muplay.database
 
-import androidx.room.Room
 import androidx.room.testing.MigrationTestHelper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.database.di.DataModule
 import app.muplay.database.entity.BookSettingsEntity
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
@@ -35,13 +35,6 @@ class MigrationTest {
   private companion object {
     /** Owned by [helper], which deletes it at the start of every test. */
     const val TEST_DB = "migration-test.db"
-
-    /**
-     * A **second** name, for the one test that hands the file to the real `Room.databaseBuilder`
-     * rather than to [helper]. Sharing [TEST_DB] would put the helper's own lifecycle and a real
-     * `RoomDatabase` over one file.
-     */
-    const val BUILDER_DB = "migration-builder-test.db"
   }
 
   @get:Rule
@@ -217,22 +210,35 @@ class MigrationTest {
     }
   }
 
+  /**
+   * The migration as the **application** installs it, through `DataModule.provideDatabase` itself.
+   *
+   * The three tests above are handed [MIGRATION_6_7] by name, so they prove the migration is
+   * *correct* and prove nothing about whether the app installs it. `provideDatabase` also carries
+   * Plan 2's destructive escape hatch, deliberately (see [MIGRATION_6_7]'s own doc). Room consults
+   * `addMigrations` first and falls back only when it finds no path -- so dropping that one line
+   * turns this schema bump from "migrated" into "every listener's book position deleted", and
+   * every other assertion in this class stays green while it happens.
+   *
+   * **It has to call the real provider, and that was measured rather than assumed.** The first
+   * version of this test rebuilt the builder inline -- `Room.databaseBuilder(...)
+   * .addMigrations(MIGRATION_6_7).fallbackToDestructiveMigration(...)`, "byte for byte what
+   * `DataModule.provideDatabase` builds". Deleting `.addMigrations` from `DataModule` left it
+   * **green**, because a copy of a builder is not that builder. That is the assertion-that-cannot-
+   * fail in the exact place it would have done the most damage: a test whose entire stated purpose
+   * is to catch that one deletion, unable to see it. Calling `provideDatabase` is what makes the
+   * mutation red.
+   *
+   * The cost of calling it is that this runs against the shipped, on-disk `muplay.db` rather than
+   * a scratch name -- so the file is seeded at version 6 through [helper] (which deletes whatever
+   * was there) and deleted again afterwards, the same discipline `DataModuleTest` keeps.
+   */
   @Test
   fun theRealBuilderMigratesRatherThanDropping() {
-    // The tests above are handed `MIGRATION_6_7` by name, so they prove the migration is *correct*
-    // and prove nothing about whether the app installs it. `DataModule.provideDatabase` also
-    // carries Plan 2's destructive escape hatch, deliberately (see `MIGRATION_6_7`'s own doc).
-    // Room consults `addMigrations` first and falls back only when it finds no path -- so dropping
-    // that one line turns this schema bump from "migrated" into "every listener's book position
-    // deleted", and every other assertion in this class stays green while it happens. This is the
-    // only test that can tell those two apart.
-    seedVersionSix(BUILDER_DB)
+    // Seeded at the shipped name, because that is the only name `provideDatabase` will open.
+    seedVersionSix(MuPlayDatabase.DATABASE_NAME)
 
-    // The real builder, line for line what `DataModule.provideDatabase` builds, over that file.
-    val room = Room.databaseBuilder(context, MuPlayDatabase::class.java, BUILDER_DB)
-      .addMigrations(MIGRATION_6_7)
-      .fallbackToDestructiveMigration(dropAllTables = true)
-      .build()
+    val room = DataModule.provideDatabase(context)
 
     try {
       runBlocking {
@@ -253,6 +259,8 @@ class MigrationTest {
       }
     } finally {
       room.close()
+      // Independent of the order it runs in, and of anything it leaves for `DataModuleTest`.
+      context.getDatabasePath(MuPlayDatabase.DATABASE_NAME).delete()
     }
   }
 }
