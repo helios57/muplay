@@ -3471,6 +3471,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // PLACEHOLDER -- replaced with the measured rules in Task 4 Step 10.
+  ":integrations:lidarr" to listOf(
+    CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90")),
+  ),
 )
 
 /**

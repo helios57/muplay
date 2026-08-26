@@ -1,0 +1,24 @@
+[
+  {
+    "propertyName": "ForeignAlbumId",
+    "errorMessage": "\u0027Foreign Album Id\u0027 must not be empty.",
+    "severity": "error",
+    "errorCode": "NotEmptyValidator",
+    "formattedMessageArguments": [],
+    "formattedMessagePlaceholderValues": {
+      "propertyName": "Foreign Album Id",
+      "propertyValue": null
+    }
+  },
+  {
+    "propertyName": "Artist",
+    "errorMessage": "\u0027Artist\u0027 must not be empty.",
+    "severity": "error",
+    "errorCode": "NotNullValidator",
+    "formattedMessageArguments": [],
+    "formattedMessagePlaceholderValues": {
+      "propertyName": "Artist",
+      "propertyValue": null
+    }
+  }
+]
