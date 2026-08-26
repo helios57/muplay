@@ -7,44 +7,45 @@ media cache, a player UI and proven gapless playback.
 
 ## Where the plans stand
 
-Master `639f878`, green under `--no-build-cache`, pushed. **Zero `COVERAGE:`
-warnings across all 12 modules** — every class in the repo is gated by a floor.
-253 mutation probes.
+Master green under `--no-build-cache`, pushed. **Zero `COVERAGE:` warnings across
+12 modules** — every class in the repo is gated. 267 mutation probes, 100 floors.
+The audiobook corpus is deployed: the library reports **9 items**, up from 4.
 
 | Plan | Merged | Notes |
 | --- | --- | --- |
-| 3 — playback core | 11 of 12 | **12 deferred — needs the fixture window** |
-| 6 — Sonos/DLNA casting | 5 of 12 + SOAP hardening | next: T5 `UpnpRenderer`, T7 `CastRouter` |
-| 5 — Auto/Wear | 3 of 11 | T4 in flight |
-| 7 — integrations | 3 of 11 | next: T4 `:integrations:lidarr` |
-| 4 — audiobooks | 0 of 10 | fixtures complete, **merge held** |
+| 1 — foundation | 8 of 8 | complete |
+| 2 — library & browse | 8 of 8 | complete |
+| 3 — playback core | 11 of 12 | T12 needs its own fixture window (adds an Opus file) |
+| 4 — audiobooks | 1 of 10 | corpus in; **T2–T10 are the critical path** |
+| 5 — Auto/Wear | 4 of 11 | T5 in flight |
+| 6 — casting | 5 of 12 | T5 in flight |
+| 7 — integrations | 3 of 11 | T4 in flight |
+| 8 — release & Play | 0 of 10 | T1–T4 in flight; **T5 done** (privacy policy + Data safety) |
+
+**40 of 82 tasks merged.** Not finished, and not review-ready: audiobooks — the
+headline feature — is one task in.
 
 ## Lanes live now
 
-| Worktree | Task | Holds |
-| --- | --- | --- |
-| `p5t4` | P5 T4 `BrowseItems` + `MuPlayLibraryCallback` | `browse/`, `MuPlaybackService.kt` |
-| `p4t1` | P4 T1 audiobook fixtures | **complete, merge held** — needs a deployment window |
+| Worktree | Task |
+| --- | --- |
+| `p4deploy` | Corpus deployment, live-suite reconciliation, the `coldTranscode` race |
+| `p6t5` | Casting T5 — `UpnpRenderer` |
+| `p7t4` | Integrations T4 — `:integrations:lidarr` |
+| `p5t5` | Auto T5 — playing from the tree |
+| `p8t1` | Release T1–T4 — icon, theme, R8, signing, versioning |
 
-## Ready to dispatch when a lane frees
+## Wave 2, ready but blocked on wave 1
 
-- **Plan 6 Task 5 `UpnpRenderer`** — SOAP and DIDL are both hardened and merged;
-  pass `DidlLite.render(item)` **raw**, `render` escapes.
-- **Plan 6 Task 7 `CastRouter`** — the proxy is in.
-- **Plan 7 Task 4 `:integrations:lidarr`** — credential store and request store in.
-- **Plan 5 Task 5** — after T4.
+Every one of these consumes something a running lane is producing, which is why
+none is dispatched yet:
 
-## Two known product limitations, measured and written down
-
-- **A newly-started item plays its first ~700 ms at the previous item's gain.**
-  Real and audible; bounded by a test and recorded in spec section 4. Fixing it
-  needs the gain adopted at the pipeline's own period boundary — a design, not a
-  tweak.
-- **ReplayGain steps 1 and 9 are blocked, not done.** No tagged fixture (held
-  branch) and no `ReplayGainJourneyTest`. Navidrome *does* emit `replayGain`
-  (measured live, `{}` for all four untagged files); what is unproven is that it
-  populates `trackGain` from a file tag. Validated against the OpenAPI oracle
-  instead. Both land with the fixture window.
+- **Audiobooks T2** (schema 5, first Room migration) — needs the corpus verified
+- **Casting T7** (`CastRouter`) — needs `UpnpRenderer`
+- **Integrations T5** (Lidarr lookup) — needs the Lidarr module
+- **Auto T6** (voice and search) — needs T5's callback changes
+- **Playback T12** (transcoded seek, Opus fixture) — needs the container, which
+  the deploy lane holds
 
 ## Open decisions, deliberately not made
 

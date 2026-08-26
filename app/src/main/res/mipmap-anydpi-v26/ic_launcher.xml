@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon every device this app supports actually uses. `minSdk` is 26, and `anydpi-v26`
+  outranks every density bucket from API 26 up, so the PNGs in `mipmap-*dpi/` are the *unreachable*
+  half of the icon on this project's supported range — they exist so the mark survives a future
+  `minSdk` drop and so `ci/generate-launcher-icon.py` has one place to write every raster it makes.
+
+  `<monochrome>` is the themed-icon layer (API 33+). It is safe in this same file rather than in a
+  `-v33` copy because API 26-32's `AdaptiveIconDrawable.inflate` skips any child tag it does not
+  recognise rather than failing on it.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <background android:drawable="@drawable/ic_launcher_background" />
+  <foreground android:drawable="@drawable/ic_launcher_foreground" />
+  <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

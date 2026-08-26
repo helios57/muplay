@@ -1081,4 +1081,117 @@ class ConventionTest {
       .contains("$literal -> true")
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Plan 8 Task 3: the upload key. One contiguous block, appended at the end, so it cannot tangle
+  // with the edits other lanes are making to the rules above.
+  // ------------------------------------------------------------------------------------------
+
+  /** Paths that would be key material if they were tracked. Named once, for rule and control alike. */
+  private val KEY_MATERIAL =
+    Regex("""(^|/)(keystore\.properties|[^/]+\.(jks|keystore|p12|pfx|bks|pepk))$""")
+
+  /**
+   * Runs `git` with [command] in the repository root; returns its exit status and combined output.
+   *
+   * Fails loudly rather than returning a falsey value when it cannot run at all. That is why this
+   * is a helper and not two inline `ProcessBuilder` calls: this repository has now recorded four
+   * checks that could not distinguish "no" from "I cannot tell" (a `pgrep` matching its own
+   * command line, a PID file holding `PID=12345`, a subagent `.output` mtime, and a coverage
+   * warning suppressed by configuration-cache reuse), and every one of them was read as "no".
+   */
+  private fun git(vararg command: String): Pair<Int, String> {
+    val process = ProcessBuilder(listOf("git", *command))
+      .directory(repoRoot())
+      .redirectErrorStream(true)
+      .start()
+    val output = process.inputStream.readBytes().decodeToString()
+    check(process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS)) {
+      "git ${command.joinToString(" ")} did not finish within two minutes"
+    }
+    return process.exitValue() to output
+  }
+
+  /**
+   * The upload key must never be in this repository, in any form.
+   *
+   * Asked of **git's index**, not of `.gitignore`'s text, and that is the entire point. A rule that
+   * reads the ignore file proves someone wrote a pattern down; it says nothing about a file added
+   * with `git add -f`, about a file committed before the pattern existed, or about a shape of key
+   * material the pattern's author did not think of. `git ls-files` answers the question actually at
+   * stake — what would a `git push` publish — and answers it about this checkout rather than about
+   * a policy document.
+   *
+   * Getting this wrong is not recoverable by rotating a secret. Anyone holding the upload key can
+   * sign an artifact Play accepts as an update to this application, and installed users receive it
+   * as MuPlay. Which is why Plan 8 states the constraint as "not encrypted, not base64-encoded in
+   * a workflow file": an encoded key is still the key.
+   */
+  @Test
+  fun `no keystore material is tracked by git`() {
+    val (status, output) = git("ls-files", "-z")
+    assertThat(status).describedAs("git ls-files exit status (output: $output)").isZero()
+    // `-z` above, so the separator is NUL: a path containing a newline (git permits one)
+    // would otherwise arrive as two paths, neither of which matches the pattern.
+    val tracked = output.split('\u0000').filter { it.isNotEmpty() }
+
+    // Vacuity, from both ends. A `git ls-files` that returned nothing — wrong directory, git
+    // missing, a checkout with no index — would leave this rule green forever...
+    assertThat(tracked).describedAs("files in git's index").isNotEmpty()
+    // ...and so would a pattern matching no filename anybody would actually create. These three are
+    // the exact names this task's own tooling, .gitignore and documentation use.
+    assertThat(
+      listOf("keystore.properties", "upload-keystore.jks", "ci/release.p12")
+        .filter { KEY_MATERIAL.containsMatchIn(it) },
+    )
+      .describedAs("the pattern must match the shapes key material actually takes")
+      .hasSize(3)
+
+    assertThat(tracked.filter { KEY_MATERIAL.containsMatchIn(it) })
+      .describedAs(
+        "the upload key must never be tracked, in any form. Remove it from the index " +
+          "(git rm --cached), and then treat the key as compromised: anything that reached a " +
+          "commit reached the reflog, and anything pushed reached everyone with read access.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * ...and the ignore list has to actually work, so the *next* keystore someone generates is
+   * untracked by default rather than by that person's discipline.
+   *
+   * `git check-ignore`, not a `contains` over `.gitignore`: the question is whether git ignores the
+   * path, and git's own answer accounts for pattern syntax, ordering, negation and every other
+   * `.gitignore` in the tree. The rule above is the guarantee; this one is what stops the guarantee
+   * depending on somebody remembering.
+   */
+  @Test
+  fun `git ignores every shape key material takes`() {
+    fun ignored(path: String): Boolean {
+      val (status, output) = git("check-ignore", "-q", "--no-index", path)
+      // 0 = ignored, 1 = not ignored, anything else = git could not answer, which must not be read
+      // as either of the two real answers.
+      check(status == 0 || status == 1) { "git check-ignore could not answer for $path: $output" }
+      return status == 0
+    }
+
+    val candidates = listOf(
+      "keystore.properties",
+      "upload-keystore.jks",
+      "app/muplay-upload.keystore",
+      "ci/release.p12",
+      "secrets/upload.pfx",
+      "upload.bks",
+      "app/muplay.pepk",
+    )
+    assertThat(candidates.filterNot(::ignored))
+      .describedAs("add a pattern for these to .gitignore — see its upload-key section")
+      .isEmpty()
+
+    // The control. Without it, a `check-ignore` that answered "ignored" for everything — a stray
+    // `*` in some .gitignore, or a helper that mistook an error for a hit — would satisfy the
+    // assertion above while proving nothing at all.
+    assertThat(ignored("app/build.gradle.kts"))
+      .describedAs("a tracked project file must NOT be ignored, or this helper proves nothing")
+      .isFalse()
+  }
 }

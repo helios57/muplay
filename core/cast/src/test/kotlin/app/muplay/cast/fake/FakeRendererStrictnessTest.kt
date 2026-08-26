@@ -438,6 +438,12 @@ class FakeRendererStrictnessTest {
         SoapArgument("InstanceID", "0"), SoapArgument("Unit", "ABS_TIME"),
         SoapArgument("Target", "0:00:10"),
       ),
+      // A renderer with nothing loaded answers 701 to `Seek`, exactly as real hardware does, so
+      // the seek-mode knob cannot be observed at all until something is loaded. Before this
+      // preamble existed the fake accepted a Seek into an empty transport, which is a leniency no
+      // device has -- and which made the "seek was refused for a reason that is not about seeking"
+      // path unreachable from any test.
+      precededBy = listOf("SetAVTransportURI" to goodArguments),
     )
     assertAccepted(
       FakeRenderer.Strictness(rejectedMimeTypes = emptySet()),
@@ -452,14 +458,34 @@ class FakeRendererStrictnessTest {
     )
   }
 
-  /** Sends [action] to a renderer built with [strictness] and asserts it was answered 200. */
+  /**
+   * Sends [action] to a renderer built with [strictness] and asserts it was answered 200, after
+   * putting the renderer into the state [precededBy] describes -- each of those must be answered
+   * 200 too, or the sweep would be asserting acceptance of a request the device never reached.
+   */
   private fun assertAccepted(
     strictness: FakeRenderer.Strictness,
     action: String,
     arguments: List<SoapArgument>,
+    precededBy: List<Pair<String, List<SoapArgument>>> = emptyList(),
   ) {
     FakeRenderer(strictness).use { lenient ->
       lenient.start()
+      precededBy.forEach { (setUpAction, setUpArguments) ->
+        val setUp = http.exchange(
+          lenient.controlUrl,
+          "POST",
+          HttpHeaders.of(
+            "Content-Type" to SoapEnvelope.CONTENT_TYPE,
+            "SOAPACTION" to quoted(setUpAction),
+          ),
+          SoapEnvelope.render(DeviceDescription.SERVICE_AV_TRANSPORT, setUpAction, setUpArguments)
+            .toByteArray(Charsets.UTF_8),
+        )
+        assertThat(SoapEnvelope.parseFault(setUp.bodyText()))
+          .describedAs("the preamble %s should have been accepted", setUpAction)
+          .isNull()
+      }
       val response = http.exchange(
         lenient.controlUrl,
         "POST",
