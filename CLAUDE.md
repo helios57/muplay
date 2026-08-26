@@ -461,7 +461,12 @@ Neither was.
 - **The container had `Exited (0)`, not gone.** `docker start ci-navidrome-1`
   brought it back healthy in seconds, and because the restart is not a recreate,
   its **writable layer survived** — the seeded library still reported all 9 items
-  and the transcoding cache was still populated.
+  and the transcoding cache was still populated. Note what does *not* survive, and
+  is the one good thing about this: the transcoding cache's **in-memory index**
+  is rebuilt from the files that are actually on disk, which *repairs* a cache
+  poisoned by a previous file deletion. Measured across this very restart: 8 of 8
+  permanently-dead bitrates came back. See "Never delete the transcoding cache
+  files" above — on-disk state and served behaviour disagree exactly here.
 - **The emulator's `qemu-system-x86_64` was still running**; it was the *adb
   server* that had died with the session. `adb start-server` found the device
   `offline`, and it reached `device` and then `sys.boot_completed=1` about a
