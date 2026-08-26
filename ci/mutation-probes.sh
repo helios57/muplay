@@ -2560,6 +2560,14 @@ LATER_PROBE_FILES = [
     # run ends, which is the stray-mutation incident this script's header describes.
     STORE,
     CREDENTIALS,
+    # Plan 7 Task 4, added in the same edit as the seven `integrations/lidarr-*` probes -- and
+    # this list's own comment is not decoration: adding the probes WITHOUT these three names left
+    # `LidarrAuthInterceptor.kt` mutated after the first probe, so the second probe's `apply()`
+    # found 0 matches and aborted the family. It failed loudly and `git status` showed the stray
+    # immediately, which is the mechanism working, but it cost a run.
+    LIDARR_INT,
+    LIDARR_CLIENT,
+    LIDARR_EXC,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,
