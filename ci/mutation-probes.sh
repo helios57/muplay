@@ -192,6 +192,9 @@ CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/Integra
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 REQUEST_STATUS = "integrations/core/src/main/kotlin/app/muplay/integrations/RequestStatus.kt"
 MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/MediaRequest.kt"
+LIDARR_INT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
+LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrClient.kt"
+LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -2318,6 +2321,70 @@ PROBES = [
      'else -> Requested',
      "an unrecognised stored status reads as a failure that names itself", 1),
 
+    # ---- Plan 7 Task 4: the credential that must never reach a URL -----------------------------
+    # THIS FAMILY EXISTS BECAUSE THE COVERAGE GATE CANNOT SEE ANY OF IT, and that was measured
+    # rather than assumed. `LidarrAuthInterceptor` has **no branches at all** and its seven lines
+    # run on any request whatsoever, so its 7/7 LINE floor stays green under every mutation below;
+    # withholding all seven of `LidarrAuthTest`'s tests -- every assertion in this repository about
+    # where a Lidarr API key goes -- also leaves that floor at 7/7 and both coverage gates GREEN.
+    # A green `./gradlew check` is therefore no evidence at all about the key's placement. These
+    # four probes and the named tests are the whole of it.
+    #
+    # 1. The key itself. A constant here authenticates against nothing and fails loudly in the
+    #    field, but it is the shape that ships: a hardcoded value satisfies "the header is present"
+    #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
+    ("integrations/lidarr-api-key-header", LIDARR_INT,
+     '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
+     # 4, measured: it also reddens the three other tests that read the header back off a
+     # RecordedRequest, including the redirect one.
+     "the header carries whichever key the client was given", 4),
+
+    # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
+    #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
+    #    Adding the query parameter while LEAVING the header in place is deliberate: every
+    #    response assertion in the module still passes, because the request still authenticates.
+    ("integrations/lidarr-api-key-on-url", LIDARR_INT,
+     'chain.request().newBuilder()\n        .header("X-Api-Key", apiKey)',
+     'chain.request().newBuilder()\n        .url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build())\n        .header("X-Api-Key", apiKey)',
+     "no request this client makes carries the key on its url", 1),
+
+    # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
+    #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
+    #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
+    ("integrations/lidarr-accept-json", LIDARR_INT,
+     '.header("Accept", "application/json")', '.header("Accept", "*/*")',
+     "every request declares that it accepts json", 1),
+
+    # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
+    #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
+    #    proxied install needs. A constant in either leaves the fixture-based test green, because
+    #    the constant a lazy implementation reaches for is the fixture's own value.
+    ("integrations/lidarr-appName", LIDARR_CLIENT,
+     "appName = body.appName.orEmpty(),", 'appName = "Lidarr",',
+     # 2, measured: also reddens `a status body with every optional field omitted maps to empty
+     # strings`, which is the second observation of the same field at a third value.
+     "status reads the values from the body, not from constants", 2),
+    ("integrations/lidarr-urlBase", LIDARR_CLIENT,
+     "urlBase = body.urlBase.orEmpty(),", 'urlBase = "",',
+     "status reads the values from the body, not from constants", 1),
+
+    # 6. The 401 message. Lidarr returns a byte-identical bare 401 for a wrong key and a missing
+    #    one (measured: `Content-Length: 0`, no body, both cases), so a message claiming to know
+    #    which is a guess presented to the user as a fact. No ratio moves under this mutation --
+    #    the class is still constructed and still thrown.
+    ("integrations/lidarr-401-overclaims", LIDARR_EXC,
+     'Exception("Lidarr rejected this API key")',
+     'Exception("Lidarr says this API key is incorrect")',
+     "a 401 is an unauthorized failure whose message does not overclaim", 1),
+
+    # 7. The 503 discriminator. A reverse proxy with no upstream answers 503 too, and mapping every
+    #    503 to "starting up" tells a user to wait for a container that is not starting. Every arm
+    #    still executes under the mutation, so the BRANCH floor over `LidarrClient` stays green.
+    ("integrations/lidarr-503-collapsed", LIDARR_CLIENT,
+     "503 -> if (isStartingUp(raw)) LidarrStartingUpException() else LidarrHttpException(503)",
+     "503 -> LidarrStartingUpException()",
+     "a 503 starting-up body is its own failure, distinct from any other 503", 1),
+
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
     # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
@@ -2594,6 +2661,14 @@ JVM_TEST_RESULT_DIRS = {
     # Android type, which is exactly why the cleartext decision and the secret-stripping live in
     # this module rather than inside either service client.
     "integrations/core": "testDebugUnitTest",
+    # `:integrations:lidarr` joined in Plan 7 Task 4. An Android library, so `testDebugUnitTest`.
+    # Its JVM tier reaches every class in the module except one: `LidarrSourceProvider`'s single
+    # collaborator is `IntegrationCredentialStore`, which is DataStore over the Android Keystore,
+    # so the provider is instrumented-only and no probe here can see it. The severability
+    # behaviour it owns -- "not configured yields null" -- is proved by `LidarrSourceProviderTest`
+    # on the emulator and recorded in task-4-report.md, the same way `LiveNavidromeTest`'s
+    # test-side probes already are.
+    "integrations/lidarr": "testDebugUnitTest",
     # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
     # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
     # top-level function in its own file, and `PlayerViewModel` is constructed over a
@@ -2660,7 +2735,8 @@ def run_suite():
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
-                    ":integrations:core:test", ":feature:player:test"],
+                    ":integrations:core:test", ":integrations:lidarr:test",
+                    ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

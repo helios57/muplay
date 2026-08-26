@@ -3535,6 +3535,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.integrations.lidarr.LidarrClient*",
+        // `LidarrAuthInterceptor` is here so it is *gated*, and this rule is measured at 7/7 --
+        // but read the next sentence before trusting it, because it was falsified and the
+        // falsification FAILED. Withholding **all seven** of `LidarrAuthTest`'s tests -- every
+        // assertion in the repository about where the API key goes -- leaves this class at 7/7
+        // and both coverage gates GREEN, because `LidarrHandshakeTest` and `LidarrWiringTest`
+        // also send real requests through the same interceptor and its lines run on any request
+        // at all. The class has no branches, so no BRANCH rule can gate it either.
+        //
+        // So this floor cannot see a wrong header name, a constant key, or a key moved onto the
+        // query string. `ci/mutation-probes.sh`'s `integrations/lidarr-*` family is what does --
+        // three of those four probes leave every ratio in this table exactly where it is. Do not
+        // read a green coverage gate as evidence about the key's placement.
         "app.muplay.integrations.lidarr.LidarrAuthInterceptor",
         "app.muplay.integrations.lidarr.LidarrServer",
         "app.muplay.integrations.lidarr.Lidarr*Exception",
@@ -3560,6 +3572,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.integrations.lidarr.LidarrSourceProvider"),
       requiresInstrumentedData = true,
     ),
+    // The BRANCH rule above is falsifiable by withholding tests and the LINE rule below is not,
+    // which is worth writing down rather than leaving for the next person to rediscover.
+    // Withholding the four `LidarrSourceProviderTest` methods that reach `?.let(factory::create)`
+    // drops BRANCH to **2/4 = 0.50** and the full gate fails; the same withholding leaves LINE at
+    // **6/6**, because `?.let` compiles onto the same lines as the `as?` before it. The only
+    // falsification the LINE rule has is the absence of instrumented data altogether (0/6), which
+    // is what makes it worth keeping -- it is the rule that would fire if this class stopped being
+    // exercised on a device at all, and it is what keeps `warnUngatedClasses` quiet about
+    // `current$1`.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
