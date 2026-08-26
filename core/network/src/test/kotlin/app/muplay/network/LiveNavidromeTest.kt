@@ -9,6 +9,7 @@ import app.muplay.network.model.SubsonicResponseBody
 import app.muplay.testing.BookFixtures
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -55,6 +56,29 @@ import org.junit.jupiter.api.Test
 class LiveNavidromeTest {
 
   private val baseUrl = "http://localhost:4533"
+
+  /**
+   * The one raw HTTP client every helper in this class uses, with timeouts set **explicitly**
+   * rather than left at OkHttp's 10-second defaults.
+   *
+   * Measured: over 14 back-to-back runs of this suite, one run failed with a
+   * `SocketTimeoutException` out of [rawCommand] — not an assertion, a 10-second read timeout on a
+   * trivial REST call, while the shared container was busy serving another lane. A red that means
+   * "the container was slow" is indistinguishable at the report from a red that means "the server
+   * is wrong", and this suite exists to produce the second kind.
+   *
+   * 30 seconds is well beyond anything this corpus can legitimately take (the largest fixture is a
+   * 21-second, 32 kbps m4b, and a full transcode of one measured under a second) while still
+   * bounded, so a genuine hang still fails rather than parking the build.
+   *
+   * One instance rather than one per call: each `OkHttpClient()` brings its own connection pool
+   * and dispatcher threads, and this class makes hundreds of requests in a run.
+   */
+  private val http = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .callTimeout(60, TimeUnit.SECONDS)
+    .build()
 
   private fun client(password: String) =
     SubsonicClient(SubsonicCredentials(baseUrl = baseUrl, username = "admin", password = password))
@@ -795,7 +819,7 @@ class LiveNavidromeTest {
     val request = Request.Builder().url(url).apply {
       if (range != null) header("Range", range)
     }.build()
-    return OkHttpClient().newCall(request).execute().use { response ->
+    return http.newCall(request).execute().use { response ->
       // The body must be read before `use` closes the response. Returning the `Response`
       // afterwards is safe because every assertion above reads only its status line and headers.
       response to response.body.bytes()
@@ -812,7 +836,7 @@ class LiveNavidromeTest {
     val url = "$baseUrl/rest/$command".toHttpUrl().newBuilder().apply {
       (auth + params).forEach { (name, value) -> addQueryParameter(name, value) }
     }.build()
-    return OkHttpClient().newCall(Request.Builder().url(url).build()).execute()
+    return http.newCall(Request.Builder().url(url).build()).execute()
       .use { checkNotNull(it.body).string() }
   }
 
@@ -841,7 +865,7 @@ class LiveNavidromeTest {
       .apply { params.forEach { (name, value) -> addQueryParameter(name, value) } }
       .build()
 
-    val body = OkHttpClient().newCall(Request.Builder().url(url).build()).execute().use { response ->
+    val body = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
       assertThat(response.code).describedAs("HTTP status for %s", url.encodedPath).isEqualTo(200)
       checkNotNull(response.body) { "empty body from $url" }.string()
     }
