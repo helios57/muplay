@@ -3173,28 +3173,36 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // What holds the field that *is* read is `control/volume-reads-the-mute-argument` in
     // `ci/mutation-probes.sh`, which a coverage number could never see.
     //
-    // FALSIFIED per class by withholding tests, never by raising a minimum above a measured 1.0000
-    // (JaCoCo validates the minimum is inside 0.0..1.0 before it reads a ratio, so that can only
-    // ever throw). Measured, and the near-misses are the interesting part:
+    // FALSIFIED per class by withholding tests and RUNNING the result -- never by raising a minimum
+    // above a measured 1.0000, which JaCoCo cannot even evaluate (it validates the minimum is
+    // inside 0.0..1.0 before it reads a ratio, so that can only ever throw). Every number below was
+    // read off `jacocoJvmCoverageVerification`'s own output on a withheld run, and every one of
+    // these seven fires with the tests named and nothing else withheld:
     //
-    //   * `TransportState$Companion`: withholding `TransportStateTest`'s `an unrecognised or
-    //     missing value is UNKNOWN and not STOPPED` **alone leaves it at 9/9 = 1.0000 and this
-    //     floor GREEN** -- `fromWire`'s `else` arm is also driven by `an absent transport status is
-    //     not an error...`, which passes `"PLAYING"` and by `UpnpRendererTest`'s own reads.
-    //     Withholding `every wire value the AVTransport template defines maps to a state` as well
-    //     drops it to **4/9 = 0.4444** and the rule fires: *"Rule violated for class
-    //     app.muplay.cast.control.TransportState.Companion: branches covered ratio is 0.44, but
-    //     expected minimum is 0.90"*.
-    //   * `RendererCapabilities$Companion`: withholding `an unreadable scpd falls back to the
-    //     conservative default rather than throwing` **and** `a seek mode list that is present but
-    //     empty is the default too` drops `fromScpd` to **2/4 = 0.5000** and the rule fires. Either
-    //     one alone leaves it at 3/4 = 0.75 -- which also fires, and is recorded because it is the
-    //     tighter of the two answers.
-    //   * `UpnpRenderer`: withholding `a device with no RenderingControl reports no volume instead
-    //     of throwing` **alone leaves it at 27/30 = 0.9000 and this floor GREEN** -- exactly on the
-    //     boundary, which is the sort of thing this table exists to write down. Withholding `a
-    //     device that declares no such action is never asked, rather than asked and refused` as
-    //     well reaches **26/30 = 0.8667** and the rule fires.
+    //   * `TransportState$Companion`: withhold `TransportStateTest`'s `an unrecognised or missing
+    //     value is UNKNOWN and not STOPPED` -> **7/9 = 0.7778**, *"branches covered ratio is 0.77,
+    //     but expected minimum is 0.90"*. So the arm that keeps a value this enum has not seen out
+    //     of `STOPPED` -- the one that would silently skip a track per unrecognised state -- is
+    //     load-bearing for this floor on its own.
+    //   * `TransportInfo$Companion`: withhold `an absent transport status is not an error, and
+    //     every spelling of the error one is` -> **1/2 = 0.5000**.
+    //   * `PositionInfo`: withhold `a follower is recognised by its scheme and nothing else is`
+    //     -> **5/6 = 0.8333**.
+    //   * `PositionInfo$Companion`: withhold `position info reads three fields from three
+    //     arguments, and a blank track uri is no uri` -> **5/6 = 0.8333**. The two are independent:
+    //     each withheld alone fires its own class and leaves the other at 1.0000, which is what a
+    //     floor split across a type and its companion is supposed to look like.
+    //   * `RendererCapabilities$Companion`: withhold `an unreadable scpd falls back to the
+    //     conservative default rather than throwing` -> **3/4 = 0.7500**.
+    //   * `RendererCapabilities`: withhold the four seek-mode tests (`a device offering neither
+    //     time mode reports that it cannot seek`, `abs time is used when rel time is not offered`,
+    //     `a device that cannot seek by time reports so...`, `a device that only accepts ABS_TIME
+    //     is seeked with ABS_TIME`) -> **1/4 = 0.2500**.
+    //   * `UpnpRenderer`: withhold `a device with no RenderingControl reports no volume instead of
+    //     throwing` -> **26/30 = 0.8667**. One test, four branches: it is the only thing that
+    //     drives the `?: return` on `renderingControlUrl` in all three of `volume`, `setVolume` and
+    //     `setMuted`, and the margin here is four branches of thirty. That is the honest state of a
+    //     class this size at a 0.90 floor, not a reason to raise the minimum.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3240,9 +3248,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // and named` **alone** takes `RendererFollowsAnotherException` to **0/2 = 0.0000** and this
     // floor fires -- *"Rule violated for class
     // app.muplay.cast.control.RendererFollowsAnotherException: lines covered ratio is 0.00, but
-    // expected minimum is 0.90"*. `loadCapabilities$2` takes more, and the number is recorded so
-    // nobody repeats the search: every `capabilities()` call runs it, so all four lines survive
-    // until the last test that constructs an `UpnpRenderer` is gone.
+    // expected minimum is 0.90"*. So the one class in this package that exists to say no is gated
+    // on whether anything ever makes it say no.
+    //
+    // `loadCapabilities$2`'s half of this rule was ALSO falsified, and the attempt FAILED -- which
+    // is recorded rather than quietly re-tried, because a floor whose falsification nobody ran is
+    // a floor nobody knows the strength of. Withholding `a device that declares no scpd url at all
+    // is castable on the conservative default` -- the only test that drives that body's
+    // `?: return@withContext DEFAULT` -- leaves it at **LINE 4/4 = 1.0000 and this rule GREEN**,
+    // while its BRANCH moves 5/6 -> 4/6. The `return@withContext` shares its line with the
+    // assignment above it, so no LINE counter can move for it. Read this entry for what it is: a
+    // ride-along that keeps `warnUngatedClasses` quiet and asserts only that *something* still
+    // calls `capabilities()`. What actually holds that body is the BRANCH rule over `UpnpRenderer`
+    // and the `control/*` mutation probes.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
