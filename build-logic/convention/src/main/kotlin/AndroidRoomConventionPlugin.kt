@@ -1,3 +1,4 @@
+import com.android.build.api.dsl.LibraryExtension
 import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import com.google.devtools.ksp.gradle.KspExtension
 import java.io.File
@@ -30,6 +31,9 @@ import org.gradle.process.CommandLineArgumentProvider
  * migration is unverifiable — and Room warns about it on every build, which is noise that
  * trains people to ignore warnings.
  *
+ * Puts that same directory on the **androidTest** asset path, which is the only place
+ * `MigrationTestHelper` looks for a schema at runtime -- see the comment at the call site.
+ *
  * Also registers `verifyReleaseNoDestructiveMigration` (release-variant only, see
  * [VerifyNoDestructiveMigrationTask]) and wires it into `check`. It fails on a
  * `fallbackToDestructiveMigration` call unless `<module>/DESTRUCTIVE_MIGRATION_EXEMPTION.md`
@@ -49,6 +53,26 @@ class AndroidRoomConventionPlugin : Plugin<Project> {
         arg(RoomSchemaArgProvider(File(projectDir, "schemas")))
         // Kotlin codegen rather than Java. Room 2.8 can emit either; this project has no Java.
         arg("room.generateKotlin", "true")
+      }
+
+      // The exported schemas, on the *instrumented test* APK's asset path.
+      //
+      // `MigrationTestHelper` reads `<database class canonical name>/<version>.json` out of
+      // `instrumentation.context.assets` -- the test APK's assets, not the module's resources and
+      // not the `room.schemaLocation` argument above, which only tells the annotation processor
+      // where to *write*. Without this line the schema directory is invisible at runtime and every
+      // migration test fails with Room's own message: "Cannot find the schema file in the assets
+      // folder. Make sure to include the exported json schemas in your test assert inputs."
+      //
+      // Here rather than in the module's build file for the reason `ConventionTest`'s `no module
+      // configures android or kotlin blocks directly` enforces: an `android { sourceSets { .. } }`
+      // block in `core/database/build.gradle.kts` fails that rule, and the next module to grow a
+      // database would have to rediscover this.
+      //
+      // `androidTest` only. The production variants do not get it, so the JSON never ships inside
+      // the AAR.
+      extensions.configure<LibraryExtension> {
+        sourceSets.getByName("androidTest").assets.srcDir(File(projectDir, "schemas"))
       }
 
       dependencies {

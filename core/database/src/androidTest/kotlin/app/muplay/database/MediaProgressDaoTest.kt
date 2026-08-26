@@ -3,8 +3,10 @@ package app.muplay.database
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.cash.turbine.test
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.entity.MediaProgressEntity
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -97,5 +99,65 @@ class MediaProgressDaoTest {
 
     assertThat(dao.recentlyPlayed(limit = 10).map { it.mediaId })
       .containsExactly("new", "old")
+  }
+
+  /**
+   * `runBlocking`, not `runTest`, and only for the Flow tests: Room's invalidation tracker emits
+   * from its own executor in real time, and a Turbine timeout inside `runTest` resolves against a
+   * virtual clock instead.
+   */
+  @Test
+  fun observeAllEmitsTheCurrentRowsAndThenEveryChange() = runBlocking {
+    dao.upsert(MediaProgressEntity("a", 1_000L, false, 10L, 1f, false, 0f))
+
+    dao.observeAll().test {
+      assertThat(awaitItem().map { it.mediaId }).containsExactly("a")
+      dao.upsert(MediaProgressEntity("b", 2_000L, false, 20L, 1f, false, 0f))
+      // Two emissions, two different contents. The resume snapshot (Task 6) is built on this Flow;
+      // an `observeAll` that emitted once would make every resume answer the app's first second of
+      // life forever.
+      assertThat(awaitItem().map { it.mediaId }).containsExactlyInAnyOrder("a", "b")
+      cancelAndIgnoreRemainingEvents()
+    }
+  }
+
+  @Test
+  fun findInReturnsOnlyTheRequestedIdsAndOnlyTheOnesThatExist() = runTest {
+    dao.upsert(MediaProgressEntity("a", 1_000L, false, 10L, 1f, false, 0f))
+    dao.upsert(MediaProgressEntity("b", 2_000L, false, 20L, 1f, false, 0f))
+    dao.upsert(MediaProgressEntity("c", 3_000L, false, 30L, 1f, false, 0f))
+
+    val found = dao.findIn(listOf("a", "c", "missing"))
+
+    // Exact contents, and a positive control ("b" exists and must not appear). `hasSize(2)` alone
+    // would be satisfied by returning "a" and "b".
+    assertThat(found.map { it.mediaId }).containsExactlyInAnyOrder("a", "c")
+    assertThat(found.map { it.positionMs }).containsExactlyInAnyOrder(1_000L, 3_000L)
+  }
+
+  @Test
+  fun findInWithNoIdsFindsNothingRatherThanEverything() = runTest {
+    // `WHERE mediaId IN ()` is the shape that silently becomes "no filter" when someone rewrites
+    // the query, and one book's empty file list is a reachable caller.
+    dao.upsert(MediaProgressEntity("a", 1_000L, false, 10L, 1f, false, 0f))
+
+    assertThat(dao.findIn(emptyList())).isEmpty()
+  }
+
+  @Test
+  fun clearRemovesExactlyTheGivenIds() = runTest {
+    // "Start this book from the beginning" is expressed by clearing progress, because the
+    // ForwardingPlayer seam (Plan 3 Task 8) forbids handing the player a position -- correctly.
+    dao.upsert(MediaProgressEntity("a", 1_000L, false, 10L, 1.4f, true, 0f))
+    dao.upsert(MediaProgressEntity("b", 2_000L, false, 20L, 1f, false, 0f))
+    dao.upsert(MediaProgressEntity("c", 3_000L, false, 30L, 1f, false, 0f))
+
+    dao.clear(listOf("a", "c"))
+
+    assertThat(dao.find("a")).isNull()
+    assertThat(dao.find("c")).isNull()
+    // The survivor is asserted by value, not just by presence: a `clear` that deleted everything
+    // and a `clear` that deleted the right two are the same thing to an `isNull` pair alone.
+    assertThat(dao.find("b")?.positionMs).isEqualTo(2_000L)
   }
 }
