@@ -1,0 +1,14 @@
+# Version codes this project has already spent, oldest first.
+#
+# "Spent" means the code has been attached to a release artifact that left this repository --
+# uploaded to Play, or handed to a tester. Google Play refuses a second upload carrying a version
+# code it has already seen; this file is the same rule, enforced by `verifyReleaseVersion` before
+# `bundleRelease` produces anything rather than by the Play Console after a tag has been pushed.
+#
+# Tab-separated: version code, version name, date the code was spent, and what spent it.
+# Append one line per release, in the same commit that moves versionCode/versionName in
+# app/build.gradle.kts. Never edit or remove a line: a spent code stays spent forever.
+#
+# See build-logic/convention/src/main/kotlin/VerifyReleaseVersionTask.kt for the code/name scheme
+# (MAJOR * 10000 + MINOR * 100 + PATCH) and for all four rules this file feeds.
+1	0.1.0	2026-08-25	pre-release development builds, before release engineering existed; never uploaded anywhere

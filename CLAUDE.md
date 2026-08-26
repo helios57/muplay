@@ -485,3 +485,39 @@ who marked an entire instrumented tier unverified because `adb` was not on
 `PATH`. **Before concluding that a tier cannot be verified — or that a test you
 just wrote is broken — check that the emulator and the container are actually
 up.**
+
+## A release build *can* do cleartext HTTP — to `localhost`, and only there
+
+`app/src/androidTest/.../FirstRunJourneyTest` says "Cleartext HTTP is allowed only
+because this is the debug build". That is not what the platform does, and the
+difference matters for anything that reasons about the release variant.
+
+Measured in Plan 8 Task 2, on the **minified, release-signed** APK (no
+`usesCleartextTraffic` in its merged manifest — `verifyReleaseManifest` proves
+that on every `check`), same install, same run, same credentials, minutes apart:
+
+| Server URL entered            | Result                                    |
+|-------------------------------|-------------------------------------------|
+| `http://10.0.2.2:4533`        | "Could not reach the server."             |
+| `http://localhost:4533`       | connected, library synced, audio played   |
+
+`10.0.2.2` is the emulator's alias for the same host loopback the `adb reverse`
+forward reaches, and the same Navidrome answers on both, so the difference is not
+the network. It is Android's **default** network security config for
+`targetSdk >= 28`, which sets `cleartextTrafficPermitted="false"` in its
+`base-config` and then adds a `domain-config` that permits it for `localhost`.
+Every app on this target level has that carve-out and cannot opt out of it from
+the manifest.
+
+Two consequences:
+
+- `verifyReleaseManifest`'s guarantee is "no cleartext **to a remote host**", not
+  "no cleartext". Read the gate's name accordingly; it is still the right gate.
+- Plan 6's on-device cast proxy serves from `localhost`. It will therefore work in
+  a release build without any manifest change — which is convenient, and is also
+  the reason nobody will notice if the cleartext gate is later weakened to make it
+  work. It already works.
+
+It is also what makes a release build drivable against the CI container at all:
+`adb reverse tcp:4533 tcp:4533` plus `http://localhost:4533` is the only way to
+put a real library in front of a release APK on this emulator.
