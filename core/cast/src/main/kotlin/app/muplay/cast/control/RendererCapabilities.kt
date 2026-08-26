@@ -61,9 +61,11 @@ data class RendererCapabilities(
      * facts, that is the point to promote it.
      */
     fun fromScpd(xml: String): RendererCapabilities {
-      val modes = SEEK_MODE_BLOCK.find(xml)?.groupValues?.get(1)
-        ?.let { block -> ALLOWED_VALUE.findAll(block).map { it.groupValues[1] }.toList() }
-        ?: return DEFAULT
+      // Taken apart rather than chained through `?.`: a chain of safe calls over values the
+      // platform never makes null (`groupValues`, `get`) compiles to null checks whose other arm
+      // no test can reach, and this module gates itself on BRANCH.
+      val block = SEEK_MODE_BLOCK.find(xml) ?: return DEFAULT
+      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList()
 
       if (modes.isEmpty()) return DEFAULT
       return RendererCapabilities(

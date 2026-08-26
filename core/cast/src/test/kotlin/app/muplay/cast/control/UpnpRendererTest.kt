@@ -268,6 +268,22 @@ class UpnpRendererTest {
   }
 
   @Test
+  fun `a refusal that is not about seeking reaches the caller rather than reading as a false`() = runTest {
+    // `seek` swallows exactly two codes. A device that refuses for any OTHER reason -- here 701,
+    // which is what a real renderer (and this fake) answers to a Seek with nothing loaded -- must
+    // reach the caller: a blanket `catch (e: UpnpErrorException) { false }` would pass every other
+    // seek test in this class and turn "this device rejected the request outright" into "the seek
+    // did not take".
+    val renderer = renderer()
+
+    val thrown = runCatching { renderer.seek(1_000L) }.exceptionOrNull()
+
+    assertThat(thrown).isInstanceOf(UpnpErrorException::class.java)
+    assertThat((thrown as UpnpErrorException).fault.errorCode)
+      .isEqualTo(UpnpError.TRANSITION_NOT_AVAILABLE)
+  }
+
+  @Test
   fun `a seek at a speaker that has gone away is not swallowed as a false`() = runTest {
     // `seek` returns `false` for the two ORDINARY refusals and for nothing else. A
     // `catch (e: IOException) { false }` would pass every other seek test in this class and turn a

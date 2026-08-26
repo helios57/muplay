@@ -11,6 +11,7 @@ import app.muplay.cast.soap.UpnpError
 import app.muplay.cast.soap.UpnpErrorException
 import app.muplay.cast.soap.UpnpTime
 import java.io.IOException
+import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -78,8 +79,7 @@ class UpnpRenderer(
   suspend fun setUri(item: CastItem) {
     // Look BEFORE setting: a grouped Sonos accepts the call and plays nothing, so checking
     // afterwards would leave a session that looks established and is not.
-    positionInfo().takeIf { it.isFollowingAnotherSpeaker }
-      ?.let { throw RendererFollowsAnotherException(it.trackUri.orEmpty()) }
+    positionInfo().followedCoordinator?.let { throw RendererFollowsAnotherException(it) }
 
     avTransport(
       "SetAVTransportURI",
@@ -160,27 +160,20 @@ class UpnpRenderer(
     }
   }
 
+  /**
+   * `ERROR_OCCURRED` is how a renderer reports that it could not play what it was given -- the
+   * format was wrong, or the URL 404'd -- and it arrives in a *different* out-argument from the
+   * state, usually alongside an ordinary `STOPPED`. The mapping is [TransportInfo.fromWire]'s so
+   * that every shape of it is reachable without a socket.
+   */
   suspend fun transportInfo(): TransportInfo {
     val out = avTransport("GetTransportInfo", listOf(SoapArgument("InstanceID", INSTANCE_ID)))
-    return TransportInfo(
-      state = TransportState.fromWire(out["CurrentTransportState"]),
-      // `ERROR_OCCURRED` is how a renderer reports that it could not play what it was given --
-      // the format was wrong, or the URL 404'd. It is a different variable from the state, and a
-      // device reporting it usually reports `STOPPED` alongside, so reading only the state turns
-      // "the speaker refused these bytes" into "the track finished".
-      hasError = out["CurrentTransportStatus"]?.trim()?.uppercase() ==
-        TransportInfo.STATUS_ERROR_OCCURRED,
-    )
+    return TransportInfo.fromWire(out["CurrentTransportState"], out["CurrentTransportStatus"])
   }
 
   suspend fun positionInfo(): PositionInfo {
     val out = avTransport("GetPositionInfo", listOf(SoapArgument("InstanceID", INSTANCE_ID)))
-    return PositionInfo(
-      // `null`, not `0`, when the device says NOT_IMPLEMENTED -- see UpnpTime.parseClock.
-      positionMs = UpnpTime.parseClock(out["RelTime"]),
-      durationMs = UpnpTime.parseClock(out["TrackDuration"]),
-      trackUri = out["TrackURI"]?.takeIf { it.isNotBlank() },
-    )
+    return PositionInfo.fromWire(out["RelTime"], out["TrackDuration"], out["TrackURI"])
   }
 
   /** `null` when the device has no `RenderingControl` -- the UI then shows no slider at all. */
@@ -224,7 +217,7 @@ class UpnpRenderer(
     soap.invoke(device.avTransportControlUrl, DeviceDescription.SERVICE_AV_TRANSPORT, action, arguments)
 
   private suspend fun renderingControl(
-    controlUrl: java.net.URI,
+    controlUrl: URI,
     action: String,
     arguments: List<SoapArgument>,
   ): Map<String, String> =

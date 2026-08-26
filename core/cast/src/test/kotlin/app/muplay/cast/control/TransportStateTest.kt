@@ -42,6 +42,39 @@ class TransportStateTest {
   }
 
   @Test
+  fun `an absent transport status is not an error, and every spelling of the error one is`() {
+    // Four observations of one boolean, because a `hasError` hardcoded either way passes a test
+    // that only ever looks at one device. The absent case is the one that matters most: a renderer
+    // that omits `CurrentTransportStatus` has said nothing, and reading silence as a failure would
+    // tear down a session over a firmware quirk.
+    val statuses = listOf(null, "OK", "ERROR_OCCURRED", " error_occurred ")
+
+    assertThat(statuses.map { TransportInfo.fromWire("PLAYING", it).hasError })
+      .containsExactly(false, false, true, true)
+    // ...and the state half is not taken from the status half.
+    assertThat(TransportInfo.fromWire("PLAYING", "ERROR_OCCURRED"))
+      .isEqualTo(TransportInfo(TransportState.PLAYING, hasError = true))
+    assertThat(TransportInfo.fromWire("STOPPED", "OK"))
+      .isEqualTo(TransportInfo(TransportState.STOPPED, hasError = false))
+  }
+
+  @Test
+  fun `position info reads three fields from three arguments, and a blank track uri is no uri`() {
+    // Every field disjoint from the others, so none of them can be reading a neighbour. The blank
+    // `TrackURI` is what a renderer with nothing loaded really sends -- an empty element, not an
+    // absent argument -- and reading it as a URI would give Task 8 an identity of `""` to compare
+    // against the one it queued.
+    assertThat(PositionInfo.fromWire("0:01:23", "0:05:00", "http://10.0.0.2/a.mp3"))
+      .isEqualTo(PositionInfo(83_000L, 300_000L, "http://10.0.0.2/a.mp3"))
+    assertThat(PositionInfo.fromWire("0:00:07", "0:01:01", "   "))
+      .isEqualTo(PositionInfo(7_000L, 61_000L, null))
+    // `NOT_IMPLEMENTED` and an absent argument are null, never zero: a player that read them as
+    // zero would drag the seek bar back to the start once a second.
+    assertThat(PositionInfo.fromWire("NOT_IMPLEMENTED", null, null))
+      .isEqualTo(PositionInfo(null, null, null))
+  }
+
+  @Test
   fun `a follower is recognised by its scheme and nothing else is`() {
     // `x-rincon:` is stated once, in `PositionInfo`, and this is where the two directions of that
     // one statement are held. `x-rincon-stream:` -- a real Sonos scheme for a line-in source --
@@ -57,5 +90,9 @@ class TransportStateTest {
 
     assertThat(uris.map { PositionInfo(0L, 0L, it).isFollowingAnotherSpeaker })
       .containsExactly(true, false, false, false, false)
+    // ...and the coordinator is the URI itself, not a boolean dressed up as one: Task 10 puts it
+    // in front of the user.
+    assertThat(uris.map { PositionInfo(0L, 0L, it).followedCoordinator })
+      .containsExactly("x-rincon:RINCON_000E58ABCDEF01400", null, null, null, null)
   }
 }

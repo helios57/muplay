@@ -219,6 +219,9 @@ class FakeRenderer(
   /** Whether the renderer actually fetches `CurrentURI` on `Play`. Task 7 turns this off. */
   @Volatile var fetchesMedia: Boolean = true
 
+  /** Set by [disappear]. The socket stays bound; every connection is hung up on. */
+  @Volatile private var vanished: Boolean = false
+
   @Volatile private var currentUri: String? = null
   @Volatile private var currentMetadata: String = ""
   @Volatile private var nextUri: String? = null
@@ -261,8 +264,24 @@ class FakeRenderer(
     return port
   }
 
-  /** Stops answering, without a clean shutdown -- what a speaker losing power looks like. */
-  fun disappear() = server.close()
+  /**
+   * Stops answering, without a clean shutdown -- what a speaker losing power looks like.
+   *
+   * It **keeps its port**, and hangs up on every connection instead of releasing the listener. The
+   * difference is not cosmetic and it was measured: releasing an ephemeral port and then asserting
+   * that connecting to it fails is a race against every other process on the machine, and this
+   * repository's own fleet runs many JVMs at once. `a seek at a speaker that has gone away is not
+   * swallowed as a false` failed exactly once that way -- `seek` returned `true`, which means
+   * *something else on the box had taken the port and answered the Seek*. Holding the socket bound
+   * makes the failure this fake is imitating the only one a client can observe.
+   *
+   * From the client's side an immediate hang-up is what a rebooting speaker looks like anyway: a
+   * connect that succeeds and a stream that ends before a status line -- `MalformedHttpException`,
+   * which is an `IOException`, which `SoapClient` reports as a `SoapTransportException`.
+   */
+  fun disappear() {
+    vanished = true
+  }
 
   fun awaitMediaRequest(timeoutMs: Long): RecordedMedia? =
     if (firstMedia.await(timeoutMs, TimeUnit.MILLISECONDS)) media.firstOrNull() else null
@@ -279,6 +298,7 @@ class FakeRenderer(
   // ---- the server --------------------------------------------------------------------------
 
   private fun serve(connection: Socket) {
+    if (vanished) return
     val input = RecordingInputStream(connection.getInputStream())
     val head = HttpWire.readRequestHead(input)
     // Exactly the bytes of the head, terminating blank line included, taken off the socket before
@@ -427,6 +447,11 @@ class FakeRenderer(
       }
 
       "Seek" -> {
+        // Nothing loaded, nothing to seek within: a real device answers 701 here, the same as it
+        // does to `Play`. Task 5 relies on it -- `UpnpRenderer.seek` swallows exactly 710 and 711
+        // and must let every other refusal through, and without a refusal that is neither of those
+        // that arm of the catch is unreachable from any test.
+        currentUri ?: return fault(UpnpError.TRANSITION_NOT_AVAILABLE)
         val unit = arguments.firstOrNull { it.first == "Unit" }?.second.orEmpty()
         if (unit !in strictness.supportedSeekModes) return fault(UpnpError.SEEK_MODE_NOT_SUPPORTED)
         val target = UpnpTime.parseClock(arguments.firstOrNull { it.first == "Target" }?.second)
