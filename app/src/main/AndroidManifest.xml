@@ -7,7 +7,9 @@
       android:label="MuPlay"
       android:allowBackup="false"
       android:enableOnBackInvokedCallback="true"
-      android:theme="@android:style/Theme.Material.Light.NoActionBar">
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:theme="@style/Theme.MuPlay">
     <activity
         android:name=".MainActivity"
         android:exported="true">

@@ -9,8 +9,10 @@ import org.gradle.kotlin.dsl.register
 
 /**
  * `muplay.android.application`: everything `muplay.android.library` sets up
- * (see [configureKotlinAndroid]) plus `targetSdk 36` — a real application module needs one,
- * a library module does not — and the release-manifest check below.
+ * (see [configureKotlinAndroid]) plus `targetSdk 36` — a real application module needs one —
+ * the release-manifest check below, and everything that makes the release variant shippable
+ * rather than merely buildable (see [configureReleaseBuild]: R8, resource shrinking, signing,
+ * the bundle's split layout and the version gate).
  */
 class AndroidApplicationConventionPlugin : Plugin<Project> {
   override fun apply(target: Project) {
@@ -22,6 +24,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
       extensions.configure<ApplicationExtension> {
         configureKotlinAndroid(this)
         defaultConfig.targetSdk = 36
+        configureReleaseBuild(this)
       }
 
       configureMergedManifestVerification()

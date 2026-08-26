@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The two window colours the *platform* draws with, before a single Compose frame exists.
+
+  These are not a second copy of the Compose palette in `:core:designsystem`. They cover the window
+  that Android paints between `Activity` launch and the first composition — the gap
+  `MuPlayTheme` cannot reach, because it does not exist yet. `muplay_window_background` is
+  deliberately the same value as Material 3's default `surface` for each mode, so the handover from
+  the platform window to the first Compose frame is invisible rather than a flash of the wrong
+  colour. The dark values live in `values-night/colors.xml`; that split is the whole fix for the
+  light-only platform theme this replaced.
+-->
+<resources>
+  <color name="muplay_window_background">#FFFBFE</color>
+  <color name="muplay_splash_background">#4F378B</color>
+</resources>
