@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MuPlay's own application theme, replacing `@android:style/Theme.Material.Light.NoActionBar` in
+  the manifest.
+
+  Why this file exists at all: the platform theme it replaced is *light-only*, and this app's
+  Compose theme (`:core:designsystem`'s `MuPlayTheme`) has followed the system dark setting since
+  it was written. Between `Activity` launch and the first composition the window is painted from
+  the manifest theme and nothing else, so on a dark-mode device the app opened white and then
+  turned dark. That gap is not reachable from Compose; it is only reachable from here.
+
+  The night half is `values-night/themes.xml`, and it differs in exactly two ways: the platform
+  parent (dark rather than light, which is what fixes every platform-drawn default, not just the
+  background) and `@color/muplay_window_background`, which resolves per mode from
+  `values-night/colors.xml`.
+
+  `values-v31/` overrides this style wholesale for API 31+, where the platform draws a splash
+  screen of its own. A style redeclared under a qualifier *replaces* rather than merges, so that
+  file restates everything here — which is why there is deliberately very little here to restate.
+-->
+<resources>
+  <style name="Theme.MuPlay" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <!-- API 26-30 have no platform splash screen, so the launch window IS the splash. -->
+    <item name="android:windowBackground">@drawable/splash_background</item>
+  </style>
+</resources>

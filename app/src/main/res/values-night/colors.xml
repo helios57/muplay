@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The dark-mode half of values/colors.xml. The splash colour is deliberately NOT overridden:
+     the brand field is the brand field in both modes, and it carries white artwork either way. -->
+<resources>
+  <color name="muplay_window_background">#1C1B1F</color>
+</resources>

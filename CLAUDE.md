@@ -234,38 +234,66 @@ is not always a transcode.
 cold entry.** Measured in Plan 6 Task 6: `HEAD` on an uncached transcode answers
 `Accept-Ranges: none` with no `Content-Length` — it reports "cold" correctly —
 and starts a background transcode that has populated the cache about a second
-later. Two `HEAD`s back to back both say cold; the same URL a few hundred
-milliseconds afterwards is warm. So a probe that finds a cold entry has warmed
-the entry it found, and the assertion after it races the transcoder: a live suite
-built that way passed once and then failed three runs running with `expected: 502
-but was: 200`.
+later. So a probe that finds a cold entry has warmed the entry it found. Search
+*through the thing under test*, so the search's own GET is the response you
+assert on and there is no second request to race.
 
-Searching *through the thing under test*, so the search's own response is the
-observation, is correct and is worse: a run that finds nothing has requested
-**every** bitrate below the source and cached all of them.
+### Never delete the transcoding cache files. That is what breaks `coldTranscode`
 
-**And flushing the cache does not repair `coldTranscode`.** That was measured
-here after Plan 6 Task 6 reported having exhausted a track's entries and named
-recreating the container as the only fix. `docker exec ci-navidrome-1 sh -c 'rm
--rf /data/cache/transcoding/*'` empties it (201 entries → 0, container stays
-healthy, no restart, no reseed) and the test still fails **about one run in
-three, from a completely cold cache** — three flush-then-run cycles gave green,
-green, red. Nor is it the track: all three seeded Music fixtures are the *same*
-encoding, 64 kbps / 5.04 s mp3, so "it picked a random track" cannot explain a
-one-in-three split.
+`docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'` was
+recorded here as a safe diagnostic. **It is the opposite.** Navidrome keeps an
+in-memory index of that cache; deleting the files underneath a running server
+leaves every key pointing at a file that is gone, and each one then answers,
+*forever*:
 
-What is left is the race in the paragraph above, inside a single run: the search
-probes a bitrate, correctly sees cold, and the assertion that follows re-requests
-the same URL after the background transcode has landed. Cache state is a red
-herring; **the fix is to make the searching request itself the asserted one**, so
-there is no second request to lose the race. Until that lands, a `coldTranscode`
-failure is a flake and is not evidence about the branch under test.
+    200  Content-Type: application/json  (~292 bytes)
+    {"...":{"status":"failed","error":{"message":"Internal Server Error:
+     open /data/cache/transcoding/xx/yy/...: no such file or directory"}}}
 
-So: prefer a live assertion that needs no cold entry. `:core:cast`'s
-`LiveNavidromeProxyTest` gets a real `Content-Range`-less response out of
-Navidrome by stripping the credentials from a stream URL instead (200,
-`Content-Type: application/json`, a real `Content-Length`, no `Content-Range`),
-which is stable, costs nothing, and is a sharper assertion besides.
+Measured: permanent, not a transient race — four retries each of seven poisoned
+bitrates gave 28 errors and no recoveries. Proven causal in **both** directions:
+
+- Deleting **one** file for a known-warm key sent that key alone from
+  `Accept-Ranges: bytes` to the error document, and it stayed there.
+- **Restarting the container heals every poisoned key.** After an unrelated host
+  reboot restarted `ci-navidrome-1`, all **8 of 8** bitrates that had been
+  permanently dead came back as live transcodes. The cache *files* live in the
+  writable layer and survive a stop — 200 entries were still on disk — but the
+  poison never lived on disk. It is the in-memory index, so a restart is the
+  repair and a file deletion is the injury. Do not reason about this cache from
+  what is on disk; the two disagree exactly when it matters.
+
+So: *do not flush.* If a container is already poisoned, a plain restart fixes it
+without a recreate or a reseed.
+
+Note the third state. `Accept-Ranges` is `none` for a live transcode, `bytes`
+for a cache hit, and **absent entirely** for this. A predicate of
+`header("Accept-Ranges") == "none"` reads the error as "already cached, keep
+looking" — which is how the old search walked all 63 bitrates and failed
+blaming cache *exhaustion*, and how "recreate the container" got written down as
+the diagnosis for what was really "somebody flushed the cache".
+
+### `coldTranscode`'s "one run in three" was which track got drawn
+
+Not a probability and not a race. The old body took
+`getRandomSongs(...).first()` — one of the three music fixtures — and after the
+flush the census was **63 of 63** bitrates unusable on Track 1, 6 of 10 sampled
+on Track 2, 4 of 10 on Track 3. Drawing the dead track is a certain failure and
+the other two are near-certain passes: a weighted coin that reads exactly like a
+race. Neither half of the test was ever racing the transcoder — the searching
+GET's own response is what the cold half asserts on, and over **54** freshly
+cold keys the cache-hit re-fetch came back seekable **54** times.
+
+The search space is now the whole music library crossed with the bitrate range,
+so one unusable track cannot decide a run, and the failure message reports the
+LIVE/CACHED/UNAVAILABLE census so a red is diagnostic. Measured after the fix:
+**10 consecutive green runs** of `:core:network:` and `:core:cast:liveNavidromeTest`
+(35 tests each) against the warm, partially-poisoned shared container — no flush,
+because flushing is the defect.
+
+`:core:cast`'s `LiveNavidromeProxyTest` remains the cheaper pattern where it
+fits: it gets a real `Content-Range`-less response by stripping the credentials
+from a stream URL, which needs no cold entry at all.
 
 ## A fresh worktree has no `local.properties`, and the failure names the wrong thing
 
@@ -423,3 +451,73 @@ The general shape, which has now cost this repository three separate gates: **a
 list written by hand in one file, describing something discoverable from the
 tree, drifts and nothing notices.** When you find one, do not just fix the list
 — derive it, or assert it against what it claims to describe.
+
+## Neither the emulator nor the container survives a session restart
+
+Measured 2026-08-27, after the parent Claude Code process exited: `adb devices`
+was empty and `docker ps` showed no `ci-navidrome-1`. Both looked destroyed.
+Neither was.
+
+- **The container had `Exited (0)`, not gone.** `docker start ci-navidrome-1`
+  brought it back healthy in seconds, and because the restart is not a recreate,
+  its **writable layer survived** — the seeded library still reported all 9 items
+  and the transcoding cache was still populated. Note what does *not* survive, and
+  is the one good thing about this: the transcoding cache's **in-memory index**
+  is rebuilt from the files that are actually on disk, which *repairs* a cache
+  poisoned by a previous file deletion. Measured across this very restart: 8 of 8
+  permanently-dead bitrates came back. See "Never delete the transcoding cache
+  files" above — on-disk state and served behaviour disagree exactly here.
+- **The emulator's `qemu-system-x86_64` was still running**; it was the *adb
+  server* that had died with the session. `adb start-server` found the device
+  `offline`, and it reached `device` and then `sys.boot_completed=1` about a
+  minute later. The AVD is still `muplay37`.
+- **The app was no longer installed**, so the next `connectedDebugAndroidTest`
+  pays a full install.
+
+So the recovery is `docker start ci-navidrome-1` and `adb start-server`, then wait
+for `sys.boot_completed`. It is restoration, not the recreate-or-reseed this file
+forbids, and nothing is lost.
+
+Why this is worth a section: for about ten minutes every device and live suite
+failed with a connection error, and five resumed lanes were about to read those
+failures as defects in their own branches. That is the same shape as the reviewer
+who marked an entire instrumented tier unverified because `adb` was not on
+`PATH`. **Before concluding that a tier cannot be verified — or that a test you
+just wrote is broken — check that the emulator and the container are actually
+up.**
+
+## A release build *can* do cleartext HTTP — to `localhost`, and only there
+
+`app/src/androidTest/.../FirstRunJourneyTest` says "Cleartext HTTP is allowed only
+because this is the debug build". That is not what the platform does, and the
+difference matters for anything that reasons about the release variant.
+
+Measured in Plan 8 Task 2, on the **minified, release-signed** APK (no
+`usesCleartextTraffic` in its merged manifest — `verifyReleaseManifest` proves
+that on every `check`), same install, same run, same credentials, minutes apart:
+
+| Server URL entered            | Result                                    |
+|-------------------------------|-------------------------------------------|
+| `http://10.0.2.2:4533`        | "Could not reach the server."             |
+| `http://localhost:4533`       | connected, library synced, audio played   |
+
+`10.0.2.2` is the emulator's alias for the same host loopback the `adb reverse`
+forward reaches, and the same Navidrome answers on both, so the difference is not
+the network. It is Android's **default** network security config for
+`targetSdk >= 28`, which sets `cleartextTrafficPermitted="false"` in its
+`base-config` and then adds a `domain-config` that permits it for `localhost`.
+Every app on this target level has that carve-out and cannot opt out of it from
+the manifest.
+
+Two consequences:
+
+- `verifyReleaseManifest`'s guarantee is "no cleartext **to a remote host**", not
+  "no cleartext". Read the gate's name accordingly; it is still the right gate.
+- Plan 6's on-device cast proxy serves from `localhost`. It will therefore work in
+  a release build without any manifest change — which is convenient, and is also
+  the reason nobody will notice if the cleartext gate is later weakened to make it
+  work. It already works.
+
+It is also what makes a release build drivable against the CI container at all:
+`adb reverse tcp:4533 tcp:4533` plus `http://localhost:4533` is the only way to
+put a real library in front of a release APK on this emulator.

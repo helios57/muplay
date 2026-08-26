@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The dark-mode half of values/themes.xml; see that file for why the split exists. The parent is
+     the dark platform theme, which is the half a `windowBackground` override alone cannot fix. -->
+<resources>
+  <style name="Theme.MuPlay" parent="@android:style/Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@drawable/splash_background</item>
+  </style>
+</resources>
