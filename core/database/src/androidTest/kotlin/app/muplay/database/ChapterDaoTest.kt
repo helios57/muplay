@@ -52,7 +52,7 @@ class ChapterDaoTest {
     )
 
   @Test
-  fun chaptersComeBackInIndexOrderNoMatterWhatOrderTheyWentIn() = runBlocking {
+  fun chaptersComeBackInIndexOrderNoMatterWhatOrderTheyWentIn(): Unit = runBlocking {
     // Five, not four, and inserted in an order that is neither sorted nor reversed: on a
     // four-row table SQLite's scan very often happens to return insertion order, and a test
     // that only ever sees that cannot tell a present `ORDER BY` from an absent one.
@@ -82,7 +82,7 @@ class ChapterDaoTest {
   }
 
   @Test
-  fun oneFilesChaptersAreNotAnotherFilesChapters() = runBlocking {
+  fun oneFilesChaptersAreNotAnotherFilesChapters(): Unit = runBlocking {
     // Two files, two answers. With one file in the table, "chapters for X" and "every chapter
     // there is" are the same query.
     dao.store("book-1", listOf(chapter("book-1", 0, 0, 5_000, "Chapter 1")), 1L)
@@ -100,7 +100,7 @@ class ChapterDaoTest {
   }
 
   @Test
-  fun aFileWithNoChaptersIsARecordedAnswerAndNotAMissingOne() = runBlocking {
+  fun aFileWithNoChaptersIsARecordedAnswerAndNotAMissingOne(): Unit = runBlocking {
     // The whole reason `chapter_scans` exists. `find` returning empty is ambiguous between "no
     // chapters" and "never looked"; `findScan` is not. Without this distinction every chapterless
     // file is re-probed over HTTP on every screen open, which is the common case and not the rare
@@ -115,7 +115,7 @@ class ChapterDaoTest {
   }
 
   @Test
-  fun storingAgainReplacesRatherThanAccumulates() = runBlocking {
+  fun storingAgainReplacesRatherThanAccumulates(): Unit = runBlocking {
     dao.store(
       "book-1",
       listOf(chapter("book-1", 0, 0, 5_000, "old"), chapter("book-1", 1, 5_000, 9_000, "older")),
@@ -133,7 +133,7 @@ class ChapterDaoTest {
   }
 
   @Test
-  fun clearingAFileTakesItsChaptersWithIt() = runBlocking {
+  fun clearingAFileTakesItsChaptersWithIt(): Unit = runBlocking {
     dao.store("book-1", listOf(chapter("book-1", 0, 0, 5_000, "Chapter 1")), 1L)
     dao.store("book-2", listOf(chapter("book-2", 0, 0, 7_000, "Head")), 1L)
 
@@ -148,7 +148,7 @@ class ChapterDaoTest {
   }
 
   @Test
-  fun aChapterWithNoTitleIsStoredAsNullAndComesBackAsNull() = runBlocking {
+  fun aChapterWithNoTitleIsStoredAsNullAndComesBackAsNull(): Unit = runBlocking {
     // Spike S3 observed a trailing, empty-titled chapter on one `chap` fixture. A `String?` column
     // that silently became "" would make "untitled" and "titled empty" the same thing.
     dao.store(

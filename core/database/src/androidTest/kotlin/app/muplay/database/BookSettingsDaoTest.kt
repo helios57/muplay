@@ -42,7 +42,7 @@ class BookSettingsDaoTest {
   fun tearDown() = db.close()
 
   @Test
-  fun twoBooksKeepTwoSpeeds() = runBlocking {
+  fun twoBooksKeepTwoSpeeds(): Unit = runBlocking {
     // The single most important property of this table, and the reason it is keyed on the book.
     // With one book, "the speed for book X" and "the speed" are the same value.
     dao.upsert(BookSettingsEntity("book-1", speed = 1.4f, skipSilence = true))
@@ -59,7 +59,7 @@ class BookSettingsDaoTest {
   }
 
   @Test
-  fun aBookNobodyHasTouchedHasNoRow() = runBlocking {
+  fun aBookNobodyHasTouchedHasNoRow(): Unit = runBlocking {
     // `null` and "the defaults" are different facts; the repository turns one into the other
     // (Task 4) and the DAO must not pre-empt it.
     dao.upsert(BookSettingsEntity("book-1", speed = 1.4f, skipSilence = true))
@@ -68,7 +68,7 @@ class BookSettingsDaoTest {
   }
 
   @Test
-  fun upsertingTheSameBookReplacesRatherThanDuplicating() = runBlocking {
+  fun upsertingTheSameBookReplacesRatherThanDuplicating(): Unit = runBlocking {
     dao.upsert(BookSettingsEntity("book-1", speed = 1.0f, skipSilence = false))
     dao.upsert(BookSettingsEntity("book-1", speed = 2.2f, skipSilence = true))
     dao.upsert(BookSettingsEntity("book-2", speed = 1.0f, skipSilence = false))
@@ -80,7 +80,7 @@ class BookSettingsDaoTest {
   }
 
   @Test
-  fun observingABookEmitsItsCurrentValueAndThenEveryChange() = runBlocking {
+  fun observingABookEmitsItsCurrentValueAndThenEveryChange(): Unit = runBlocking {
     dao.upsert(BookSettingsEntity("book-1", speed = 1.0f, skipSilence = false))
 
     dao.observe("book-1").test {
@@ -94,7 +94,7 @@ class BookSettingsDaoTest {
   }
 
   @Test
-  fun observingEveryBookEmitsTheWholeTableAndThenEveryChange() = runBlocking {
+  fun observingEveryBookEmitsTheWholeTableAndThenEveryChange(): Unit = runBlocking {
     dao.upsert(BookSettingsEntity("book-1", speed = 1.4f, skipSilence = true))
 
     dao.observeAll().test {
@@ -108,7 +108,7 @@ class BookSettingsDaoTest {
   }
 
   @Test
-  fun aNeighboursWriteDoesNotMoveThisBooksSettings() = runBlocking {
+  fun aNeighboursWriteDoesNotMoveThisBooksSettings(): Unit = runBlocking {
     // The read-modify-write trap Plan 3 named, one table over. Whatever writes speed must not
     // write anything else, and whatever writes silence skipping must not write speed.
     dao.upsert(BookSettingsEntity("book-1", speed = 1.4f, skipSilence = true))

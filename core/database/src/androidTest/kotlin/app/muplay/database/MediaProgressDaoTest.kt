@@ -107,7 +107,7 @@ class MediaProgressDaoTest {
    * virtual clock instead.
    */
   @Test
-  fun observeAllEmitsTheCurrentRowsAndThenEveryChange() = runBlocking {
+  fun observeAllEmitsTheCurrentRowsAndThenEveryChange(): Unit = runBlocking {
     dao.upsert(MediaProgressEntity("a", 1_000L, false, 10L, 1f, false, 0f))
 
     dao.observeAll().test {
