@@ -1,4 +1,9 @@
+26cd144454adfbba1e082e716d60f81c  ./ci/fixtures/Audiobooks/Fourth Author/Multi Part Book/01 - Part One.mp3
+5b52759f2c5e8995b203439096100e6f  ./ci/fixtures/Audiobooks/Fourth Author/Multi Part Book/02 - Part Two.mp3
+dc57c58b83da9c6440b94d040496101a  ./ci/fixtures/Audiobooks/Fourth Author/Multi Part Book/03 - Part Three.mp3
+fe34e98f9fbbfbb9e0f831724f2a7ba8  ./ci/fixtures/Audiobooks/Second Author/Second Book/Second Book.m4b
 05da45c40955f7e4a539b4df4bef3eca  ./ci/fixtures/Audiobooks/Test Author/Test Book/Test Book.m4b
+81f13bd6a4911f86dcc09b8c2143989e  ./ci/fixtures/Audiobooks/Third Author/Tail Book/Tail Book.m4b
 a62002da199cba2a9c593d3596c31cab  ./ci/fixtures/Music/Test Artist/Test Album/01 - Track 1.mp3
 0a336addd8c211c0bc4428479957a386  ./ci/fixtures/Music/Test Artist/Test Album/02 - Track 2.mp3
 f5c45143fd35f00da954f6075a767050  ./ci/fixtures/Music/Test Artist/Test Album/03 - Track 3.mp3

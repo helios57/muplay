@@ -34,9 +34,11 @@ import org.junit.runner.RunWith
  * **Two albums, in two different libraries, with disjoint contents**, because one is not enough: a
  * hardcoded id that happens to be the Music album's own would satisfy every assertion about the
  * Music album and none about the audiobook. `ci/seed-fixtures.sh` seeds exactly that — Music holds
- * "Test Album" by "Test Artist" with tracks "Track 1"/"Track 2"/"Track 3"; Audiobooks holds
- * "Test Book" by "Test Author" with a single chaptered file. Neither album's text appears on the
- * other's screen, so each half of the walk falsifies the other half's constant.
+ * "Test Album" by "Test Artist" with tracks "Track 1"/"Track 2"/"Track 3"; Audiobooks holds four
+ * books since Plan 4 Task 1, of which this walk opens "Test Book" by "Test Author" (a single
+ * chaptered file). Neither album's text appears on the other's screen, so each half of the walk
+ * falsifies the other half's constant — and the four books carry four *different* authors, so
+ * opening the wrong book fails on `BOOK_AUTHOR_NAME` rather than passing quietly.
  *
  * Preconditions are `FirstRunJourneyTest`'s, unchanged and for the same reasons: a seeded
  * `ci-navidrome-1` on 4533, `adb reverse tcp:4533 tcp:4533`, and an emulator started with
@@ -82,7 +84,12 @@ class AlbumRouteJourneyTest {
     // ---- Audiobooks: a different album, so no constant can satisfy both halves --------------
     composeRule.onNodeWithText(AUDIOBOOKS_LIBRARY_NAME).performClick()
     awaitText(BOOK_AUTHOR_NAME)
-    composeRule.onNodeWithText(OPEN_LABEL).performClick()
+    // `onAllNodesWithText(...)[BOOK_ROW]`, not `onNodeWithText(...)`: the Audiobooks library holds
+    // four books since Plan 4 Task 1, so there are four "Open" buttons and the single-node matcher
+    // throws *"Expected exactly '1' node but could not find any"* before any assertion runs. See
+    // BOOK_ROW for where the index comes from; `awaitText(BOOK_AUTHOR_NAME)` above is what
+    // guarantees that row is composed at all, this list being a LazyColumn.
+    composeRule.onAllNodesWithText(OPEN_LABEL)[BOOK_ROW].performClick()
 
     // The book's own author, on the album screen (the browse row shows it too, so the two
     // assertions below are what say *which* screen this is).
@@ -160,6 +167,21 @@ class AlbumRouteJourneyTest {
     const val MUSIC_TRACK_TWO = "Track 2"
     const val MUSIC_TRACK_THREE = "Track 3"
     const val BOOK_AUTHOR_NAME = "Test Author"
+
+    /**
+     * `Test Book`'s row among the four seeded books.
+     *
+     * `BrowseDao.observeAlbums` is `ORDER BY sortName`, and `ci/seed-fixtures.sh` writes
+     * "Multi Part Book", "Second Book", "Tail Book", "Test Book" — so Test Book is last. It is
+     * still the book this walk opens, and deliberately so: its author, `Test Author`, is the one
+     * string the assertions below turn on, and each of the four books has a *different* author, so
+     * landing on the wrong row fails on `BOOK_AUTHOR_NAME` rather than passing quietly.
+     *
+     * A row index rather than a text match on the book itself because `LibraryScreen` emits each
+     * album's `Row` and its `Open` `Button` as two separate `LazyColumn` children — they share no
+     * per-album parent for an ancestor or sibling matcher to reach through.
+     */
+    const val BOOK_ROW = 3
 
     /** A first `ping` plus `refreshFromServer` against the container. Same figure and same
      *  reasoning as FirstRunJourneyTest's: generous, because a gate that flakes is worse than none. */

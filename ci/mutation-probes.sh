@@ -169,6 +169,7 @@ MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
 RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
 GAIN_POLICY = "core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt"
 PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
+BOOK_FIXTURES = "core/testing/src/main/kotlin/app/muplay/testing/BookFixtures.kt"
 PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
 TRACK_ID_KEY = "core/media/src/main/kotlin/app/muplay/media/TrackIdCacheKeyFactory.kt"
 CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
@@ -2401,6 +2402,36 @@ PROBES = [
      "    if (replayGainTrackDb == null && replayGainAlbumDb == null) return null",
      "    if (replayGainTrackDb == null) return null",
      "a song with only an album gain still round-trips as a decision", 1),
+    # ---- Plan 4 Task 1: the three constants the four-book corpus exists to break -------------
+    #
+    # These are not defects that shipped -- the corpus and the parser landed together. They are
+    # here because the corpus's whole justification is that against ONE book with three equal
+    # chapters each of these mutations is undetectable, and a justification nobody re-checks is
+    # the kind this project keeps finding to be false. Each reddens exactly one test, measured.
+    #
+    # If any of these ever reports MISSED, the fixtures have lost the property they were built
+    # for -- read `ci/seed-fixtures.sh`'s per-book comments before touching the assertion.
+    ("books/duration-is-the-sum", BOOK_FIXTURES,
+     "val durationMs: Long get() = tracks.sumOf { it.durationMs }",
+     "val durationMs: Long get() = tracks.first().durationMs",
+     # `Multi Part Book` is the only fixture that can tell these two programs apart. Against the
+     # three single-file books they are the same function.
+     "a book's duration is the sum of its files", 1),
+    ("books/track-order", BOOK_FIXTURES,
+     ".sortedWith(compareBy({ it.trackNumber }, { it.path }))",
+     ".sortedBy { it.durationMs }",
+     # 4 s / 6 s / 5 s is deliberately not monotonic, so "sorted by duration" and "sorted by track
+     # number" are different lists. Give the parts equal or ascending durations and this probe goes
+     # MISSED without a single assertion changing.
+     "Multi Part Book is three files with three different durations, in track order", 1),
+    ("books/chapter-order", BOOK_FIXTURES,
+     "chapters = tracks.flatMap { chaptersOf(it.path) },",
+     "chapters = tracks.flatMap { chaptersOf(it.path) }.sortedBy { it.title },",
+     # Chapter ORDER is a property of a book: a reader that returned them alphabetically would
+     # play the epilogue first. `Test Book`'s "Chapter 1/2/3" and `Tail Book`'s "Head/Tail" are
+     # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
+     # is the only fixture in the corpus that catches this at all.
+     "Second Book's chapters are unequal in length and in order", 1),
 ]
 
 
@@ -2493,6 +2524,10 @@ LATER_PROBE_FILES = [
     # Plan 3 Task 11, added in the same edit as the `gain/` probes above, per this list's own
     # comment. `CLIENT` and `MIRROR` are already on the `git checkout` line inside `revert()`.
     GAIN_POLICY,
+    # Plan 4 Task 1. Added in the same edit as the three `books/` probes above, as this list's own
+    # comment requires: a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    BOOK_FIXTURES,
 ]
 
 

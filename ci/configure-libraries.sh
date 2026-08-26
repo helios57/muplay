@@ -28,6 +28,23 @@ set -euo pipefail
 
 BASE="http://localhost:4533"
 
+# How many files the scan has to account for, read out of the ffprobe-derived oracle
+# `ci/probe-chapters.sh` writes rather than hardcoded here. The corpus has grown once already
+# (Plan 4 Task 1, four files to nine) and a hardcoded number is the kind that gets updated in one
+# of its two homes; `ci/fixtures.md5` and this table are both derived from the same audio, so the
+# only way for this to be wrong is for the audio to be wrong, which `md5sum -c` catches first.
+#
+# Guarded against reading zero: an empty or missing table would otherwise make the convergence
+# check below pass on a scan that found nothing, which is the exact shape of gate this project
+# keeps finding and deleting.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TABLE="$REPO_ROOT/core/testing/src/main/resources/fixtures/books.tsv"
+EXPECTED_TRACKS="$(grep -c '^track	' "$TABLE" || true)"
+if [ -z "$EXPECTED_TRACKS" ] || [ "$EXPECTED_TRACKS" -lt 1 ]; then
+  echo "Could not read a fixture count from $TABLE. Run ci/probe-chapters.sh." >&2
+  exit 1
+fi
+
 login_json="$(curl -sf -X POST "$BASE/auth/login" -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"testpass"}')"
 token="$(echo "$login_json" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)"
@@ -60,10 +77,10 @@ fi
 # Observed once under heavy host load (not reproduced in 3 immediate retries under normal load,
 # but cheap enough to guard against unconditionally): the scan fired here can land before the
 # just-created library is fully visible to the scanner, so it only covers library 1 (Music) and
-# getScanStatus's count sticks at 3, never 4, no matter how long the caller polls afterwards —
-# nothing re-triggers a second scan on its own. So this retries the scan itself (not just
-# polling) up to 5 times, each waiting for the previous one to finish, until all 4 fixture files
-# are accounted for.
+# getScanStatus's count sticks below the full total, no matter how long the caller polls
+# afterwards — nothing re-triggers a second scan on its own. So this retries the scan itself (not
+# just polling) up to 5 times, each waiting for the previous one to finish, until every fixture
+# file is accounted for.
 Q="v=1.16.1&c=ci&f=json&u=admin&p=testpass"
 for attempt in 1 2 3 4 5; do
   curl -sf "$BASE/rest/startScan.view?$Q&fullScan=true" > /dev/null
@@ -81,9 +98,9 @@ for attempt in 1 2 3 4 5; do
   done
 
   count="$(curl -sf "$BASE/rest/getScanStatus.view?$Q" | grep -o '"count":[0-9]*' | head -1 | cut -d: -f2)"
-  [ "$count" = "4" ] && exit 0
+  [ "$count" = "$EXPECTED_TRACKS" ] && exit 0
   sleep 1
 done
 
-echo "Scan did not converge on 4 tracks after 5 attempts (last count: $count)" >&2
+echo "Scan did not converge on $EXPECTED_TRACKS tracks after 5 attempts (last count: $count)" >&2
 exit 1
