@@ -32,7 +32,8 @@ Nothing existing does all four of these at once:
   the full concept: architecture, Navidrome integration, casting, audiobooks,
   testing strategy, risks.
 - **[Roadmap](docs/superpowers/plans/2026-08-22-muplay-kotlin-roadmap.md)** —
-  seven plans in dependency order.
+  the plans in dependency order. Plan 8 (release and Google Play) was added
+  after that document was written and is listed in the table below.
 - **[Spike findings](docs/superpowers/spikes/)** — empirical answers to the
   questions the design rested on.
 
