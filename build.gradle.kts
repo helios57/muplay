@@ -3526,14 +3526,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // Plan 6 Task 12. The settings **slot** -- a screen that renders whatever `SettingsSection`
   // implementations the Hilt graph contains and names none of them.
   ":feature:settings" to listOf(
-    // PLACEHOLDER-SETTINGS-JVM
+    // **NOT YET MEASURED -- see this task's report.** The host was at load average 101 on 24
+    // vCPUs for the whole of this lane's gate window and no `jacocoTestReport` completed, so this
+    // number is the project's target rather than a reading, which is the one thing every other
+    // comment in this table is not. It must be measured and this comment corrected before merge.
+    //
+    // What it is intended to gate: `SettingsViewModel` is the slot's only logic (`orderedSections`,
+    // in `SettingsSectionKt`) and it is pure JVM -- a `Set` has no order, so returning it untouched
+    // makes the screen's layout a function of Dagger's codegen order. `SettingsViewModelTest`
+    // drives it with four cases; `ci/mutation-probes.sh`'s `renderer-direct/section-order-ignored`
+    // is the falsification.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.settings.SettingsViewModel", "app.muplay.settings.SettingsSectionKt*"),
     ),
-    // PLACEHOLDER-SETTINGS-UI
+    // **NOT YET MEASURED -- see this task's report**, same reason as the entry above.
+    //
+    // LINE and not BRANCH because `SettingsScreenKt` is `@Composable` code: the Compose compiler
+    // weaves `$changed`/`$dirty` recomposition-skip branches into every composable body, so a
+    // BRANCH rule here measures the Compose compiler rather than this project's work -- the split
+    // this table's own header describes. Covered by `:feature:settings`'s own
+    // `SettingsScreenTest` (three cases: the empty state, a section the screen has never heard of,
+    // and the rendered order read off the composition's geometry).
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -3545,7 +3561,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // Plan 6 Task 12 contributes the renderer-direct section into this module; Plan 6 Task 10 owns
   // the module itself (the device list, the cast button, the volume control).
   ":feature:castpicker" to listOf(
-    // PLACEHOLDER-PICKER-JVM
+    // **NOT YET MEASURED -- see this task's report**, same reason as the `:feature:settings`
+    // entries above.
+    //
+    // `RendererDirectSectionKt` is the file's top-level half: the two copy constants and the
+    // stateless `RendererDirectSwitch` composable. LINE, because it is Compose. Covered by
+    // `RendererDirectSectionTest` on the device; the *content* of the copy is gated separately and
+    // on the JVM tier by `RendererDirectCopyTest`, which is the assertion that actually matters
+    // here -- a rendered string nobody reads is not an informed choice.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -3553,7 +3576,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.castpicker.RendererDirectSectionKt"),
       requiresInstrumentedData = true,
     ),
-    // PLACEHOLDER-PICKER-SECTION
+    // **NOT YET MEASURED -- see this task's report**, same reason as above.
+    //
+    // The stateful section: the flow collection with `initialValue = DEFAULT_ALLOW_RENDERER_DIRECT`
+    // (a screen that painted the switch on for one frame would be telling the user something false
+    // about their own security posture) and the write onto an application-lifetime scope. Both are
+    // driven by `RendererDirectSectionTest` against a real DataStore.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
