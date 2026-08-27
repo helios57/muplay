@@ -694,3 +694,55 @@ untouched. `GaplessTest`'s `const val TRACK_COUNT = 3` did not.
 Where a test genuinely needs one *kind* of track, filter rather than count:
 `RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
 and was unaffected.
+
+## An instrumented `fun x() = runBlocking { .. }` is refused before it runs
+
+JUnit 4 requires `void` test methods. Kotlin infers a `@Test`'s return type from the block's last
+expression, and **most AssertJ assertions return the assert object** — so the idiomatic
+`@Test fun x() = runBlocking { .. assertThat(a).isEqualTo(b) }` is an `AbstractAssert`-returning
+method, and the whole class is rejected at load time:
+
+    org.junit.runners.model.InvalidTestClassError: Invalid test class 'app.muplay.media.ChapterRepositoryTest':
+    1. Method forgettingAFileMakesTheNextReadParseItAgain() should be void
+    2. Method aSecondReadOfTheSameBookIsServedFromRoomWithoutReParsing() should be void
+    ...
+
+Four methods named, **none of the five run**, and the surviving one is the misleading part: it ends
+in `isEmpty()`, which happens to return `void`, so exactly one test in the class looks fine. Declare
+`fun x(): Unit = runBlocking { .. }`. The JVM tier never sees this — JUnit 5 is happy with any
+return type — so a plan's sample code carries the defect straight onto the device.
+
+## Anything in `:core:media` that fetches through `MuPlayDataSourceFactory` must set a cache key
+
+`TrackIdCacheKeyFactory.buildCacheKey` **throws** `MissingCacheKeyException` on a `DataSpec` with no
+key rather than falling back to the URI — deliberately, and `MediaCacheTest` pins it. So it is not
+only `MediaItems.of` that owes `setCustomCacheKey(song.id)`: **every** `MediaItem` handed to
+anything built on that factory does, including ones no player ever sees.
+
+Measured in Plan 4 Task 3: `ChapterReader` built `MediaItem.fromUri(uri)` for a `MetadataRetriever`
+— no player, no playback, just a read of the file's `moov` atom — and all six of its device tests
+died with *"A media request reached the cache with no custom cache key (track Ra14Y8yMKT8YPrtrt6delD)"*,
+wrapped in a `Loader$UnexpectedLoaderException` inside an `ExecutionException`. Nothing in that
+stack names `MediaItem`. The plan's own listing had the same shape, so expect it.
+
+    MediaItem.Builder().setUri(uri).setCustomCacheKey(mediaId).build()
+
+The alternative — a plain HTTP factory that skips the cache — also skips `RequestedUriDataSource`,
+which is what keeps a credential-bearing redirect target out of `exoplayer_internal.db`. Supply the
+key; do not route around the guard.
+
+## A cache-backed read makes "requests that did not happen" the wrong signal
+
+Plan 3 Task 3 proved its media cache by counting HTTP requests, and that is the right shape *there*.
+It does not transfer to anything layered **above** a `CacheDataSource`, because the byte cache
+satisfies the assertion whether or not the layer under test did anything.
+
+Measured in Plan 4 Task 3: delete `ChapterRepository`'s `findScan` short-circuit — so every call
+re-parses the file over HTTP — and `assertThat(requests.get() - afterFirst).isZero` still passes.
+The second parse read the same `moov` bytes off `SimpleCache`. A request counter cannot distinguish
+"served from Room" from "re-parsed from the byte cache".
+
+What worked was a signal the byte cache cannot fake: a `Clock` the test **moves between reads**, and
+an assertion on the row's stored timestamp. A re-parse rewrites it; a cached read does not touch it.
+If you are asserting that some layer avoided work, check first that the work leaves a trace the
+layer below cannot also produce.
