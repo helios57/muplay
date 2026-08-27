@@ -2528,6 +2528,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // Plan 4 Task 5. `SmartRewind` **10/10 = 1.0000 BRANCH from JVM data alone** --
+    // `SmartRewindTest`, thirteen tests, no emulator, no Android type anywhere in the file. Eight
+    // of the ten are the band table read from both sides (four thresholds, each asserted at
+    // `threshold - 1` and at `threshold`); the other two are `resumePositionMs`'s clamp.
+    //
+    // **1.00 and not 0.90, because there is nothing in this class a test cannot reach.** This
+    // table's own doc rules out a floor a check cannot fail at, and it rules in the opposite too:
+    // 0.90 on ten branches passes at 9/10, so it would tolerate losing a whole boundary. Contrast
+    // `StreamRetryPolicy` above, whose 0.90 exists to leave room for one genuinely unreachable
+    // branch -- `SmartRewind` has none, and an arm that was going to be one (an `awayMs < 0L`
+    // guard in front of the table) was deleted rather than gated: removing it changes the answer
+    // at no input at all, `Long.MIN_VALUE` included, so it was a branch this rule would have
+    // scored 2/2 while no mutation could redden it. See `SmartRewind`'s own KDoc.
+    //
+    // FALSIFIED, not assumed: `@Disabled` on the three tests that reach `resumePositionMs`'s
+    // taken clamp -- `a rewind never goes past the start of the file`, `a negative stored position
+    // is treated as the start` and `a stored position at the bottom of the range does not wrap
+    // into the far future` -- drops it to **9/10 = 0.90** and `jacocoJvmCoverageVerification`
+    // fails with "Rule violated for class app.muplay.media.SmartRewind: branches covered ratio is
+    // 0.90, but expected minimum is 1.00". Three, because that is the minimum: every other branch
+    // in the class is reached by more than one test, which is what "both sides of every boundary"
+    // buys and is also why 0.90 here would have needed five withheld tests to fire.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.media.SmartRewind"),
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
