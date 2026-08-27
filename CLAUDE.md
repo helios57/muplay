@@ -543,3 +543,154 @@ The same rule applies to clearing a stray mutation by hand. `git checkout -- .`
 is safe only once you have looked at `git status` and confirmed the *only*
 modified file is the one you mean to revert. Read the diff first; it costs one
 command and it is the difference between undoing a mutation and undoing an hour.
+
+## This host is shared with the user's own work — build like a guest
+
+Measured 2026-08-27 while six agent worktrees were building: **load average 32.6
+on 24 cores**, alongside the user's IntelliJ (3.6 GB resident) and several
+concurrent `rustc`/`rust-lld` processes. Memory was never the problem — 34 GB
+available, swap barely touched, **zero OOM kills in the kernel log**.
+
+Two settings live in `~/.gradle/gradle.properties` rather than the repo's, because
+CI reads the repo's and these numbers are wrong there:
+
+    org.gradle.workers.max=3
+    org.gradle.priority=low
+
+`org.gradle.parallel=true` in the repo lets **each** build take one worker per
+processor, so N concurrent worktrees ask for N x 24. Capping workers matches the
+machine rather than the process; `priority=low` makes the daemons yield to
+interactive work instead of competing with it. After both, load fell to 24.
+Run `./gradlew --stop` after changing either — a running daemon keeps its old
+settings and will not pick them up.
+
+**Disk is the risk that is not yet fixed.** `/` was at **94% (26 GB free of
+393 GB)** during the same window, and under that load `du` and `docker system df`
+both exceeded a 100-second timeout, which is itself the symptom. A full disk on
+this host produces exactly the unexplained mid-build failures that get
+misattributed to the code. Check `df -h /` before blaming a flaky build.
+
+And note what a **host reboot** looks like from inside a session, because it has
+happened here: every agent stops at once with no completion record, the emulator's
+qemu process is gone, and the container shows `Exited (0)` — a clean stop, not a
+crash. `last reboot` distinguishes it from anything you did in one command.
+
+## A plan's sample code does not necessarily pass the plan's own sample tests
+
+Plan 6 Task 7 shipped both halves in the plan document: a `CastRouterTest` and the
+`CastRouter` meant to satisfy it. Three of the listed tests could not pass against
+the listed implementation, and none of the three was a typo:
+
+- a test required the failure message to name the device, and the function that
+  builds that message was given no device and no way to reach one;
+- two tests exercised a "fast path" constructor parameter that **nothing in the
+  listing ever called** — it was declared, defaulted, and dead;
+- one assertion was arithmetically false: `10.0.1.20` and `10.0.2.50` really are
+  in the same `/22` (`10.0.0.0/22` spans `10.0.0.0–10.0.3.255`), and the listing
+  asserted they are not.
+
+All three surfaced within one run of writing the code and running the tests, and
+none of them is visible by reading. So: **type the plan's tests in first and run
+them before believing either half.** A red there is as likely to be the plan as
+the implementation, and the third case above — an expectation that is simply
+wrong about the world — only ever surfaces as a failure against *correct* code.
+
+Related: a defaulted constructor parameter no caller omits compiles to a second,
+synthetic constructor that no test can reach, and it measures as permanently
+uncovered lines. `CastRoute.Proxied` read LINE 5/6 with the default and 5/5
+without it. If a floor is a line or two short on a `data class`, look for a
+default before looking for a missing test.
+
+## An IPv6 address interpolated into a URL silently produces a URL with no host
+
+Measured on JDK 21, and it is the whole reason `CastRouter` has a `urlHost`:
+
+    URI("http://fd00:0:0:0:0:0:0:1:8080/m/x.mp3").host   ->  null
+    URI("http://[fd00:0:0:0:0:0:0:1]:8080/m/x.mp3").host  ->  "[fd00:0:0:0:0:0:0:1]", port 8080
+
+`InetAddress.hostAddress` never brackets, and for a link-local address it appends
+this machine's own scope id (`fe80::1%7`), which means nothing to a peer. So
+`"http://$host:$port$path"` over an `InetAddress` is correct for IPv4 and produces
+an unfetchable URL for IPv6 — with no error anywhere, on a test bed that is
+loopback IPv4 and therefore cannot see it.
+
+Note also that `URI.getHost()` **keeps the brackets** for an IPv6 literal, and
+`InetAddress.getByName` accepts them, so a host string round-trips; it is only
+string interpolation that breaks.
+## Kotlin block comments **nest**, so a glob in a KDoc can eat the rest of the file
+
+`/*` inside a `/** ... */` opens a nested comment. Writing a perfectly ordinary
+path in prose is enough:
+
+    /** ... it parses `META-INF/*.SF`, checks the signature ... */
+
+That `/*` opens a comment the closing `*/` then only half-closes, and the
+compiler reports **`Syntax error: Unclosed comment`** at the *last line of the
+file* — plus, in the same run, seventeen `Unresolved reference` errors in a
+**different** file that happened to use the swallowed declarations. Nothing in
+that output names the glob. `*/` in prose (`*/src/debug/kotlin/**`) closes the
+KDoc early and produces the same shape from the other direction.
+
+Both were hit in one compile while writing Plan 8's release gates. Grep for
+`/\*` and `\*/src` inside comments before believing a nonsensical
+`Unresolved reference` list.
+
+## `build-logic` is an included build, so root `check` never runs its tests
+
+`settings.gradle.kts` has `pluginManagement { includeBuild("build-logic") }`.
+`./gradlew check` at the root builds and tests the eleven project modules and
+stops — it does not reach `build-logic`.
+
+Measured 2026-08-27: no workflow file mentioned `build-logic` in any `run:` line,
+so **thirteen tests had never executed in CI** — including
+`VerifyMergedManifestTaskTest`, whose own header records that it is the only
+thing in this repository that goes red when the merged-manifest gate stops
+checking. `pr.yml` now runs `./gradlew :build-logic:convention:test` and
+`ConventionTest`'s `build-logic's own tests are run by CI` derives the module
+list from the tree.
+
+To run them yourself: `./gradlew :build-logic:convention:test` from the root
+(the `:build-logic:` prefix addresses the included build), or
+`./gradlew -p build-logic test`.
+
+## A `tearDown` that throws replaces the real failure with its own
+
+`GaplessTest`'s `setUp` ends with `server = MockWebServer(); server.start()`. Any
+failure before that line — a `check()` on the fixture count, a network refusal —
+leaves `server` unset, and `@After tearDown()` then throws
+
+    kotlin.UninitializedPropertyAccessException: lateinit property server has not been initialized
+    at app.muplay.media.GaplessTest.tearDown(GaplessTest.kt:115)
+
+which is the **only** message the report carries. The real cause never appears.
+
+Measured 2026-08-27: a corpus change added a fourth music fixture, `setUp`'s
+`check(songs.size == TRACK_COUNT)` fired, and four tests reported nothing but the
+`tearDown` exception. One lane read those failures and concluded *"`:core:media`'s
+audio-sink and disk-cache suites are red on master too"*, which sent the next
+reader looking at host disk and emulator storage. Both were fine; the cause was a
+hardcoded `3`.
+
+Guard every `@After` that touches a `lateinit` set late in `@Before`:
+
+    if (::server.isInitialized) server.close()
+
+It is one line, and it is the difference between a report that names the defect
+and a report that names the cleanup.
+
+## A shared fixture corpus breaks every hardcoded count at once
+
+The container bind-mounts `<repo>/ci/fixtures/Music -> /music` from the **main**
+worktree, so a corpus change is visible to every lane the instant the file lands
+— not when that lane's branch merges. Adding one Opus fixture took the music
+library from 3 tracks to 4 and turned `:core:media`'s device tier red on master
+while the lane that added it was still working.
+
+So a count over the corpus must be **derived, not written down**.
+`LiveNavidromeTest` does this correctly —
+`SEEDED_TRACK_COUNT = BookFixtures.allTrackPaths().size` — and survived the change
+untouched. `GaplessTest`'s `const val TRACK_COUNT = 3` did not.
+
+Where a test genuinely needs one *kind* of track, filter rather than count:
+`RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
+and was unaffected.

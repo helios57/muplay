@@ -61,3 +61,39 @@ internal data class ValidationFailureBody(
 /** The body a 503 carries while Lidarr boots (`StartingUpMiddleware.cs`). */
 @Serializable
 internal data class StartingUpBody(val errorMessage: String? = null)
+
+/**
+ * A root folder, with the four defaults that let one picker satisfy every required add field.
+ *
+ * `freeSpace` and `totalSpace` are `long?` in the resource and are genuinely absent for an
+ * inaccessible folder, which is why `freeSpace` is nullable here rather than defaulted to zero —
+ * "zero bytes free" and "we do not know" are different things to show a user. `totalSpace` is not
+ * read at all: nothing in this app has a use for it, and a field this client parses is a field it
+ * then owns.
+ *
+ * Captured from the pinned container into `fixtures/lidarr/rootfolder.json`, which also carries
+ * `defaultTags` and `totalSpace`; both are dropped by `ignoreUnknownKeys`.
+ */
+@Serializable
+internal data class RootFolderBody(
+  val id: Int = 0,
+  val name: String? = null,
+  val path: String? = null,
+  val accessible: Boolean = false,
+  val freeSpace: Long? = null,
+  val defaultQualityProfileId: Int = 0,
+  val defaultMetadataProfileId: Int = 0,
+  val defaultMonitorOption: String? = null,
+  val defaultNewItemMonitorOption: String? = null,
+)
+
+/**
+ * Quality and metadata profiles share the only two fields an add needs.
+ *
+ * One type for both endpoints because both resources really do carry `id` and `name` at the top
+ * level and nothing else this app reads — measured against `fixtures/lidarr/qualityprofile.json`
+ * (3 profiles: `Any`, `Lossless`, `Standard`) and `fixtures/lidarr/metadataprofile.json`
+ * (2 profiles: `Standard`, `None`), whose other 34 KB and 7 KB are quality/album-type trees.
+ */
+@Serializable
+internal data class ProfileBody(val id: Int = 0, val name: String? = null)

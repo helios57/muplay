@@ -1,0 +1,4937 @@
+[
+    {
+        "title": "Kind of Blue",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "8e8a594f-2175-38c7-a871-abb68ec363e7",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 7283168,
+        "albumType": "Album",
+        "secondaryTypes": [],
+        "mediumCount": 2,
+        "ratings": {
+            "votes": 43,
+            "value": 8.9
+        },
+        "releaseDate": "1959-08-17T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "ca6b19c7-08b3-4d98-a5db-d73a08562a73",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2709000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Reel-to-reel"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "Reel-to-reel",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "49234de2-790c-46e5-b780-3cd6be79a2db",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 1568000,
+                "trackCount": 3,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Reel-to-reel"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "Reel-to-reel",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "607f2c9a-3ece-3a44-bbcf-030e3f62f936",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a25deb78-2bcd-4535-86b6-2c66505e796d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2732000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "2899db3e-155b-4990-931e-66c81cc95ae3",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2701000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "969e1c1c-d72b-3f05-a412-03679632cc75",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7283168,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Legacy",
+                    "Legacy"
+                ],
+                "format": "2xCD",
+                "monitored": true
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "5272927b-2b43-355d-b914-550ea06eb7e9",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2719000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Classic Records"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a2743f6b-5096-416b-8001-fb08a64ec570",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2750119,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "[no label]"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a9bd6e04-c2b6-4d70-8043-eb3c115d2d57",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "584c767b-ebb9-37f4-b1fc-c0021552f072",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Australia"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "eef3606d-0843-370f-8ea9-73b949e8bdfc",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "080d58e3-9e03-4322-aebf-6d42605b3260",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3326000,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "e32a3f0b-1c19-3170-bb1c-650893774744",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "cd9c728d-2f4d-3f09-aba4-6c90ed255ee1",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Argentina"
+                ],
+                "label": [
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "5fec116b-a6f7-4738-b452-0846cfb6dd0a",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2719000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d6a1f166-8a02-4608-849b-9d623912c3e5",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3876426,
+                "trackCount": 7,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Vinyl"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "Vinyl"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "Music on Vinyl"
+                ],
+                "format": "2xVinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "5db85826-f516-4f39-ba0f-df0efe634668",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 6675220,
+                "trackCount": 20,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Not Now Music"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "3aaa9d21-4982-4c13-a1bb-caa57195fee6",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325398,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Legacy"
+                ],
+                "format": "Hybrid SACD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c27e2140-1403-4a76-89ec-6e5aac73767c",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8ff3c62f-d0a6-4963-8c6f-5bbbea19e56f",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "SME Records"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "46c3472f-1cb0-481b-9dc9-da67b62bb89b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "e8324f18-31cd-4a2f-877b-08affdccfff1",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 9977289,
+                "trackCount": 18,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "CD side",
+                        "mediumFormat": "DualDisc"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "DVD side",
+                        "mediumFormat": "DualDisc"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "2xDualDisc",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "1cf538cd-8b5b-4aeb-b1b4-73861b84ceac",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2773000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "2015 MFSL remaster",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Mobile Fidelity Sound Lab"
+                ],
+                "format": "2x12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "e7ba3cb7-a074-45ee-870f-3baeb6d3e8bf",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2726000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "612b6b32-433e-4d44-a987-ca0c92598e5d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2673106,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "Hallmark Music & Entertainment"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "55db8111-3fbf-493a-87bd-a815b1f15d60",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7250000,
+                "trackCount": 14,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "The Stereo Version",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "The Mono Version",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Green Corner"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "9c56aa14-559f-4742-ae3c-34781cd83bcf",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "353021d1-3d84-4f17-9fe4-66788d785a9d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7283168,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "legacy edition",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "723f4d97-d88a-4d76-a323-f4c951e147fb",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3316000,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "UK \"Definitive\" version by COLUMBIA/LEGACY. Made in EU.",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d7b496d8-f044-4e34-830a-1dd93c31cabf",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 0,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy",
+                    "Sony Music"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "82ebb36b-0a0f-3608-9c7d-743d9003fbf8",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "France"
+                ],
+                "label": [
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "04eeef76-5a4b-4195-a6bb-e64e84eee6e0",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "DOL"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d79eec92-df03-4327-b3b7-32a7c1dec7af",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Kind of Blue",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "6949dcd6-8630-490d-bdd6-d997b85014ac",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 6641773,
+                "trackCount": 12,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "SACD (2 channels)"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "SACD (multichannel)"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "SACD (2 channels), SACD (multichannel)",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bf48ae37-e630-4e45-92ab-e2e1d6d3a656",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 4128000,
+                "trackCount": 7,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "2020 re-release with two bonus tracks",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Groove Replica"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "fa731de1-331d-4713-adcc-2c304817cb88",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 8243320,
+                "trackCount": 15,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD (CD layer)"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD (SACD layer, 2 channels)"
+                    },
+                    {
+                        "mediumNumber": 3,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD (SACD layer, multichannel)"
+                    }
+                ],
+                "mediumCount": 3,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "Hybrid SACD (CD layer), Hybrid SACD (SACD layer, 2 channels), Hybrid SACD (SACD layer, multichannel)",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "5d8188df-3d1e-4413-8b17-471840c9915f",
+                "title": "Kind of Blue: Limited Edition",
+                "status": "Official",
+                "duration": 2697000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "90e7b1b1-b8fe-4c7e-b5d3-8b4416a2eadd",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3628532,
+                "trackCount": 7,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Jazz Images"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bc4d1870-1614-411b-85d0-6c76ef3fdd9d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "e25dbbbc-7c21-4cf8-9dc7-fdf401b8403c",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Australia"
+                ],
+                "label": [
+                    "Coronet Records",
+                    "Coronet Records",
+                    "Coronet Records"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "53f2acf9-6f05-4bf7-b566-58da62c430df",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "1cf21fef-c5d8-480d-8a2f-4a74aa3ab68b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "Fontana",
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "42231daa-6ade-49fc-8ab8-c0b19ca6b237",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "28b406fc-3a8b-4c91-baf8-880bfeb990d9",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Fontana",
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "cf540ec1-24c6-4f2f-ad9d-b65c517b3b22",
+                "title": "Kind of Blue",
+                "status": "Promotion",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "9768d0fa-28a0-48c8-ab88-8088651eae60",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "France"
+                ],
+                "label": [
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "19f628e9-91a7-4037-b7ef-2889aabe9d02",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Fontana",
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "57089ee6-9854-409b-93f7-b0536c9625e6",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "819a8dc6-8018-42f7-a053-cb04acbddade",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Repress",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "4c76f430-69f9-43b4-84cc-18b8d166e6bc",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Fontana"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a35a08ab-0f6f-4235-8e54-220c5097cbfc",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, Repress",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "91b60109-f99f-4310-952f-ae2d9869bc10",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, misprint, reissue",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "7fb2d5c8-8a1f-43e4-8de3-c5f64ed725b4",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, Reissue",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "530ab29f-37ba-4404-9d8f-a9b9124b2bce",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, Reissue",
+                "country": [
+                    "France"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8db29cd5-74e8-4226-ba12-d9f7d9453ef1",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, Reissue",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "7b3590f9-27e4-4fee-8757-2692b73d5c5e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Reissue",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c5a73143-5bd8-4328-955e-ce52e0e7bb8a",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Reissue",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "ec065f05-5932-4ee9-82cb-7f2d586854c1",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, Reissue",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "78a51ebe-e753-4ac7-a450-7b65b2fc4f83",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Reissue",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "25018b3f-13d4-44bc-96fc-8dc3eb569a91",
+                "title": "Kind of Blue",
+                "status": "Promotion",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d9024940-bc9f-4f5b-a07b-5ded5bec374a",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "208090bc-c520-48dd-9cf0-4979961a982a",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Reissue",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a8ca58bf-1196-416f-8cf5-5578078bbf05",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 4464051,
+                "trackCount": 9,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Poll Winners Records"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "dc3d4846-6bad-4243-8939-82e53bea0403",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2740000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "ccec1041-3b45-43d5-ae56-6a1cbf347d21",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c884b971-fa34-429c-912e-1034cd5ee34e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Reissue",
+                "country": [
+                    "France"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "b078aa62-ed36-4351-b6a2-02b9783ec695",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "South Africa"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "f2e46edb-c6e7-4fc4-9dfe-9800d1e46e47",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "3f909047-f932-4b61-b3bd-2fb10760cbff",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "7453bf0d-1839-4e22-b46a-7046d6ea03cf",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "1b218605-46d0-44f2-bcf2-22149cb1d70f",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d4d9c3e1-ee06-4cf2-9800-fc05ede9b3cc",
+                "title": "V.I.P.-Jazz 9",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo, Club Edition",
+                "country": [
+                    "Austria"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS Special Products",
+                    "Donauland"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "300a89d6-f48c-41fe-b13b-c60f59e37cac",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia",
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d319d791-8ccd-42ba-97ab-9c97330f4ae7",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "France"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "375526b3-aa4a-4cf5-9078-e3688a229dd4",
+                "title": "Kind of Blue",
+                "status": "Promotion",
+                "duration": 2719000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "635a79a6-c352-47ae-ab1c-8ac7c1acdae3",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "6d0313df-7159-4bdf-a884-e5411bd2cfc3",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "26ab0ad1-f38a-4456-8fc6-320fbfa9e0b2",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "16489a93-888a-454d-a13a-c8bec167bb5e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c5f6c95f-63da-4d45-851c-220d7c2d163c",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo reissue",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "CBS",
+                    "Nimbus Records"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "4ad5e9a9-f503-4a1d-8151-0dfcc20c168b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "3c464efc-77b0-4ecd-9571-5d1d98774d7e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "235d3e52-a3e6-4daf-a5d7-9592722a2631",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8bc7f495-dc06-4c81-aa0c-6aba94927a69",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo Reissue",
+                "country": [
+                    "T\u00fcrkiye"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS",
+                    "Uzelli"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8e72d4fb-30bc-441e-b6aa-882bf84bdb92",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "38de96f7-2dc5-4804-8d2c-5b93cfd803cb",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Israel"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8ccc56dd-ff64-4afc-ab06-2e4d2c6ee7e2",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Canada"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "816a4c46-dfbd-4f3d-bb4a-3e72e4a5069d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Cassette"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Columbia"
+                ],
+                "format": "Cassette",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "93bd4496-9653-48bd-8aff-eb8a71e3b439",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "CBS/Sony"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "fddad804-2edd-46be-bd15-f21ed12a5d8b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "South Korea"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8e600847-0f63-4e2f-a1e2-a979592c70b2",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "66ccecc9-c4ca-4d40-8daf-7427c90ae657",
+                "title": "Kind of Blue",
+                "status": "Bootleg",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Russia"
+                ],
+                "label": [
+                    "Russian Disc"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8379a736-ed20-4dc9-85ea-ed0fb85a2c1d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "1d5960e2-6ba7-4609-8568-18af8cbc8462",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 5683596,
+                "trackCount": 11,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Kind of Blue",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "Bonus Disc",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "Nordstrom exclusive 50th anniversary edition",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Sony Music Custom Marketing Group"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bee5e0cd-1767-4a8e-9578-6455e87ba60b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "18416863-1777-4687-bc96-a87056b21664",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "blue disc label",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "7b1e1ec9-6b29-4c80-b7a2-bab3f4f6b945",
+                "title": "Kind of Blue",
+                "status": "Promotion",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono, promo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "18c13f03-1df4-4e72-af84-c503c5e6ee5a",
+                "title": "Kind Of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "180gram",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Columbia",
+                    "De Agostini"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d647accb-ec48-4e69-b83e-a090ef034e64",
+                "title": "Another Tracks of \"Kind of Blue\"",
+                "status": "Bootleg",
+                "duration": 4430000,
+                "trackCount": 2,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Unknown",
+                        "mediumFormat": "Unknown"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Core Collections"
+                ],
+                "format": "Unknown",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "6652eb60-0024-450b-8c51-2a9c2d797a33",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Ireland"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bae43741-b1de-4e18-9851-8aac4a99dd50",
+                "title": "Some Kinds Of Blue",
+                "status": "Official",
+                "duration": 4599000,
+                "trackCount": 11,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Italy"
+                ],
+                "label": [
+                    "Musica Jazz"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "cf9412b8-0c90-42dc-9d6c-6832be6e15d7",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "South Korea"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d4da091b-6468-4ff9-afad-a6bc19408b3d",
+                "title": "Kind Of Blue",
+                "status": "Official",
+                "duration": 4566144,
+                "trackCount": 9,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "2022 Remaster",
+                "country": [],
+                "label": [
+                    "Jazz Images"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d3f0f7aa-d53c-4b96-9f19-f34ec06fdbc8",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3320773,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "SACD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "SACD-only version in jewel case with slipcase.",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "SACD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "7d7ebace-0e5a-43c2-bd6d-18b5f35bed0b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "20-bit remastered version",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "51c87419-b6cc-4e26-af1f-b82640e89ee4",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2701000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "f82aa197-f528-46a0-b67b-a9a558bddd4c",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2701000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "fa7c01ac-5d2c-4968-af26-a0a0ebd1be6e",
+                "title": "Kind of Blue",
+                "status": "Cancelled",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "0915561a-a75c-493e-aee8-1c2d130c2e3d",
+                "title": "Kind of Blue",
+                "status": "Cancelled",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "4a9d4dce-2330-41f7-b151-aabeb861ff20",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2771000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "SACD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Mobile Fidelity Sound Lab"
+                ],
+                "format": "SACD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "15eb186f-2856-4852-890c-44d6109357ae",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 6048598,
+                "trackCount": 11,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Stereo",
+                        "mediumFormat": "Blu-spec CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "Mono",
+                        "mediumFormat": "Blu-spec CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Records International",
+                    "Sony Records International"
+                ],
+                "format": "2xBlu-spec CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "935de3c3-212d-4455-bd73-fcacdecc6f7e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Mobile Fidelity Sound Lab"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "62fce4a5-bb8f-4980-a800-b72314819cc5",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Netherlands"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "4c8af71f-5746-4981-92d7-0d6c64db1155",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2744000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "607ef674-142c-4a59-ba2b-9cdbc2b77264",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3316000,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "Matrix: Sony Music S0106493510-0101 24 F9",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "5472d4b8-1d33-405d-84fa-9c8385f22531",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 4210492,
+                "trackCount": 8,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "High Definition Tape Transfers"
+                ],
+                "format": "Digital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "099c1bb3-091f-4a86-a0e9-ece4b347bd2b",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "Jazz @ 33rpm - Issue 1",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "CBS",
+                    "De Agostini"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bd9c0f19-f6a6-4c97-85c6-4028d8a68d29",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 5485000,
+                "trackCount": 10,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Mono",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "Stereo",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Not Now Music"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "14f34297-ae81-4069-925a-1a320ac19f11",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2726000,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "reissue, remastered, stereo, 200 gram Quiex SV-P, \u201cHand Made\u201d",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Classic Records"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "0b84b56e-b0c6-4319-8d81-49cdd0ee3737",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7237346,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "legacy edition",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "2xDigital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "844642e8-5ee3-4eed-b153-06fc69996f62",
+                "title": "Kind Of Blue",
+                "status": "Official",
+                "duration": 3322000,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy",
+                    "Sony Music"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "f8f79f3a-3a63-3286-a43d-0135c1a59fea",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "CBS"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "890942eb-0248-43a5-8442-ee90ec5321f9",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Second Records"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "79ed3ff2-1b33-3245-8755-947554bc8b3d",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "mono",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "d7dab426-f295-4c3a-b43b-81d25f438f2e",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "blue marbled vinyl",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "ab8e869e-9fed-456b-934e-4154f157eafa",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2708492,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "reissue",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "CBS",
+                    "CBS",
+                    "CBS"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "25d4f28c-9ec6-4590-838f-cbd849ab2cde",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7274000,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Legacy"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c5db7ff3-9746-4874-a281-b909deb10165",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3326000,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Mixed Mode CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United Kingdom"
+                ],
+                "label": [
+                    "Columbia"
+                ],
+                "format": "Mixed Mode CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "4c5c46ae-cc25-4528-a4df-740e6b2990c5",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7247880,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "Legacy edition",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "2xDigital Media",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "6365fb27-2c81-3700-9bb9-1aced97345ab",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 3325891,
+                "trackCount": 6,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "\"360 SOUND\"",
+                "country": [
+                    "Europe"
+                ],
+                "label": [
+                    "Columbia",
+                    "Legacy"
+                ],
+                "format": "CD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "6b78821e-b1f5-40f3-b8c3-a03c2e9e67b8",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 7283168,
+                "trackCount": 21,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "legacy edition",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Legacy"
+                ],
+                "format": "2xCD",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "82bb6cb8-0045-44bf-9a52-5d3fcde6a988",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 5541719,
+                "trackCount": 10,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD (CD layer)"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "Hybrid SACD (SACD layer, 2 channels)"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "SACD",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Columbia",
+                    "Mobile Fidelity Sound Lab"
+                ],
+                "format": "Hybrid SACD (CD layer), Hybrid SACD (SACD layer, 2 channels)",
+                "monitored": false
+            },
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "bc37119c-3a4b-414f-a4d1-e1c32d5730ff",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 0,
+                "trackCount": 5,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "12\" Vinyl"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "stereo",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Analogue Productions",
+                    "Analogue Productions",
+                    "Columbia",
+                    "Sony Music Commercial Music Group"
+                ],
+                "format": "12\" Vinyl",
+                "monitored": false
+            }
+        ],
+        "genres": [
+            "Jazz",
+            "Cool Jazz",
+            "Modal Jazz",
+            "Hard Bop",
+            "Post-Bop"
+        ],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            },
+            {
+                "mediumNumber": 2,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            }
+        ],
+        "artist": {
+            "status": "ended",
+            "ended": true,
+            "artistName": "Miles Davis",
+            "foreignArtistId": "561d854a-6a28-4aa7-8c99-323e6ce46c2a",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Person",
+            "disambiguation": "jazz trumpeter, bandleader, songwriter",
+            "links": [
+                {
+                    "url": "http://all-blues.de/music/missing.htm",
+                    "name": "all-blues"
+                },
+                {
+                    "url": "http://www.kind-of-blue.de/",
+                    "name": "kind-of-blue"
+                },
+                {
+                    "url": "https://www.discogs.com/artist/23755",
+                    "name": "discogs"
+                },
+                {
+                    "url": "https://myspace.com/milesdavis",
+                    "name": "myspace"
+                },
+                {
+                    "url": "https://www.bbc.co.uk/music/artists/561d854a-6a28-4aa7-8c99-323e6ce46c2a",
+                    "name": "bbc"
+                },
+                {
+                    "url": "https://www.facebook.com/MilesDavis",
+                    "name": "facebook"
+                },
+                {
+                    "url": "https://www.imdb.com/name/nm0002537/",
+                    "name": "imdb"
+                },
+                {
+                    "url": "https://www.allmusic.com/artist/mn0000423829",
+                    "name": "allmusic"
+                },
+                {
+                    "url": "https://secondhandsongs.com/artist/106",
+                    "name": "secondhandsongs"
+                },
+                {
+                    "url": "http://viaf.org/viaf/97762193",
+                    "name": "viaf"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q93341",
+                    "name": "wikidata"
+                },
+                {
+                    "url": "https://www.last.fm/music/Miles+Davis",
+                    "name": "last"
+                },
+                {
+                    "url": "https://commons.wikimedia.org/wiki/File:Miles_Davis_by_Palumbo.jpg",
+                    "name": "wikimedia"
+                },
+                {
+                    "url": "https://open.spotify.com/artist/0kbYTNQb4Pb1rPbbaF0pT4",
+                    "name": "spotify"
+                },
+                {
+                    "url": "https://vgmdb.net/artist/27058",
+                    "name": "vgmdb"
+                },
+                {
+                    "url": "https://d-nb.info/gnd/118524046",
+                    "name": "d-nb"
+                },
+                {
+                    "url": "http://id.loc.gov/authorities/names/n50035608",
+                    "name": "loc"
+                },
+                {
+                    "url": "https://catalogue.bnf.fr/ark:/12148/cb13893030g",
+                    "name": "bnf"
+                },
+                {
+                    "url": "https://openlibrary.org/works/OL4359245A",
+                    "name": "openlibrary"
+                },
+                {
+                    "url": "http://snaccooperative.org/ark:/99166/w68k7wq0",
+                    "name": "snaccooperative"
+                },
+                {
+                    "url": "https://twitter.com/milesdavis",
+                    "name": "twitter"
+                },
+                {
+                    "url": "https://www.deezer.com/artist/1910",
+                    "name": "deezer"
+                },
+                {
+                    "url": "https://www.songkick.com/artists/564879",
+                    "name": "songkick"
+                },
+                {
+                    "url": "https://genius.com/artists/Miles-davis",
+                    "name": "genius"
+                },
+                {
+                    "url": "https://www.45cat.com/vinyl/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.45cat.com/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.45cat.com/cdalbum/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.45cat.com/live/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.45cat.com/tape/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.45cat.com/78rpm/artist/miles-davis",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.muziekweb.nl/Link/M00000286446/",
+                    "name": "muziekweb"
+                },
+                {
+                    "url": "https://tidal.com/artist/55",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://www.youtube.com/channel/UC1ZS17c0DlqUjsXZK3K_bgA",
+                    "name": "youtube"
+                },
+                {
+                    "url": "https://www.instagram.com/milesdavis/",
+                    "name": "instagram"
+                },
+                {
+                    "url": "https://music.apple.com/us/artist/44984",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.apple.com/us/artist/44984",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.youtube.com/channel/UCIev2PktTH5mI-QlGmbUkiw",
+                    "name": "youtube"
+                },
+                {
+                    "url": "https://jaxsta.com/profile/80eaeb6a-e128-4421-8ab5-a4641d03f790",
+                    "name": "jaxsta"
+                },
+                {
+                    "url": "https://www.youtube.com/channel/UC9NlE_veniVpnvpIegfifMQ",
+                    "name": "youtube"
+                },
+                {
+                    "url": "https://www.qobuz.com/us-en/interpreter/miles-davis/6760",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://www.qobuz.com/us-en/interpreter/miles-davis/6760",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://www.plosin.com/milesahead/",
+                    "name": "plosin"
+                },
+                {
+                    "url": "https://www.milesdavis.com/",
+                    "name": "milesdavis"
+                },
+                {
+                    "url": "https://musicmoz.org/Bands_and_Artists/D/Davis,_Miles/",
+                    "name": "musicmoz"
+                },
+                {
+                    "url": "https://rateyourmusic.com/artist/miles-davis",
+                    "name": "rateyourmusic"
+                },
+                {
+                    "url": "https://id.oclc.org/worldcat/entity/E39PBJgHgCKJYFHypjdXmCyKh3",
+                    "name": "oclc"
+                },
+                {
+                    "url": "https://nla.gov.au/nla.party-911157",
+                    "name": "gov"
+                },
+                {
+                    "url": "https://www.jazzmusicarchives.com/artist/miles-davis",
+                    "name": "jazzmusicarchives"
+                },
+                {
+                    "url": "https://www.progarchives.com/artist.asp?id=3906",
+                    "name": "progarchives"
+                },
+                {
+                    "url": "https://www.musik-sammler.de/artist/miles-davis/",
+                    "name": "musik-sammler"
+                },
+                {
+                    "url": "https://www.setlist.fm/setlists/miles-davis-3d6b58b.html",
+                    "name": "setlist"
+                },
+                {
+                    "url": "https://www.tiktok.com/@milesdavis",
+                    "name": "tiktok"
+                },
+                {
+                    "url": "https://www.whosampled.com/Miles-Davis/",
+                    "name": "whosampled"
+                },
+                {
+                    "url": "https://us.7digital.com/artist/miles-davis",
+                    "name": "7digital"
+                },
+                {
+                    "url": "https://www.melon.com/artist/detail.htm?artistId=3658",
+                    "name": "melon"
+                },
+                {
+                    "url": "https://www.melon.com/artist/detail.htm?artistId=3658",
+                    "name": "melon"
+                },
+                {
+                    "url": "https://mora.jp/artist/38366/",
+                    "name": "mora"
+                },
+                {
+                    "url": "https://ototoy.jp/_/default/a/897626",
+                    "name": "ototoy"
+                },
+                {
+                    "url": "https://open.qobuz.com/artist/6760",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://open.qobuz.com/artist/6760",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://milesdavis.bandcamp.com/",
+                    "name": "bandcamp"
+                },
+                {
+                    "url": "https://music.apple.com/gb/artist/44984",
+                    "name": "apple"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [
+                "Jazz",
+                "Jazz Fusion",
+                "Modal Jazz",
+                "Cool Jazz",
+                "Hard Bop",
+                "Post-Bop",
+                "Bebop",
+                "Jazz-Funk",
+                "Rock",
+                "Funk",
+                "Classical"
+            ],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 21,
+                "value": 9.6
+            }
+        },
+        "images": [
+            {
+                "url": "/MediaCoverProxy/a26059d09c800f3cc3367c4f94e9ff719ada965cc0394b953807357c57b9b79a/12708426541-1200.jpg",
+                "coverType": "cover",
+                "extension": ".jpg",
+                "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/e7ba3cb7-a074-45ee-870f-3baeb6d3e8bf/12708426541-1200.jpg"
+            },
+            {
+                "url": "/MediaCoverProxy/927f879a14a522526991a847f0ef1971290b46c740a2acd6007373993d9a9344/31640267587-1200.jpg",
+                "coverType": "disc",
+                "extension": ".jpg",
+                "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/53f2acf9-6f05-4bf7-b566-58da62c430df/31640267587-1200.jpg"
+            }
+        ],
+        "links": [
+            {
+                "url": "https://www.discogs.com/master/5460",
+                "name": "discogs"
+            },
+            {
+                "url": "https://www.bbc.co.uk/music/reviews/fr25",
+                "name": "bbc"
+            },
+            {
+                "url": "https://www.allmusic.com/album/mw0000191710",
+                "name": "allmusic"
+            },
+            {
+                "url": "https://www.wikidata.org/wiki/Q283221",
+                "name": "wikidata"
+            },
+            {
+                "url": "https://rateyourmusic.com/release/album/miles_davis/kind_of_blue/",
+                "name": "rateyourmusic"
+            },
+            {
+                "url": "https://www.whosampled.com/album/Miles-Davis/Kind-Of-Blue/",
+                "name": "whosampled"
+            },
+            {
+                "url": "https://www.musik-sammler.de/album/50738/",
+                "name": "musik-sammler"
+            }
+        ],
+        "remoteCover": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/e7ba3cb7-a074-45ee-870f-3baeb6d3e8bf/12708426541-1200.jpg"
+    },
+    {
+        "title": "KIND OF BLUE",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "e5c2dc44-5811-3727-a76a-a42f95b0d14d",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 3924000,
+        "albumType": "Album",
+        "secondaryTypes": [],
+        "mediumCount": 1,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "2006-10-18T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "67628344-8492-4624-a0b0-88c7f783f91a",
+                "title": "KIND OF BLUE",
+                "status": "Official",
+                "duration": 3924000,
+                "trackCount": 13,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Sony Music Associated Records"
+                ],
+                "format": "CD",
+                "monitored": true
+            }
+        ],
+        "genres": [],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "\u5927\u5c71\u767e\u5408\u9999",
+            "foreignArtistId": "eeed1f51-5e73-42a4-99af-51e3f402c125",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Person",
+            "disambiguation": "",
+            "links": [
+                {
+                    "url": "http://www.ohyamayurika.com/",
+                    "name": "ohyamayurika"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q11434668",
+                    "name": "wikidata"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 0,
+                "value": 0
+            }
+        },
+        "images": [],
+        "links": []
+    },
+    {
+        "title": "Kind of Blue",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "c35e782d-be05-380b-ac26-1b9c48878ee5",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 2443000,
+        "albumType": "Album",
+        "secondaryTypes": [],
+        "mediumCount": 1,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "2000-01-01T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "a1468fae-7982-40cb-8002-166f8ad8a62a",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 2443000,
+                "trackCount": 12,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "Switzerland"
+                ],
+                "label": [],
+                "format": "CD",
+                "monitored": true
+            }
+        ],
+        "genres": [],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "Swiss Blues Authority",
+            "foreignArtistId": "7afb9e2b-0f0d-4be0-887d-b856f63d4ea3",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Group",
+            "disambiguation": "",
+            "links": [
+                {
+                    "url": "https://www.discogs.com/artist/274170",
+                    "name": "discogs"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q108072604",
+                    "name": "wikidata"
+                },
+                {
+                    "url": "https://rateyourmusic.com/artist/swiss_blues_authority",
+                    "name": "rateyourmusic"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [
+                "Blues Rock"
+            ],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 0,
+                "value": 0
+            }
+        },
+        "images": [],
+        "links": []
+    },
+    {
+        "title": "Kind of Blue",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "d6ac7f6b-9082-4f04-8a90-17253856e877",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 4383000,
+        "albumType": "Album",
+        "secondaryTypes": [],
+        "mediumCount": 1,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "2010-03-23T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "06224408-7526-4f26-a8b4-0872b8a2d466",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 4383000,
+                "trackCount": 18,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "United States"
+                ],
+                "label": [
+                    "Affiliated Entertainment"
+                ],
+                "format": "CD",
+                "monitored": true
+            }
+        ],
+        "genres": [
+            "R&B"
+        ],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "TQ",
+            "foreignArtistId": "fe47130b-6abd-403e-8829-42f55a21a086",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Person",
+            "disambiguation": "US R&B singer",
+            "links": [
+                {
+                    "url": "http://www.thugpoetry.com/",
+                    "name": "thugpoetry"
+                },
+                {
+                    "url": "https://www.discogs.com/artist/85141",
+                    "name": "discogs"
+                },
+                {
+                    "url": "http://viaf.org/viaf/17421234",
+                    "name": "viaf"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q957231",
+                    "name": "wikidata"
+                },
+                {
+                    "url": "http://muzikum.eu/en/122-4259/tq/lyrics.html",
+                    "name": "muzikum"
+                },
+                {
+                    "url": "http://therealtq.com/",
+                    "name": "therealtq"
+                },
+                {
+                    "url": "https://myspace.com/tqthetrojan",
+                    "name": "myspace"
+                },
+                {
+                    "url": "https://soundcloud.com/tqthetrojan",
+                    "name": "soundcloud"
+                },
+                {
+                    "url": "https://www.facebook.com/TheRealTQ",
+                    "name": "facebook"
+                },
+                {
+                    "url": "https://twitter.com/TQtheTrojan",
+                    "name": "twitter"
+                },
+                {
+                    "url": "https://www.allmusic.com/artist/mn0000012465",
+                    "name": "allmusic"
+                },
+                {
+                    "url": "https://rateyourmusic.com/artist/t_q_",
+                    "name": "rateyourmusic"
+                },
+                {
+                    "url": "https://d-nb.info/gnd/135129079",
+                    "name": "d-nb"
+                },
+                {
+                    "url": "http://id.loc.gov/authorities/names/nb2002088094",
+                    "name": "loc"
+                },
+                {
+                    "url": "https://www.worldcat.org/identities/lccn-nb2002088094",
+                    "name": "worldcat"
+                },
+                {
+                    "url": "https://catalogue.bnf.fr/ark:/12148/cb14023706v",
+                    "name": "bnf"
+                },
+                {
+                    "url": "https://genius.com/artists/Tq",
+                    "name": "genius"
+                },
+                {
+                    "url": "https://www.songkick.com/artists/535554",
+                    "name": "songkick"
+                },
+                {
+                    "url": "https://open.spotify.com/artist/5a6nqHiBS9v3CxYOs7ttET",
+                    "name": "spotify"
+                },
+                {
+                    "url": "https://www.discogs.com/artist/1433430",
+                    "name": "discogs"
+                },
+                {
+                    "url": "https://tower.jp/artist/174661",
+                    "name": "tower"
+                },
+                {
+                    "url": "https://tidal.com/artist/93",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://open.spotify.com/artist/5JqGjqBhFsNTpAPsXnVDLB",
+                    "name": "spotify"
+                },
+                {
+                    "url": "https://www.youtube.com/channel/UC6sWLvfYkNXXYqbkdP8-M8w",
+                    "name": "youtube"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 0,
+                "value": 0
+            }
+        },
+        "images": [
+            {
+                "url": "/MediaCoverProxy/d35bf0d7164bb324356ce3ef95312b16c04b622aa8c5c5e5882a11c55e2941a4/34186089867-1200.jpg",
+                "coverType": "cover",
+                "extension": ".jpg",
+                "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/06224408-7526-4f26-a8b4-0872b8a2d466/34186089867-1200.jpg"
+            }
+        ],
+        "links": [
+            {
+                "url": "https://en.wikipedia.org/wiki/Kind_of_Blue_(TQ_album)",
+                "name": "wikipedia"
+            },
+            {
+                "url": "https://www.allmusic.com/album/mw0001958663",
+                "name": "allmusic"
+            }
+        ],
+        "remoteCover": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/06224408-7526-4f26-a8b4-0872b8a2d466/34186089867-1200.jpg"
+    },
+    {
+        "title": "Kind of Blue",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "2dfafb2f-a048-4eb1-b941-3a6e8c05aec4",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 165733,
+        "albumType": "Single",
+        "secondaryTypes": [],
+        "mediumCount": 1,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "2019-07-05T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "209cabbd-8ea2-45ed-92cd-693589b02b27",
+                "title": "Kind of Blue",
+                "status": "Official",
+                "duration": 165733,
+                "trackCount": 1,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "Digital Media"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [
+                    "[Worldwide]"
+                ],
+                "label": [
+                    "Columbia Local"
+                ],
+                "format": "Digital Media",
+                "monitored": true
+            }
+        ],
+        "genres": [],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "Digital Media"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "Hellberg",
+            "foreignArtistId": "57b63b14-ca23-42f3-8e41-652bdc945241",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Person",
+            "disambiguation": "",
+            "links": [
+                {
+                    "url": "https://twitter.com/HellbergMusic",
+                    "name": "twitter"
+                },
+                {
+                    "url": "https://soundcloud.com/hellbergmusic",
+                    "name": "soundcloud"
+                },
+                {
+                    "url": "http://www.hellbergmusic.com/",
+                    "name": "hellbergmusic"
+                },
+                {
+                    "url": "https://www.instagram.com/hellbergmusic/",
+                    "name": "instagram"
+                },
+                {
+                    "url": "https://www.deezer.com/artist/1930471",
+                    "name": "deezer"
+                },
+                {
+                    "url": "https://plus.google.com/+TheOfficialHellberg",
+                    "name": "google"
+                },
+                {
+                    "url": "https://open.spotify.com/artist/1kgxTtyF91VaqLD3J6Krd5",
+                    "name": "spotify"
+                },
+                {
+                    "url": "https://www.discogs.com/artist/3009087",
+                    "name": "discogs"
+                },
+                {
+                    "url": "https://www.beatport.com/artist/hellberg/278857",
+                    "name": "beatport"
+                },
+                {
+                    "url": "https://play.google.com/store/music/artist?id=Ajjcbliwefv37mexusckgjyljiq",
+                    "name": "google"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q19976797",
+                    "name": "wikidata"
+                },
+                {
+                    "url": "https://www.imdb.com/name/nm5995725/",
+                    "name": "imdb"
+                },
+                {
+                    "url": "https://tidal.com/artist/4954275",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://player.monstercat.app/artist/hellberg",
+                    "name": "monstercat"
+                },
+                {
+                    "url": "https://www.junodownload.com/artists/Hellberg/releases/",
+                    "name": "junodownload"
+                },
+                {
+                    "url": "https://genius.com/artists/Hellberg",
+                    "name": "genius"
+                },
+                {
+                    "url": "https://rateyourmusic.com/artist/hellberg",
+                    "name": "rateyourmusic"
+                },
+                {
+                    "url": "https://www.facebook.com/278184345541712",
+                    "name": "facebook"
+                },
+                {
+                    "url": "https://music.apple.com/se/artist/268889393",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.apple.com/se/artist/268889393",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://www.youtube.com/channel/UCLOGIsYh9g6_YDRnJHet-aQ",
+                    "name": "youtube"
+                },
+                {
+                    "url": "https://tidal.com/artist/12932499",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://tidal.com/artist/26586666",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://jaxsta.com/profile/37f6307d-b2fd-4cee-9031-fb82d36adfd0",
+                    "name": "jaxsta"
+                },
+                {
+                    "url": "https://music.apple.com/se/artist/1456309059",
+                    "name": "apple"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 0,
+                "value": 0
+            }
+        },
+        "images": [
+            {
+                "url": "/MediaCoverProxy/19248d5357fe7db0e09ebf857779741f72445b71f779ff1a67186ad04f1a83e0/42037571072-1200.jpg",
+                "coverType": "cover",
+                "extension": ".jpg",
+                "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/209cabbd-8ea2-45ed-92cd-693589b02b27/42037571072-1200.jpg"
+            }
+        ],
+        "links": [],
+        "remoteCover": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/209cabbd-8ea2-45ed-92cd-693589b02b27/42037571072-1200.jpg"
+    },
+    {
+        "title": "Kind of Blue Beat",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "34a2a8ae-ee7d-361f-9d5c-f91f61883c5c",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 2558971,
+        "albumType": "Album",
+        "secondaryTypes": [],
+        "mediumCount": 1,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "0001-01-01T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "c19340ce-26de-4cc6-a265-97482af3dc6e",
+                "title": "Kind of Blue Beat",
+                "status": "Official",
+                "duration": 2558971,
+                "trackCount": 8,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "Unknown",
+                        "mediumFormat": "Unknown"
+                    }
+                ],
+                "mediumCount": 1,
+                "disambiguation": "",
+                "country": [],
+                "label": [],
+                "format": "Unknown",
+                "monitored": true
+            }
+        ],
+        "genres": [],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "Unknown",
+                "mediumFormat": "Unknown"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "Ska Toons",
+            "foreignArtistId": "6e7731b8-e07f-4f14-a3a8-90c12c23e3ae",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Group",
+            "disambiguation": "",
+            "links": [
+                {
+                    "url": "http://www.skatoons.co.uk/",
+                    "name": "skatoons"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 0,
+                "value": 0
+            }
+        },
+        "images": [],
+        "links": []
+    },
+    {
+        "title": "Kind of Blues",
+        "disambiguation": "",
+        "artistId": 0,
+        "foreignAlbumId": "aeebc9ec-933d-3076-9e97-ea403ba214ee",
+        "monitored": false,
+        "anyReleaseOk": true,
+        "profileId": 0,
+        "duration": 6771993,
+        "albumType": "Album",
+        "secondaryTypes": [
+            "Live"
+        ],
+        "mediumCount": 2,
+        "ratings": {
+            "votes": 0,
+            "value": 0
+        },
+        "releaseDate": "1997-07-01T00:00:00Z",
+        "releases": [
+            {
+                "id": 0,
+                "albumId": 0,
+                "foreignReleaseId": "8cc83343-0dfa-4487-bbd5-18236e34e98e",
+                "title": "Kind of Blues",
+                "status": "Bootleg",
+                "duration": 6771993,
+                "trackCount": 24,
+                "media": [
+                    {
+                        "mediumNumber": 1,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    },
+                    {
+                        "mediumNumber": 2,
+                        "mediumName": "",
+                        "mediumFormat": "CD"
+                    }
+                ],
+                "mediumCount": 2,
+                "disambiguation": "",
+                "country": [
+                    "Japan"
+                ],
+                "label": [
+                    "Mid Valley"
+                ],
+                "format": "2xCD",
+                "monitored": true
+            }
+        ],
+        "genres": [],
+        "media": [
+            {
+                "mediumNumber": 1,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            },
+            {
+                "mediumNumber": 2,
+                "mediumName": "",
+                "mediumFormat": "CD"
+            }
+        ],
+        "artist": {
+            "status": "continuing",
+            "ended": false,
+            "artistName": "Eric Clapton",
+            "foreignArtistId": "618b6900-0618-4f1e-b835-bccb17f84294",
+            "tadbId": 0,
+            "discogsId": 0,
+            "artistType": "Person",
+            "disambiguation": "",
+            "links": [
+                {
+                    "url": "https://musicmoz.org/Bands_and_Artists/C/Clapton,_Eric/",
+                    "name": "musicmoz"
+                },
+                {
+                    "url": "http://www.ericclapton.com/",
+                    "name": "ericclapton"
+                },
+                {
+                    "url": "https://www.whereseric.com/",
+                    "name": "whereseric"
+                },
+                {
+                    "url": "https://www.discogs.com/artist/17827",
+                    "name": "discogs"
+                },
+                {
+                    "url": "https://myspace.com/ericclapton",
+                    "name": "myspace"
+                },
+                {
+                    "url": "https://www.bbc.co.uk/music/artists/618b6900-0618-4f1e-b835-bccb17f84294",
+                    "name": "bbc"
+                },
+                {
+                    "url": "https://www.allmusic.com/artist/mn0000187478",
+                    "name": "allmusic"
+                },
+                {
+                    "url": "https://www.facebook.com/ericclapton",
+                    "name": "facebook"
+                },
+                {
+                    "url": "https://twitter.com/EricClaptonNews",
+                    "name": "twitter"
+                },
+                {
+                    "url": "https://secondhandsongs.com/artist/214",
+                    "name": "secondhandsongs"
+                },
+                {
+                    "url": "http://viaf.org/viaf/46945873",
+                    "name": "viaf"
+                },
+                {
+                    "url": "https://www.wikidata.org/wiki/Q48187",
+                    "name": "wikidata"
+                },
+                {
+                    "url": "https://commons.wikimedia.org/wiki/File:Eric_Clapton_2.jpg",
+                    "name": "wikimedia"
+                },
+                {
+                    "url": "http://soundtrackcollector.com/composer/303/",
+                    "name": "soundtrackcollector"
+                },
+                {
+                    "url": "https://www.imdb.com/name/nm0002008/",
+                    "name": "imdb"
+                },
+                {
+                    "url": "http://muzikum.eu/en/122-3538/eric-clapton/lyrics.html",
+                    "name": "muzikum"
+                },
+                {
+                    "url": "https://open.spotify.com/artist/6PAt558ZEZl0DmdXlnjMgD",
+                    "name": "spotify"
+                },
+                {
+                    "url": "https://rateyourmusic.com/artist/eric-clapton",
+                    "name": "rateyourmusic"
+                },
+                {
+                    "url": "http://www.pandora.com/eric-clapton",
+                    "name": "pandora"
+                },
+                {
+                    "url": "https://www.setlist.fm/setlists/eric-clapton-1bd6ad58.html",
+                    "name": "setlist"
+                },
+                {
+                    "url": "https://www.bandsintown.com/a/2639",
+                    "name": "bandsintown"
+                },
+                {
+                    "url": "https://www.45cat.com/artist/eric-clapton",
+                    "name": "45cat"
+                },
+                {
+                    "url": "https://www.last.fm/music/Eric+Clapton",
+                    "name": "last"
+                },
+                {
+                    "url": "https://d-nb.info/gnd/119073102",
+                    "name": "d-nb"
+                },
+                {
+                    "url": "https://catalogue.bnf.fr/ark:/12148/cb13892530m",
+                    "name": "bnf"
+                },
+                {
+                    "url": "https://www.musik-sammler.de/artist/eric-clapton/",
+                    "name": "musik-sammler"
+                },
+                {
+                    "url": "https://genius.com/artists/Eric-clapton",
+                    "name": "genius"
+                },
+                {
+                    "url": "https://imvdb.com/n/eric-clapton",
+                    "name": "imvdb"
+                },
+                {
+                    "url": "https://www.songkick.com/artists/387667",
+                    "name": "songkick"
+                },
+                {
+                    "url": "https://www.spirit-of-rock.com/en/band/Eric_Clapton",
+                    "name": "spirit-of-rock"
+                },
+                {
+                    "url": "https://www.whosampled.com/Eric-Clapton/",
+                    "name": "whosampled"
+                },
+                {
+                    "url": "https://soundcloud.com/ericclapton",
+                    "name": "soundcloud"
+                },
+                {
+                    "url": "https://www.deezer.com/artist/192",
+                    "name": "deezer"
+                },
+                {
+                    "url": "https://www.7digital.com/artist/eric-clapton",
+                    "name": "7digital"
+                },
+                {
+                    "url": "http://id.loc.gov/authorities/names/n84222859",
+                    "name": "loc"
+                },
+                {
+                    "url": "https://www.worldcat.org/identities/lccn-n84222859",
+                    "name": "worldcat"
+                },
+                {
+                    "url": "https://ibdb.com/person.php?id=84072",
+                    "name": "ibdb"
+                },
+                {
+                    "url": "http://snaccooperative.org/ark:/99166/w6h82h8s",
+                    "name": "snaccooperative"
+                },
+                {
+                    "url": "https://nla.gov.au/nla.party-1092634",
+                    "name": "gov"
+                },
+                {
+                    "url": "https://tidal.com/artist/124",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://music.apple.com/gb/artist/123853",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.apple.com/gb/artist/123853",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.apple.com/us/artist/123853",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://music.apple.com/us/artist/123853",
+                    "name": "apple"
+                },
+                {
+                    "url": "https://www.youtube.com/channel/UCtCOFqqGGGunX71nfZgPQOQ",
+                    "name": "youtube"
+                },
+                {
+                    "url": "https://www.instagram.com/ericclapton/",
+                    "name": "instagram"
+                },
+                {
+                    "url": "https://tidal.com/artist/56286077",
+                    "name": "tidal"
+                },
+                {
+                    "url": "https://www.qobuz.com/gb-en/interpreter/eric-clapton/5936",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://www.qobuz.com/us-en/interpreter/eric-clapton/5936",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://www.qobuz.com/us-en/interpreter/eric-clapton/5936",
+                    "name": "qobuz"
+                },
+                {
+                    "url": "https://tidal.com/artist/83696402",
+                    "name": "tidal"
+                }
+            ],
+            "nextAlbum": null,
+            "lastAlbum": null,
+            "images": [],
+            "qualityProfileId": 0,
+            "metadataProfileId": 0,
+            "monitored": false,
+            "monitorNewItems": "all",
+            "genres": [
+                "Blues",
+                "Blues Rock",
+                "Rock",
+                "Soft Rock"
+            ],
+            "tags": [],
+            "added": "0001-01-01T00:00:00Z",
+            "ratings": {
+                "votes": 20,
+                "value": 8.8
+            }
+        },
+        "images": [
+            {
+                "url": "/MediaCoverProxy/a5d044d4d61f5c761b25a83bf4ee555c21b8bfc9b32f3c44ef84d676d32e8e16/12972647742-1200.jpg",
+                "coverType": "cover",
+                "extension": ".jpg",
+                "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/8cc83343-0dfa-4487-bbd5-18236e34e98e/12972647742-1200.jpg"
+            }
+        ],
+        "links": [],
+        "remoteCover": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/8cc83343-0dfa-4487-bbd5-18236e34e98e/12972647742-1200.jpg"
+    }
+]

@@ -34,6 +34,9 @@ object RealTrackBytes {
   const val NAVIDROME_URL = "http://localhost:4533"
   const val MUSIC_LIBRARY_ID = 1
 
+  /** `ci/navidrome.compose.yml`'s second library, mounted at `/audiobooks`. */
+  const val AUDIOBOOK_LIBRARY_ID = 2
+
   private const val MP3_SUFFIX = "mp3"
   private const val OPUS_SUFFIX = "opus"
 
@@ -46,6 +49,7 @@ object RealTrackBytes {
   }
 
   private var tracks: List<Song>? = null
+  private var books: List<Song>? = null
   private val bytesById = mutableMapOf<String, ByteArray>()
 
   /** Every song in the seeded music library, in title order. */
@@ -80,6 +84,19 @@ object RealTrackBytes {
    * picking whichever came back first.
    */
   suspend fun opusTrack(): Song = allMusic().single { it.suffix.equals(OPUS_SUFFIX, true) }
+
+  /**
+   * Every seeded audiobook **file**, longest first.
+   *
+   * The same shape and the same cache as [musicTracks], scoped to the other library. Added by Plan
+   * 5 Task 5, which needs a file long enough that a stored position several seconds in is inside
+   * it: the music fixtures are five seconds each, and a resume assertion on a five-second track is
+   * satisfied by playback simply reaching the position on its own.
+   */
+  suspend fun audiobookFiles(): List<Song> =
+    books ?: client.getRandomSongs(musicFolderId = AUDIOBOOK_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
+      .sortedByDescending { it.durationSeconds }
+      .also { books = it }
 
   /** One seeded mp3 — the single track `MuPlayDataSourceFactoryTest` plays. */
   suspend fun oneMp3Track(): ByteArray = bytesOf(musicTracks().first())
