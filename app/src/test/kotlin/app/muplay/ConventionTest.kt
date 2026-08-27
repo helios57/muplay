@@ -1045,6 +1045,61 @@ class ConventionTest {
       .isEmpty()
   }
 
+  /**
+   * The settings slot's severability, as a check rather than a promise.
+   *
+   * `:feature:settings` renders whatever `SettingsSection` implementations the Hilt graph contains
+   * and names none of them, so that removing casting is `git rm -r core/cast feature/castpicker`
+   * and nothing else: the `@IntoSet` binding goes with the directory, the multibound set gets
+   * smaller, and the settings screen loses a section without noticing.
+   *
+   * That property is not self-enforcing. One dependency on the cast modules in that module's build
+   * file -- or one import of their package in its sources -- compiles, works, and quietly turns a
+   * severable feature into a load-bearing one. Same shape as `nothing outside integrations depends
+   * on an integration`, and for the same reason: a dependency has to be *declared* to be used.
+   *
+   * **Both halves match a declaration, not a mention.** Comments are stripped from the build file
+   * before matching, and the source half matches an `import` line rather than any occurrence of
+   * the package name. This project has twice paid for a `contains` over a whole file that read a
+   * comment as the thing it described -- `verifyReleaseNoDestructiveMigration` failing on prose and
+   * `VerifyMergedManifestTask` *passing* on it -- and both modules this rule guards have to be able
+   * to explain themselves in their own comments.
+   */
+  @Test
+  fun `the settings slot never learns what is in it`() {
+    val module = File(repoRoot(), "feature/settings")
+    val buildFile = File(module, "build.gradle.kts")
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(buildFile).describedAs("the settings module this rule is about").exists()
+
+    val declaredEdges = Regex("""project\(\s*"(:[^"]+)"\s*\)""")
+      .findAll(withoutComments(buildFile.readText()))
+      .map { it.groupValues[1] }
+      .toList()
+    assertThat(declaredEdges.filter { it == ":core:cast" || it == ":feature:castpicker" })
+      .describedAs(
+        "${buildFile.path} must not depend on casting: the settings screen is a slot, and an edge " +
+          "here makes `git rm -r core/cast feature/castpicker` stop being a complete removal",
+      )
+      .isEmpty()
+
+    val sources = module.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+    assertThat(sources).describedAs("Kotlin sources under ${module.path}").isNotEmpty()
+
+    val castImport = Regex("""^import\s+app\.muplay\.cast""", RegexOption.MULTILINE)
+    val offendingSources = sources
+      .filter { castImport.containsMatchIn(it.readText()) }
+      .map { it.path }
+    assertThat(offendingSources)
+      .describedAs("no source in :feature:settings may import a casting package")
+      .isEmpty()
+  }
+
+  /** Kotlin/Gradle-script text with `//` and `/* */` comments removed, so a rule reads code only. */
+  private fun withoutComments(text: String): String =
+    text.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+      .replace(Regex("""//.*"""), "")
+
   @Test
   fun `every Gradle project has a coverage floor`() {
     // A module absent from `coverageFloors` is un-gated, and the build's own warning for it has
