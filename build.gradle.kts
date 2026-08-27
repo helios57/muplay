@@ -4463,13 +4463,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // failure body with no `error` key at all. Every one is a shape a real Bindery or a real proxy
     // can produce and none had an observation.
     //
-    // FALSIFIED, and it took two tests to move -- the second-caller effect this table has been
-    // bitten by three times, met again. Withholding `BinderySearchTest`'s
-    // `every candidate field is read from its own element` alone leaves this class at **106/108
-    // and green**, because `a blank optional field is read as nothing and a present one as itself`
-    // walks the same arms from the other side. Withholding **both** gives **95/108 = 0.8796** and
-    // `jacocoJvmCoverageVerification` fails with "branches covered ratio is 0.87, but expected
-    // minimum is 0.90". Transcript in task-8-report.md.
+    // FALSIFIED, AND THE FIRST TWO ATTEMPTS FAILED -- which is the whole reason to run one rather
+    // than assert it. Measured, in order:
+    //
+    //   * Withholding `BinderySearchTest`'s `every candidate field is read from its own element`
+    //     ALONE leaves this class at **106/108 and green**: `a blank optional field is read as
+    //     nothing and a present one as itself` walks the same arms from the other side.
+    //   * Withholding **both** of those gives **100/108 = 0.9259 -- still GREEN.** This author
+    //     predicted 0.8796 and a red gate, and was wrong by six branches.
+    //   * Withholding both of those **plus the whole of `BinderyBooksTest`** gives **93/108 =
+    //     0.8611** and `jacocoJvmCoverageVerification` fails with "Rule violated for class
+    //     app.muplay.integrations.bindery.BinderyClient: branches covered ratio is 0.86, but
+    //     expected minimum is 0.90".
+    //
+    // So this floor gates a *trio* of test classes rather than any one of them, and a reader who
+    // withheld the obvious single test and saw green would learn the wrong thing. Two other
+    // withholdings do fire it, both measured: `BinderySubmitTest` + `BinderySearchTest` +
+    // `BinderyBooksTest` together gives **67/108 = 0.6204**, and withholding every test that
+    // deserialises a health body (`BinderyHandshakeTest`, `BinderyAuthTest`, `BinderyWiringTest`)
+    // takes **`BinderyServer` to 0/6 = 0.0000**, which fires this same rule on its other class.
+    // Transcripts in task-8-report.md.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -4507,10 +4520,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `Bindery*Exception` also matches the sealed interface `BinderyException`, which carries no
     // counters and rides along so `warnUngatedClasses` has nothing to say about it.
     //
-    // FALSIFIED: withholding all six `BinderyBooksTest` tests that build a page drops
-    // `BinderyBookPage` to **0/5** and `BinderyBook` to 0/6, and the gate fails with
-    // "Rule violated for class app.muplay.integrations.bindery.BinderyBookPage: lines covered
-    // ratio is 0.00, but expected minimum is 0.90". Transcript in task-8-report.md.
+    // FALSIFIED, AND THE FIRST ATTEMPT FAILED. The prediction was that withholding the whole of
+    // `BinderyBooksTest` would drop `BinderyBookPage` to 0/5. Measured: it stays at **5/5 and the
+    // gate stays GREEN**, because `BinderyAuthTest`'s four-endpoint scan calls `books(...)` and
+    // builds a page on the way past. The second-caller effect again, one class over.
+    //
+    // What does fire it, measured: withholding `BinderyHandshakeTest`, `BinderyAuthTest` and
+    // `BinderyWiringTest` together -- every test that deserialises a health body -- reddens FOUR
+    // classes in this rule at once, "lines covered ratio is 0.00, but expected minimum is 0.90"
+    // for `BinderyServer`, `DefaultBinderySourceFactory`, `di.BinderyModule` and
+    // `BinderyClient.health.body.1`. Note what that says: this rule fires when a class stops being
+    // exercised at all, and says nothing about whether anything it does is right.
+    // Transcript in task-8-report.md.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -4579,13 +4600,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // exactly on the current minimum fires on the first one. What 0.40 still refuses is a DTO that
     // nothing deserialises at all, which measures 0.
     //
-    // FALSIFIED, and the falsification is the reason this entry is worth having: withholding
-    // `BinderyHandshakeTest`'s five tests drops `HealthBody` to **0/2 = 0.0000** and
+    // FALSIFIED, AND THE FIRST ATTEMPT FAILED, which is worth recording because the obvious
+    // withholding is the wrong one. Withholding `BinderyHandshakeTest`'s five tests -- the class
+    // whose whole subject is the health endpoint -- leaves `HealthBody` at **1/2 = 0.5000 and this
+    // rule green**, because `BinderyAuthTest` and `BinderyWiringTest` both deserialise a health
+    // body too.
+    //
+    // Withholding **all three** gives `HealthBody` **0/2 = 0.0000** and
     // `jacocoJvmCoverageVerification` fails with "Rule violated for class
     // app.muplay.integrations.bindery.HealthBody: lines covered ratio is 0.00, but expected
-    // minimum is 0.40". Note what that says and does not: the floor fires when a DTO stops being
-    // deserialised at all, and says nothing about whether any of its fields is read correctly.
-    // Transcript in task-8-report.md.
+    // minimum is 0.40" (and the same for `HealthBody.Companion`). Note what that says and does
+    // not: the floor fires when a DTO stops being deserialised at all, and says nothing about
+    // whether any of its fields is read correctly. Transcript in task-8-report.md.
     //
     // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
     // pass); LINE is the only counter that can hold them to anything.
