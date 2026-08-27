@@ -830,12 +830,20 @@ class ConventionTest {
     val lintConfig = File(repoRoot(), "app/lint.xml")
     assertThat(lintConfig).describedAs("the only lint configuration in this repository").exists()
 
-    // What took over from each disabled check, and where to look for the evidence that it did.
-    // `Declaration` -> a required entry in AUTOMOTIVE_DECLARATIONS, so the merged-manifest gate
-    // proves on every `check` what lint could not see. `Rule` -> a test in this class.
-    val replacements = mapOf(
+    // What took over from each disabled check. Two maps, not one, because the evidence lives in two
+    // different files and one combined haystack is answerable by the wrong half -- measured: with a
+    // single blob of both sources, deleting the declaration from AUTOMOTIVE_DECLARATIONS left this
+    // rule green, because *this test file* quotes the same declaration in the rule above. Each
+    // replacement is now checked only against the file that is supposed to hold it.
+    val replacedByDeclaration = mapOf(
+      // The merged-manifest gate proves on every `check`, for both variants, what lint could not
+      // see: the action really is in the artifact that ships.
       "MissingMediaBrowserServiceIntentFilter" to
         """android:name="android.media.browse.MediaBrowserService"""",
+    )
+    val replacedByRule = mapOf(
+      // Not an equivalent, and the lint.xml comment says so. This rule holds the filter, its
+      // handler and its gate entry to one answer; it does not require any of them to exist.
       "MissingIntentFilterForMediaSearch" to
         "a declared play-from-search filter must have a handler and a gate entry",
     )
@@ -849,12 +857,22 @@ class ConventionTest {
     // otherwise satisfy every assertion below by appearing to disable nothing.
     assertThat(disabled)
       .describedAs("ids disabled in ${lintConfig.path}")
-      .containsExactlyInAnyOrderElementsOf(replacements.keys)
+      .containsExactlyInAnyOrderElementsOf(replacedByDeclaration.keys + replacedByRule.keys)
 
-    val evidence = declarationList(applicationPlugin(), "AUTOMOTIVE_DECLARATIONS").orEmpty() +
-      "\n" + kotlinCode(File(repoRoot(), CONVENTION_TEST_PATH).readText())
+    val declarations = declarationList(applicationPlugin(), "AUTOMOTIVE_DECLARATIONS")
+    assertThat(declarations).describedAs("AUTOMOTIVE_DECLARATIONS").isNotNull()
+    // `kotlinCode`, so a rule named only in a comment -- including the paragraphs above, which name
+    // it -- does not stand in for the rule itself.
+    val rules = kotlinCode(File(repoRoot(), CONVENTION_TEST_PATH).readText())
 
-    assertThat(replacements.filterValues { it !in evidence }.keys)
+    // The **declaration** of the named test, not the bare name. Measured: matching the bare name
+    // made this assertion incapable of failing, because the name is a string literal in the map
+    // three lines above -- the rule was reading itself. Renaming the test away left it green.
+    val orphaned =
+      replacedByDeclaration.filterValues { !checkNotNull(declarations).contains(it) }.keys +
+        replacedByRule.filterValues { !rules.contains("fun `$it`(") }.keys
+
+    assertThat(orphaned)
       .describedAs(
         "${lintConfig.path} disables these lint checks and names a replacement that is no longer " +
           "there, so the check is off and nothing took its place. Either restore the replacement " +
