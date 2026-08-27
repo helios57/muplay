@@ -190,7 +190,14 @@ class MuPlayLibraryCallback @Inject constructor(
     mediaSession: MediaSession,
     controller: MediaSession.ControllerInfo,
     mediaItems: List<MediaItem>,
-  ): ListenableFuture<List<MediaItem>> = future(emptyList()) { resolve(mediaItems) }
+  ): ListenableFuture<List<MediaItem>> =
+    if (mediaItems.all { it.localConfiguration != null }) {
+      // **Synchronously, and that is a correctness requirement rather than an optimisation.**
+      // See the note below `onSetMediaItems`'s note.
+      immediate(mediaItems)
+    } else {
+      future(emptyList()) { resolve(mediaItems) }
+    }
 
   /**
    * The same resolution, plus the **index** -- which is this plan's to choose and the resume
@@ -214,8 +221,14 @@ class MuPlayLibraryCallback @Inject constructor(
     mediaItems: List<MediaItem>,
     startIndex: Int,
     startPositionMs: Long,
-  ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
-    future(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, C.TIME_UNSET)) {
+  ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+    if (mediaItems.all { it.localConfiguration != null }) {
+      // See the note below `onSetMediaItems`. Nothing here needs a repository, so nothing here may suspend.
+      return immediate(
+        MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, C.TIME_UNSET),
+      )
+    }
+    return future(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, C.TIME_UNSET)) {
       val selection = mediaItems.singleOrNull()
         ?.takeIf { it.localConfiguration == null }
         ?.let { BrowseId.decode(it.mediaId) }
@@ -227,6 +240,32 @@ class MuPlayLibraryCallback @Inject constructor(
         MediaSession.MediaItemsWithStartPosition(items(selection), selection.startIndex, C.TIME_UNSET)
       }
     }
+  }
+
+  /**
+   * Why the passthrough answers **synchronously**, measured rather than reasoned.
+   *
+   * `PlaybackLauncher.play` sends three commands back to back -- `setMediaItems`, `prepare`,
+   * `play` -- and Media3 does **not** hold the second and third behind a pending future from the
+   * first. `MediaSessionStub` completes the queue change through `handleMediaItemsWhenReady`, so a
+   * future resolved on another dispatcher lands *after* `prepare()` and `play()` have already been
+   * applied to an empty player. Media3's own default `onAddMediaItems` returns
+   * `Futures.immediateFuture(...)` for exactly this reason, and matching it is what keeps the
+   * ordering the rest of this app was built on.
+   *
+   * The cost of getting it wrong is silent: no exception, no player error, no log. The player sits
+   * in `STATE_BUFFERING` with `isPlaying == false` for ever. Measured on `muplay37`: with the
+   * unconditional `scope.launch` this method first had, **11 of `MuPlaybackServiceTest`'s 15 tests
+   * failed** with `position never reached 1000ms; state=2 isPlaying=false error=null`, and all 15
+   * passed with these two overrides removed entirely. No test in this plan would have caught it --
+   * the browse path is asynchronous by necessity and works, because a car sends its own `prepare`
+   * and `play` and the late queue is then prepared under a `playWhenReady` that is already true.
+   *
+   * So: **a request that needs no repository must not suspend.** An item that already carries its
+   * own `localConfiguration` needs nothing looked up, which is the same field that decides whether
+   * it is expanded at all.
+   */
+
 
   /**
    * Every item, either passed through or expanded.

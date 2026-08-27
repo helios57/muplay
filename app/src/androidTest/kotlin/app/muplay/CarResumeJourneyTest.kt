@@ -168,9 +168,7 @@ class CarResumeJourneyTest {
     val files = children(book.mediaId).map { it.mediaId }
 
     val started = files.indices.map { index ->
-      // `lastPlayedAtEpochMs = now` on every write, so this row is unambiguously the most recent
-      // one for this book whatever the previous iteration -- or a previous test -- left behind.
-      store(files[index], positionMs = 1_000)
+      makeMostRecentlyPlayed(files, index)
       queueFromTree(book)
       awaitQueueOf(files.size)
       onMain { browser.currentMediaItemIndex }
@@ -250,7 +248,14 @@ class CarResumeJourneyTest {
   fun tappingShuffleInTheCarPlaysMusicAndNeverABook() {
     // Spec section 1, from a car seat. Library-scoped shuffle is Plan 2's; what this asserts is
     // that the browse row reaches it with the right library id.
-    val musicTitles = children(musicAlbum().mediaId).mapNotNull { it.mediaMetadata.title?.toString() }
+    // **Every** music album, not the one this suite happens to play from. The seeded corpus has
+    // grown twice while this task was being written -- from four files to nine, and then again
+    // with an "Offset Track" in a second album, which is what caught this assertion reading one
+    // album's titles and calling them "the music library".
+    val musicTitles = children("muplay/albums")
+      .filter { it.mediaId.startsWith("muplay/album/") }
+      .flatMap { children(it.mediaId) }
+      .mapNotNull { it.mediaMetadata.title?.toString() }
     val bookTitles = children("muplay/books")
       .flatMap { book -> children(book.mediaId) }
       .mapNotNull { it.mediaMetadata.title?.toString() }
@@ -315,6 +320,53 @@ class CarResumeJourneyTest {
       browser.prepare()
     }
   }
+
+  /**
+   * Writes a row for `files[index]` and **verifies it is the book's most recent**, retrying if not.
+   *
+   * `ProgressWriter` captures the item being left on `onMediaItemTransition`, from a coroutine, so
+   * replacing a queue writes a row for the *previous* file some time afterwards. Measured twice,
+   * and both orderings matter: with no verification at all the third observation read `1` instead
+   * of `2`, and with verification but no quiet period the second read `0` instead of `1` -- the
+   * stray write landing between the check and the tap.
+   *
+   * So the queue is emptied first, the writer is allowed to go quiet, and only then is the row
+   * written and re-checked. Verified rather than slept on: the loop asserts the precondition the
+   * test needs (this file's row is strictly the newest of the book's) instead of assuming a fixed
+   * delay is long enough.
+   */
+  private fun makeMostRecentlyPlayed(files: List<String>, index: Int) {
+    val deadline = SystemClock.elapsedRealtime() + TIMEOUT_SECONDS * 1_000
+    var stamps: List<Long> = emptyList()
+    while (SystemClock.elapsedRealtime() < deadline) {
+      onMain {
+        browser.stop()
+        browser.clearMediaItems()
+      }
+      awaitProgressQuiet(files)
+      store(files[index], positionMs = 1_000)
+      stamps = stampsOf(files)
+      val mine = stamps[index]
+      if (stamps.withIndex().all { (i, at) -> i == index || at < mine }) return
+    }
+    throw AssertionError("could not make ${files[index]} the book's most recent row; saw $stamps")
+  }
+
+  /** Waits until two consecutive reads of the book's rows agree, i.e. nothing is still writing. */
+  private fun awaitProgressQuiet(files: List<String>) {
+    val deadline = SystemClock.elapsedRealtime() + TIMEOUT_SECONDS * 1_000
+    var previous = stampsOf(files)
+    while (SystemClock.elapsedRealtime() < deadline) {
+      Thread.sleep(QUIET_MILLIS)
+      val current = stampsOf(files)
+      if (current == previous) return
+      previous = current
+    }
+    throw AssertionError("progress writes never went quiet for $files")
+  }
+
+  private fun stampsOf(files: List<String>): List<Long> =
+    runBlocking { files.map { progressDao().find(it)?.lastPlayedAtEpochMs ?: 0L } }
 
   private fun store(mediaId: String, positionMs: Long) = runBlocking {
     progressDao().upsert(
@@ -424,5 +476,8 @@ class CarResumeJourneyTest {
      * produce a queue.
      */
     const val SETTLE_MILLIS = 2_000L
+
+    /** How long two reads of the progress rows must agree over before the writer is called quiet. */
+    const val QUIET_MILLIS = 500L
   }
 }

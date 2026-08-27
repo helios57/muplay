@@ -292,6 +292,30 @@ class BrowsePlaybackTest {
     assertThat(played.startIndex).isEqualTo(2)
   }
 
+  @Test
+  fun anAlreadyPlayableRequestIsAnsweredWithoutSuspendingAtAll() {
+    // **A correctness requirement, not an optimisation, and it cost eleven red tests to learn.**
+    //
+    // `PlaybackLauncher.play` sends `setMediaItems`, `prepare` and `play` back to back, and Media3
+    // does not hold the last two behind a pending future from the first. A future completed on
+    // another dispatcher therefore lands *after* the player has already been prepared and played
+    // empty, and the player then sits in `STATE_BUFFERING` for ever -- no exception, no player
+    // error, no log. Measured on `muplay37`: 11 of `MuPlaybackServiceTest`'s 15 tests failed that
+    // way, and all 15 passed with these callbacks removed entirely.
+    //
+    // `isDone` is read **before** anything waits on the future, which is the only moment at which
+    // the two implementations differ. Media3's own default answers this case with
+    // `Futures.immediateFuture(...)`; this asserts that ours still does.
+    val own = runBlocking { graph.queueRepository.mediaItems(queueOf("al-abbey", startIndex = 1)) }
+
+    assertThat(
+      listOf(
+        callback.onAddMediaItems(session, controller(), own).isDone,
+        callback.onSetMediaItems(session, controller(), own, 1, 0L).isDone,
+      ),
+    ).containsExactly(true, true)
+  }
+
   // ---- the position, and the failure ----------------------------------------------------------
 
   @Test
