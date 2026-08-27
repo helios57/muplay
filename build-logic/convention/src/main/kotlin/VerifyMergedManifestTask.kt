@@ -76,7 +76,23 @@ abstract class VerifyMergedManifestTask : DefaultTask() {
           "not a manifest edit that slips past this check unnoticed.",
       )
     }
-    val missing = requiredDeclarations.get().filterNot { text.contains(it) }
+    // Comments stripped for the *presence* half only, and the two halves want opposite things.
+    //
+    // AGP's merged manifest keeps every source manifest's XML comments verbatim -- measured, not
+    // assumed: `core/media`'s twenty-line comment explaining the browse actions is reproduced in
+    // `app/build/intermediates/merged_manifest/debug/AndroidManifest.xml`. So a comment that quotes
+    // the declaration it explains, which is what a good comment next to `android:name="..."` looks
+    // like, would satisfy this check on behalf of a declaration nobody wrote. That is this
+    // repository's recorded "assertion that runs but cannot fail" defect, and it has been paid for
+    // twice already -- `verifyReleaseNoDestructiveMigration` fails `check` on its own KDoc, and
+    // `ConventionTest`'s cleartext rule stayed green with the attribute deleted and only the
+    // comment about it left behind.
+    //
+    // The forbidden half above deliberately keeps reading the comments: it is an *absence* check,
+    // where over-matching is the safe direction, and a `usesCleartextTraffic` written into a
+    // manifest comment is a change a human should have to look at.
+    val declarations = text.replace(Regex("""(?s)<!--.*?-->"""), "")
+    val missing = requiredDeclarations.get().filterNot { declarations.contains(it) }
     if (missing.isNotEmpty()) {
       throw GradleException(
         "$manifest is missing ${missing.joinToString(", ")}. A media playback service that is " +
