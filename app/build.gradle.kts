@@ -10,8 +10,13 @@ android {
 
   defaultConfig {
     applicationId = "app.muplay"
-    versionCode = 1
-    versionName = "0.1.0"
+    // Two literals a human edits, paired by `verifyReleaseVersion`: versionCode is
+    // MAJOR * 10000 + MINOR * 100 + PATCH of versionName, and neither may reuse a value listed in
+    // app/release-history.tsv. Nothing computes them, and nothing may -- `ConventionTest`'s
+    // `android { }` allow-list permits a bare integer and a bare string here and nothing else.
+    // See build-logic/convention/src/main/kotlin/VerifyReleaseVersionTask.kt for both rules.
+    versionCode = 200
+    versionName = "0.2.0"
   }
 }
 

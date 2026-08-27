@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The dark-mode half of values-v31/themes.xml. `-night-v31` outranks both `-night` and `-v31`
+     for a dark-mode device on API 31+, so this is the file that runs there and it restates the
+     whole style; see values/themes.xml for why a qualified style replaces rather than merges. -->
+<resources>
+  <style name="Theme.MuPlay" parent="@android:style/Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@color/muplay_window_background</item>
+    <item name="android:windowSplashScreenBackground">@color/muplay_splash_background</item>
+    <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+  </style>
+</resources>
