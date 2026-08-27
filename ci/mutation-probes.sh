@@ -2971,7 +2971,12 @@ PROBES = [
      "val fallback = contentDurationMs",
      # Every chapter that arrived with `C.TIME_UNSET` would end at the end of the FILE, so every
      # chapter but the last would report itself hours long and overlap every one after it.
-     "a missing end time is filled from the next chapter's start", 1),
+     #
+     # 2, measured: `a duplicate that carries nothing the first one lacked leaves it alone` also
+     # reddens, because its two surviving chapters both end at the fallback. Submitted as 1 and
+     # reported MISSED on the first run -- that test was added after this count was written, which
+     # is exactly the stale-count case this table's `expected failures` note describes.
+     "a missing end time is filled from the next chapter's start", 2),
     ("chapters/assembly-duration-overwrites-end", CHAPTER_ASSEMBLY,
      "val end = (entry.endMs ?: fallback).coerceAtLeast(entry.startMs)",
      "val end = fallback.coerceAtLeast(entry.startMs)",
