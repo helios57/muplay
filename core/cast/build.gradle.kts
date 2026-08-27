@@ -1,5 +1,15 @@
 plugins {
   id("muplay.jvm.library")
+  // The **fake renderer** -- a real UPnP renderer over a real socket, strict in the ways a Sonos is
+  // strict -- has a second consumer as of Plan 6 Task 9: `:core:media`'s instrumented `HandoverTest`
+  // drives a handover against it on the device, where `SimpleBasePlayer` and a real `ExoPlayer` can
+  // exist and this module's own JVM tier cannot follow.
+  //
+  // A test-fixtures source set rather than a copy in `src/androidTest`, because the alternative is
+  // ~1000 lines of protocol fake maintained in two places, which is two renderers to keep strict.
+  // `src/test` still sees it: the plugin puts the fixtures on this module's own test compile
+  // classpath automatically, which is why `FakeRendererStrictnessTest` did not move with it.
+  `java-test-fixtures`
 }
 
 dependencies {

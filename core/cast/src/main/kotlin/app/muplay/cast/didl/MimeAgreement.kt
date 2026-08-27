@@ -165,7 +165,20 @@ object MimeAgreement {
     val document = runCatching {
       DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = false
-        isXIncludeAware = false
+        // `runCatching`, and this one is NOT defence in depth -- it is the difference between this
+        // module working on a device and not working at all. `javax.xml.parsers.DocumentBuilderFactory`
+        // implements `setXIncludeAware` by throwing, and **Android's parser does not override it**:
+        //
+        //   java.lang.UnsupportedOperationException: This parser does not support specification
+        //   "Unknown" version "0.0"
+        //
+        // Measured on `muplay37` in Plan 6 Task 9, where it surfaced as
+        // `MalformedDescriptionException: ... is not XML` for a document that is perfectly well
+        // formed. `:core:cast` is a pure-JVM module whose whole test tier is the JVM, so no gate in
+        // this repository could see it: on the JVM, Xerces implements this setter and every one of
+        // these three call sites is fine. Swallowing is safe because Android's parser has no XInclude
+        // support to switch off, and on the JVM the call succeeds.
+        runCatching { isXIncludeAware = false }
         isExpandEntityReferences = false
         listOf(
           "http://apache.org/xml/features/disallow-doctype-decl" to true,

@@ -1,8 +1,19 @@
 package app.muplay.media.di
 
+import app.muplay.cast.didl.ServedMedia
+import app.muplay.cast.proxy.OkHttpProxyUpstream
+import app.muplay.cast.route.CastRoute
 import app.muplay.media.NeverResume
+import app.muplay.media.ResumePolicy
+import app.muplay.media.ResumeTarget
+import app.muplay.media.cast.OneShotResumePolicy
+import dagger.Provides
+import java.net.URI
 import java.time.Clock
 import java.time.ZoneOffset
+import javax.inject.Qualifier
+import javax.inject.Singleton
+import kotlinx.coroutines.isActive
 import okhttp3.OkHttpClient
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -85,19 +96,177 @@ class MediaModuleTest {
   }
 
   @Test
-  fun `the bound resume policy is the one that resumes nothing`() {
+  fun `the undecorated resume policy is the one that resumes nothing`() {
     // Spec section 3's stated behaviour for music, and the binding Plan 4 replaces. Two
     // observations, because the identity check alone would survive `NeverResume` itself being
     // changed to resume, and the behavioural one alone would survive this module binding some
     // other policy that also happens to answer zero today.
-    val policy = MediaModule.provideResumePolicy()
+    val policy = MediaModule.provideUndecoratedResumePolicy()
 
     assertThat(policy).isSameAs(NeverResume)
     assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startPositionMs).isZero
     assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startIndex).isEqualTo(1)
   }
 
+  // ---- the cast handover's bindings -----------------------------------------------------------
+
+  @Test
+  fun `the unqualified resume policy the player factory receives IS the cast decorator`() {
+    // **The whole feature, and it fails silently when it is wrong.** `CastSessionManager` arms an
+    // `OneShotResumePolicy` by concrete type; `MuPlayerFactory` asks for an unqualified
+    // `ResumePolicy`. If those two are not the same object the outbound leg still works by accident
+    // -- the remote player is built holding the decorator -- and the RETURN leg silently restarts
+    // the track from zero, which reads as a resume bug in a different file.
+    val oneShot = MediaModule.provideOneShotResumePolicy(MediaModule.provideUndecoratedResumePolicy())
+
+    val bound: ResumePolicy = MediaModule.provideResumePolicy(oneShot)
+
+    assertThat(bound).isSameAs(oneShot)
+    // Same object, and it really is the armed one: arm through the concrete type, read the answer
+    // out of the bound one.
+    oneShot.armFor("track-1", ResumeTarget(startIndex = 0, startPositionMs = 42_000L))
+    assertThat(bound.resolve(listOf("track-1", "track-2"), requestedIndex = 0))
+      .isEqualTo(ResumeTarget(0, 42_000L))
+  }
+
+  @Test
+  fun `the decorator wraps whatever is bound rather than NeverResume by name`() {
+    // The audiobook plan replaces `provideUndecoratedResumePolicy`'s body and changes nothing else.
+    // Asserted with a policy that is emphatically not `NeverResume`, so a decorator that reached
+    // for the object instead of the argument fails here.
+    val bookish = ResumePolicy { _, index -> ResumeTarget(index, 7_000L) }
+
+    val decorated = MediaModule.provideOneShotResumePolicy(bookish)
+
+    assertThat(decorated.resolve(listOf("a"), requestedIndex = 0)).isEqualTo(ResumeTarget(0, 7_000L))
+  }
+
+  @Test
+  fun `exactly one resume policy provider is unqualified, and it is the one taking the decorator`() {
+    // The shape Hilt cannot check for us. Hilt *does* fail the build on two unqualified
+    // `ResumePolicy` bindings -- that is the good outcome. The bad one is a graph with exactly one
+    // unqualified binding that happens to be the WRONG one, which compiles, runs, and loses a
+    // listener's place on every handover back.
+    //
+    // Read by reflection rather than asserted in prose, because prose is what this was protected by
+    // and prose cannot fail.
+    // Exact return type, not `isAssignableFrom`: a Dagger key is the **declared** type, so
+    // `provideOneShotResumePolicy` -- which returns the subtype and is legitimately unqualified --
+    // binds `OneShotResumePolicy` and is not a `ResumePolicy` binding at all. Written the loose way
+    // first, and it reported three providers and two unqualified ones, which is true and is about a
+    // different question.
+    val providers = MediaModule::class.java.declaredMethods
+      .filter { it.isAnnotationPresent(Provides::class.java) }
+      .filter { it.returnType == ResumePolicy::class.java }
+    val unqualified = providers.filter { method ->
+      method.annotations.none { it.annotationClass.java.isAnnotationPresent(Qualifier::class.java) }
+    }
+
+    assertThat(providers).hasSize(2)
+    assertThat(unqualified).hasSize(1)
+    assertThat(unqualified.single().parameterTypes.toList())
+      .containsExactly(OneShotResumePolicy::class.java)
+  }
+
+  @Test
+  fun `the decorator is a singleton, because two decorators over one delegate lose the return leg`() {
+    // The mutation this catches is one missing annotation: without `@Singleton`, Dagger hands
+    // `CastSessionManager` and `MuPlayerFactory` a decorator each, over the same delegate. Every
+    // outbound cast still works. The return leg arms one object and asks the other, and resumes
+    // from zero -- and no assertion about positions anywhere else in this project would move.
+    val provider = MediaModule::class.java.declaredMethods
+      .single { it.returnType == OneShotResumePolicy::class.java }
+
+    assertThat(provider.isAnnotationPresent(Singleton::class.java)).isTrue()
+  }
+
+  @Test
+  fun `the proxy the renderer fetches from serves on a real port and mints tokens, not track ids`() {
+    // The two halves of the cast graph that have a value worth reading: the server is listening (a
+    // proxy that exists and is not accepting is a route that fails its own proof and reports the
+    // speaker as unreachable), and the path a renderer is handed is a capability rather than a
+    // track id.
+    val registry = MediaModule.provideProxyRegistry()
+    val upstream = MediaModule.provideProxyUpstream(MediaModule.provideMediaCallFactory())
+    val proxy = MediaModule.provideMediaProxyServer(upstream, registry)
+
+    proxy.use {
+      assertThat(it.port).isGreaterThan(0)
+      val published = registry.publish("https://nav.example/rest/stream?id=42", MP3)
+      assertThat(published.path).doesNotContain("42")
+      assertThat(it.urlFor(published, "192.168.1.9")).startsWith("http://192.168.1.9:${it.port}/")
+      assertThat(upstream).isInstanceOf(OkHttpProxyUpstream::class.java)
+    }
+  }
+
+  @Test
+  fun `the router refuses to hand a renderer the credential-bearing navidrome url`() {
+    // `allowRendererDirect = false` is the shipped answer until the setting that turns it on
+    // exists, and the reason is that a Subsonic stream URL carries the user's `u`, `t` and `s`.
+    // Driven through the router rather than read off a field: `confirm` is where the fallback would
+    // be taken, and a device that never fetches is exactly the case it is taken in.
+    val registry = MediaModule.provideProxyRegistry()
+    val proxy = MediaModule.provideMediaProxyServer(
+      MediaModule.provideProxyUpstream(MediaModule.provideMediaCallFactory()),
+      registry,
+    )
+    proxy.use {
+      val router = MediaModule.provideCastRouter(it, registry)
+      val candidate = router.candidate(device(), UPSTREAM, MP3)
+      assertThat(candidate).isInstanceOf(CastRoute.Proxied::class.java)
+
+      val confirmed = router.confirm(candidate, UPSTREAM)
+
+      assertThat(confirmed).isInstanceOf(CastRoute.Unroutable::class.java)
+      assertThat((confirmed as CastRoute.Unroutable).detail).doesNotContain(UPSTREAM)
+    }
+  }
+
+  @Test
+  fun `speakers are talked to on a live scope that is not the caller's`() {
+    // Every command to a renderer is a blocking socket exchange and the poll runs forever, so this
+    // must never be a main-thread scope. `SupervisorJob`, asserted as *still active*, is the half
+    // that matters after one session fails: a plain `Job` would be cancelled by the first failure
+    // and the next cast would silently never start.
+    val scope = MediaModule.provideCastCommandScope()
+
+    assertThat(scope.isActive).isTrue()
+    assertThat(scope.coroutineContext.toString()).contains("Dispatchers.IO")
+  }
+
+  @Test
+  fun `soap goes over the cast module's own client, never okhttp`() {
+    // `:core:cast` routes renderer traffic through its own socket client precisely so the
+    // local-network rule is enforced in code rather than by `NetworkSecurityPolicy`. Two objects,
+    // asserted to exist and to be wired together, because the alternative wiring -- a `SoapClient`
+    // built with its own default client -- compiles and works on the bench.
+    val http = MediaModule.provideCastHttpClient()
+
+    assertThat(MediaModule.provideSoapClient(http)).isNotNull()
+  }
+
+  private fun device() = app.muplay.cast.discovery.CastDevice(
+    udn = "uuid:test",
+    friendlyName = "Test Speaker",
+    manufacturer = null,
+    modelName = null,
+    descriptionUrl = URI("http://127.0.0.1:1/desc.xml"),
+    avTransportControlUrl = URI("http://127.0.0.1:1/av"),
+    avTransportScpdUrl = null,
+    renderingControlUrl = null,
+    isSonos = false,
+  )
+
   private companion object {
+    val MP3: ServedMedia = ServedMedia("audio/mpeg", "mp3")
+
+    /**
+     * Shaped like Navidrome's and carrying **no** authentication parameters, not even fabricated
+     * ones: a stream URL's `t` and `s` are password equivalents and this repository does not write
+     * them down.
+     */
+    const val UPSTREAM = "https://nav.example/rest/stream?id=1&format=raw"
+
     /** 2024-01-01T00:00:00Z. Any real clock is past it; a `Clock.fixed(EPOCH, ..)` is not. */
     const val EARLIEST_PLAUSIBLE_EPOCH_MS = 1_704_067_200_000L
   }
