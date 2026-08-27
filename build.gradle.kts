@@ -4038,29 +4038,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.integrations.IntegrationCredentialStore*Companion"),
     ),
-    // Task 2. `IntegrationCredentialStore`'s own author-written branches: **17/18**, instrumented
-    // only -- DataStore and AndroidKeyStore are both device-only, so there is no JVM tier for this
-    // class.
+    // Task 2, **RE-MEASURED AT TASK 8**: `IntegrationCredentialStore`'s own author-written
+    // branches are now **19/20 = 0.9500**, instrumented only -- DataStore and AndroidKeyStore are
+    // both device-only, so there is no JVM tier for this class. (Task 2 recorded 17/18. Task 8's
+    // Bindery credential member turned `read`'s `BINDERY -> null` into a real construction and
+    // gave `secretOf` a second arm, which is two more branches, both covered.)
     //
-    // Sixteen of the eighteen are `read`'s five `?: return null` guards (absent base URL, absent
+    // Eighteen of the twenty are `read`'s five `?: return null` guards (absent base URL, absent
     // sealed secret, absent Keystore key, a blob that will not open, a stored URL the cleartext
-    // policy now refuses) and the `when` over `service`. Each was closed by a test that plants the
-    // state on disk by hand rather than by one that hopes to reach it:
-    // `aPartiallyWrittenServiceReadsAsNotConfigured`,
+    // policy now refuses), the `when` over `service`, and `secretOf`'s `when` over the member.
+    // Each was closed by a test that plants the state on disk by hand rather than by one that
+    // hopes to reach it: `aPartiallyWrittenServiceReadsAsNotConfigured`,
     // `aCredentialWhoseKeyWasDestroyedOutFromUnderItReadsAsNotConfigured`,
     // `aTamperedCiphertextReadsAsNotConfiguredRatherThanThrowing`,
-    // `aStoredCleartextUrlIsDroppedRatherThanUsed` and
-    // `aStoredBinderyEntryReadsAsNotConfiguredRatherThanAsLidarrs`. That last one is why this
-    // number is 17/18 rather than 16/18: the `BINDERY -> null` arm was reachable by no test in the
-    // suite, and the answer was to write the test that plants a complete, openable Bindery entry
-    // -- which also proves `read` does not hand back Lidarr's credential for it -- rather than to
-    // lower this floor to accommodate an arm nothing exercised.
+    // `aStoredCleartextUrlIsDroppedRatherThanUsed`,
+    // `aStoredBinderyEntryReadsAsBinderysNotAsLidarrs` and, added at Task 8,
+    // `aStoredLidarrEntryStillReadsAsLidarrsNotAsBinderys`.
     //
-    // The eighteenth is Kotlin's unreachable non-null path of
+    // Those last two are the pair worth understanding. Both members have the identical
+    // `(IntegrationBaseUrl, String)` shape, so the `when` over `service` compiles fine with its
+    // arms SWAPPED -- it would hand a Bindery blob back as a Lidarr credential carrying an
+    // admin-equivalent key, and the sealed type and the compiler between them cannot see it. Two
+    // tests, one per direction, are what can. This is the two-observations rule applied to a value
+    // that happens to be a *type*.
+    //
+    // The remaining two are Kotlin's unreachable non-null path of
     // `(parse(...) as? Valid)?.url ?: return null`: when the `as?` succeeds, `url` cannot be null.
     // Same shape and same reason as `:feature:library`'s `CoverArtCacheKeyKt` at 0.75 and
     // `:feature:setup`'s `SetupFailureReasonKt` at 0.85 -- an artifact of how the null-safe chain
-    // compiles, not an uncovered case -- so **0.90 against a measured 0.9444 is the honest
+    // compiles, not an uncovered case -- so **0.90 against a measured 0.9500 is the honest
     // ceiling here**, and raising it to 1.00 would fail the build on the Kotlin compiler.
     CoverageFloor(
       counter = "BRANCH",
@@ -4069,8 +4075,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.integrations.IntegrationCredentialStore"),
       requiresInstrumentedData = true,
     ),
-    // Task 2. The same class's LINE (**27/27**), the companion's (7/7), and the Hilt provider that
-    // decides *where* a user's API key is written (`IntegrationsDataModule`, **3/3**).
+    // Task 2, **RE-MEASURED AT TASK 8**: the same class's LINE is **28/28** (was 27/27 -- the
+    // Bindery arm of `secretOf` is the twenty-eighth), the companion's 7/7, and the Hilt provider
+    // that decides *where* a user's API key is written (`IntegrationsDataModule`, **3/3**).
     //
     // The provider is here rather than left ungated for the reason `:core:database`'s
     // `di.DataModule` is: it is the code that opens the shipped file, `IntegrationCredentialStoreTest`

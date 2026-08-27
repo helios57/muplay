@@ -29,6 +29,19 @@ class IntegrationCredentialsTest {
     apiKey = API_KEY,
   )
 
+  /**
+   * The second member, added at Task 8.
+   *
+   * Its key is **64** lowercase hex characters where Lidarr's is 32 — the shape a real
+   * `v1.32.1` generates — and a different value. Two secrets that differ in length as well as in
+   * value are what turn "both redact" into "neither redaction is a constant that happens to
+   * match".
+   */
+  private val bindery = IntegrationCredentials.Bindery(
+    baseUrl = url("https://bindery.example.com"),
+    apiKey = BINDERY_API_KEY,
+  )
+
   @Test
   fun `toString does not leak the api key`() {
     assertThat(lidarr.toString()).doesNotContain(API_KEY)
@@ -90,8 +103,87 @@ class IntegrationCredentialsTest {
       .doesNotContain("app.muplay.credentials")
   }
 
+  // ---- the Bindery member, added at Task 8 ---------------------------------------------------
+  //
+  // Every assertion above, repeated for the second member rather than assumed to follow from it.
+  // `toString()` is an override per member: the sealed supertype cannot enforce it, the compiler
+  // cannot notice a member that forgot it, and `data class` supplies a `toString()` that names
+  // every constructor property — so a new member's redaction is exactly the kind of security
+  // control that is one absent override away from not existing. Adding this member is what
+  // measured that: `IntegrationCredentials.Bindery` read **LINE 0.00** on the first run and failed
+  // this module's 0.90 floor, because nothing in the JVM tier constructed one.
+
+  @Test
+  fun `the bindery toString does not leak the api key either`() {
+    assertThat(bindery.toString()).doesNotContain(BINDERY_API_KEY)
+    // And not the other service's, which a copy-pasted override naming the wrong field could do.
+    assertThat(bindery.toString()).doesNotContain(API_KEY)
+  }
+
+  @Test
+  fun `the bindery toString still identifies which server it is for`() {
+    assertThat(bindery.toString()).contains("https://bindery.example.com/")
+    // Named, so a redaction that returned a constant -- which would satisfy the test above and
+    // make every log line about an integration useless -- fails here.
+    assertThat(bindery.toString()).startsWith("Bindery(")
+    assertThat(bindery.toString()).doesNotContain("Lidarr")
+  }
+
+  @Test
+  fun `the bindery api key is still carried, only hidden from toString`() {
+    assertThat(bindery.apiKey).isEqualTo(BINDERY_API_KEY)
+  }
+
+  @Test
+  fun `two bindery credentials differing only by api key are not equal`() {
+    assertThat(bindery)
+      .isNotEqualTo(IntegrationCredentials.Bindery(url("https://bindery.example.com"), "ffffffff"))
+  }
+
+  @Test
+  fun `the bindery member reports its own service rather than a stored one`() {
+    assertThat(bindery.service).isEqualTo(IntegrationService.BINDERY)
+    assertThat(bindery.copy(apiKey = "ffffffff").service).isEqualTo(IntegrationService.BINDERY)
+  }
+
+  /**
+   * **Every** member of the sealed type redacts, as one exact statement.
+   *
+   * The per-member tests above pin each redaction; this one pins the *set*. A third service added
+   * later without a `toString()` override gets a `data class`'s generated one, which names
+   * `apiKey=<the real key>`, and nothing above would fail — because nothing above knows the new
+   * member exists. This does: it maps over both secrets and requires that neither appears in
+   * either object's rendering.
+   */
+  @Test
+  fun `no member of the sealed type renders any secret`() {
+    val members: List<IntegrationCredentials> = listOf(lidarr, bindery)
+    val secrets = listOf(API_KEY, BINDERY_API_KEY)
+
+    // Positive controls first: two members, two distinct renderings that are not empty. An
+    // `allSatisfy` over an empty list is vacuously true, and so is one over two blank strings.
+    assertThat(members).hasSize(2)
+    assertThat(members.map { it.service })
+      .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
+    assertThat(members.map { it.toString() }).doesNotHaveDuplicates()
+    assertThat(members).allSatisfy { assertThat(it.toString()).contains("baseUrl=https://") }
+
+    assertThat(members).allSatisfy { member ->
+      secrets.forEach { secret -> assertThat(member.toString()).doesNotContain(secret) }
+    }
+    assertThat(members).allSatisfy { assertThat(it.toString()).contains("<redacted>") }
+  }
+
   private companion object {
     /** Shaped like a real Lidarr key: 32 lowercase hex characters. */
     private const val API_KEY = "0123456789abcdef0123456789abcdef"
+
+    /**
+     * Shaped like a real Bindery key: **64** lowercase hex characters, measured off a running
+     * `ghcr.io/vavallee/bindery:v1.32.1` whose generated key is 32 random bytes hex-encoded and
+     * lives in its own `settings` table under `auth.api_key`.
+     */
+    private const val BINDERY_API_KEY =
+      "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
   }
 }
