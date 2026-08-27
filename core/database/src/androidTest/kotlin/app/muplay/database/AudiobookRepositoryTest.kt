@@ -1,5 +1,6 @@
 package app.muplay.database
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -47,7 +48,7 @@ class AudiobookRepositoryTest {
   private val clock: Clock = Clock.fixed(Instant.ofEpochMilli(FIXED_NOW_MS), ZoneOffset.UTC)
 
   @Before
-  fun setUp() = runBlocking {
+  fun setUp(): Unit = runBlocking {
     db = Room.inMemoryDatabaseBuilder(
       ApplicationProvider.getApplicationContext(),
       MuPlayDatabase::class.java,
@@ -133,7 +134,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun aMusicAlbumIsNotABookEvenWhenAskedForByName() = runBlocking {
+  fun aMusicAlbumIsNotABookEvenWhenAskedForByName(): Unit = runBlocking {
     // `bookshelf()` cannot see this: it never asks about `record` at all. `book()` is asked
     // directly, which is exactly how a music album gets summarised as a book if the role guard is
     // missing from `findBookAlbum`.
@@ -145,7 +146,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun aBookCarriesTheAlbumRowsIdentityAndItsFilesArithmetic() = runBlocking {
+  fun aBookCarriesTheAlbumRowsIdentityAndItsFilesArithmetic(): Unit = runBlocking {
     val book = repository.book("multi")!!
 
     assertThat(book.bookId).isEqualTo("multi")
@@ -210,7 +211,17 @@ class AudiobookRepositoryTest {
         ),
       )
 
-      val after = awaitItem()
+      // Drained to the settled emission, and the reason is a measured property of this shelf
+      // rather than test hygiene: `bookshelf()` is a `combine` of three Room Flows, and Room's
+      // invalidation tracker fires per table, so a `replaceLibraryContents` that rewrites `albums`
+      // and `songs` in one transaction still reaches the combine as two separate re-emissions.
+      // The first of them was measured here -- `Third Book` present with `durationMs = 0`, its
+      // songs query not yet re-run. See `AudiobookRepository.bookshelf`'s own note.
+      var after = awaitItem()
+      repeat(DRAIN_LIMIT) {
+        if (after.singleOrNull { it.bookId == "third" }?.fileCount == 1) return@repeat
+        after = awaitItem()
+      }
       assertThat(after.map { it.title }).containsExactlyInAnyOrder("Test Book", "Third Book")
       assertThat(after.single { it.bookId == "third" }.durationMs).isEqualTo(9_000L)
       cancelAndIgnoreRemainingEvents()
@@ -263,7 +274,7 @@ class AudiobookRepositoryTest {
   // ---- the resume point ----------------------------------------------------------------------
 
   @Test
-  fun theResumePointNamesTheFileTheListenerWasIn() = runBlocking {
+  fun theResumePointNamesTheFileTheListenerWasIn(): Unit = runBlocking {
     record("multi-2", positionMs = 3_500, at = 900)
 
     val point = repository.resumePoint("multi")
@@ -278,7 +289,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun twoBooksKeepTwoResumePoints() = runBlocking {
+  fun twoBooksKeepTwoResumePoints(): Unit = runBlocking {
     // The original complaint, at its smallest. One book cannot express it.
     record("multi-3", positionMs = 1_500, at = 900)
     record("single-1", positionMs = 12_345, at = 800)
@@ -290,13 +301,13 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun aBookNobodyHasOpenedHasNoResumePoint() = runBlocking {
+  fun aBookNobodyHasOpenedHasNoResumePoint(): Unit = runBlocking {
     assertThat(repository.resumePoint("multi")).isNull()
     assertThat(repository.resumeFileId("multi")).isNull()
   }
 
   @Test
-  fun filesComeBackInPlayOrder() = runBlocking {
+  fun filesComeBackInPlayOrder(): Unit = runBlocking {
     assertThat(repository.files("multi").map { it.title })
       .containsExactly("Part One", "Part Two", "Part Three")
     assertThat(repository.files("multi").map(Song::id))
@@ -304,7 +315,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun bookIdOfAnswersTheAlbumAndFallsBackToTheFile() = runBlocking {
+  fun bookIdOfAnswersTheAlbumAndFallsBackToTheFile(): Unit = runBlocking {
     val part = repository.files("multi").first()
     val loose = Song(
       id = "loose-1", libraryId = 2, title = "A Loose File", albumId = null, albumName = null,
@@ -323,7 +334,7 @@ class AudiobookRepositoryTest {
   // ---- settings ------------------------------------------------------------------------------
 
   @Test
-  fun settingsDefaultWhenNobodyHasSetThem() = runBlocking {
+  fun settingsDefaultWhenNobodyHasSetThem(): Unit = runBlocking {
     val settings = repository.settings("multi")
 
     assertThat(settings.bookId).isEqualTo("multi")
@@ -332,7 +343,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun twoBooksKeepTwoSpeeds() = runBlocking {
+  fun twoBooksKeepTwoSpeeds(): Unit = runBlocking {
     repository.setSpeed("multi", 1.4f)
     repository.setSpeed("single", 0.8f)
 
@@ -375,7 +386,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun settingTheSpeedDoesNotTurnSilenceSkippingOff() = runBlocking {
+  fun settingTheSpeedDoesNotTurnSilenceSkippingOff(): Unit = runBlocking {
     // Plan 3 Task 8 named this trap on `media_progress`; it exists identically on `book_settings`.
     // A setter that constructs a whole fresh row turns off a feature the listener switched on, and
     // nothing reports it.
@@ -388,7 +399,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun turningSilenceSkippingOnDoesNotResetTheSpeed() = runBlocking {
+  fun turningSilenceSkippingOnDoesNotResetTheSpeed(): Unit = runBlocking {
     // The same trap in the other direction, because a read-modify-write can be got right one way
     // and wrong the other.
     repository.setSpeed("multi", 1.4f)
@@ -400,28 +411,48 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun anImpossibleSpeedIsClampedOnTheWayInAndOnTheWayOut() = runBlocking {
+  fun anImpossibleSpeedIsClampedOnTheWayInAndOnTheWayOut(): Unit = runBlocking {
     repository.setSpeed("multi", 99f)
     assertThat(repository.settings("multi").speed).isEqualTo(BookSettings.MAX_SPEED)
 
     repository.setSpeed("multi", 0.01f)
     assertThat(repository.settings("multi").speed).isEqualTo(BookSettings.MIN_SPEED)
 
-    // ...and a row that got past the setter -- a hand-edited database, a future bug -- still cannot
-    // reach `ExoPlayer.setPlaybackSpeed`. `Float.NaN.coerceIn(...)` returns NaN, and NaN there
-    // throws from inside a listener callback, which surfaces as playback dying with no message.
-    db.bookSettingsDao().upsert(BookSettingsEntity("multi", Float.NaN, false))
-    assertThat(repository.settings("multi").speed).isEqualTo(BookSettings.DEFAULT_SPEED)
-
-    // The clamp on the way out is not the clamp on the way in: a stored 4.0 also has to be capped.
+    // The clamp on the way OUT is a different clamp from the one on the way in, and this is what
+    // shows it: a row that got past the setter -- a hand-edited database, a future bug, a write
+    // from a version of this code that had no setter -- still cannot reach
+    // `ExoPlayer.setPlaybackSpeed` as it stands.
     db.bookSettingsDao().upsert(BookSettingsEntity("multi", 4.0f, false))
     assertThat(repository.settings("multi").speed).isEqualTo(BookSettings.MAX_SPEED)
+    db.bookSettingsDao().upsert(BookSettingsEntity("multi", 0.1f, false))
+    assertThat(repository.settings("multi").speed).isEqualTo(BookSettings.MIN_SPEED)
+  }
+
+  @Test
+  fun aNaNSpeedCannotBeStoredAtAll() {
+    // `BookSettings.clampSpeed` guards `NaN` because `Float.NaN.coerceIn(..)` returns `NaN` and
+    // `ExoPlayer.setPlaybackSpeed(NaN)` throws from inside a listener callback. That guard is
+    // reachable from arithmetic (`:core:model`'s `BookSettingsTest` covers it) but **not from this
+    // table**, and that is a measurement rather than an argument: SQLite stores no `NaN`, it binds
+    // one as `NULL`, and `book_settings.speed` is `NOT NULL`. So the write is refused by the
+    // database before any clamp is asked. Asserted as the refusal, because the alternative -- the
+    // original form of this test -- was an assertion that could never run its own second line.
+    val thrown = runCatching {
+      runBlocking { db.bookSettingsDao().upsert(BookSettingsEntity("multi", Float.NaN, false)) }
+    }.exceptionOrNull()
+
+    assertThat(thrown).isInstanceOf(SQLiteConstraintException::class.java)
+    assertThat(thrown).hasMessageContaining("NOT NULL constraint failed: book_settings.speed")
+    // ...and nothing was written, so the book still answers with the default rather than with a
+    // half-applied row.
+    assertThat(runBlocking { repository.settings("multi").speed })
+      .isEqualTo(BookSettings.DEFAULT_SPEED)
   }
 
   // ---- restart and finish ---------------------------------------------------------------------
 
   @Test
-  fun restartingABookClearsItsProgressAndNobodyElses() = runBlocking {
+  fun restartingABookClearsItsProgressAndNobodyElses(): Unit = runBlocking {
     record("multi-1", positionMs = 2_000, at = 500)
     record("multi-2", positionMs = 3_500, at = 900)
     record("single-1", positionMs = 12_345, at = 800)
@@ -449,7 +480,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun markingABookFinishedWritesEveryFileToItsOwnEndAtTheInjectedClock() = runBlocking {
+  fun markingABookFinishedWritesEveryFileToItsOwnEndAtTheInjectedClock(): Unit = runBlocking {
     repository.markFinished("multi")
 
     val rows = db.mediaProgressDao().findIn(listOf("multi-1", "multi-2", "multi-3"))
@@ -468,7 +499,7 @@ class AudiobookRepositoryTest {
   }
 
   @Test
-  fun markingABookFinishedPreservesTheColumnsThisPlanDoesNotOwn() = runBlocking {
+  fun markingABookFinishedPreservesTheColumnsThisPlanDoesNotOwn(): Unit = runBlocking {
     // `gainDb` is Plan 3 Task 11's measured ReplayGain, and `speed`/`skipSilence` are Plan 2's
     // columns. A `markFinished` that constructed a fresh entity would silently reset all three --
     // the same trap `setSpeed` carries one table over, on the table where it has been named since
@@ -537,5 +568,11 @@ class AudiobookRepositoryTest {
   private companion object {
     /** 2023-11-14T22:13:20Z. Distinctive enough that finding it in a row is evidence. */
     const val FIXED_NOW_MS = 1_700_000_000_000L
+
+    /**
+     * How many further emissions a shelf assertion will drain before giving up. Bounded rather
+     * than a `while (true)`: a shelf that never settles has to fail this suite, not hang it.
+     */
+    const val DRAIN_LIMIT = 5
   }
 }

@@ -55,6 +55,17 @@ class AudiobookRepository @Inject constructor(
    * chapter has to move the row the listener is looking at, and a shelf that read once at
    * subscription would show the app's first second of life until the screen was left and
    * re-entered.
+   *
+   * **It can emit a transient inconsistent shelf, and that is measured rather than assumed.**
+   * Room's invalidation tracker fires per *table*, so a `BrowseDao.replaceLibraryContents` that
+   * rewrites `albums` and `songs` inside one transaction still reaches this `combine` as two
+   * separate re-emissions -- and the first was observed on-device with a newly synced book present
+   * and `durationMs = 0`, its songs query not yet re-run. It settles on the next emission, so a
+   * screen collecting this Flow sees a flicker during a sync rather than a wrong shelf.
+   * `AudiobookRepositoryTest.theShelfUpdatesWhenTheMirrorChanges` drains to the settled emission
+   * and says so at the line. Removing the flicker means one `@Transaction`-scoped query with an
+   * `@Relation` in place of the first two flows; it is not done here because nothing in this plan
+   * renders the shelf yet, and Task 9 is where a flicker would first be visible.
    */
   fun bookshelf(): Flow<List<BookSummary>> = combine(
     audiobookDao.observeBookAlbums(LibraryRole.AUDIOBOOKS),
