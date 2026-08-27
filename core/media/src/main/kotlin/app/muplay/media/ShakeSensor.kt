@@ -41,20 +41,29 @@ class ShakeSensor @Inject constructor(@ApplicationContext private val context: C
     if (listener != null) return
     detector.reset()
     listener = object : SensorEventListener {
-      override fun onSensorChanged(event: SensorEvent) {
-        // `event.timestamp` is nanoseconds since boot; the detector's window is in milliseconds.
-        val firedShake = detector.onSample(
-          event.values[0],
-          event.values[1],
-          event.values[2],
-          event.timestamp / NANOS_PER_MILLI,
-        )
-        if (firedShake) onShake()
-      }
+      override fun onSensorChanged(event: SensorEvent) =
+        onSample(event.values, event.timestamp, onShake)
 
       override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     }
     manager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
+  }
+
+  /**
+   * The body of `onSensorChanged`, with the `SensorEvent` already unpacked.
+   *
+   * `internal` and separate for one reason: `SensorEvent` has no public constructor and its
+   * `values` array cannot be written from a test, so anything left inside that callback can only be
+   * reached by shaking a physical phone. What lives here is small but not nothing -- three array
+   * indices in the right order, and a **nanoseconds-to-milliseconds** conversion without which
+   * every peak is a million times further apart than [ShakeDetector]'s window and no shake is ever
+   * detected. `ShakeSensorTest` drives this directly, so both of those are observed rather than
+   * asserted from the armchair.
+   */
+  internal fun onSample(values: FloatArray, timestampNanos: Long, onShake: () -> Unit) {
+    if (detector.onSample(values[0], values[1], values[2], timestampNanos / NANOS_PER_MILLI)) {
+      onShake()
+    }
   }
 
   fun stop() {

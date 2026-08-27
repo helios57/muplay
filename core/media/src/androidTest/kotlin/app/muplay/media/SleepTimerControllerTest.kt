@@ -218,6 +218,107 @@ class SleepTimerControllerTest {
   }
 
   @Test
+  fun aShakeBeforeTheDeadlinePushesItOutWithoutPausing() {
+    // The primary use of the affordance, and the one every other shake test here misses: the
+    // listener is still awake, hears the fade start, and shakes the phone *before* the timer fires.
+    val harness = startBook()
+    val subject = timer(harness)
+
+    harness.onMain { subject.start(SleepTimerRequest.Duration(COUNTDOWN_MS)) }
+    Thread.sleep(COUNTDOWN_MS - 800L)
+    val remainingBeforeTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
+    harness.onMain { subject.onShake() }
+    val remainingAfterTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
+
+    // Read with no wait: `extend` republishes synchronously, so this cannot be satisfied by
+    // playback reaching anything on its own.
+    assertThat(remainingAfterTheShake - remainingBeforeTheShake)
+      .describedAs("one shake buys EXTENSION_MS more, from %d ms remaining", remainingBeforeTheShake)
+      .isBetween(SleepTimerController.EXTENSION_MS - 500L, SleepTimerController.EXTENSION_MS + 500L)
+    assertThat(harness.onMain { harness.player.volume }).isEqualTo(FULL_VOLUME)
+    Thread.sleep(1_500L)
+    assertThat(harness.onMain { harness.player.isPlaying })
+      .describedAs("past the original deadline, still playing").isTrue
+  }
+
+  @Test
+  fun aShakeExtendsAnEndOfChapterTimerByMediaRatherThanByWallClock() {
+    // The other arm of `extend`'s countdown, and it is a different unit: "five more minutes" of a
+    // chapter timer is five more minutes of the **book**, so the stop position moves, not a clock.
+    val harness = startBook()
+    val subject = timer(harness)
+
+    val (before, after) = harness.onMain {
+      val stopAt = harness.player.currentPosition + AHEAD_MS
+      subject.start(SleepTimerRequest.UntilPosition(book.id, stopAt))
+      val before = (subject.state.value as SleepTimerState.Running).remainingMs
+      subject.onShake()
+      before to (subject.state.value as SleepTimerState.Running).remainingMs
+    }
+    harness.onMain { subject.cancel() }
+
+    assertThat(after - before)
+      .describedAs("media milliseconds added to an end-of-chapter timer by one shake")
+      .isBetween(SleepTimerController.EXTENSION_MS - 500L, SleepTimerController.EXTENSION_MS + 500L)
+  }
+
+  @Test
+  fun aTimerWhosePositionHasAlreadyGoneByReportsZeroAndFires() {
+    // Reachable from a caller that computed a chapter end and then took a moment: the mark is
+    // behind the playhead by the time the timer starts. The countdown on screen must be zero rather
+    // than a negative number, and it must fire rather than count backwards forever.
+    val harness = startBook()
+    val subject = timer(harness)
+
+    val published = harness.onMain {
+      subject.start(SleepTimerRequest.UntilPosition(book.id, positionMs = 0L))
+      subject.state.value
+    }
+
+    assertThat((published as SleepTimerState.Running).remainingMs).isZero
+    harness.await("playback to pause", timeoutMs = FIRE_TIMEOUT_MS) { !harness.player.isPlaying }
+    assertThat(subject.state.value).isEqualTo(SleepTimerState.Off)
+  }
+
+  @Test
+  fun anEndOfChapterTimerOnAnEmptyQueueFiresRatherThanHanging() {
+    // `currentMediaItem` is null with nothing queued, so the file the request named is not the file
+    // playing -- which is the same answer as "the queue moved on", and must not be a countdown that
+    // never ends.
+    val harness = startQueue(emptyList())
+    val subject = timer(harness)
+
+    harness.onMain { subject.start(SleepTimerRequest.UntilPosition(book.id, 15_000L)) }
+
+    harness.await("the timer to give up", timeoutMs = FIRE_TIMEOUT_MS) {
+      subject.state.value == SleepTimerState.Off
+    }
+  }
+
+  @Test
+  fun theConstructorHiltUsesCarriesTheShippedFadeLength() {
+    // The `@Inject` constructor is the one production takes and no other test here calls it. What
+    // it is observed *doing* is choosing `SleepTimerFade.DEFAULT_FADE_MS`: 25 s left is not fading,
+    // 15 s left is, and only a 20 s fade puts the boundary between them.
+    val harness = startBook()
+    val subject = SleepTimerController(clock)
+      .also { controller -> harness.onMain { controller.attach(harness.player, scope) } }
+
+    val outside = harness.onMain {
+      subject.start(SleepTimerRequest.Duration(25_000L))
+      subject.state.value as SleepTimerState.Running
+    }
+    val inside = harness.onMain {
+      subject.start(SleepTimerRequest.Duration(15_000L))
+      subject.state.value as SleepTimerState.Running
+    }
+    harness.onMain { subject.cancel() }
+
+    assertThat(outside.isFading).describedAs("25 s left against the shipped 20 s fade").isFalse
+    assertThat(inside.isFading).describedAs("15 s left against the shipped 20 s fade").isTrue
+  }
+
+  @Test
   fun aShakeWithNoTimerRunningIsIgnored() {
     // Nobody asked for a sleep timer, so the accelerometer must not be able to start one -- and a
     // shake must certainly not pause or resume anything. The third arm of `onShake`'s guard.

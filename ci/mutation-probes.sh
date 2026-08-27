@@ -3344,8 +3344,8 @@ PROBES = [
      # the phone is hair-trigger for the life of the process.
      "a second shake is detected after the first", 1),
     ("sleep/shake-window", SHAKE_DETECTOR,
-     "    while (peaks.isNotEmpty() && timestampMs - peaks.first() > windowMs) peaks.removeFirst()",
-     "    while (peaks.isNotEmpty() && timestampMs - peaks.first() > windowMs * 10) peaks.removeFirst()",
+     "    while (peaks.size > 1 && timestampMs - peaks.first() > windowMs) peaks.removeFirst()",
+     "    while (peaks.size > 1 && timestampMs - peaks.first() > windowMs * 10) peaks.removeFirst()",
      # Picking the phone up, putting it down and picking it up again over three seconds is not a
      # shake. Without a window it is.
      "three jolts spread beyond the window are not", 2),

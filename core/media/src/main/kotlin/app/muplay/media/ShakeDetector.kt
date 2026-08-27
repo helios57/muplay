@@ -34,7 +34,12 @@ class ShakeDetector(
     if (peaks.isNotEmpty() && timestampMs - peaks.last() < minPeakGapMs) return false
 
     peaks.addLast(timestampMs)
-    while (peaks.isNotEmpty() && timestampMs - peaks.first() > windowMs) peaks.removeFirst()
+    // `size > 1` rather than `isNotEmpty()`: the sample just added is always inside its own window
+    // (`timestampMs - timestampMs` is zero), so the deque can never be emptied here and the
+    // `isNotEmpty` this used to ask was a branch no input could take. Written as a size test rather
+    // than dropped entirely because it is also what keeps a caller-supplied negative [windowMs]
+    // from draining the deque and making `first()` throw.
+    while (peaks.size > 1 && timestampMs - peaks.first() > windowMs) peaks.removeFirst()
 
     if (peaks.size < requiredPeaks) return false
     reset()

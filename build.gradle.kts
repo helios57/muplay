@@ -506,6 +506,22 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.StreamFormat*",
         "app.muplay.model.browse.BrowseId",
         "app.muplay.model.browse.BrowseId*",
+        // Plan 4 Task 8. `SleepTimerRequest`/`SleepTimerState` and their four members ride along
+        // exactly the way `Album` and `Song` do above: measured with **no BRANCH counter at all**
+        // (JaCoCo filters a `data class`'s generated `equals`/`hashCode`/`copy`), and every line
+        // they carry is a declaration. Included so `warnUngatedClasses` has nothing to say; gating
+        // nothing, and saying so.
+        //
+        // Their LINE counters are deliberately left ungated, and here that needs stating rather
+        // than assuming: this module is pure JVM, its only consumer is `:core:media`'s **device**
+        // suite, and a JVM module's own report does not read another module's instrumented
+        // execution data -- so these four measure 0 lines here and would fail any LINE rule at any
+        // minimum above zero. What actually gates them is `SleepTimerControllerTest`, which asserts
+        // on `SleepTimerState.Running`'s three fields and constructs both `SleepTimerRequest` arms.
+        "app.muplay.model.SleepTimerRequest",
+        "app.muplay.model.SleepTimerRequest*",
+        "app.muplay.model.SleepTimerState",
+        "app.muplay.model.SleepTimerState*",
         // Plan 6 Task 2. `RememberedRenderer` is a three-field record and `RememberedRenderers` is
         // an interface whose only member with a body is a `const val`; between them they carry
         // zero branch counters, so they ride along here exactly the way `Album` and `Song` do
@@ -2525,6 +2541,118 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ChapterReader*",
         "app.muplay.media.ChapterRepository",
         "app.muplay.media.ChapterRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 4 Task 8, the sleep timer's two Android-free halves. **8/8 and 14/14 = 1.0000 BRANCH
+    // from JVM data alone** -- `SleepTimerFadeTest` (7 tests) and `ShakeDetectorTest` (12), no
+    // emulator, which is what `requiresInstrumentedData = false` claims here and what the split in
+    // this task is *for*: the fade ramp and the shake decision are arithmetic, and gating them on
+    // the fast tier is why `SleepTimerController` and `ShakeSensor` are allowed to be thin.
+    //
+    // `SleepTimerFade`'s eight are `volumeFor`'s four arms and their guards -- the `fadeMs <= 0`
+    // divide-by-zero arm (both of its own halves), the `remainingMs >= fadeMs` boundary and the
+    // negative-remaining clamp. `ShakeDetector`'s fourteen are the threshold test, the minimum peak
+    // gap, the sliding window's two conditions and the required-peak count, every one of them
+    // asserted at two values of its own parameter.
+    //
+    // `ShakeDetector` measured 14/16 = 0.8750 when it landed, and the two missing branches were the
+    // `peaks.isNotEmpty()` inside `while (peaks.isNotEmpty() && ..)` -- unreachable, because the
+    // sample just added is always inside its own window. The line is now a `size > 1` test whose
+    // false arm a single peak takes, so the pair is covered rather than excused; see that line's
+    // own comment.
+    //
+    // Falsified by withholding both JVM test classes: `SleepTimerFade` and `ShakeDetector` each
+    // fire at *"branches covered ratio is 0.00, but expected minimum is 0.90"*, BUILD FAILED.
+    // Nothing else in either tier touches them -- `SleepTimerController` calls
+    // `SleepTimerFade.volumeFor`, but that is instrumented data, which
+    // `jacocoJvmCoverageVerification` does not read.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.SleepTimerFade",
+        "app.muplay.media.ShakeDetector",
+      ),
+    ),
+    // `SleepTimerController` **41/42 = 0.9762 BRANCH**, instrumented. Unreachable from the JVM tier:
+    // it drives a Media3 `Player` through a real countdown, and this project has no Robolectric.
+    //
+    // The 42 are what the timer decides: which arm of `SleepTimerRequest` was asked for, whether a
+    // shake lands inside the grace window, whether the file named by an "until this position"
+    // request is still the one playing, whether the countdown has run out, whether the state says
+    // `isFading`, and each of `extend`'s three countdown arms. It measured **55/70 = 0.7857** when
+    // it landed; the fifteen that went were not covered by new tests but *deleted* -- three
+    // nullable fields expressing one two-armed choice produced an elvis inside a branch that had
+    // just proved it non-null, a `player ?: return` in a ticker that only runs while attached, and
+    // a `speed.takeIf { it > 0f }` guarding a value `PlaybackParameters`'s own constructor refuses
+    // to make non-positive. Six more came from tests that were missing rather than impossible: a
+    // shake *before* the deadline, and an extension of an end-of-chapter timer.
+    //
+    // The one still missing is the `null` arm of `extend`'s `when (val current = countdown)` as the
+    // compiler lays it out; the arm's own body is covered (a shake after firing takes it), so this
+    // is an exhaustiveness edge rather than an untested case.
+    //
+    // `SleepTimerController$begin$1` is the ticker's own coroutine body, **2/2**: the
+    // `while (tick(..))` that stops when the countdown ends. It is named by the `*begin*1` pattern
+    // rather than left to ride along, because it is the loop that makes the fade a ramp rather than
+    // one step.
+    //
+    // Falsified by moving every project's `code_coverage/` aside (this module's own is not enough
+    // -- see the ReplayGain rule above for the measurement that proves it): *"branches covered
+    // ratio is 0.00, but expected minimum is 0.90"* for both classes, BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.SleepTimerController",
+        "app.muplay.media.SleepTimerController*begin*1",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // **`ShakeSensor` deliberately carries no BRANCH rule, and the number is written down rather
+    // than rounded away: 10/14 = 0.7143.** All four missed branches are ones this device cannot
+    // take, not ones nobody tested:
+    //
+    //   * `getSystemService(SENSOR_SERVICE) as? SensorManager` -- the null arm needs a platform
+    //     with no sensor service at all.
+    //   * `val manager = manager ?: return` and `getDefaultSensor(TYPE_ACCELEROMETER) ?: return` --
+    //     `theDeviceHasTheAccelerometerThisClassAsksFor` measures that `muplay37` has one, which is
+    //     exactly why these two arms are out of reach here.
+    //   * `manager?.` inside `stop`'s `listener?.let { .. }` -- unreachable for the same reason: a
+    //     listener can only exist if a manager did.
+    //
+    // A BRANCH rule at any minimum this table would accept is therefore either red on correct code
+    // or below 0.72, and this table's own doc rules out a number the check cannot fail at. LINE
+    // gates what is left, and what is left is all of it: **17/17** for `ShakeSensor`, **3/3** for
+    // `ShakeSensor$start$1` (the anonymous `SensorEventListener`).
+    //
+    // That 3/3 is the point of the shape rather than a lucky number. The listener used to hold the
+    // unpacking -- three array indices and a nanoseconds-to-milliseconds divide -- and measured
+    // **1/9 LINE**, because `SensorEvent` has no public constructor and no test can synthesise a
+    // jolt without the emulator console changing global device state. The body moved to
+    // `ShakeSensor.onSample`, which `ShakeSensorTest` drives directly; the callback is now two
+    // expression bodies a still device covers.
+    //
+    // `SleepTimerController` and its nested types ride this rule's LINE counter: **76/76** for the
+    // class itself, and 1/1 apiece for `$Companion`, `$Attachment`, `$Countdown$Until` and
+    // `$Countdown$AtPosition` -- holders and `data class`es with no bodies, matched by the `*`
+    // pattern so `warnUngatedClasses` has nothing to say about them.
+    //
+    // Falsified by moving every project's `code_coverage/` aside: *"lines covered ratio is 0.00,
+    // but expected minimum is 0.90"* for `ShakeSensor`, `ShakeSensor.start.1` and
+    // `SleepTimerController`, BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ShakeSensor",
+        "app.muplay.media.ShakeSensor*",
+        "app.muplay.media.SleepTimerController",
+        "app.muplay.media.SleepTimerController*",
       ),
       requiresInstrumentedData = true,
     ),
