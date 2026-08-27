@@ -309,7 +309,29 @@ reviewer ends up staring at an error message.
   `musicFolders`, so the trap is the default state of a new user and not an artefact of one
   account.
 
-**Measured on the emulator, against the real app** — see *On-device walkthrough* below.
+**Not walked on a device, and this is the gap that matters most.** The shared emulator
+(`muplay37`) was gone when this document was finished — its `qemu-system-x86_64` process had
+disappeared and 44 GB of host RAM had come back, on a host that had already logged an
+out-of-memory kill that evening — so the steps below were never executed against the real UI by
+the author of this document:
+
+- that entering `https://demo.navidrome.org` / `demo` / `demo` in the real app reaches the tagging
+  screen (the server side of it is measured; the app side is not);
+- that a single library can be tagged and Continue then enables;
+- that the library browser lists the demo server's albums and that a track plays;
+- that the empty-library prompt added alongside this document renders as intended on the tagging
+  screen.
+
+A minified, release-signed APK was built for exactly this walk and is the artifact to use when the
+emulator is back:
+
+    ./gradlew :app:assembleRelease            # with the upload key configured
+    adb install -r app/build/outputs/apk/release/app-release.apk
+    adb shell am start -n app.muplay/.MainActivity
+
+**Nobody should file these instructions with Play until that walk has been done once**, because a
+route that has only ever been proved server-side is exactly the half-measured claim this project
+keeps finding in its own gates.
 
 **Read from source, not measured** (each is a claim about code in this repository, checkable by
 reading it, but not executed as part of writing this document):
