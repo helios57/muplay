@@ -210,6 +210,16 @@ SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
 # their mutations are recorded by hand in task-8-report.md, per the SCOPE note above -- but the fade
 # ramp and the shake decision are plain arithmetic and are gated here.
 SLEEP_FADE = "core/media/src/main/kotlin/app/muplay/media/SleepTimerFade.kt"
+# Plan 4 Task 6. The resume policy itself is a pure function over an in-memory item and a `Clock`,
+# on purpose, so the whole of the decision this project exists for is reachable from this JVM-only
+# runner. `AudiobookSnapshot` and `ResumptionQueue` are Room-shaped and are recorded by hand in the
+# task report, per the SCOPE note above -- and so is the ONE thing that could not be probed here at
+# all until this task changed it: `MediaModule`'s binding, which now takes an `AudiobookItemSource`
+# rather than the concrete snapshot precisely so `MediaModuleTest` can call it from this tier.
+AUDIOBOOK_POLICY = "core/media/src/main/kotlin/app/muplay/media/AudiobookResumePolicy.kt"
+# The local-only guard's two subjects: the port every consumer holds, and the wire it reaches.
+SUBSONIC_SOURCE = "core/network/src/main/kotlin/app/muplay/network/SubsonicSource.kt"
+SUBSONIC_API = "core/network/src/main/kotlin/app/muplay/network/SubsonicApi.kt"
 SHAKE_DETECTOR = "core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
@@ -866,8 +876,9 @@ PROBES = [
      # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
      "the injected clock is a real clock and not a frozen one", 1),
     ("progress/policy-resumes", MEDIA_MODULE,
-     "  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume",
-     "  fun provideUndecoratedResumePolicy(): ResumePolicy =\n"
+     "  fun provideUndecoratedResumePolicy(source: AudiobookItemSource, clock: Clock): ResumePolicy =\n"
+     "    AudiobookResumePolicy(source, clock)",
+     "  fun provideUndecoratedResumePolicy(source: AudiobookItemSource, clock: Clock): ResumePolicy =\n"
      "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
      # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
      # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
@@ -877,7 +888,14 @@ PROBES = [
      # the one UNQUALIFIED `ResumePolicy` in the graph is the cast decorator. The probe went STALE
      # -- "0 matches ... (need exactly 1)" -- and the family refused to run, which is the guard
      # working: a probe whose search text has drifted is a probe that would silently mutate nothing.
-     "the undecorated resume policy is the one that resumes nothing", 1),
+     #
+     # REPOINTED in Plan 4 Task 6, which is the task this probe's own comment above predicted
+     # ("the one Plan 4 will be editing"). The provider's signature and body both changed, so the
+     # search text went stale and `ci/probe-preflight.py` refused the run -- twice now this probe
+     # has been the one that catches a signature move, which is the guard working. It remains the
+     # OPPOSITE direction to `resume/module-never` below: that one binds a policy that resumes
+     # nothing, this one binds a policy that resumes EVERYTHING, music included, at a constant.
+     "the undecorated resume policy is the one that actually resumes a book", 2),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone
@@ -4052,6 +4070,61 @@ PROBES = [
      # Reading only z looks correct, because a resting phone's gravity is on z -- and every other
      # test in that file jolts z.
      "the magnitude uses all three axes", 1),
+    # ---- Plan 4 Task 6: the swap, the policy, and the local-only guard ----------------------
+    #
+    # `resume/module-never` is the important one. Restoring `NeverResume` here is the whole defect
+    # this project exists to fix, it is silent, and until this task it could not be probed at all:
+    # the plan specified a provider taking `AudiobookSnapshot`, which needs Room, so every test of
+    # the policy constructed it directly and the binding itself was ungated. The provider takes the
+    # narrow `AudiobookItemSource` instead, which costs the graph nothing and puts the single most
+    # important line in the application on this tier.
+    ("resume/module-never", MEDIA_MODULE,
+     "    AudiobookResumePolicy(source, clock)",
+     "    NeverResume",
+     "the undecorated resume policy is the one that actually resumes a book", 2),
+    # Music resumes too -- the other half of the headline behaviour, reproduced on demand. A source
+    # that answered for an unknown id is what `AudiobookSnapshot` becomes if its map is keyed off
+    # `media_progress` rather than off the audiobook item map.
+    ("resume/music-resumes", AUDIOBOOK_POLICY,
+     "    val item = source.itemFor(mediaId) ?: return ResumeTarget(index, 0L)",
+     "    val item = source.itemFor(mediaId)\n"
+     "      ?: AudiobookItem(mediaId, mediaId, 12_345L, clock.millis(), false, 1.0f, false)",
+     "music is not resumed, however much progress it has", 2),
+    # A book you finished drops you two seconds before its end.
+    ("resume/finished-ignored", AUDIOBOOK_POLICY,
+     "    if (item.isFinished) return ResumeTarget(index, 0L)",
+     "    if (item.isFinished && item.positionMs < 0L) return ResumeTarget(index, 0L)",
+     "a finished item starts again from the beginning", 1),
+    # The smart rewind deleted: every resume lands exactly where the row says, however long ago.
+    ("resume/no-rewind", AUDIOBOOK_POLICY,
+     "    return ResumeTarget(index, SmartRewind.resumePositionMs(item.positionMs, awayMs))",
+     "    return ResumeTarget(index, item.positionMs - 0L * awayMs)",
+     "the smart rewind is applied, and it depends on how long the book was away", 4),
+    # A stale index from a car or a headset, taken at face value.
+    ("resume/index-not-coerced", AUDIOBOOK_POLICY,
+     "    val index = requestedIndex.coerceIn(0, (mediaIds.size - 1).coerceAtLeast(0))",
+     "    val index = requestedIndex",
+     "an index outside the queue does not throw", 1),
+    # ---- local-only, which was prose in three specs and a privacy policy until this task --------
+    #
+    # A write endpoint on the wire. Read the failure message: it is what a future contributor sees,
+    # and it names the constraint rather than the assertion.
+    ("local-only/savePlayQueue-endpoint", SUBSONIC_API,
+     '  @GET("rest/ping")',
+     '  @GET("rest/savePlayQueue")\n'
+     "  suspend fun savePlayQueue(@QueryMap params: Map<String, String>): SubsonicEnvelope\n"
+     "\n"
+     '  @GET("rest/ping")',
+     "every declared endpoint is one of these reads", 1),
+    # ...and the same thing one layer up, on the port every consumer holds. A default body, so the
+    # mutation compiles: an abstract member would break `SubsonicClient` and the suite would never
+    # run, which is a probe that proves nothing.
+    ("local-only/createBookmark-port", SUBSONIC_SOURCE,
+     "  suspend fun capabilities(): ServerCapabilities\n}",
+     "  suspend fun capabilities(): ServerCapabilities\n"
+     "\n"
+     "  suspend fun createBookmark(songId: String, positionMs: Long) = Unit\n}",
+     "the Subsonic port declares exactly these operations and no way to write progress", 1),
 ]
 
 
@@ -4234,6 +4307,12 @@ LATER_PROBE_FILES = [
     # forgetting this line easy and its consequence a stray mutation the next agent is blamed
     # for.
     HANDOVER_POLICY,
+    # Plan 4 Task 6, added in the same edit as the seven `resume/` and `local-only/` probes above,
+    # per this list's own comment -- the fifth time getting this order wrong has cost this file a
+    # run. `MEDIA_MODULE` is already on `revert()`'s checkout line; these three are new.
+    AUDIOBOOK_POLICY,
+    SUBSONIC_SOURCE,
+    SUBSONIC_API,
 ]
 
 
