@@ -1,39 +1,65 @@
 # Handoff — MuPlay, the 2026-08-25 fleet session
 
-Master is `6c7d4b1`, green (`check verifyNoMockFrameworks`), pushed, release
-Kotlin and androidTest both compile. The app went from "cannot play audio" to
-playing in the background with a session, notification, lock-screen controls, a
-media cache, a player UI and proven gapless playback.
+The app went from "cannot play audio" to playing in the background with a
+session, notification, lock-screen controls, a media cache, a player UI and
+proven gapless playback, and from there to a signed AAB that installs and plays
+on the emulator.
 
-## Where the plans stand — 2026-08-27 17:20
+*(This paragraph used to name a commit. It named `6c7d4b1` for three days after
+master had moved on — the same stale-measurement defect `CLAUDE.md` records
+against floor comments and lane reports. The current commit lives in the dated
+section below, where the date makes it checkable.)*
 
-Master green under `--no-build-cache` as of the last full gate, pushed. **Zero
-ungated-class warnings**, 121+ coverage floors, 373+ mutation probes, signed
-6.95 MB AAB that installs and plays audio on the emulator.
+## Where the plans stand — 2026-08-27 23:20
 
-**64 of 82 tasks merged.**
+Master is `892a26a`, green under `--no-build-cache check` as measured at
+`026377d` (everything since is documentation). **64 of 82 tasks merged**, and
+**eight more are committed on lane branches but not yet gated**, so the honest
+count of finished-and-verified work is 64.
 
-| Plan | Done | Remaining |
+| Plan | Merged | Remaining |
 | --- | --- | --- |
 | 1 foundation · 2 library | 16/16 | complete |
-| 3 playback core | **12/12** | complete |
-| 4 audiobooks | 6/10 | T6, T7 in flight · T9, T10 |
-| 5 Auto/Wear | 7/11 | T8 in flight · T9, T10, T11 |
-| 6 casting | 9/12 | T10, T12 in flight · T11 |
-| 7 integrations | 8/11 | T9 in flight · T10, T11 |
-| 8 release & Play | 7/10 | T6 in flight · T8 (needs the account holder), T10 |
+| 3 playback core | 12/12 | complete |
+| 4 audiobooks | 6/10 | T6, T7 committed-not-gated · T9, T10 not started |
+| 5 Auto/Wear | 7/11 | T8 committed-not-gated · T9, T10, T11 not started |
+| 6 casting | 9/12 | T10, T12 committed-not-gated · T11 not started |
+| 7 integrations | 8/11 | T9 committed-not-gated · T10, T11 not started |
+| 8 release & Play | 7/10 | T6, T8 committed-not-gated · T10 not started |
 
-## Lanes live
+### The eight lane branches, as they stand
 
-`p4t6` resume-policy swap · `p4t7` speed + silence skipping · `p5t8` `:wear`
-module · `p6t10` `:feature:castpicker` · `p6t12` `RendererDirect` · `p7t9`
-arrival (**resumed from an abandoned worktree with uncommitted work**) ·
-`p8t6` store listing.
+Every one of these is committed and therefore survives a session death. None
+has a green `--no-build-cache check` recorded against it yet; that is what each
+was doing when the clock ran out.
 
-Four lanes were lost mid-task to a session rate limit at 16:30 and their work
-was recovered from their worktrees: `p4t4`, `p4t8`, `p5t6` and `p6t9` had all
-committed and were merged as they stood. `p7t9` had **not** committed, which is
-why its brief now says commit early and often.
+| Branch | Task | Commits ahead | State |
+| --- | --- | --- | --- |
+| `p4t6` | P4 T6 resume policy | 6 | AudiobookResumeTest committed; gate run owed |
+| `p4t7` | P4 T7 speed + silence | 3 | `--no-build-cache check` in flight since 22:52 |
+| `p5t8` | P5 T8 `:wear` module | 5 | found and fixed a dropped brace in ConventionTest (`95475cf`) that made **every** rule uncompilable; gate relaunched |
+| `p6t10` | P6 T10 `:feature:castpicker` | 5 | nine castui probes committed; 3 files uncommitted |
+| `p6t12` | P6 T12 RendererDirect | 5 | renderer-direct probes committed; contributes a section into p6t10's module |
+| `p7t9` | P7 T9 arrival | 7 | eleven probes + four floors committed; 2 files uncommitted; **still owes the `LidarrValidationException` credential-exposure fix** |
+| `p8t6` | P8 T6 store listing | 5 | screenshots pulled; must exclude `ci/__pycache__/` |
+| `p8t8` | P8 T8 reviewer access | 4 | reviewer-taps rule committed; owes a decision on the `p8t8-review-navidrome` container it left running |
+
+**Merge them in the order their gates go green, not in plan order**, and re-read
+the "A lane's report describes master as it was at that lane's last sync" note
+in `CLAUDE.md` before believing any claim a lane makes about master. `p6t10` and
+`p6t12` both touch `:feature:castpicker` by agreement — `p6t10` owns the module,
+`p6t12` contributes a `RendererDirectSection` into it — so expect their
+`build.gradle.kts` floor blocks to conflict textually, and resolve to *both*.
+
+### Why the session ran long
+
+The parent process died twice, at 17:45 and 22:40, taking all eight lanes with
+it and leaving no completion record either time. Six of eight lanes had
+committed on both occasions, so nothing was lost, but roughly four hours of wall
+clock were. Neither death was a host reboot (`last reboot` unchanged, uptime
+continuous). The host was also at 30-44% CPU steal with a load average between
+28 and 57 for most of the evening, which is why a `check` that normally takes
+four minutes was taking twenty-five.
 
 ## Remaining waves
 
