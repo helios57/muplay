@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import app.muplay.cast.control.UpnpRenderer
 import app.muplay.cast.discovery.CastDevice
 import app.muplay.cast.http.CastHttpClient
@@ -128,6 +129,16 @@ class CastSessionManager @Inject constructor(
    * what to play; the speaker's own answer arrives through [state] and through the player's
    * listeners.
    */
+  // `incoming` is a [MuPlayer], and `MuPlayer` is a `ForwardingPlayer`, which is `@UnstableApi` --
+  // so `prepare()` and `play()` resolve to `ForwardingPlayer`'s members rather than `Player`'s and
+  // are opt-in. `local.prepare()` in `handBackTo` is not flagged, because that receiver is typed
+  // `Player`: which declaration a call resolves to is what decides this, not the method name.
+  //
+  // `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's marker is an
+  // `androidx.annotation.RequiresOptIn`, invisible to the Kotlin compiler, so the omission compiles
+  // clean and fails much later at `lintDebug`. This file arrived on master having done exactly
+  // that -- green in its own worktree, red on the first `--no-build-cache check` after the merge.
+  @androidx.annotation.OptIn(UnstableApi::class)
   suspend fun castTo(device: CastDevice) {
     val outgoing = switch.current() ?: return
     terminal = false
@@ -204,6 +215,10 @@ class CastSessionManager @Inject constructor(
     }
   }
 
+  // `remote.release()`: the receiver is the `UpnpPlayer` built above, a `SimpleBasePlayer`, and
+  // `release()` is that class's `@UnstableApi` member. See `castTo`'s note for why the compiler
+  // cannot see this.
+  @androidx.annotation.OptIn(UnstableApi::class)
   private suspend fun handBackTo(forcePaused: Boolean) {
     val remote = castPlayer ?: return
     val local = switch.localPlayer() ?: return
