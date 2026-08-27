@@ -76,15 +76,20 @@ class BrowseResumeAudioTest {
 
   @Test
   fun aQueueStartsAtThePositionTheResumePolicyChoseAndGoesOnFromThere() {
-    val reading = play(ResumePolicy { _, index -> ResumeTarget(index, RESUME_POSITION_MS) })
+    val reading = play(
+      ResumePolicy { _, index -> ResumeTarget(index, RESUME_POSITION_MS) },
+      awaitMs = RESUME_POSITION_MS,
+    )
 
     // The position audio actually reached, not "setMediaItems returned".
     assertThat(reading.reachedMs)
-      .describedAs("the decoder reported %d ms after %d ms of real time", reading.reachedMs, reading.elapsedMs)
-      .isGreaterThanOrEqualTo(RESUME_POSITION_MS - SLACK_MS)
+      .describedAs("the player reported %d ms after %d ms of real time", reading.reachedMs, reading.elapsedMs)
+      .isGreaterThan(RESUME_POSITION_MS)
       .isLessThan(RESUME_POSITION_MS + SLACK_MS)
 
     // The assertion the fixture's length cannot satisfy: more media went by than real time did.
+    // Measured on `muplay37`: reached 11 800 ms of media after roughly 1 300 ms of wall clock,
+    // where a player started at zero can only ever report `reached <= elapsed`.
     assertThat(reading.reachedMs - reading.elapsedMs).isGreaterThan(SEEK_EVIDENCE_MS)
 
     // The two discriminating negatives. 0 is what a player that ignored the policy reports; 9 000
@@ -126,10 +131,7 @@ class BrowseResumeAudioTest {
    * construction site `PlayerConstructionTest` allows -- so the retry policy, the renderers and the
    * data source are the shipping ones. The `MediaItem` is built by the production [MediaItems.of].
    */
-  private fun play(
-    policy: ResumePolicy,
-    awaitMs: Long = RESUME_POSITION_MS - SLACK_MS,
-  ): Reading {
+  private fun play(policy: ResumePolicy, awaitMs: Long): Reading {
     val song = bookFile()
     val item = MediaItems.of(
       song = song,
@@ -163,7 +165,14 @@ class BrowseResumeAudioTest {
       player.prepare()
       player.play()
     }
-    harness.awaitPositionAtLeast(awaitMs, timeoutMs = WAIT_BUDGET_MS)
+    // **`isPlaying` and a position strictly past the target, not merely a position at it.**
+    // `ExoPlayer` masks a seek synchronously, so waiting for `currentPosition >= 11 500` alone is
+    // satisfied 10 ms after `play()` by the masked value -- measured, and it is the whole
+    // difference between "the seek was applied" and "audio is coming out at that second". Only a
+    // renderer clock moves the position *past* where it was put.
+    harness.await("isPlaying with the position past ${awaitMs}ms", timeoutMs = WAIT_BUDGET_MS) {
+      harness.player.isPlaying && harness.player.currentPosition > awaitMs
+    }
     val elapsedMs = SystemClock.elapsedRealtime() - startedAt
     val reachedMs = harness.onMain { harness.player.currentPosition }
 
