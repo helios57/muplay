@@ -543,3 +543,34 @@ The same rule applies to clearing a stray mutation by hand. `git checkout -- .`
 is safe only once you have looked at `git status` and confirmed the *only*
 modified file is the one you mean to revert. Read the diff first; it costs one
 command and it is the difference between undoing a mutation and undoing an hour.
+
+## This host is shared with the user's own work — build like a guest
+
+Measured 2026-08-27 while six agent worktrees were building: **load average 32.6
+on 24 cores**, alongside the user's IntelliJ (3.6 GB resident) and several
+concurrent `rustc`/`rust-lld` processes. Memory was never the problem — 34 GB
+available, swap barely touched, **zero OOM kills in the kernel log**.
+
+Two settings live in `~/.gradle/gradle.properties` rather than the repo's, because
+CI reads the repo's and these numbers are wrong there:
+
+    org.gradle.workers.max=3
+    org.gradle.priority=low
+
+`org.gradle.parallel=true` in the repo lets **each** build take one worker per
+processor, so N concurrent worktrees ask for N x 24. Capping workers matches the
+machine rather than the process; `priority=low` makes the daemons yield to
+interactive work instead of competing with it. After both, load fell to 24.
+Run `./gradlew --stop` after changing either — a running daemon keeps its old
+settings and will not pick them up.
+
+**Disk is the risk that is not yet fixed.** `/` was at **94% (26 GB free of
+393 GB)** during the same window, and under that load `du` and `docker system df`
+both exceeded a 100-second timeout, which is itself the symptom. A full disk on
+this host produces exactly the unexplained mid-build failures that get
+misattributed to the code. Check `df -h /` before blaming a flaky build.
+
+And note what a **host reboot** looks like from inside a session, because it has
+happened here: every agent stops at once with no completion record, the emulator's
+qemu process is gone, and the container shows `Exited (0)` — a clean stop, not a
+crash. `last reboot` distinguishes it from anything you did in one command.
