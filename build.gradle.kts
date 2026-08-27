@@ -2021,6 +2021,19 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.PlaybackConnection*startTicker*1",
         "app.muplay.media.MuPlayerFactory",
         "app.muplay.media.MuPlaybackService*Companion",
+        // Plan 5 Task 6. `MuPlaybackService$playFromSearch$1` -- the coroutine that answers the
+        // Assistant's cold-start intent -- **6/6 LINE**, instrumented, from
+        // `VoiceSearchJourneyTest`'s three intent tests in `:app`.
+        //
+        // **LINE and deliberately not BRANCH**, which is `MuPlaybackService`'s own ruling one floor
+        // down applied to its lambda: the class measures **3/6 BRANCH**, and all three misses are
+        // the give-up arms -- `spokenQueue` answering `null`, which needs a library with nothing
+        // expandable in it, and `session?.player` being null, which cannot happen because
+        // `onStartCommand` only ever runs after `onCreate` built the session. A BRANCH floor at
+        // 0.50 would permit anything, which is the vacuous shape this table exists to refuse.
+        // What the LINE rule really holds is that the intent path *ran*: it is 0/6 the moment the
+        // three intent journeys stop reaching it.
+        "app.muplay.media.MuPlaybackService*playFromSearch*1",
         // `MuPlaybackService$LibraryCallback` used to ride here at 6/6. Plan 5 Task 4 replaced it
         // with `app.muplay.media.browse.MuPlayLibraryCallback`, which has its own LINE rule below;
         // the pattern is deleted rather than left behind, because a pattern that matches nothing
