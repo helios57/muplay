@@ -284,6 +284,46 @@ Expect `"status":"ok"`.
 
 ---
 
+## What was verified, and what is inferred
+
+The distinction matters more here than anywhere else in this repository: an instruction nobody
+walked is exactly the failure this document exists to prevent, and "it should work" is how a
+reviewer ends up staring at an error message.
+
+**Measured against a live server** (`curl`, this machine, 2026-08-27):
+
+- `https://demo.navidrome.org` answers `ping`, `getMusicFolders`, `getAlbumList2`,
+  `getRandomSongs` and `getScanStatus` as `demo`/`demo`; a `Range` request to `/rest/stream`
+  returns HTTP/2 206 with `audio/mpeg` and a correct `content-range`. It reports exactly one
+  library.
+- The whole option-B recipe — rename a library, create a second, create a non-admin user, grant it
+  libraries by id — against `deluan/navidrome:0.63.2`, with three disjoint observations of the same
+  account at three grant sets (none, one, both). That is the table in *The zero-library trap*, and
+  it is the reason the grant step is called out as the step the route fails on.
+- A second, deliberately ungranted account on the same server also returns an empty
+  `musicFolders`, so the trap is the default state of a new user and not an artefact of one
+  account.
+
+**Measured on the emulator, against the real app** — see *On-device walkthrough* below.
+
+**Read from source, not measured** (each is a claim about code in this repository, checkable by
+reading it, but not executed as part of writing this document):
+
+- `SetupViewModel.connect` validates the URL with OkHttp's `toHttpUrlOrNull()`, so a bare hostname
+  with no scheme fails before any request is made. This is why step 2 insists on the scheme.
+- `SetupViewModel.tagging` computes `canContinue` as `isNotEmpty() && none { UNASSIGNED }`, which
+  is what makes the zero-library case a dead end rather than a skippable screen.
+- MuPlay calls only read endpoints; `scrobble`, `nowPlaying` and `savePlayQueue` are not declared.
+  `docs/PLAY-DATA-SAFETY.md` carries that claim and its traceability.
+
+**Inferred, and flagged as such:**
+
+- Everything about Play Console's own form — the section name, the field names, and the wording it
+  expects. Play's console changes; re-read the App access page before pasting, exactly as
+  `docs/PLAY-DATA-SAFETY.md` says to re-read the Data safety definitions.
+- That a reviewer will follow the steps in order. They may not. The instructions are written so
+  that step 7 alone (open an album, play a track) demonstrates a working app.
+
 ## What remains the account holder's
 
 1. Choosing the route (Plan 8's item D). This document recommends B; the decision is theirs.
