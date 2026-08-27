@@ -199,6 +199,9 @@ BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 # de-duplication and the whole timeline are plain Kotlin and are gated here.
 CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
 BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
+# Plan 4 Task 5. A pure function over two Longs, on purpose, so the whole of it is reachable from
+# this JVM-only runner -- there is nothing about the smart-rewind table that needs a device.
+SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -3305,6 +3308,74 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+    # ---- Plan 4 Task 5: the smart-rewind band table, its four boundaries, and the clamp --------
+    # Every count below was MEASURED by applying the mutation alone against the committed tree and
+    # reading the result XML -- see task-5-report.md for the transcripts.
+    #
+    # The four `*-boundary-inclusive` probes are the point of the family and they are what the
+    # deliverable "every boundary asserted on both sides" buys: each turns one `<` into `<=`, which
+    # moves the answer at EXACTLY ONE input in the whole Long range. A suite that asserted each
+    # band at one interior value only -- the obvious way to test a lookup table, and the way that
+    # proves the table equals itself -- is green against all four of them.
+    ("rewind/band-table-constant", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs < Long.MAX_VALUE -> REWIND_MEDIUM_MS",
+     # The whole table collapsed to one value. Named against the five-band assertion because that
+     # is the one that cannot be satisfied by any constant at all.
+     "each band rewinds its own distinct amount", 9),
+    ("rewind/none-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs <= AWAY_NONE_MS -> REWIND_NONE_MS",
+     "the fifteen second threshold is where rewinding starts", 1),
+    ("rewind/short-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "    awayMs <= AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "the one minute threshold moves the answer", 1),
+    ("rewind/medium-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "    awayMs <= AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "the one hour threshold moves the answer", 1),
+    ("rewind/long-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_LONG_MS -> REWIND_LONG_MS",
+     "    awayMs <= AWAY_LONG_MS -> REWIND_LONG_MS",
+     "the one day threshold moves the answer", 1),
+    ("rewind/top-band-unbounded", SMART_REWIND,
+     "    else -> REWIND_MAX_MS",
+     "    else -> awayMs / AWAY_LONG_MS * REWIND_MAX_MS",
+     # The top band is the one band with no upper threshold, so "both sides" cannot pin it and a
+     # second, much larger input has to. A scale that keeps going rewinds a listener ten minutes
+     # into the previous chapter after a holiday. Note it answers 20_000 at exactly one day, so
+     # `the one day threshold moves the answer` is green against it -- the bound is only visible
+     # from far above the boundary.
+     "a month away rewinds the same as a day away and no more", 2),
+    ("rewind/swap-long-and-max", SMART_REWIND,
+     "  const val REWIND_LONG_MS = 10_000L\n  const val REWIND_MAX_MS = 20_000L",
+     "  const val REWIND_LONG_MS = 20_000L\n  const val REWIND_MAX_MS = 10_000L",
+     # Five DISTINCT values is what makes this catchable at all: with two bands sharing a number,
+     # a swap is invisible. `a month away ...` is NOT among the three, and that is the honest
+     # correction to this task's plan, which expected it: that test names `REWIND_MAX_MS` rather
+     # than `20_000L`, so it moves with the constant and stays green. It is only safe because the
+     # literal is asserted two tests above it.
+     "the one day threshold moves the answer", 3),
+    ("rewind/resume-no-clamp", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return storedPositionMs - rewind",
+     # A negative reaching `seekTo`. Two seconds into a chapter, gone for a week: -18_000.
+     "a rewind never goes past the start of the file", 3),
+    ("rewind/resume-clamp-after-subtracting", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return (storedPositionMs - rewind).coerceAtLeast(0L)",
+     # The shorter form, which reads better and is wrong at one input: `Long.MIN_VALUE - 20_000`
+     # wraps to a huge POSITIVE that a lower clamp cannot see. One failure, and it is the test
+     # that exists for it -- `a negative stored position is treated as the start` is green here,
+     # which is why the two are separate tests rather than two assertions in one.
+     "a stored position at the bottom of the range does not wrap into the far future", 1),
+    ("rewind/resume-ignores-away", SMART_REWIND,
+     "    val rewind = rewindMs(awayMs)",
+     "    val rewind = rewindMs(600_000L)",
+     # `resumePositionMs` as a function of one argument. The clamp tests are all green against
+     # this, because a clamped answer of 0 is 0 whatever the band said.
+     "the resume position is the stored position minus the band's rewind", 1),
 ]
 
 
@@ -3435,6 +3506,10 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 5. Added in the same edit as the ten `rewind/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    SMART_REWIND,
 ]
 
 
