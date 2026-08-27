@@ -186,6 +186,8 @@ BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
 BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
+BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
+BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
@@ -2854,6 +2856,51 @@ PROBES = [
      # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
      # is the only fixture in the corpus that catches this at all.
      "Second Book's chapters are unequal in length and in order", 1),
+
+    # ---- Plan 5 Task 5: what a tapped browse row expands to ------------------------------------
+    #
+    # ONLY THE ARITHMETIC IS HERE, AND THAT IS THIS RUNNER'S LIMIT RATHER THAN A CHOICE. The task's
+    # other nine mutations -- the callback's start index, the `localConfiguration` passthrough, the
+    # book's scope guard, the shuffle's library id, the resume file, the reversed file list, the
+    # swallowed failure, and `MuPlayer` discarding the policy's position -- all live behind
+    # `MediaItem`, which reaches `android.net.Uri` and cannot be built on the JVM at all. Their
+    # only tier is `connectedDebugAndroidTest`, which this script cannot reach: an androidTest
+    # source is not an input to the JVM test task, Gradle restores it FROM-CACHE, and the probe
+    # reports MISSED with zero failures. Adding them here would read as a broken test rather than
+    # as an unrunnable probe -- see this file's header. They are falsified BY HAND on the device
+    # and the transcripts are in task-5-report.md, the same way Plan 3 Task 7b's are.
+    #
+    # `startIndexOf` is the half that is pure Kotlin, and it is the half a wrong answer is silent
+    # in: `indexOfFirst` returns -1 for a miss, `PlaybackQueue.of(songs, -1)` throws inside a
+    # `ListenableFuture`, and a car hears nothing with no error anywhere.
+    ("browse/start-index-constant-zero", BROWSE_TREE_REPOSITORY,
+     "songs.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)", "0",
+     # Every album starts at track one, every book at its first file. The count is 3 because the
+     # two fixtures added below to kill the two mutations after this one also see it.
+     "the start index is the tapped song's own position", 3),
+    ("browse/start-index-not-coerced", BROWSE_TREE_REPOSITORY,
+     "songs.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)",
+     "songs.indexOfFirst { it.id == mediaId }",
+     "an id that is not in the list starts at the beginning rather than at minus one", 1),
+    ("browse/start-index-matches-title", BROWSE_TREE_REPOSITORY,
+     "songs.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)",
+     "songs.indexOfFirst { it.title == mediaId || it.id == mediaId }.coerceAtLeast(0)",
+     # A WIDENING, not a swap, and it is the shape this mistake actually takes. It survived
+     # `BrowseExpansionTest` as first written -- no fixture had a title that was another song's id
+     # -- which is why one of them now does.
+     "the id is matched on identity and not on any other field", 1),
+    ("browse/start-index-last-match", BROWSE_TREE_REPOSITORY,
+     "songs.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)",
+     "songs.indexOfLast { it.id == mediaId }.coerceAtLeast(0)",
+     # Identical to the right answer on every list with unique ids, which every fixture in this
+     # project had. A queue may legitimately hold one track twice; the tapped row is the first.
+     "a queue that holds one id twice is positioned at its first appearance", 1),
+    ("browse/empty-selection-not-at-zero", BROWSE_SELECTION,
+     "val EMPTY: BrowseSelection = BrowseSelection(emptyList(), 0)",
+     "val EMPTY: BrowseSelection = BrowseSelection(emptyList(), 1)",
+     # `EMPTY` is what a caller that must answer unconditionally hands back. An index of 1 into no
+     # songs is an `IllegalArgumentException` the moment anything tries to play it.
+     "the empty selection is empty and starts at zero", 1),
     # ---- Plan 4 Task 2: the audiobook value types ---------------------------------------------
     ("audiobook/chapter-contains-upper-bound", CHAPTER,
      "positionMs >= startMs && positionMs < endMs",
@@ -2995,6 +3042,10 @@ LATER_PROBE_FILES = [
     # `browse/extras-*` probes -- never after, per this list's own comment.
     BROWSE_PAGING,
     BROWSE_EXTRAS,
+    # Plan 5 Task 5, added in the same edit as the five `browse/start-index-*` and
+    # `browse/empty-selection-*` probes -- never after, per this list's own comment.
+    BROWSE_SELECTION,
+    BROWSE_TREE_REPOSITORY,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
