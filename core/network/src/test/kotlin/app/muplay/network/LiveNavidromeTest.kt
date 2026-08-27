@@ -3,6 +3,8 @@ package app.muplay.network
 import app.muplay.model.AlbumListType
 import app.muplay.model.LibraryRole
 import app.muplay.model.StreamFormat
+import app.muplay.model.ServerCapabilities
+import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.model.SubsonicEnvelope
 import app.muplay.network.model.SubsonicResponseBody
@@ -128,7 +130,8 @@ class LiveNavidromeTest {
   fun `a valid musicFolderId really does scope getAlbumList2 to that library`() = runTest {
     // The control. Without it the three tests after this one would be consistent with a server
     // that ignores `musicFolderId` altogether, and "widens the scope" would be unfalsifiable.
-    assertThat(albumNames(scopedAlbumList(MUSIC_LIBRARY_ID.toString()))).containsExactly("Test Album")
+    assertThat(albumNames(scopedAlbumList(MUSIC_LIBRARY_ID.toString())))
+      .containsExactlyInAnyOrderElementsOf(MUSIC_ALBUM_NAMES)
     assertThat(albumNames(scopedAlbumList(AUDIOBOOKS_LIBRARY_ID.toString())))
       .containsExactlyInAnyOrderElementsOf(BOOK_ALBUM_NAMES)
   }
@@ -144,7 +147,7 @@ class LiveNavidromeTest {
       assertThat(body.error).describedAs("error for musicFolderId=%s", ignored).isNull()
       assertThat(albumNames(body))
         .describedAs("albums for musicFolderId=%s", ignored)
-        .containsExactlyInAnyOrderElementsOf(BOOK_ALBUM_NAMES + "Test Album")
+        .containsExactlyInAnyOrderElementsOf(BOOK_ALBUM_NAMES + MUSIC_ALBUM_NAMES)
     }
   }
 
@@ -208,8 +211,10 @@ class LiveNavidromeTest {
    */
   @Test
   fun `shuffling the music library never returns the audiobook`() = runTest {
-    // `ci/configure-libraries.sh` seeds library 1 "Music" with three tracks and library 2
-    // "Audiobooks" with "Test Book". See this test's own doc for what the fifty draws prove.
+    // `ci/seed-fixtures.sh` seeds library 1 "Music" with four tracks -- three mp3s and, since
+    // Task 12, the Opus fixture -- and library 2 "Audiobooks" with six. See this test's own doc
+    // for what the fifty draws prove. `MUSIC_TITLES` is derived from the oracle, so the allow-list
+    // below moved with the corpus rather than needing to be remembered.
     val client = client("testpass")
     val distinctDrawOrders = mutableSetOf<List<String>>()
 
@@ -226,7 +231,7 @@ class LiveNavidromeTest {
     // The property fifty draws can actually prove that one cannot: real randomisation, not fifty
     // identical draws laundered through a loop.
     assertThat(distinctDrawOrders.size)
-      .describedAs("distinct draw orders across 50 draws of the same 3-track library")
+      .describedAs("distinct draw orders across 50 draws of the same music library")
       .isGreaterThan(1)
   }
 
@@ -290,7 +295,7 @@ class LiveNavidromeTest {
     val client = client("testpass")
 
     assertThat(client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).map { it.name })
-      .containsExactly("Test Album")
+      .containsExactlyElementsOf(MUSIC_ALBUM_NAMES)
     // `containsExactly`, in `ALPHABETICAL_BY_NAME` order, against the oracle's own ordering --
     // not `contains`. This is the assertion that would have to be weakened if a fixture were
     // dropped, and weakening it quietly is exactly what must not happen. The control on the line
@@ -306,12 +311,17 @@ class LiveNavidromeTest {
   @Test
   fun `getAlbum returns the album's tracks and stamps the library the caller scoped by`() = runTest {
     val client = client("testpass")
-    val album = client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0).single()
+    // Every music album, not `single()`. Task 12 put the Opus fixture in its own album, so the
+    // music library holds two -- and a bare `single()` would throw before any assertion ran, which
+    // is the failure mode this project's own note about `.first()` on a grown corpus warns about.
+    val albums = client.getAlbumList2(MUSIC_LIBRARY_ID, AlbumListType.ALPHABETICAL_BY_NAME, 500, 0)
 
-    val withSongs = client.getAlbum(album.id, MUSIC_LIBRARY_ID)
+    val songs = albums.flatMap { client.getAlbum(it.id, MUSIC_LIBRARY_ID).songs }
 
-    assertThat(withSongs.songs.map { it.title }).containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
-    assertThat(withSongs.songs).allMatch { it.libraryId == MUSIC_LIBRARY_ID }
+    // `containsExactlyInAnyOrder`, not a per-album loop: a loop over zero albums asserts nothing,
+    // and a broken album lookup is exactly what produces zero iterations.
+    assertThat(songs.map { it.title }).containsExactlyInAnyOrderElementsOf(MUSIC_TITLES)
+    assertThat(songs).allMatch { it.libraryId == MUSIC_LIBRARY_ID }
   }
 
   /**
@@ -459,7 +469,7 @@ class LiveNavidromeTest {
   @Test
   fun `a raw stream is a 200 with an accurate content length and byte ranges`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val song = musicTrack(client, MP3_TITLE)
 
     val (response, bytes) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
 
@@ -475,7 +485,7 @@ class LiveNavidromeTest {
   @Test
   fun `a range request on a raw stream is a byte-exact 206`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val song = musicTrack(client, MP3_TITLE)
     val url = client.streamUrl(song.id, StreamFormat.Raw)
     val (_, whole) = fetch(url)
     val offset = whole.size / 2
@@ -493,7 +503,7 @@ class LiveNavidromeTest {
   @Test
   fun `a range past the end of a raw stream is 416`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val song = musicTrack(client, MP3_TITLE)
     val url = client.streamUrl(song.id, StreamFormat.Raw)
     val (_, whole) = fetch(url)
 
@@ -562,6 +572,12 @@ class LiveNavidromeTest {
     // entries are all unusable no longer decides the run. On the shared container this was
     // measured at exactly that: 63 of 63 bitrates unusable on one of the three fixtures and
     // usable on the other two, which is what made a random `first()` fail about one run in three.
+    //
+    // Task 12's Opus fixture joins that space and is safe in it, which was measured rather than
+    // assumed: the assertion below compares the transcoded body against the **source**, and an
+    // Opus source is VBR, so "smaller than raw" is not free the way it is for the CBR mp3s. Raw is
+    // 285417 bytes and the largest cap this search can ask for -- 63 kbps over 30.0065 s -- comes
+    // back at 240321, a 16% margin. Every lower cap is smaller still.
     val songs = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
 
     val cold = coldTranscode(client, songs.map { it.id })
@@ -608,7 +624,11 @@ class LiveNavidromeTest {
   @Test
   fun `an mp3 cap at or above the source bitrate is not a transcode at all`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    // Named, and it has to be an **mp3** source: the rule this test pins is "the requested format
+    // already matches the file's own suffix", and the corpus now holds a file for which it does
+    // not. `format=mp3` on the Opus fixture is a real transcode at every cap, so a `.first()` here
+    // would fail on `capped == raw` roughly one run in four.
+    val song = musicTrack(client, MP3_TITLE)
 
     val cappedUrl = client.streamUrl(song.id, StreamFormat.Mp3(320)).toHttpUrl()
     val (_, raw) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
@@ -641,7 +661,7 @@ class LiveNavidromeTest {
   @Test
   fun `stripping the credentials from a stream url stops the audio`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
+    val song = musicTrack(client, MP3_TITLE)
     val authenticated = client.streamUrl(song.id, StreamFormat.Raw).toHttpUrl()
     val stripped = authenticated.newBuilder().removeAllQueryParameters("t")
       .removeAllQueryParameters("s").removeAllQueryParameters("u").build()
@@ -678,7 +698,129 @@ class LiveNavidromeTest {
     assertThat(String(bytes.copyOfRange(4, 8), Charsets.US_ASCII)).isEqualTo("ftyp")
   }
 
+  // --- transcoded seek: the `transcodeOffset` extension (Task 12) ------------------------------
+
+  /**
+   * The gate's own precondition, asserted rather than assumed: the pinned container advertises
+   * `transcodeOffset`.
+   *
+   * If a future pin stops advertising it, `TranscodeSeek` answers `NotOffered` for every transcode
+   * and the seek bar quietly disappears on every Opus track -- which is correct behaviour and a
+   * terrible surprise. This is where that gets noticed, and it is asserted through
+   * [SubsonicSource.capabilities], the accessor `TranscodeOffsetSupport` actually calls, rather
+   * than through the raw endpoint underneath it.
+   */
+  @Test
+  fun `the pinned container advertises the transcodeOffset extension`() = runTest {
+    val capabilities = client("testpass").capabilities()
+
+    assertThat(capabilities.isOpenSubsonic).isTrue
+    assertThat(capabilities.supports(ServerCapabilities.TRANSCODE_OFFSET_EXTENSION)).isTrue
+    // The control, at a name this server does not advertise: without it the assertion above is
+    // equally satisfied by a `supports` that returns true for everything.
+    assertThat(capabilities.supports("thisExtensionDoesNotExist")).isFalse
+  }
+
+  /**
+   * The server behaviour the whole feature rests on: `timeOffset` starts the transcode later.
+   *
+   * Measured as **bytes**, because a live transcode has no `Content-Length` to read and no duration
+   * to ask for -- the body is all there is. The Opus fixture is thirty seconds at a fixed cap, so
+   * the transcoded body shrinks in proportion to the offset.
+   *
+   * **Two offsets, not one.** A server that ignored the parameter entirely returns the same size
+   * three times, which one observation cannot see; and a client that sent a *constant* offset
+   * returns the same size twice, which two observations at one value cannot see either. Ten and
+   * twenty seconds into a thirty-second file are two thirds and one third, and nothing constant
+   * produces both.
+   *
+   * The transcoding cache is not a hazard here and that is worth stating, because it is a hazard
+   * everywhere else in this file: the entry is keyed on (track, requested bitrate, **offset**)
+   * -- measured -- and the *bytes* are identical whether they arrive live or from the cache. Only
+   * the headers differ, and this test reads none of them.
+   */
+  @Test
+  fun `a timeOffset shortens the transcoded body in proportion to the offset`() = runTest {
+    val client = client("testpass")
+    val song = musicTrack(client, OPUS_TITLE)
+
+    val (wholeResponse, whole) = fetch(client.streamUrl(song.id, TRANSCODE, timeOffsetSeconds = 0))
+    val (thirdIn, twoThirds) = fetch(client.streamUrl(song.id, TRANSCODE, timeOffsetSeconds = 10))
+    val (twoThirdsIn, oneThird) = fetch(client.streamUrl(song.id, TRANSCODE, timeOffsetSeconds = 20))
+
+    assertThat(wholeResponse.code).isEqualTo(200)
+    assertThat(thirdIn.code).isEqualTo(200)
+    assertThat(twoThirdsIn.code).isEqualTo(200)
+    // Not vacuous against three empty 200s -- the shape a poisoned cache entry answers with.
+    assertThat(whole.size).isGreaterThan(1000)
+    assertThat(twoThirds.size).isGreaterThan(1000)
+    assertThat(oneThird.size).isGreaterThan(1000)
+
+    assertThat(twoThirds.size.toDouble() / whole.size)
+      .describedAs("body from 10s in, over the whole body")
+      .isBetween(0.55, 0.78)
+    assertThat(oneThird.size.toDouble() / whole.size)
+      .describedAs("body from 20s in, over the whole body")
+      .isBetween(0.22, 0.45)
+  }
+
+  /**
+   * The other half of the same fact, and the one that makes the offset a *seek* rather than a trim:
+   * a request with no offset and a request with `timeOffset=0` are the same audio.
+   *
+   * Which is why `SubsonicClient` sends `0` rather than mapping it to "no parameter": the
+   * re-issue path's own boundary case has to reach the server as a request, or nothing can observe
+   * that it works.
+   */
+  @Test
+  fun `timeOffset zero is the whole track, byte for byte`() = runTest {
+    val client = client("testpass")
+    val song = musicTrack(client, OPUS_TITLE)
+
+    val (_, noOffset) = fetch(client.streamUrl(song.id, TRANSCODE))
+    val (_, zeroOffset) = fetch(client.streamUrl(song.id, TRANSCODE, timeOffsetSeconds = 0))
+
+    assertThat(noOffset.size).isGreaterThan(1000)
+    // Byte-identical, not merely the same length: `timeOffset=0` must not be a re-encode that
+    // happens to land on the same size.
+    assertThat(zeroOffset).isEqualTo(noOffset)
+  }
+
+  /**
+   * The Opus fixture reaches the transcoder at all -- which is the reason it is in the corpus.
+   *
+   * `StreamFormat.forSuffix` forces `format=mp3` for `opus`, so this is the only file here that a
+   * user's own playback path sends through Navidrome's transcoder. If the scanner ever stopped
+   * reporting `suffix = "opus"` for it, `forSuffix` would return `Raw`, every assertion above would
+   * still pass against a raw Ogg body, and the transcoded-seek feature would have no fixture left.
+   */
+  @Test
+  fun `the opus fixture is indexed as opus, which is what forces the transcode`() = runTest {
+    val song = musicTrack(client("testpass"), OPUS_TITLE)
+
+    assertThat(song.suffix).isEqualTo("opus")
+    assertThat(StreamFormat.forSuffix(song.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS))
+      .isEqualTo(StreamFormat.Mp3(StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS))
+    // The control on the same line of reasoning: the mp3 fixtures are not transcoded.
+    val mp3 = musicTrack(client("testpass"), MP3_TITLE)
+    assertThat(StreamFormat.forSuffix(mp3.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS))
+      .isEqualTo(StreamFormat.Raw)
+  }
+
   // --- raw Subsonic, deliberately not through SubsonicClient -----------------------------------
+
+  /**
+   * One music track, **by title**.
+   *
+   * Every stream test in this class used to take `getRandomSongs(...).first()`, which was a fair
+   * draw over three interchangeable fixtures. It stopped being fair the moment the corpus gained a
+   * file that behaves differently: `format=mp3` on the Opus fixture is a real transcode at every
+   * cap, so `an mp3 cap at or above the source bitrate is not a transcode at all` would fail on
+   * whichever run happened to draw it. A test that passes for one fixture and fails for another is
+   * exactly the flake that gets a gate disabled.
+   */
+  private suspend fun musicTrack(client: SubsonicClient, title: String): Song =
+    client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).single { it.title == title }
 
   private fun scopedAlbumList(musicFolderId: String): SubsonicResponseBody =
     albumList(
@@ -884,6 +1026,27 @@ class LiveNavidromeTest {
     /** The one single-file `.m4b` this class still names individually — the mp4-container test. */
     const val AUDIOBOOK_TITLE = "Test Book"
 
+    /**
+     * The music fixture every raw-stream test names, so none of them draws at random from a corpus
+     * whose members no longer behave the same way. A CBR 64 kbps mp3, five seconds long.
+     */
+    const val MP3_TITLE = "Track 1"
+
+    /**
+     * The corpus's one Opus file, and therefore the only track a user's own playback path sends
+     * through Navidrome's transcoder — `StreamFormat.forSuffix` forces `format=mp3` for `opus` and
+     * for nothing else. Thirty seconds, in three ten-second regions: silence, a quiet 440 Hz tone,
+     * a loud 1760 Hz tone. `ci/seed-fixtures.sh` says why each of those matters.
+     */
+    const val OPUS_TITLE = "Offset Track"
+
+    /**
+     * The format the app really asks for when it plays [OPUS_TITLE] — `StreamFormat.forSuffix`'s
+     * own answer for an `opus` suffix, not a bitrate chosen here. A transcoded-seek test that used
+     * some other cap would be measuring a request nothing makes.
+     */
+    val TRANSCODE = StreamFormat.Mp3(StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS)
+
     // Everything below is read out of `BookFixtures`, i.e. out of the ffprobe-derived table
     // `ci/probe-chapters.sh` writes from the committed audio, rather than transcribed here.
     //
@@ -902,6 +1065,22 @@ class LiveNavidromeTest {
     val AUDIOBOOK_TITLES: List<String> = BookFixtures.ALL_BOOKS.flatMap { it.tracks }.map { it.title }
 
     val MUSIC_TITLES: List<String> = BookFixtures.MUSIC_TRACKS.map { it.title }
+
+    /**
+     * The music library's album names, in `ALPHABETICAL_BY_NAME` order, **derived from the oracle's
+     * own paths** (`Music/<artist>/<album>/<file>`) rather than transcribed.
+     *
+     * Transcribing them is what `getAlbumList2 is scoped and pages` did until the corpus grew a
+     * second music album, and a literal there is a fourth truth after the audio, the table and the
+     * seed script — the exact shape this class's own note one block down argues against.
+     */
+    val MUSIC_ALBUM_NAMES: List<String> = BookFixtures.MUSIC_TRACKS
+      .map { it.path.split('/')[MUSIC_PATH_ALBUM_SEGMENT] }
+      .distinct()
+      .sorted()
+
+    /** `Music` / `<artist>` / `<album>` / `<file>` — the album is the third segment. */
+    private const val MUSIC_PATH_ALBUM_SEGMENT = 2
 
     /** Nine files across both libraries — and the count `ci/configure-libraries.sh` waits for. */
     val SEEDED_TRACK_COUNT: Int = BookFixtures.allTrackPaths().size

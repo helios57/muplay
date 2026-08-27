@@ -36,3 +36,8 @@ include(":feature:player")
 include(":integrations:core")
 // Plan 7 Task 4. Depends on `:integrations:core` and on nothing else in the build.
 include(":integrations:lidarr")
+// Plan 7 Task 8. The second service, and the module that turns "severable" from a claim into a
+// demonstrated property: it depends on `:integrations:core` and on nothing else in the build --
+// in particular not on `:integrations:lidarr`, which is the severability contract's third clause
+// (neither service is reachable from the other's code path) stated as a build edge.
+include(":integrations:bindery")

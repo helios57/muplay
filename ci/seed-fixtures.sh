@@ -53,6 +53,60 @@ EOF
 fi
 
 cp /tmp/book.m4b "$OUT/Audiobooks/Test Author/Test Book/Test Book.m4b"
+# ---------------------------------------------------------------------------------------------
+# Offset Track: the corpus's ONE Opus file, and the only fixture that reaches Navidrome's
+# transcoder on the path a user actually takes.
+#
+# `StreamFormat.forSuffix` forces `format=mp3` for `opus`/`ogg`/`oga` and for nothing else (spec
+# section 4's "Never Opus"), so every other file in this corpus streams `format=raw` -- seekable,
+# length-declared, ordinary. A live transcode is none of those, which is why transcoded seek needs
+# `timeOffset` and why no gate could see that requirement until this file existed.
+#
+# THIRTY SECONDS, IN THREE TEN-SECOND REGIONS, AND EVERY PART OF THAT IS LOAD-BEARING.
+#
+#   [ 0s, 10s)  digital silence
+#   [10s, 20s)  440 Hz at amplitude 0.12   -- quiet
+#   [20s, 30s)  1760 Hz at amplitude 0.90  -- loud, and two octaves up
+#
+# Those two numbers are FRACTIONS OF WHAT `sine` EMITS, and `sine` does not emit full scale: it
+# peaks at about 0.119 of it (measured, and `GainAudioProcessorTest` records the same for the mp3
+# fixtures). Decoded, the three regions come back at RMS 0.2 / 372 / 2590 in raw 16-bit sample
+# units, and through Navidrome's `format=mp3` transcode at 0.0 / 355.6 / 2143.6.
+# `TranscodeSeekPlaybackTest`'s bands are those measurements, not arithmetic over 32767.
+#
+# * Three regions, not two, so a seek can be observed at TWO different targets that land in TWO
+#   distinguishable places. A fixture that is only "silence then tone" is satisfied by an offset
+#   hardcoded to any value inside the tone.
+# * The regions differ in AMPLITUDE, so "which part of the track is the decoder emitting" is
+#   answerable from RMS alone -- no golden file, no FFT, no trust in a position the player
+#   computes for itself. They also differ in FREQUENCY, which is the same discipline every other
+#   fixture here follows (each one has its own tone so a test holding only PCM can tell them
+#   apart), and gives a second, independent discriminator to anything that wants one.
+# * THIRTY SECONDS, not the ten the task brief suggested, and that is the deliberate part.
+#   `CLAUDE.md`'s "Five-second fixtures let time pass a test that its own defect should fail"
+#   records three device tests that passed against the very mutation they existed to catch,
+#   because a test that WAITS for a position can be satisfied by playback reaching it unaided.
+#   A seek assertion is exactly that shape. With the tone starting at 10 s and the loud region at
+#   20 s, no bounded wait this project's device tests use can reach either by simply playing.
+#
+# `-bitexact` matters twice: Ogg embeds a random stream serial without it (this script's own
+# header says so), and it pins the vendor string in the Opus comment header. Verified: two
+# consecutive encodes are byte-identical.
+#
+# IN "Test Album", AS TRACK 4, AND NOT IN AN ALBUM OF ITS OWN. That was tried first and it is the
+# more invasive of the two: a second music album turns `onNodeWithText("Open")` into an
+# ambiguous-node failure in `AlbumRouteJourneyTest` and makes `onAllNodesWithText("Open")[0]` open
+# the wrong album in `BrowseJourneyTest` -- two Tier 2 journeys broken by where a file was filed,
+# which is a coupling worth not creating. Nothing about a transcoded seek is about album grouping.
+ffmpeg -y -f lavfi -i "anullsrc=r=48000:cl=mono:d=10" \
+  -f lavfi -i "sine=frequency=440:duration=10:sample_rate=48000" \
+  -f lavfi -i "sine=frequency=1760:duration=10:sample_rate=48000" \
+  -filter_complex "[1:a]volume=0.12[quiet];[2:a]volume=0.9[loud];[0:a][quiet][loud]concat=n=3:v=0:a=1[out]" \
+  -map "[out]" -c:a libopus -b:a 64k -ac 1 -bitexact -map_metadata -1 \
+  -metadata title="Offset Track" -metadata artist="Test Artist" \
+  -metadata album="Test Album" -metadata track="4" \
+  "$OUT/Music/Test Artist/Test Album/04 - Offset Track.opus"
+
 
 mkdir -p "$OUT/Audiobooks/Second Author/Second Book" \
          "$OUT/Audiobooks/Third Author/Tail Book" \

@@ -94,13 +94,19 @@ class ProgressWriterTest {
     songs = runBlocking { RealTrackBytes.musicTracks() }
   }
 
+  /**
+   * Guarded on `isInitialized`, because an un-guarded `@After` **replaces the real failure with its
+   * own**: a `@Before` that dies before the last `lateinit` is assigned leaves `tearDown` throwing
+   * `UninitializedPropertyAccessException`, and that is then the only message in the report. See
+   * `GaplessTest.tearDown` for the run that cost two lanes an afternoon.
+   */
   @After
   fun tearDown() {
     harnesses.forEach { it.release() }
     harnesses.clear()
     scope.cancel()
-    db.close()
-    cacheDir.deleteRecursively()
+    if (::db.isInitialized) db.close()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
   }
 
   // ---- the write ------------------------------------------------------------------------------

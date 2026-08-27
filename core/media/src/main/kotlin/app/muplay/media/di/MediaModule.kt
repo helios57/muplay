@@ -2,6 +2,8 @@ package app.muplay.media.di
 
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
+import app.muplay.media.TranscodeOffsetSupport
+import app.muplay.media.TranscodeSeekSupport
 import app.muplay.media.browse.DefaultSurfaceResolver
 import app.muplay.media.browse.SurfaceResolver
 import dagger.Binds
@@ -101,5 +103,18 @@ object MediaModule {
     @Binds
     @Singleton
     fun bindSurfaceResolver(impl: DefaultSurfaceResolver): SurfaceResolver
+
+    /**
+     * Plan 3 Task 12. `TranscodeOffsetSupport` is the `transcodeOffset` capability gate *and* the
+     * thing that rebuilds an item's URI at an offset, because both need the same negotiated
+     * `SubsonicSource` and `MuPlayer.seekTo` cannot suspend to fetch one.
+     *
+     * A binding rather than injecting the concrete class into `MuPlayerFactory`, so that `MuPlayer`
+     * -- the seam -- names only the interface and the module's instrumented suites can hand it a
+     * written-by-hand one.
+     */
+    @Binds
+    @Singleton
+    fun bindTranscodeSeekSupport(impl: TranscodeOffsetSupport): TranscodeSeekSupport
   }
 }

@@ -112,6 +112,13 @@ class MuPlaybackServiceTest {
 
       songs = SubsonicClient(SubsonicCredentials(NAVIDROME_URL, USERNAME, PASSWORD))
         .getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
+        // mp3 only. Plan 3 Task 12 seeded a fourth music track, `Offset Track` -- thirty seconds of
+        // Opus whose first ten are silent -- and sorted by title it lands at index 0, which is the
+        // song most of this suite plays. Every queue assertion below is written against the
+        // five-second CBR fixtures; a thirty-second one would turn a transition wait into a
+        // thirty-second wait and a "did it play" check into a check against silence.
+        // `TranscodeSeekJourneyTest` is where that file is played deliberately.
+        .filter { it.suffix.equals("mp3", ignoreCase = true) }
         .sortedBy { it.title }
     }
     check(songs.size >= 2) { "the seeded music library must hold at least two tracks" }

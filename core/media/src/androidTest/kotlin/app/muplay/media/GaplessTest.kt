@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.Song
+import app.muplay.testing.BookFixtures
 import app.muplay.testing.PcmAnalysis
 import java.io.File
 import java.nio.ByteBuffer
@@ -99,8 +100,8 @@ class GaplessTest {
     cacheDir = File(context.cacheDir, "gapless-test-${System.nanoTime()}")
     songs = runBlocking { RealTrackBytes.musicTracks() }
     check(songs.size == TRACK_COUNT) {
-      "ci/seed-fixtures.sh seeds exactly $TRACK_COUNT music tracks; found ${songs.size}. This " +
-        "test's arithmetic is over those three."
+      "ci/seed-fixtures.sh seeds $TRACK_COUNT mp3 music tracks; found ${songs.size}. This test's " +
+        "arithmetic is over exactly those."
     }
     streamUrls = songs.map { RealTrackBytes.rawStreamUrl(it) }
     // Serves the one thing the real library cannot: a track that is deliberately silent. Started
@@ -110,10 +111,20 @@ class GaplessTest {
     server.start()
   }
 
+  /**
+   * Guarded, because an un-guarded `@After` **replaces the real failure with its own**.
+   *
+   * `server` is set on the last line of [setUp]. Any failure before it -- the fixture check above,
+   * a refused connection to the container -- leaves the property unset, and a bare `server.close()`
+   * then throws `UninitializedPropertyAccessException` from `tearDown`, which is the only message
+   * the report carries. Measured on 2026-08-27: a corpus change added a fourth music file, the
+   * `check` above fired, and all four tests here reported nothing but the cleanup exception. One
+   * lane read that and concluded this module's suites were broken; the cause was a hardcoded count.
+   */
   @After
   fun tearDown() {
-    server.close()
-    cacheDir.deleteRecursively()
+    if (::server.isInitialized) server.close()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
   }
 
   @Test
@@ -472,8 +483,21 @@ class GaplessTest {
   }
 
   private companion object {
-    /** `ci/seed-fixtures.sh` seeds three, and this class's arithmetic is over those three. */
-    const val TRACK_COUNT = 3
+    /**
+     * How many **mp3** music fixtures the corpus holds, **derived from the committed oracle**
+     * rather than written down.
+     *
+     * It was a literal `3`, and Plan 3 Task 12's Opus fixture made that literal wrong -- silently,
+     * because `RealTrackBytes.musicTracks()` returned four and the `check` in [setUp] then fired
+     * with a message the cleanup exception buried. A count that has to be edited every time the
+     * corpus grows is the same defect one number later, so it is read off `books.tsv`, which
+     * `ci/probe-chapters.sh --check` re-derives from the audio on every CI run.
+     *
+     * `.mp3` and not every music track: `RealTrackBytes.musicTracks()` filters to the mp3 fixtures
+     * for this suite's benefit -- a thirty-second Opus track whose first ten seconds are silent
+     * would break every measurement below -- so this has to count the same set.
+     */
+    val TRACK_COUNT: Int = BookFixtures.MUSIC_TRACKS.count { it.path.endsWith(".mp3") }
 
     /** `ffmpeg -ac 1 ... sample_rate=44100`, per `ci/seed-fixtures.sh`. */
     const val FIXTURE_SAMPLE_RATE_HZ = 44100

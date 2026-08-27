@@ -22,6 +22,7 @@ import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -395,11 +396,17 @@ class RecordingArtSource : SubsonicSource {
    * existed: the value below carries **no `u`, `s` or `t` parameter of any kind**, so no assertion
    * in this suite can become the place a real Subsonic token is written down. The real URL is built
    * by the real `SubsonicClient` and is asserted nowhere, here or anywhere else.
+   *
+   * `timeOffsetSeconds` is recorded on the URL rather than ignored (Plan 3 Task 12 added it to the
+   * port): the browse tree never asks for one, and a stand-in that silently dropped the argument
+   * would make "it never asks" unobservable.
    */
-  override fun streamUrl(songId: String, format: StreamFormat): String {
+  override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String {
     streamCalls += songId to format
-    return "http://stream.invalid/$songId"
+    return "http://stream.invalid/$songId" + (timeOffsetSeconds?.let { "?timeOffset=$it" } ?: "")
   }
+
+  override suspend fun capabilities(): ServerCapabilities = error("not used by the browse suite")
 
   override suspend fun ping(): ServerInfo = error("not used by the browse suite")
   override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by the browse suite")

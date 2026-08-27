@@ -97,16 +97,28 @@ class IntegrationCredentialStore @Inject constructor(
     // NOT used here, and no policy is injected into this class for that reason.
     val url = (IntegrationBaseUrl.parse(rawUrl, CleartextPolicy.Forbidden) as? BaseUrlResult.Valid)
       ?.url ?: return null
+    // Exhaustive over both services since Task 8. The `service` argument decides the type, so a
+    // `read` that ignored it would hand a Bindery blob back as a Lidarr credential --
+    // `IntegrationCredentialStoreTest`'s `aStoredBinderyEntryReadsAsBinderysNotAsLidarrs` is the
+    // observation that refuses it, and it needed the second member to exist before it could be
+    // written at all.
     return when (service) {
       IntegrationService.LIDARR -> IntegrationCredentials.Lidarr(url, secret)
-      // Task 7 replaces this with the real Bindery member. Until then a Bindery entry cannot be
-      // written (there is no member to write) and therefore cannot be read.
-      IntegrationService.BINDERY -> null
+      IntegrationService.BINDERY -> IntegrationCredentials.Bindery(url, secret)
     }
   }
 
+  /**
+   * The secret to seal, per member.
+   *
+   * Both services happen to use a single API key, so both arms read `.apiKey` — but they are two
+   * arms rather than one `credentials.apiKey` on the supertype deliberately: the sealed type does
+   * not declare a secret, so a third service authenticating some other way is a compile error here
+   * rather than a field that quietly means something different.
+   */
   private fun secretOf(credentials: IntegrationCredentials): String = when (credentials) {
     is IntegrationCredentials.Lidarr -> credentials.apiKey
+    is IntegrationCredentials.Bindery -> credentials.apiKey
   }
 
   companion object {

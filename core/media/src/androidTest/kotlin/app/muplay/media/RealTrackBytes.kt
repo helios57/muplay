@@ -41,6 +41,9 @@ object RealTrackBytes {
    */
   const val AUDIOBOOK_LIBRARY_ID = 2
 
+  private const val MP3_SUFFIX = "mp3"
+  private const val OPUS_SUFFIX = "opus"
+
   private val http: OkHttpClient by lazy { OkHttpClient() }
 
   private val client: SubsonicClient by lazy {
@@ -53,11 +56,38 @@ object RealTrackBytes {
   private var books: List<Song>? = null
   private val bytesById = mutableMapOf<String, ByteArray>()
 
-  /** The three seeded music tracks, in title order — "Track 1", "Track 2", "Track 3". */
-  suspend fun musicTracks(): List<Song> =
+  /** Every song in the seeded music library, in title order. */
+  private suspend fun allMusic(): List<Song> =
     tracks ?: client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
       .sortedBy { it.title }
       .also { tracks = it }
+
+  /**
+   * The three seeded **mp3** music tracks, in title order — "Track 1", "Track 2", "Track 3".
+   *
+   * Filtered rather than taken whole, and the filter is the interesting part. Plan 3 Task 12 added
+   * a fourth song to this library, `Offset Track`: thirty seconds of Opus, which
+   * `StreamFormat.forSuffix` forces through Navidrome's transcoder and whose first ten seconds are
+   * digital silence. Every consumer of this list assumes the opposite of all three of those --
+   * `MediaCacheTest` asserts the two tracks it draws are the same *length* because the mp3s are one
+   * recipe, `GaplessTest` measures the joins of a three-track queue, and `GainAudioProcessorTest`
+   * plays a fixture to the end. Sorted by title, `Offset Track` would have arrived at index 0 of
+   * all of them.
+   *
+   * [opusTrack] is where that file is reached deliberately.
+   */
+  suspend fun musicTracks(): List<Song> = allMusic().filter { it.suffix.equals(MP3_SUFFIX, true) }
+
+  /**
+   * The corpus's one Opus file — the only track this app's own playback path transcodes, and
+   * therefore the only one whose seek goes through `timeOffset`. See `ci/seed-fixtures.sh` for the
+   * shape of its audio and why it has that shape.
+   *
+   * `single`, not `first`: if a second Opus file is ever seeded, "the Opus fixture" stops naming one
+   * thing and every assertion built on its region boundaries needs re-reading rather than silently
+   * picking whichever came back first.
+   */
+  suspend fun opusTrack(): Song = allMusic().single { it.suffix.equals(OPUS_SUFFIX, true) }
 
   /**
    * Every seeded audiobook **file**, longest first.
@@ -80,8 +110,7 @@ object RealTrackBytes {
       .also { books = it }
 
   /** One seeded mp3 — the single track `MuPlayDataSourceFactoryTest` plays. */
-  suspend fun oneMp3Track(): ByteArray =
-    bytesOf(musicTracks().first { it.suffix?.lowercase() == "mp3" })
+  suspend fun oneMp3Track(): ByteArray = bytesOf(musicTracks().first())
 
   suspend fun bytesOf(song: Song): ByteArray = bytesById.getOrPut(song.id) {
     val request = Request.Builder().url(rawStreamUrl(song)).build()

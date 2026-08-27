@@ -52,6 +52,18 @@ class IntegrationCredentialStoreTest {
     apiKey = API_KEY,
   )
 
+  /**
+   * The second service, which Task 8 made constructible.
+   *
+   * A **different** secret from [lidarr]'s, and a longer one: a real Bindery key is 64 lowercase
+   * hex characters where a real Lidarr key is 32. Two distinguishable values are what turn "both
+   * are readable" into "neither's secret leaked into the other".
+   */
+  private val bindery = IntegrationCredentials.Bindery(
+    baseUrl = url("https://bindery.example.com"),
+    apiKey = BINDERY_API_KEY,
+  )
+
   @Before
   fun setUp() {
     val context = ApplicationProvider.getApplicationContext<Context>()
@@ -207,16 +219,94 @@ class IntegrationCredentialStoreTest {
 
   @Test
   fun configuredReportsExactlyTheServicesThatAreConfigured() = runTest {
-    // Three of the four combinations, in order, on one store. The fourth (both configured) needs
-    // Task 7's Bindery member to exist; the alias half of it is asserted below, which is the part
-    // that can be expressed today.
+    // **All four combinations, in order, on one store** -- neither, Lidarr only, Bindery only,
+    // both. Task 2 could express only three of them because `IntegrationCredentials` had no
+    // Bindery member; Task 8 added it, and the fourth is the one the plan's severability contract
+    // names as this plan's most likely defect.
     assertThat(store.configured.first().keys).isEmpty()
 
     store.save(lidarr)
     assertThat(store.configured.first().keys).containsExactly(IntegrationService.LIDARR)
 
     store.clear(IntegrationService.LIDARR)
-    assertThat(store.configured.first().keys).isEmpty()
+    store.save(bindery)
+    assertThat(store.configured.first().keys).containsExactly(IntegrationService.BINDERY)
+
+    store.save(lidarr)
+    // `containsExactly` on a map's key set is order-sensitive, and the order here is
+    // `IntegrationService.entries` -- declaration order -- rather than the order they were saved
+    // in. That is load-bearing: every configuration screen renders this map, and a map whose order
+    // followed insertion would put the services in a different order for every user.
+    assertThat(store.configured.first().keys)
+      .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
+
+    store.clear(IntegrationService.BINDERY)
+    assertThat(store.configured.first().keys).containsExactly(IntegrationService.LIDARR)
+  }
+
+  /**
+   * The fourth configuration state, end to end: **both services at once, independent in every
+   * direction.**
+   *
+   * This is the test Task 2 wrote a comment about and could not write, and it is the one the
+   * per-service Keystore alias exists for. With a shared key, `clear(LIDARR)` either leaves a key
+   * behind that still opens Bindery's blob -- so "forget this" would not mean it -- or destroys it
+   * and silently signs the user out of a service they did not ask to forget. Both failures are
+   * invisible to a test that configures one service.
+   */
+  @Test
+  fun bothServicesConfiguredAtOnceAreIndependentInEveryDirection() = runTest {
+    store.save(lidarr)
+    store.save(bindery)
+
+    // Both readable, each its own type, neither's secret leaking into the other. The two secrets
+    // differ in value *and* in length, so a `load` that returned one for both fails here rather
+    // than passing on a shared fixture value.
+    assertThat(store.configured.first().keys)
+      .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
+    val loadedLidarr = store.load(IntegrationService.LIDARR)
+    val loadedBindery = store.load(IntegrationService.BINDERY)
+    assertThat(loadedLidarr).isInstanceOf(IntegrationCredentials.Lidarr::class.java)
+    assertThat(loadedBindery).isInstanceOf(IntegrationCredentials.Bindery::class.java)
+    assertThat((loadedLidarr as IntegrationCredentials.Lidarr).apiKey).isEqualTo(API_KEY)
+    assertThat((loadedBindery as IntegrationCredentials.Bindery).apiKey).isEqualTo(BINDERY_API_KEY)
+    assertThat(loadedLidarr.baseUrl.value).isEqualTo("https://lidarr.example.com/")
+    assertThat(loadedBindery.baseUrl.value).isEqualTo("https://bindery.example.com/")
+
+    store.clear(IntegrationService.LIDARR)
+
+    // Forgetting one leaves the other completely intact -- entries and Keystore key alike.
+    assertThat(store.configured.first().keys).containsExactly(IntegrationService.BINDERY)
+    assertThat((store.load(IntegrationService.BINDERY) as IntegrationCredentials.Bindery).apiKey)
+      .isEqualTo(BINDERY_API_KEY)
+    assertThat(IntegrationCredentialStore.keyExists(IntegrationService.BINDERY)).isTrue()
+    assertThat(IntegrationCredentialStore.keyExists(IntegrationService.LIDARR)).isFalse()
+  }
+
+  /**
+   * The same independence for the secret itself, at the one layer a `load` cannot see.
+   *
+   * Two services, two aliases, two blobs. If both were sealed under one Keystore key this would
+   * still pass -- which is why the alias assertion above exists as well -- but if `save` wrote both
+   * secrets into one *entry*, or `secretOf` returned a constant, only this fails.
+   */
+  @Test
+  fun eachServicesSecretIsStoredUnderItsOwnEntry() = runTest {
+    store.save(lidarr)
+    store.save(bindery)
+
+    val preferences = dataStore.data.first()
+    val lidarrBlob = preferences[stringPreferencesKey("lidarr_sealed_secret")]
+    val binderyBlob = preferences[stringPreferencesKey("bindery_sealed_secret")]
+
+    // Positive first: both entries exist. Two nulls are "not equal" too, and a `save` that wrote
+    // nothing at all would satisfy the inequality below on its own.
+    assertThat(lidarrBlob).isNotNull()
+    assertThat(binderyBlob).isNotNull()
+    assertThat(lidarrBlob).isNotEqualTo(binderyBlob)
+    // ...and neither secret is on disk in the clear, under any key.
+    assertThat(preferences.asMap().values.map { it.toString() })
+      .noneMatch { it.contains(API_KEY) || it.contains(BINDERY_API_KEY) }
   }
 
   @Test
@@ -273,33 +363,68 @@ class IntegrationCredentialStoreTest {
   }
 
   /**
-   * A complete, **openable** Bindery entry on disk reads as not configured until Task 7 adds the
-   * member — and, critically, is not mistaken for Lidarr's.
+   * A Bindery entry planted **on disk** reads back as Bindery's, never as Lidarr's.
    *
-   * Planted the way a downgrade or a restore from a newer build would leave it: Bindery's own
-   * Keystore alias, its own two preference keys, a secret that really does open. Everything `read`
-   * checks passes, so the only thing that can decide the answer is the `when` over `service` — and
-   * a `read` that ignored its `service` argument would return a `Lidarr` credential here. That arm
-   * was reachable by no other test in this suite, which is exactly why it was worth writing rather
-   * than excusing with a lower coverage floor.
+   * Planted the way a restore or an older build's leftovers would leave it, rather than through
+   * `save`: Bindery's own Keystore alias, its own two preference keys, a secret that really does
+   * open. Everything `read` checks passes for both services, so **the only thing that can decide
+   * the answer is the `when` over `service`** — and a `read` that ignored its `service` argument
+   * would hand this blob back as a `Lidarr` credential carrying Bindery's admin key. That arm is
+   * reachable by no other test in this suite, and it is exactly the mistake the sealed type plus
+   * the compiler could *not* catch: both members have the same two-argument shape, so the wrong
+   * one compiles.
+   *
+   * Until Task 8 this test asserted `isNull()`, because there was no Bindery member to return.
+   * The planting is unchanged; only what the store may now answer is.
    */
   @Test
-  fun aStoredBinderyEntryReadsAsNotConfiguredRatherThanAsLidarrs() = runTest {
+  fun aStoredBinderyEntryReadsAsBinderysNotAsLidarrs() = runTest {
     store.save(lidarr)
     val sealed = KeystoreCipher.seal(
       KeystoreKeys.getOrCreate(IntegrationCredentialStore.keyAlias(IntegrationService.BINDERY)),
-      "bindery-secret",
+      BINDERY_API_KEY,
     )
     dataStore.edit {
       it[stringPreferencesKey("bindery_base_url")] = "https://bindery.example.com/"
       it[stringPreferencesKey("bindery_sealed_secret")] = Base64.getEncoder().encodeToString(sealed)
     }
 
-    assertThat(store.load(IntegrationService.BINDERY)).isNull()
-    // ...and it disturbs neither the service that IS configured nor what `configured` reports.
-    assertThat(store.configured.first().keys).containsExactly(IntegrationService.LIDARR)
+    val loaded = store.load(IntegrationService.BINDERY)
+    assertThat(loaded).isInstanceOf(IntegrationCredentials.Bindery::class.java)
+    assertThat((loaded as IntegrationCredentials.Bindery).apiKey).isEqualTo(BINDERY_API_KEY)
+    assertThat(loaded.service).isEqualTo(IntegrationService.BINDERY)
+    assertThat(loaded.baseUrl.value).isEqualTo("https://bindery.example.com/")
+    // ...and it disturbs neither the service that was already configured nor its secret.
+    assertThat(store.configured.first().keys)
+      .containsExactly(IntegrationService.LIDARR, IntegrationService.BINDERY)
     assertThat((store.load(IntegrationService.LIDARR) as IntegrationCredentials.Lidarr).apiKey)
       .isEqualTo(API_KEY)
+  }
+
+  /**
+   * The mirror of the test above, in the direction the first one cannot see.
+   *
+   * A `read` hardcoded to `IntegrationCredentials.Bindery` — the state this file would have been
+   * left in by a careless Task 8 edit — passes every Bindery assertion above and fails here. Two
+   * observations of one `when`, which is this project's rule for any value that could be a
+   * constant, applied to a value that is a *type*.
+   */
+  @Test
+  fun aStoredLidarrEntryStillReadsAsLidarrsNotAsBinderys() = runTest {
+    store.save(bindery)
+    val sealed = KeystoreCipher.seal(
+      KeystoreKeys.getOrCreate(IntegrationCredentialStore.keyAlias(IntegrationService.LIDARR)),
+      API_KEY,
+    )
+    dataStore.edit {
+      it[stringPreferencesKey("lidarr_base_url")] = "https://lidarr.example.com/"
+      it[stringPreferencesKey("lidarr_sealed_secret")] = Base64.getEncoder().encodeToString(sealed)
+    }
+
+    val loaded = store.load(IntegrationService.LIDARR)
+    assertThat(loaded).isInstanceOf(IntegrationCredentials.Lidarr::class.java)
+    assertThat((loaded as IntegrationCredentials.Lidarr).apiKey).isEqualTo(API_KEY)
+    assertThat(loaded.service).isEqualTo(IntegrationService.LIDARR)
   }
 
   /**
@@ -341,5 +466,16 @@ class IntegrationCredentialStoreTest {
      * shaped like a real Lidarr key (32 lowercase hex characters).
      */
     private const val API_KEY = "0123456789abcdef0123456789abcdef"
+
+    /**
+     * Bindery's, shaped like a real one: **64** lowercase hex characters, measured off a running
+     * `v1.32.1` whose generated key is 32 random bytes hex-encoded.
+     *
+     * Deliberately a different value *and* a different length from [API_KEY]. A store that sealed
+     * both services' secrets into one entry, or a `secretOf` that returned a constant, is caught by
+     * the difference; a fixture that reused one value for both would have hidden it.
+     */
+    private const val BINDERY_API_KEY =
+      "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
   }
 }

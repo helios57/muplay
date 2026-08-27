@@ -67,11 +67,17 @@ class BrowseResumeAudioTest {
     cacheDir = File(context.cacheDir, "resume-audio-${System.nanoTime()}")
   }
 
+  /**
+   * Guarded on `isInitialized`, because an un-guarded `@After` **replaces the real failure with its
+   * own**: a `@Before` that dies before the last `lateinit` is assigned leaves `tearDown` throwing
+   * `UninitializedPropertyAccessException`, and that is then the only message in the report. See
+   * `GaplessTest.tearDown` for the run that cost two lanes an afternoon.
+   */
   @After
   fun tearDown() {
     InstrumentationRegistry.getInstrumentation().runOnMainSync { players.forEach(ExoPlayer::release) }
     players.clear()
-    cacheDir.deleteRecursively()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
   }
 
   @Test

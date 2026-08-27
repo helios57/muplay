@@ -5,47 +5,50 @@ Kotlin and androidTest both compile. The app went from "cannot play audio" to
 playing in the background with a session, notification, lock-screen controls, a
 media cache, a player UI and proven gapless playback.
 
-## Where the plans stand
+## Where the plans stand — 2026-08-27 14:00
 
-Master green under `--no-build-cache`, pushed. **Zero `COVERAGE:` warnings across
-12 modules** — every class in the repo is gated. 267 mutation probes, 100 floors.
-The audiobook corpus is deployed: the library reports **9 items**, up from 4.
+Master green under `--no-build-cache`, pushed. **Zero ungated-class warnings**,
+121+ coverage floors, 373 mutation probes, signed 6.95 MB AAB that installs and
+plays audio on the emulator.
 
-| Plan | Merged | Notes |
+**58 of 82 tasks merged.**
+
+| Plan | Done | Remaining |
 | --- | --- | --- |
-| 1 — foundation | 8 of 8 | complete |
-| 2 — library & browse | 8 of 8 | complete |
-| 3 — playback core | 11 of 12 | T12 needs its own fixture window (adds an Opus file) |
-| 4 — audiobooks | 1 of 10 | corpus in; **T2–T10 are the critical path** |
-| 5 — Auto/Wear | 4 of 11 | T5 in flight |
-| 6 — casting | 5 of 12 | T5 in flight |
-| 7 — integrations | 3 of 11 | T4 in flight |
-| 8 — release & Play | 0 of 10 | T1–T4 in flight; **T5 done** (privacy policy + Data safety) |
+| 1 foundation · 2 library | 16/16 | complete |
+| 3 playback core | **12/12** | complete |
+| 4 audiobooks | 4/10 | T4, T8 in flight · T6, T7, T9, T10 |
+| 5 Auto/Wear | 6/11 | T6 in flight · T8, T9, T10, T11 |
+| 6 casting | 8/12 | T9 in flight · T10, T11, T12 |
+| 7 integrations | 6/11 | T7, T8 in flight · T9, T10, T11 |
+| 8 release & Play | 7/10 | T6 (store listing), T8 (reviewer access), T10 (form factors) |
 
-**40 of 82 tasks merged.** Not finished, and not review-ready: audiobooks — the
-headline feature — is one task in.
+## Lanes live
 
-## Lanes live now
+`p4t4` AudiobookRepository · `p4t8` sleep timer · `p5t6` voice+search ·
+`p6t9` handover (owes the `SimpleBasePlayer` wrapper Task 8 did not build) ·
+`p7t7` request-state mapping · `p7t8` Bindery.
 
-| Worktree | Task |
-| --- | --- |
-| `p4deploy` | Corpus deployment, live-suite reconciliation, the `coldTranscode` race |
-| `p6t5` | Casting T5 — `UpnpRenderer` |
-| `p7t4` | Integrations T4 — `:integrations:lidarr` |
-| `p5t5` | Auto T5 — playing from the tree |
-| `p8t1` | Release T1–T4 — icon, theme, R8, signing, versioning |
+## Remaining waves
 
-## Wave 2, ready but blocked on wave 1
+- **B** — P4 T6 (resume policy: the swap that makes per-book resume land on the
+  *second*, not just the file), P4 T7, P6 T10, P6 T12, P7 T9, P5 T8.
+- **C** — P4 T9 `:feature:book`, P5 T9/T10 watch surface + `WatchLink`,
+  P7 T10 `:feature:requests`, P8 T6 store listing.
+- **D, the gates** — P4 T10, P5 T11, P6 T11, P7 T11, P8 T10.
 
-Every one of these consumes something a running lane is producing, which is why
-none is dispatched yet:
+## Infrastructure, as of now
 
-- **Audiobooks T2** (schema 5, first Room migration) — needs the corpus verified
-- **Casting T7** (`CastRouter`) — needs `UpnpRenderer`
-- **Integrations T5** (Lidarr lookup) — needs the Lidarr module
-- **Auto T6** (voice and search) — needs T5's callback changes
-- **Playback T12** (transcoded seek, Opus fixture) — needs the container, which
-  the deploy lane holds
+- **A 500 GB disk was hot-added live** from the hypervisor (`192.168.0.10`,
+  domain `ubuntu24.04`, identity confirmed by MAC `52:54:00:6d:4e:64`): qcow2 on
+  `/media/raid5`, `virsh attach-disk --live --persistent`, ext4, mounted at
+  `/mnt/data`, `fstab` with `nofail`. **No reboot** — uptime unbroken.
+- `/` is at ~34 GB free. **`~/.gradle` (~28 GB) still needs relocating to
+  `/mnt/data`** — deferred because every lane is building against it.
+- `docker info` reports its root as `/var/lib/docker`, but that path is 4 KB and
+  is not a mountpoint, so Docker's real data is elsewhere on `/`. Unresolved.
+- Gradle capped at `workers.max=3`, `priority=low` (user's IntelliJ and Rust
+  builds share this host). Emulator `muplay37` and `ci-navidrome-1` both healthy.
 
 ## Open decisions, deliberately not made
 

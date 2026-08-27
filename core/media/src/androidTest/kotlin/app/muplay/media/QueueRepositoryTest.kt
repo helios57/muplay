@@ -14,6 +14,7 @@ import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -42,8 +43,16 @@ class QueueRepositoryTest {
     val streamCalls = mutableListOf<Pair<String, StreamFormat>>()
     val coverArtCalls = mutableListOf<Pair<String, Int?>>()
 
-    override fun streamUrl(songId: String, format: StreamFormat): String {
+    /**
+     * The `timeOffsetSeconds` each `streamUrl` call carried. Building a queue must never ask for
+     * one -- an offset is a *seek*, decided later by `TranscodeSeek` on the item that is already
+     * playing -- so every entry here is expected to be null.
+     */
+    val streamOffsets = mutableListOf<Int?>()
+
+    override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String {
       streamCalls += songId to format
+      streamOffsets += timeOffsetSeconds
       return "https://host/rest/stream?id=$songId&format=${format.wireValue}"
     }
 
@@ -55,6 +64,7 @@ class QueueRepositoryTest {
     // Everything else on the port is out of this test's scope. `error(...)` rather than a benign
     // default: a call that should never happen must fail loudly rather than return something
     // plausible that the test would then be quietly asserting about.
+    override suspend fun capabilities(): ServerCapabilities = error("not used by QueueRepositoryTest")
     override suspend fun ping(): ServerInfo = error("not used by QueueRepositoryTest")
     override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by QueueRepositoryTest")
     override suspend fun getScanStatus(): ScanStatus = error("not used by QueueRepositoryTest")

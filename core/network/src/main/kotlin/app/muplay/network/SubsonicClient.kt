@@ -9,6 +9,7 @@ import app.muplay.model.MusicLibrary
 import app.muplay.model.ReplayGain
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -228,19 +229,24 @@ class SubsonicClient(
   /**
    * An authenticated `/rest/stream` URL — see [SubsonicSource.streamUrl].
    *
-   * Three parameters are conspicuously absent, and each absence is a decision:
+   * **Two** parameters are conspicuously absent, and each absence is a decision. There were three
+   * until Task 12; see below for what happened to the third.
    *
    * - **`estimateContentLength`.** It makes a transcoded response carry a *guessed*
    *   `Content-Length`. ExoPlayer trusts that header for seeking, so a guess produces seeks that
    *   land in the wrong place with nothing reported anywhere.
-   * - **`timeOffset`.** Only meaningful on a transcode, and only when the server advertises the
-   *   `transcodeOffset` extension. Task 12 adds it as an explicit parameter alongside that
-   *   capability gate; a request that does not ask for an offset must not carry one, because on a
-   *   `format=raw` request the server ignores it and a reader misreads it.
    * - **`maxBitRate` on a raw request.** `format=raw` disables transcoding, so a bitrate cap
    *   beside it is a parameter the server ignores and a reader misreads.
+   *
+   * The third used to be `timeOffset`, and it is now **conditional** rather than absent -- which is
+   * the interesting part, because the condition is the whole feature. `timeOffset` means something
+   * only to the transcoder, so it rides along exactly when the caller asked for one *and* the
+   * request is a transcode, and never on a `format=raw` request, where the server ignores it and a
+   * reader misreads it. Whether the caller may ask at all is the `transcodeOffset` extension's
+   * question, asked through [capabilities] and answered by `:core:media`'s `TranscodeOffsetSupport`;
+   * this method does not second-guess it.
    */
-  override fun streamUrl(songId: String, format: StreamFormat): String {
+  override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String {
     val builder = normalizeBaseUrl(credentials.baseUrl).toHttpUrl().newBuilder()
       .addPathSegments("rest/stream")
       .addQueryParameter("id", songId)
@@ -248,9 +254,25 @@ class SubsonicClient(
     if (format is StreamFormat.Mp3) {
       builder.addQueryParameter("maxBitRate", format.maxBitRateKbps.toString())
     }
+    if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {
+      // Clamped rather than rejected: `Player.seekTo(-1)` is a legal call on a Media3 player, and
+      // the second the negative reaches the wire it is a server-side surprise instead of a seek to
+      // the top. `TranscodeSeek` clamps too; both, because neither is the other's guard.
+      builder.addQueryParameter("timeOffset", timeOffsetSeconds.coerceAtLeast(0).toString())
+    }
     authParams().forEach { (name, value) -> builder.addQueryParameter(name, value) }
     return builder.build().toString()
   }
+
+  /**
+   * Delegates to [CapabilityNegotiator] rather than re-deriving anything -- see
+   * [SubsonicSource.capabilities].
+   *
+   * A one-line override on purpose: the three-tier rule (ping, then extensions, and what each
+   * failure means) is one decision and it lives in one class. A second copy of it here would be a
+   * second answer to "does this server speak OpenSubsonic", free to drift from the first.
+   */
+  override suspend fun capabilities(): ServerCapabilities = CapabilityNegotiator(this).negotiate()
 
   private fun AlbumBody.toAlbum(musicFolderId: Int) = Album(
     id = id,

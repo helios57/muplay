@@ -110,3 +110,78 @@ internal data class RootFolderBody(
  */
 @Serializable
 internal data class ProfileBody(val id: Int = 0, val name: String? = null)
+
+/**
+ * One page of Lidarr's queue (`PagingResource<QueueResource>`).
+ *
+ * **Only `records` is declared.** The response also carries `page`, `pageSize`, `totalRecords`,
+ * `sortKey` and `sortDirection`; this client reads none of them, and a field this client parses is
+ * a field it then owns. (Declaring the unread four also measured **2/7 = 0.2857 LINE**, under this
+ * module's 0.40 DTO floor, because a `data class`'s generated members land on lines nothing calls
+ * -- so the principle and the measurement pointed the same way.)
+ *
+ * **`records` is nullable, and the plan's stated reason for that is wrong.** The plan predicted the
+ * array would be *omitted* when empty under `WhenWritingNull`. Measured against the live
+ * `3.1.0.4875-ls40`, an empty queue answers `"records":[]` -- the key is **present**, because an
+ * empty list is not a null one and `WhenWritingNull` never fires on it. The nullability is kept on
+ * a reason that survives the correction: a body that is *not* a queue page at all -- a reverse
+ * proxy's JSON error document, a truncated response -- must degrade to "nothing is downloading"
+ * rather than to a `SerializationException` a status poll cannot show anyone.
+ */
+@Serializable
+internal data class QueuePageBody(val records: List<QueueRecordBody>? = null)
+
+/**
+ * One queue record.
+ *
+ * **`sizeleft`, lower-case `l`.** `QueueResource` declares `Sizeleft` as a single word, and
+ * `JsonNamingPolicy.CamelCase` lower-cases only the leading capital -- so it reaches the wire as
+ * `sizeleft` and **not** `sizeLeft`. A client reading `sizeLeft` gets kotlinx's default `0.0` on
+ * every record and shows every download at 100% forever, with no parse error anywhere.
+ *
+ * **Not observed on a live wire, and that is a limitation rather than an omission.** A queue record
+ * exists only while a download client is working, and the container this task ran against has no
+ * download client and no indexer; `GET /api/v1/queue` answered `"records":[]` on every call. The
+ * field set here rests on `QueueResource.cs` and the plan's provenance table, and
+ * `fixtures/lidarr/queue-downloading.json` is **constructed from that source, not captured** --
+ * which its own header says, because a fixture that claims to be a capture and is not is worse
+ * than no fixture. `LiveLidarrTest` is where a real record should be asserted the day this
+ * container grows a download client.
+ *
+ * The record's own `id` is deliberately not declared: the queue is a live merge of the download
+ * client's queue and pending releases, so it is not durable across polls and every correlation this
+ * app makes is on [albumId].
+ */
+@Serializable
+internal data class QueueRecordBody(
+  val albumId: Int? = null,
+  val artistId: Int? = null,
+  val size: Double = 0.0,
+  val sizeleft: Double = 0.0,
+  val trackedDownloadState: String? = null,
+  val trackedDownloadStatus: String? = null,
+  val errorMessage: String? = null,
+)
+
+/**
+ * `GET /api/v1/album/{id}`, reduced to the one nested object a status poll needs.
+ *
+ * The other twenty-one top-level fields a real response carries -- `id` among them -- are dropped
+ * by `ignoreUnknownKeys`. See `fixtures/lidarr/album-with-statistics.json`, captured verbatim from
+ * the live container.
+ */
+@Serializable
+internal data class AlbumWithStatisticsBody(val statistics: AlbumStatisticsBody? = null)
+
+/**
+ * `AlbumStatisticsResource`, reduced to the two integers that decide "is it here yet".
+ *
+ * **`percentOfTracks` is on this resource and is deliberately not read.** It is a `double` on a
+ * **0-100** scale, not 0-1, so a client that assumed the other convention shows `0.73%` forever on
+ * a fully-downloaded album. Measured on the live container it reads `0` beside
+ * `trackFileCount: 0, totalTrackCount: 10` -- a value consistent with *either* scale and therefore
+ * settling nothing, which is exactly why this client compares two integers instead. `trackCount`
+ * and `sizeOnDisk` are also present and also unread.
+ */
+@Serializable
+internal data class AlbumStatisticsBody(val trackFileCount: Int = 0, val totalTrackCount: Int = 0)

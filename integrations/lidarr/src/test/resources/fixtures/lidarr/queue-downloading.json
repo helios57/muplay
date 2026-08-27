@@ -1,0 +1,63 @@
+{
+    "page": 1,
+    "pageSize": 100,
+    "sortKey": "timeleft",
+    "sortDirection": "descending",
+    "totalRecords": 3,
+    "records": [
+        {
+            "id": 1401,
+            "artistId": 5,
+            "albumId": 6,
+            "quality": {
+                "quality": { "id": 6, "name": "FLAC" },
+                "revision": { "version": 1, "real": 0, "isRepack": false }
+            },
+            "size": 419430400.0,
+            "title": "Miles Davis - Kind of Blue (1959) [FLAC]",
+            "sizeleft": 104857600.0,
+            "timeleft": "00:04:12",
+            "status": "downloading",
+            "trackedDownloadStatus": "ok",
+            "trackedDownloadState": "downloading",
+            "statusMessages": [],
+            "downloadId": "5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C0D",
+            "protocol": "usenet",
+            "downloadClient": "SABnzbd",
+            "indexer": "an indexer",
+            "outputPath": "/downloads/complete/music"
+        },
+        {
+            "id": 1402,
+            "artistId": 5,
+            "albumId": 7,
+            "size": 268435456.0,
+            "title": "Miles Davis - Aura (1989) [MP3-320]",
+            "sizeleft": 0.0,
+            "status": "completed",
+            "trackedDownloadStatus": "warning",
+            "trackedDownloadState": "importPending",
+            "statusMessages": [
+                {
+                    "title": "Miles Davis - Aura (1989) [MP3-320]",
+                    "messages": ["Found matching album but release was not matched"]
+                }
+            ],
+            "downloadId": "0D9C8B7A6F5E4D3C2B1A0F9E8D7C6B5A",
+            "protocol": "torrent",
+            "downloadClient": "qBittorrent"
+        },
+        {
+            "id": 1403,
+            "size": 134217728.0,
+            "title": "Some Artist - Some Album",
+            "sizeleft": 134217728.0,
+            "errorMessage": "No files found are eligible for import in /downloads/complete/music/Some.Album",
+            "status": "completed",
+            "trackedDownloadStatus": "error",
+            "trackedDownloadState": "importFailed",
+            "statusMessages": [],
+            "protocol": "torrent"
+        }
+    ]
+}

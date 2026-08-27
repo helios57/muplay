@@ -46,4 +46,20 @@ data class ServerCapabilities(
    * the unversioned [supports] overload above is a convenience, never a substitute for this one.
    */
   fun supports(name: String, version: Int): Boolean = extensions[name]?.contains(version) == true
+
+  companion object {
+
+    /**
+     * The one OpenSubsonic extension this project gates a feature on, by its wire name.
+     *
+     * Here, in `:core:model`, and not beside its consumer, because the two things that must agree
+     * about this string sit on opposite sides of a module dependency: `:core:media`'s
+     * `TranscodeOffsetSupport` asks the question, and `:core:network`'s `LiveNavidromeTest` asserts
+     * the pinned container still answers it. `:core:network` cannot see `:core:media`, so a
+     * constant living there would have to be transcribed into the live test -- and a transcribed
+     * protocol name is a second truth that goes stale in exactly the direction that matters: the
+     * gate would quietly stop matching while the test that watches the server stayed green.
+     */
+    const val TRANSCODE_OFFSET_EXTENSION: String = "transcodeOffset"
+  }
 }
