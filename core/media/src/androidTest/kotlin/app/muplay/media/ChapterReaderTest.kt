@@ -76,6 +76,7 @@ class ChapterReaderTest {
   private fun read(title: String): List<Chapter> = runBlocking {
     val song = song(title)
     reader.read(
+      mediaId = song.id,
       uri = RealTrackBytes.source().streamUrl(
         song.id,
         StreamFormat.forSuffix(song.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS),

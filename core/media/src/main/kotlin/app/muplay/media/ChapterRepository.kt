@@ -46,6 +46,7 @@ class ChapterRepository @Inject constructor(
     val source = sourceProvider.current()
     val format = StreamFormat.forSuffix(song.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS)
     val chapters = chapterReader.read(
+      mediaId = song.id,
       uri = source.streamUrl(song.id, format),
       contentDurationMs = song.durationSeconds * 1_000L,
     )

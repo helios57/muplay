@@ -39,6 +39,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ChapterRepositoryTest {
 
+  // Every `@Test` below declares `: Unit` explicitly. `fun x() = runBlocking { .. }` infers its
+  // return type from the block's last expression, and most AssertJ assertions return the assert
+  // object -- JUnit 4 then refuses the whole class at load time with "Invalid test class ...
+  // Method x() should be void", naming four methods and running none. Measured on the emulator;
+  // the plan's listing for this class has the same shape. `isEmpty()` happens to return `void`,
+  // which is why one of the five looked fine.
+
+
   private lateinit var context: Context
   private lateinit var db: MuPlayDatabase
   private lateinit var repository: ChapterRepository
@@ -95,7 +103,7 @@ class ChapterRepositoryTest {
     runBlocking { db.chapterDao().findScan(song(title).id)?.scannedAtEpochMs }
 
   @Test
-  fun aSecondReadOfTheSameBookIsServedFromRoomWithoutReParsing() = runBlocking {
+  fun aSecondReadOfTheSameBookIsServedFromRoomWithoutReParsing(): Unit = runBlocking {
     val first = repository.chaptersFor(song("Second Book"))
     val afterFirst = requests.get()
 
@@ -117,7 +125,7 @@ class ChapterRepositoryTest {
   }
 
   @Test
-  fun aChapterlessFileIsProbedOnceAndThenRemembered() = runBlocking {
+  fun aChapterlessFileIsProbedOnceAndThenRemembered(): Unit = runBlocking {
     // The negative cache, which is the common case rather than the rare one: most audiobook files
     // in the world carry no chapter atoms. Without `chapter_scans` this file is re-probed over
     // HTTP every time a screen opens -- `find` returning nothing is ambiguous between "no
@@ -138,7 +146,7 @@ class ChapterRepositoryTest {
   }
 
   @Test
-  fun oneBooksCachedChaptersAreNotAnotherBooksChapters() = runBlocking {
+  fun oneBooksCachedChaptersAreNotAnotherBooksChapters(): Unit = runBlocking {
     // Two books, two answers, from one cache. With one book, "cached chapters for X" and "the
     // cached chapters" are the same query.
     repository.chaptersFor(song("Second Book"))
@@ -159,7 +167,7 @@ class ChapterRepositoryTest {
   }
 
   @Test
-  fun forgettingAFileMakesTheNextReadParseItAgain() = runBlocking {
+  fun forgettingAFileMakesTheNextReadParseItAgain(): Unit = runBlocking {
     repository.chaptersFor(song("Test Book"))
     val afterFirst = requests.get()
 
@@ -180,7 +188,7 @@ class ChapterRepositoryTest {
   }
 
   @Test
-  fun readingAWholeBookAtOnceReturnsAMapKeyedByMediaId() = runBlocking {
+  fun readingAWholeBookAtOnceReturnsAMapKeyedByMediaId(): Unit = runBlocking {
     // Deliberately mixed: a four-chapter book, a two-chapter book and a chapterless file. A batch
     // read that returned one entry, that keyed by title, or that gave every key the same list
     // fails here and passes every single-song test above.

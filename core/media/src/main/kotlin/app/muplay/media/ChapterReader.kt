@@ -47,13 +47,25 @@ class ChapterReader @Inject constructor(
 ) {
 
   /**
-   * The chapters of the file at [uri], ordered, de-duplicated and with every end time populated.
+   * The chapters of [mediaId]'s file at [uri], ordered, de-duplicated and with every end time
+   * populated.
    *
    * [contentDurationMs] fills the **last** chapter's end when the container did not carry one; the
    * caller already knows it from `Song.durationSeconds`, so nothing here has to guess.
+   *
+   * **[mediaId] is a parameter because [TrackIdCacheKeyFactory] makes it one.** The plan's listing
+   * for this class read `read(uri, contentDurationMs)` and built `MediaItem.fromUri(uri)`, which
+   * cannot work in this module: every request through [MuPlayDataSourceFactory] reaches a
+   * `CacheDataSource` whose key factory **throws** [MissingCacheKeyException] on a `DataSpec` with
+   * no key rather than falling back to the URI. Measured on the emulator -- all six tests in
+   * `ChapterReaderTest` died with *"A media request reached the cache with no custom cache key
+   * (track Ra14Y8yMKT8YPrtrt6delD)"*. Supplying the key is the fix that honours the invariant
+   * rather than routing around it, and it is worth having on its own: a chapter probe pulls the
+   * file's `moov` atom, and the next thing that happens to an audiobook is that it is played.
    */
-  suspend fun read(uri: String, contentDurationMs: Long): List<Chapter> = withContext(Dispatchers.IO) {
-    MetadataRetriever.Builder(context, MediaItem.fromUri(uri))
+  suspend fun read(mediaId: String, uri: String, contentDurationMs: Long): List<Chapter> = withContext(Dispatchers.IO) {
+    val item = MediaItem.Builder().setUri(uri).setCustomCacheKey(mediaId).build()
+    MetadataRetriever.Builder(context, item)
       // Required. See the class documentation; deleting this line is a silent correctness bug.
       .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory.create()))
       .build()
