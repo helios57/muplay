@@ -8,6 +8,7 @@ import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -48,7 +49,9 @@ class SetupViewModelTest {
     override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> =
       error("not used by setup")
     override fun coverArtUrl(coverArtId: String, sizePx: Int?): String = error("not used by setup")
-    override fun streamUrl(songId: String, format: StreamFormat): String = error("not used by setup")
+    override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String =
+      error("not used by setup")
+    override suspend fun capabilities(): ServerCapabilities = error("not used by setup")
   }
 
   /**

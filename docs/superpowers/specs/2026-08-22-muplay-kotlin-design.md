@@ -208,6 +208,14 @@ Three-tier: `ping` → is `openSubsonic` present → `getOpenSubsonicExtensions`
 storing the **versions list, not a boolean** (`songLyrics` v1 and v2 differ).
 Unsupported features are **silent no-ops, not errors**.
 
+The first and, for now, only gate is `transcodeOffset` (§4, Streaming). "Silent
+no-op" means *the app does not offer the feature* — not that it accepts the
+request and discards it. Applied to a seek, the second reading is a silent wrong
+answer: the user drags the bar, the bar moves, the audio does not, and nothing is
+reported anywhere. (Plan 3 Task 12, which is also the first caller of
+`ServerCapabilities.supports` anywhere in this project — Plan 1 built the
+negotiation and until then nothing had ever asked it a question.)
+
 If the extensions call fails on a server that `ping` said was OpenSubsonic,
 degrade to "OpenSubsonic, no known extensions" — **not** to "not OpenSubsonic".
 Those are different facts and collapsing them loses information.
@@ -235,7 +243,21 @@ otherwise a failed sync is never retried and the mirror stays permanently stale.
   Range (206/416, clamping, byte-exact tail seek) and always sends
   `Content-Length`, never chunked.
 - Transcoded seek uses `timeOffset` (the `transcodeOffset` extension), which means
-  re-issuing the URI, not `AVTransport::Seek`.
+  re-issuing the URI, not `AVTransport::Seek`. **Gate it on the extension**, and
+  when the server does not advertise it, *withdraw the seek command* rather than
+  accepting a seek that does nothing — `COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM` is
+  removed from the player's command set, so the transport controls disable the bar.
+  A silent no-op on a seek is a silent wrong answer.
+  - And in the other direction, measured on a device in Plan 3 Task 12: an
+    `ExoPlayer` playing a live transcode does **not** offer that command by itself,
+    because a body with no `Content-Length` is an unseekable timeline window to
+    `ProgressiveMediaSource`. So the seam has to *grant* the command as well as
+    withdraw it, or the session refuses the seek before the re-issue is ever
+    reached.
+  - The re-issued item needs its **own media-cache key**. §4's "cache key derives
+    from the track id alone" was a complete identifier only while one track meant
+    one stream of bytes; an offset stream filed under the bare id is written into
+    the middle of the full track's cache entry.
 - **Handle HTTP 429** — Navidrome 0.62.0 added `Transcoding.MaxConcurrent`.
   Unhandled, this looks like random playback failure.
 - **Never send `estimateContentLength`.** It makes a transcoded response carry a
@@ -647,6 +669,17 @@ and `:feature:player`'s `PlayerScreenTest`/`MiniPlayerTest`. Tier 1 gained
 `Content-Length` on `format=raw`, `Accept-Ranges: none` on a live transcode, and auth
 carried on the URL) and the pure decisions `:core:media` deliberately keeps free of
 Android types.
+
+Plan 3 Task 12 added `TranscodeSeekJourneyTest` and `:core:media`'s
+`TranscodeSeekPlaybackTest`, and with them the **first Opus file in the CI corpus** —
+`Offset Track`, thirty seconds in three ten-second regions (silence, a quiet 440 Hz
+tone, a loud 1760 Hz one). It is the only fixture that reaches Navidrome's transcoder
+on the path a user takes, because `StreamFormat.forSuffix` forces `format=mp3` for
+`opus` and for nothing else; its regions make "did the seek land where it was asked"
+answerable from the decoder's own output; and its length is what stops a seek
+assertion being satisfied by playback simply reaching the position on its own, which
+is a defect this repository has already found three times on its five-second
+fixtures.
 
 Tier 2 grows with each plan. **A plan is not done until its journeys are in it.**
 

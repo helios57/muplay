@@ -199,6 +199,9 @@ BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 # de-duplication and the whole timeline are plain Kotlin and are gated here.
 CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
 BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
+# Plan 4 Task 5. A pure function over two Longs, on purpose, so the whole of it is reachable from
+# this JVM-only runner -- there is nothing about the smart-rewind table that needs a device.
+SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -216,10 +219,13 @@ BINDERY_CLIENT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/b
 BINDERY_API = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyApi.kt"
 BINDERY_EXC = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyException.kt"
 BINDERY_STATUS = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt"
+LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
+LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrSource.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
 AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
+TRANSCODE_SEEK = "core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt"
 
 # Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
 # exported playback session at all.
@@ -2720,10 +2726,12 @@ PROBES = [
     #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
     ("integrations/lidarr-api-key-header", LIDARR_INT,
      '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
-     # 6, RE-MEASURED AT TASK 5 (was 5): every test that reads the header back off a
-     # RecordedRequest reddens, and Task 5's `no new request carries the key anywhere but the
-     # header` -- which drives all four of the new endpoints -- is the sixth.
-     "the header carries whichever key the client was given", 6),
+     # 9, RE-MEASURED AT TASK 7 (was 6 at Task 5, 5 at Task 4). Every test that reads the header
+     # back off a RecordedRequest reddens, so this count grows with every task that adds an
+     # endpoint -- Task 7's `the queue and album progress requests carry the key only in the
+     # header` and the two queue/album requests it drives are the seventh through ninth.
+     # RE-MEASURE THIS WHENEVER A TASK ADDS A REQUEST. It has now been stale twice.
+     "the header carries whichever key the client was given", 9),
 
     # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
     #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
@@ -2732,20 +2740,21 @@ PROBES = [
     ("integrations/lidarr-api-key-on-url", LIDARR_INT,
      '.header("X-Api-Key", apiKey)',
      '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
-     # 4, RE-MEASURED AT TASK 5 (was 2): `LidarrWiringTest`'s factory test asserts the same
-     # negative one layer up, and Task 5 adds two more observations -- the whole-request scan over
-     # the four new endpoints, and the lookup's exact `encodedQuery`, which a smuggled parameter
-     # lengthens.
-     "no request this client makes carries the key on its url", 4),
+     # 7, RE-MEASURED AT TASK 7 (was 4 at Task 5, 2 at Task 4): `LidarrWiringTest`'s factory test
+     # asserts the same negative one layer up; Task 5 added the four-endpoint scan and the lookup's
+     # exact `encodedQuery`, which a smuggled parameter lengthens; Task 7 adds its own two-endpoint
+     # scan, its exact `encodedQuery` pair, and its no-query-value-is-the-key loop.
+     "no request this client makes carries the key on its url", 7),
 
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
     #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
     ("integrations/lidarr-accept-json", LIDARR_INT,
      '.header("Accept", "application/json")', '.header("Accept", "*/*")',
-     # 2, RE-MEASURED AT TASK 5 (was 1): the new four-endpoint scan asserts `Accept` too, which is
-     # the point of putting it on the interceptor rather than on each `@GET`.
-     "every request declares that it accepts json", 2),
+     # 3, RE-MEASURED AT TASK 7 (was 2 at Task 5, 1 at Task 4): Task 5's four-endpoint scan and
+     # Task 6's two-endpoint one both assert every non-key header, so each new whole-request scan
+     # adds one. Task 7's is the third.
+     "every request declares that it accepts json", 3),
 
     # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
     #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
@@ -3153,6 +3162,164 @@ PROBES = [
      # MEASURED, not predicted. also `a rejected search reports the status and bindery's own
      # message`, which pins `message` as the constant.
      2),
+    # ---- Plan 7 Task 7: what happened to the request ------------------------------------------
+    # Every count below is MEASURED, one probe at a time, on a committed tree; none is reasoned out.
+    # 24 of 24 were caught by the test named beside them, 0 missed, 0 broken.
+    #
+    # READ THIS BEFORE ADDING A PROBE FOR THE `IN_PROGRESS` SET. There is deliberately no probe
+    # that deletes an `in IN_PROGRESS ->` arm from `LidarrStatusMapper.map`, because there is no
+    # such arm: an in-progress state and an unrecognised one must return the SAME
+    # `Downloading(pct)` (the plan's fail-closed rule), so an arm for the first is behaviourally
+    # identical to the fall-through that already handles the second. Written the plan's way first
+    # and then probed: deleting that arm left ALL 117 TESTS GREEN. The arm was removed rather than
+    # papered over, and `status-known-states-drops-one` below is what now holds the set to Lidarr's
+    # nine.
+
+    # 1. The one state whose answer is a terminal success. `imported` reading as anything else
+    #    leaves a finished request looking unfinished forever.
+    ("integrations/lidarr-status-imported", LIDARR_STATUS,
+     "IMPORTED -> RequestStatus.Imported", "IMPORTED -> RequestStatus.Requested",
+     "every tracked download state maps to a status, and no two kinds of failure are conflated", 4),
+
+    # 2. Files on disk outrank the queue. Without this the status is whatever the download client
+    #    last said, which is wrong from the moment the queue item vanishes -- and it vanishes the
+    #    instant an import completes, which is exactly when the answer starts mattering.
+    ("integrations/lidarr-status-progress-beats-queue", LIDARR_STATUS,
+     "if (progress?.isComplete == true) return RequestStatus.Imported",
+     "if (false) return RequestStatus.Imported",
+     "complete statistics report Imported even while a queue item still exists", 1),
+
+    # 3. The two KINDS of failure, merged. This is the defect a nine-element `containsExactly`
+    #    written from the mutated behaviour would NOT catch, and it is why the mapper test asserts
+    #    the five outcome classes separately. "The download failed" sends a user to their indexer;
+    #    "Lidarr could not import the files" sends them to their permissions. Same 400, same
+    #    `Failed`, different fix.
+    ("integrations/lidarr-status-conflate-failures", LIDARR_STATUS,
+     'internal const val IMPORT_FAILED_REASON = "Lidarr could not import the files"',
+     'internal const val IMPORT_FAILED_REASON = "the download failed"',
+     "the five outcome classes are mutually distinguishable", 2),
+
+    # 4. Fail closed on an unknown state. A Lidarr newer than this client will send one, and
+    #    reporting `Failed` is a guess that reads to the user as a verdict.
+    ("integrations/lidarr-status-unknown-is-a-verdict", LIDARR_STATUS,
+     "else -> RequestStatus.Downloading(percentComplete(queueItem))",
+     "else -> RequestStatus.Failed(DOWNLOAD_FAILED_REASON)",
+     "an unrecognised state reports progress rather than a verdict", 9),
+
+    # 5. The enumeration itself, which is the ONLY falsifiable claim about `IN_PROGRESS` -- see the
+    #    note at the head of this family. Dropping a state changes no behaviour whatsoever.
+    ("integrations/lidarr-status-known-states-drops-one", LIDARR_STATUS,
+     'setOf("downloading", "importPending", "importing")',
+     'setOf("downloading", "importPending")',
+     "the client recognises exactly lidarrs nine states", 1),
+
+    # 6 and 7. Lidarr's own failure text, and what counts as text. "No files found are eligible for
+    #    import" tells a user something the generic wording cannot; a whitespace-only message tells
+    #    them nothing and must not displace it.
+    ("integrations/lidarr-status-detail-ignored", LIDARR_STATUS,
+     "val detail = queueItem.errorMessage?.takeIf { it.isNotBlank() }", "val detail: String? = null",
+     "a failure message from lidarr replaces the generic one", 2),
+    ("integrations/lidarr-status-blank-detail", LIDARR_STATUS,
+     "queueItem.errorMessage?.takeIf { it.isNotBlank() }",
+     "queueItem.errorMessage?.takeIf { it.isNotEmpty() }",
+     "a failure message from lidarr replaces the generic one", 1),
+
+    # 8-11. The percentage. Lidarr sends none, so all four of these are this client's arithmetic.
+    #    `percent-inverted` is the one that matters most: it does not break progress, it makes it
+    #    run backwards, and a progress bar counting down looks like a slow download rather than a
+    #    bug. `percent-not-clamped` is a -14% a real download client can produce.
+    ("integrations/lidarr-percent-not-clamped", LIDARR_STATUS,
+     "return (done * 100).roundToInt().coerceIn(0, 100)", "return (done * 100).roundToInt()",
+     "a percentage outside zero to one hundred is clamped rather than shown", 1),
+    ("integrations/lidarr-percent-truncated", LIDARR_STATUS,
+     "return (done * 100).roundToInt().coerceIn(0, 100)",
+     "return (done * 100).toInt().coerceIn(0, 100)",
+     "the percentage is rounded rather than truncated", 1),
+    ("integrations/lidarr-percent-negative-size", LIDARR_STATUS,
+     "if (item.sizeBytes <= 0.0) return null", "if (item.sizeBytes == 0.0) return null",
+     "a zero-size item has an unknown percentage rather than a divide by zero", 1),
+    ("integrations/lidarr-percent-inverted", LIDARR_STATUS,
+     "val done = (item.sizeBytes - item.sizeLeftBytes) / item.sizeBytes",
+     "val done = item.sizeLeftBytes / item.sizeBytes",
+     "the percentage is computed from size and sizeleft, at more than one value", 10),
+
+    # 12 and 13. `isComplete`, from both sides. The zero guard is not belt-and-braces: MEASURED on
+    #    a live 3.1.0.4875, an album seconds after a successful add has no releases, no tracks and
+    #    no statistics object at all, so `0 >= 0` is the state every request passes through. `>=`
+    #    rather than `==` matters for a multi-disc release that files more tracks than Lidarr counts.
+    ("integrations/lidarr-progress-zero-tracks", LIDARR_SOURCE,
+     "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
+     "get() = trackFileCount >= totalTrackCount",
+     "an album with no tracks yet is not complete, however many files it has", 1),
+    ("integrations/lidarr-progress-exact-equality", LIDARR_SOURCE,
+     "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
+     "get() = totalTrackCount > 0 && trackFileCount == totalTrackCount",
+     "complete statistics report Imported even while a queue item still exists", 1),
+
+    # 14. `sizeleft`, lower-case l -- the field this client would most like to have seen on a real
+    #     wire and has not (no download client on the pinned container). Reading the camelCase
+    #     spelling yields kotlinx's default 0.0 on every record and shows every download at 100%
+    #     forever, with no parse error anywhere.
+    ("integrations/lidarr-queue-sizeleft", LIDARR_CLIENT,
+     "sizeLeftBytes = record.sizeleft,", "sizeLeftBytes = 0.0,",
+     "sizeleft is read from the lower-case field lidarr actually sends", 4),
+
+    # 15 and 16. The two query parameters, neither of which has a safe default. MEASURED: a bare
+    #     `GET /api/v1/queue` really does answer `"pageSize": 10`. Accepting either default makes
+    #     the client stop seeing its own request -- at eleven concurrent downloads for the first,
+    #     and for any item whose artist Lidarr has not resolved for the second, which is precisely
+    #     the state a just-added album is in.
+    ("integrations/lidarr-queue-pagesize", LIDARR_CLIENT,
+     "private const val QUEUE_PAGE_SIZE = 100", "private const val QUEUE_PAGE_SIZE = 10",
+     "the queue is asked for a page big enough to contain the answer", 2),
+    ("integrations/lidarr-queue-unknown-artist-items", LIDARR_CLIENT,
+     "includeUnknownArtistItems = true", "includeUnknownArtistItems = false",
+     "the queue is asked for a page big enough to contain the answer", 2),
+
+    # 17 and 18. Two mapped queue fields, one representative of each risk. A defaulted state is a
+    #     constant standing in for a value -- and `"imported"` is the one that would silently mark
+    #     every request done. A dropped `albumId` is the correlation key for every later poll.
+    ("integrations/lidarr-queue-state-default", LIDARR_CLIENT,
+     "trackedDownloadState = record.trackedDownloadState.orEmpty(),",
+     'trackedDownloadState = record.trackedDownloadState ?: "imported",',
+     "a record missing its state fields reads as empty strings rather than failing", 1),
+    ("integrations/lidarr-queue-albumid-dropped", LIDARR_CLIENT,
+     "albumId = record.albumId,", "albumId = 0,",
+     "every queue record field is read from its own record", 3),
+
+    # 19. The id the poll asks about. A constant here reports on one album forever while the poll
+    #     itself keeps working -- the silent-wrong-answer class, on the read side.
+    ("integrations/lidarr-album-id-constant", LIDARR_CLIENT,
+     "call { api.album(albumId) }.statistics", "call { api.album(42) }.statistics",
+     "album progress is fetched by id and read from the statistics object", 1),
+
+    # 20 and 21. The 404 swallow, from both sides. Swallowing nothing surfaces a normal answer -- a
+    #     user deleted the album in Lidarr while MuPlay still holds the row -- as an error.
+    #     Swallowing everything hides a 401, which is the key having stopped working and is not
+    #     something a status poll may turn into "no progress information".
+    ("integrations/lidarr-album-404-not-swallowed", LIDARR_CLIENT,
+     "if (e.status == HTTP_NOT_FOUND) null else throw e", "throw e",
+     "an album that is gone yields null rather than throwing", 1),
+    ("integrations/lidarr-album-swallows-everything", LIDARR_CLIENT,
+     "if (e.status == HTTP_NOT_FOUND) null else throw e", "null",
+     "a failure that is not a 404 still propagates from album progress", 1),
+
+    # 22. "Lidarr has not counted yet" collapsed into "Lidarr counted zero of zero". MEASURED to be
+    #     a real wire shape, not a hypothetical one: a freshly added album carries no `statistics`
+    #     key at all. Only the second of the two could ever be mistaken for a count.
+    ("integrations/lidarr-album-no-statistics-zeroed", LIDARR_CLIENT,
+     "?.let { LidarrAlbumProgress(it.trackFileCount, it.totalTrackCount) }",
+     ".let { LidarrAlbumProgress(it?.trackFileCount ?: 0, it?.totalTrackCount ?: 0) }",
+     "an album with no statistics object yields null rather than a zeroed progress", 1),
+
+    # 23. The key smuggled into a header that is not `X-Api-Key`. The existing
+    #     `lidarr-api-key-on-url` covers the query string; this is the same leak by another name,
+    #     and no URL assertion can see it. A `User-Agent` carrying the key reaches every reverse
+    #     proxy access log exactly as a query parameter would.
+    ("integrations/lidarr-key-into-another-header", LIDARR_INT,
+     '.header("Accept", "application/json")',
+     '.header("Accept", "application/json")\n        .header("User-Agent", "MuPlay/" + apiKey)',
+     "the queue and album progress requests carry the key only in the header", 3),
 
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
@@ -3268,7 +3435,6 @@ PROBES = [
      # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
      # is the only fixture in the corpus that catches this at all.
      "Second Book's chapters are unequal in length and in order", 1),
-
     # ---- Plan 5 Task 5: what a tapped browse row expands to ------------------------------------
     #
     # ONLY THE ARITHMETIC IS HERE, AND THAT IS THIS RUNNER'S LIMIT RATHER THAN A CHOICE. The task's
@@ -3471,7 +3637,163 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+    # ---- Plan 4 Task 5: the smart-rewind band table, its four boundaries, and the clamp --------
+    # Every count below was MEASURED by applying the mutation alone against the committed tree and
+    # reading the result XML -- see task-5-report.md for the transcripts.
+    #
+    # The four `*-boundary-inclusive` probes are the point of the family and they are what the
+    # deliverable "every boundary asserted on both sides" buys: each turns one `<` into `<=`, which
+    # moves the answer at EXACTLY ONE input in the whole Long range. A suite that asserted each
+    # band at one interior value only -- the obvious way to test a lookup table, and the way that
+    # proves the table equals itself -- is green against all four of them.
+    ("rewind/band-table-constant", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs < Long.MAX_VALUE -> REWIND_MEDIUM_MS",
+     # The whole table collapsed to one value. Named against the five-band assertion because that
+     # is the one that cannot be satisfied by any constant at all.
+     "each band rewinds its own distinct amount", 9),
+    ("rewind/none-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs <= AWAY_NONE_MS -> REWIND_NONE_MS",
+     "the fifteen second threshold is where rewinding starts", 1),
+    ("rewind/short-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "    awayMs <= AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "the one minute threshold moves the answer", 1),
+    ("rewind/medium-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "    awayMs <= AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "the one hour threshold moves the answer", 1),
+    ("rewind/long-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_LONG_MS -> REWIND_LONG_MS",
+     "    awayMs <= AWAY_LONG_MS -> REWIND_LONG_MS",
+     "the one day threshold moves the answer", 1),
+    ("rewind/top-band-unbounded", SMART_REWIND,
+     "    else -> REWIND_MAX_MS",
+     "    else -> awayMs / AWAY_LONG_MS * REWIND_MAX_MS",
+     # The top band is the one band with no upper threshold, so "both sides" cannot pin it and a
+     # second, much larger input has to. A scale that keeps going rewinds a listener ten minutes
+     # into the previous chapter after a holiday. Note it answers 20_000 at exactly one day, so
+     # `the one day threshold moves the answer` is green against it -- the bound is only visible
+     # from far above the boundary.
+     "a month away rewinds the same as a day away and no more", 2),
+    ("rewind/swap-long-and-max", SMART_REWIND,
+     "  const val REWIND_LONG_MS = 10_000L\n  const val REWIND_MAX_MS = 20_000L",
+     "  const val REWIND_LONG_MS = 20_000L\n  const val REWIND_MAX_MS = 10_000L",
+     # Five DISTINCT values is what makes this catchable at all: with two bands sharing a number,
+     # a swap is invisible. `a month away ...` is NOT among the three, and that is the honest
+     # correction to this task's plan, which expected it: that test names `REWIND_MAX_MS` rather
+     # than `20_000L`, so it moves with the constant and stays green. It is only safe because the
+     # literal is asserted two tests above it.
+     "the one day threshold moves the answer", 3),
+    ("rewind/resume-no-clamp", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return storedPositionMs - rewind",
+     # A negative reaching `seekTo`. Two seconds into a chapter, gone for a week: -18_000.
+     "a rewind never goes past the start of the file", 3),
+    ("rewind/resume-clamp-after-subtracting", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return (storedPositionMs - rewind).coerceAtLeast(0L)",
+     # The shorter form, which reads better and is wrong at one input: `Long.MIN_VALUE - 20_000`
+     # wraps to a huge POSITIVE that a lower clamp cannot see. One failure, and it is the test
+     # that exists for it -- `a negative stored position is treated as the start` is green here,
+     # which is why the two are separate tests rather than two assertions in one.
+     "a stored position at the bottom of the range does not wrap into the far future", 1),
+    ("rewind/resume-ignores-away", SMART_REWIND,
+     "    val rewind = rewindMs(awayMs)",
+     "    val rewind = rewindMs(600_000L)",
+     # `resumePositionMs` as a function of one argument. The clamp tests are all green against
+     # this, because a clamped answer of 0 is 0 whatever the band said.
+     "the resume position is the stored position minus the band's rewind", 1),
+
+    # ---- Plan 3 Task 12: transcoded seek via `timeOffset` ---------------------------------------
+    #
+    # WHAT IS AND IS NOT HERE. This runner is JVM-only (see this file's own header), so only the
+    # mutations a JVM test can see are in this table. The two that matter most for this feature --
+    # `TranscodeOffsetSupport` defaulting to "supported", and `MuPlayer.getCurrentPosition` losing
+    # its offset base -- are visible ONLY on the device tier, where this runner reports MISSED with
+    # zero failures. Both were applied by hand against `:core:media`'s connected suite and the
+    # transcripts are in task-12-report.md; they are deliberately absent from this table rather
+    # than left MISSED, which is the treatment Task 7b's hand-built-player probe got for the same
+    # structural reason.
+    #
+    # 1. THE SHIPPED DEFECT, RESTORED. `timeOffset` is the only way to seek a live transcode at
+    #    all: one carries no `Content-Length` and answers `Accept-Ranges: none`, so ExoPlayer's own
+    #    seek either does nothing or resolves against a length it does not have -- and nothing
+    #    throws. Dropping the parameter leaves the whole feature compiling, every player test
+    #    green, the bar moving and the audio where it was.
+    ("stream/no-time-offset", CLIENT,
+     'builder.addQueryParameter("timeOffset", timeOffsetSeconds.coerceAtLeast(0).toString())',
+     'builder.addQueryParameter("nothing", "")',
+     # 3: the offset test, the zero test and the clamp test all read a parameter this line is the
+     # sole source of. It also reddens `LiveNavidromeTest`'s two body-size assertions and the whole
+     # device tier, neither of which this runner executes.
+     "a transcode asked for an offset carries it, in seconds", 3),
+
+    # 2. The same parameter, sent where the server ignores it. `format=raw` disables transcoding,
+    #    so `timeOffset` beside it is a parameter the server discards and a reader misreads -- the
+    #    same class as `maxBitRate` on a raw request, which this file already probes one family up.
+    #    Nothing observable breaks: every raw stream still plays.
+    ("stream/time-offset-on-raw", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (timeOffsetSeconds != null) {",
+     "a raw request never carries a time offset even when one is asked for", 1),
+
+    # 3. `timeOffset=0` mapped to absence. The two produce the same audio -- measured against the
+    #    container, 300369 bytes either way -- so this looks like a nicety and is not: `0` is what
+    #    "re-issue from the top" means, and collapsing it makes the re-issue path's own boundary
+    #    case take a different code path from every other seek, untested and unmeasurable.
+    ("stream/time-offset-zero-dropped", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null && timeOffsetSeconds > 0) {",
+     # 2, measured: `> 0` also swallows the *negative* case, so the clamp test goes red beside the
+     # zero test. Submitted as 1 and reported MISSED on the first run -- the stale-count case this
+     # table's own note describes, not a code regression.
+     "a zero offset is sent, because it is a real request and not an absent one", 2),
+
+    # 4. THE DECISION ITSELF, COLLAPSED TO WHAT EVERY PLAYER DID BEFORE THIS TASK. `InPlace` for a
+    #    transcode is the original bug exactly: a seek that appears to work and plays the wrong
+    #    audio. On the device it fails on the amplitude of the first frames out of the decoder;
+    #    here it fails on the decision.
+    ("seek/always-in-place", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered\n"
+     "    else -> SeekMethod.ReissueWithOffset(offsetSecondsFor(targetPositionMs))",
+     "    else -> SeekMethod.InPlace",
+     # 5, measured. Every test in `TranscodeSeekTest` that expects a `ReissueWithOffset` or a
+     # `NotOffered` goes red: the two-target one this names, the flooring one, the clamping one,
+     # the withdrawal one and the wire-value one. Submitted as 4 and reported MISSED on the first
+     # run -- the stale-count case, not a code regression.
+     "a transcode on a server that supports the extension is re-issued at the offset", 5),
+
+    # 5. The capability gate, ignored. `NotOffered` is the honest form of spec section 4's
+    #    "unsupported features are silent no-ops": offering a seek the server cannot perform is the
+    #    silent wrong answer that rule exists to forbid, and ignoring the gate re-creates it.
+    ("seek/capability-ignored", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered",
+     "    false -> SeekMethod.NotOffered",
+     "a transcode on a server without the extension does not offer the seek at all", 1),
+
+    # 6. Rounding instead of flooring. The server starts the transcode at or before the second
+    #    asked for, so a listener never loses audio they asked to hear; rounding up clips the first
+    #    word of a sentence and there is nothing to see. 5_999 is the only input in the suite that
+    #    tells the two programs apart, which is why it is there.
+    ("seek/offset-rounds-up", TRANSCODE_SEEK,
+     "    (targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND).toInt()",
+     "    Math.round(targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND.toDouble()).toInt()",
+     "the offset floors rather than rounds", 1),
+
+    # 7. The re-issued stream filed under the full track's cache key. `TrackIdCacheKeyFactory`
+    #    files every request under `MediaItem.customCacheKey`, so an offset stream carrying the
+    #    bare id is written INTO THE MIDDLE of the full track's cache entry, and every later read
+    #    of that track is served audio from the wrong place. Nothing observable breaks on the run
+    #    that causes it -- the audio is right THIS time -- which is the whole reason it needs a
+    #    probe rather than a comment.
+    ("seek/offset-shares-the-track-cache-key", TRANSCODE_SEEK,
+     '    if (timeOffsetSeconds <= 0) mediaId else "$mediaId$OFFSET_KEY_SEPARATOR$timeOffsetSeconds"',
+     "    mediaId",
+     "an offset stream is cached under its own key, and the top of the track under the plain id", 1),
 ]
+
 
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's
@@ -3572,6 +3894,12 @@ LATER_PROBE_FILES = [
     # list's own comment.
     REQUEST_STATUS,
     MEDIA_REQUEST,
+    # Plan 3 Task 12. Added AFTER its probes were -- the wrong order, and this list's own comment
+    # says exactly what that costs: `seek/always-in-place` mutated `TranscodeSeek.kt`, `revert()`
+    # named no file that matched, and `seek/capability-ignored` aborted the family with "PROBE TEXT
+    # NOT FOUND ... 0 matches" against the file the first probe had left mutated. The guard behaved
+    # correctly and `git status` showed the stray immediately. It still cost a run.
+    TRANSCODE_SEEK,
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,
@@ -3613,6 +3941,18 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 5. Added in the same edit as the ten `rewind/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    SMART_REWIND,
+    # Plan 7 Task 7, added in the same edit as the twenty-four `integrations/lidarr-{status,percent,
+    # progress,queue,album}-*` probes and `integrations/lidarr-key-into-another-header`, per this
+    # list's own comment. `LIDARR_INT` and `LIDARR_CLIENT` are already above; these two are new,
+    # and they are exactly the pair that makes forgetting this line easy -- most of the family
+    # mutates files already listed, so the first stray would come from probe 1 (`LIDARR_STATUS`)
+    # and abort probe 2 with "PROBE TEXT NOT FOUND ... 0 matches".
+    LIDARR_STATUS,
+    LIDARR_SOURCE,
 ]
 
 

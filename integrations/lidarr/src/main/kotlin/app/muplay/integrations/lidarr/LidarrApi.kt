@@ -6,6 +6,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 import retrofit2.http.Query
 
 /**
@@ -95,4 +96,49 @@ internal interface LidarrApi {
   suspend fun albumsByForeignId(
     @Query("foreignAlbumId") foreignAlbumId: String,
   ): Response<List<JsonObject>>
+
+  /**
+   * One page of the download queue.
+   *
+   * **Both parameters are sent on every call and neither has a safe default.** `PagingResource`
+   * defaults `pageSize` to **10** (measured: a bare `GET /api/v1/queue` answers `"pageSize": 10`),
+   * so a client that accepted the default stops seeing its own request the moment the user has
+   * eleven things downloading -- and reports `Requested` forever with nothing wrong anywhere.
+   * `includeUnknownArtistItems` defaults to **false**, which hides exactly the records whose
+   * artist Lidarr has not resolved yet -- and an album added seconds ago is the case where it has
+   * not.
+   *
+   * Both are `@Query`, so both appear on the URL; neither is a secret and the one value that is
+   * never allowed there is asserted over this endpoint by `LidarrQueueTest`'s key-placement test.
+   */
+  @GET("api/v1/queue")
+  suspend fun queue(
+    @Query("pageSize") pageSize: Int,
+    @Query("includeUnknownArtistItems") includeUnknownArtistItems: Boolean,
+  ): Response<QueuePageBody>
+
+  /**
+   * One album from the user's own database, by its Lidarr id.
+   *
+   * **The single-id getter really does populate `statistics`** -- the plan listed this as *not
+   * established* ("the single-id getter uses the same mapper but was not observed") and it is now
+   * observed, on the live `3.1.0.4875-ls40`: `GET /api/v1/album/7` answers
+   * `"statistics":{"trackFileCount":0,"trackCount":10,"totalTrackCount":10,"sizeOnDisk":0,
+   * "percentOfTracks":0}`, byte-identical to the same album's entry in the list form.
+   *
+   * **But `statistics` is absent entirely for an album whose tracks Lidarr has not fetched yet**,
+   * which is measured and is not the same fact. Seconds after a successful add, the new album had
+   * `"releases": []`, zero rows from `GET /api/v1/track?albumId=`, and **no `statistics` key at
+   * all** -- in the single getter *and* in the list, so it is a property of the album rather than
+   * of the endpoint. That is the ordinary state of a request the moment it is made, and it is why
+   * [LidarrClient.albumProgress] answers `null` rather than `LidarrAlbumProgress(0, 0)`: "Lidarr
+   * has not counted yet" and "Lidarr counted zero of zero" are different facts, and only the
+   * second could ever be mistaken for "complete".
+   *
+   * A 404 is a normal answer here, not an error -- measured on both an id that never existed
+   * (`/api/v1/album/99999`) and one whose album was deleted while a request row still named it.
+   */
+  @GET("api/v1/album/{id}")
+  suspend fun album(@Path("id") id: Int): Response<AlbumWithStatisticsBody>
+
 }

@@ -491,6 +491,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.model.ServerCapabilities",
+        // Plan 3 Task 12: `ServerCapabilities$Companion`, which holds one `const val` (the
+        // `transcodeOffset` extension name) and carries no counter of either kind. It rides along
+        // exactly as `BrowseSurface*` does below, so `warnUngatedClasses` has nothing to say about
+        // it and it can never move this ratio.
+        "app.muplay.model.ServerCapabilities*",
         "app.muplay.model.SearchResults",
         "app.muplay.model.ServerInfo",
         "app.muplay.model.MusicLibrary",
@@ -1610,11 +1615,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
     // ---- Plan 3 Task 8b: the seam that applies the decision, and the writer -------------------
-    // `MuPlayer` 11/11 = 1.0000 LINE, instrumented. LINE and not BRANCH because the class has
-    // **zero BRANCH counters**: six overrides and one funnel, not a conditional among them, which
-    // is the point of it -- a seam with a branch in it is a seam with a way past it. A BRANCH rule
-    // here would be the vacuous shape this table's own doc describes and `warnVacuousFloors` would
-    // say so on every run, exactly as it did for `NeverResume` one entry above.
+    // `MuPlayer` **83/83 = 1.0000 LINE**, instrumented.
+    //
+    // It was 11/11, and this comment said LINE rather than BRANCH "because the class has zero
+    // BRANCH counters: six overrides and one funnel, not a conditional among them". **That stopped
+    // being true in Plan 3 Task 12**, which gave the seam the transcoded-seek decision: it now
+    // carries 28 branch counters and a BRANCH floor of its own, immediately below. The sentence is
+    // corrected rather than deleted because the reasoning it recorded is still why this rule is
+    // here -- LINE is what notices an untested line being *added* to a class most of whose lines
+    // are unconditional forwarding.
     //
     // Eleven lines is small, and every one of them is load-bearing in the way this project keeps
     // finding: an overload that is not overridden does not fail to compile, does not fail at
@@ -1632,7 +1641,123 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.MuPlayer",
+        // Plan 3 Task 12's anonymous `Player.Listener`, 2/2 -- the one this class installs on the
+        // **wrapped** player so it can announce a command set the wrapped player does not know it
+        // has. Two lines, and if neither ran the announcement never happens and every seek from a
+        // `MediaController` is dropped in silence. `*1`, not `$1`: a literal `$` in a pattern never
+        // matches (this table's own doc, gotcha 3).
+        "app.muplay.media.MuPlayer*1",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 3 Task 12. `MuPlayer` **27/28 = 0.9643 BRANCH**, instrumented -- the counters this class
+    // did not have until it gained the transcoded-seek decision. They are the three-armed `when`
+    // over `SeekMethod` in `seekCurrentTo`, the current-vs-other-index split in
+    // `seekTo(index, position)`, the "nothing is loaded" arm, `withOffsetBase`'s `C.TIME_UNSET`
+    // check, the `command in SEEK_COMMANDS` test and the grant/withdraw/passthrough `when` behind
+    // both command overrides. Every one of them is a way for a seek to go somewhere other than
+    // where it was asked, which is exactly the defect class this task exists to remove, so BRANCH
+    // is the counter that gates it and LINE could not: covering either arm of the `when` satisfies
+    // a LINE rule and the other arm is the silent wrong answer.
+    //
+    // The **one** missed branch is `seekMethodForCurrentItem`'s
+    // `currentMediaItem?.let { .. } ?: SeekMethod.InPlace`. Kotlin emits *four* arms there and only
+    // three are reachable: `methodFor` returns a non-null `SeekMethod`, so the elvis after the
+    // `let` can never fire from the non-null path. It stays in the denominator honestly rather than
+    // being excused, and 0.90 leaves room for that one dead arm and no more -- one genuinely
+    // uncovered branch takes this to 26/28 = 0.9286 and a second to 25/28 = 0.8929, which fails.
+    //
+    // Falsified by raising the minimum to 0.97: "Rule violated for class app.muplay.media.MuPlayer:
+    // branches covered ratio is 0.96, but expected minimum is 0.97", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.MuPlayer"),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 3 Task 12: transcoded seek ------------------------------------------------------
+    // `TranscodeSeek` **6/6 = 1.0000 BRANCH from JVM data alone** (`TranscodeSeekTest`, eight
+    // tests, no emulator), which is the entire reason this decision is a pure object with no
+    // Android import rather than a `when` inside `MuPlayer`. The six are: is the item a transcode,
+    // does the server advertise `transcodeOffset`, the `coerceAtLeast(0)` clamp, and
+    // `cacheKeyFor`'s `<= 0` test.
+    //
+    // `requiresInstrumentedData = false` is a claim about where the coverage comes from, and it is
+    // the same claim `StreamRetryPolicy` and `ReplayGainPolicy` make one screen up: the branch that
+    // decides whether a seek re-issues, seeks in place or is withdrawn is gated by the fast tier.
+    //
+    // Falsified, and the falsification had to be chosen carefully. Raising the minimum is not
+    // available at 1.0000 (JaCoCo validates it before comparing), and withholding `TranscodeSeekTest`
+    // is **not enough on its own**: `TranscodeOffsetSupport.methodFor` calls this object, so the
+    // device tier is a second caller and the merged report would stay green -- the exact
+    // stale-falsification shape `CLAUDE.md` records. What fires is withholding that test and
+    // running `jacocoJvmCoverageVerification`, i.e. the task this `requiresInstrumentedData = false`
+    // is a claim about: "Rule violated for class app.muplay.media.TranscodeSeek: branches covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TranscodeSeek"),
+    ),
+    // `TranscodeOffsetSupport` **17/18 = 0.9444 BRANCH**, instrumented -- the capability gate and
+    // the adapter that rebuilds an item's URI at an offset. Its branches are the ones that decide
+    // whether a seek is offered at all (`negotiated?.supportsOffset == true`), whether an item can
+    // be re-issued (no extras / no format stamp / nothing negotiated) and whether a negotiation
+    // succeeded. Every one is a silent failure: the wrong answer withdraws the seek bar, or offers
+    // a seek the server cannot honour.
+    //
+    // Instrumented because a `MediaItem`'s extras are an Android `Bundle` and the negotiation is a
+    // real round trip to `ci-navidrome-1`; `TranscodeSeekPlaybackTest` drives both directions of
+    // the gate, including a transport failure through a hand-written delegating `SubsonicSource`.
+    //
+    // The **one** missed branch is `reissue`'s `negotiated?.source ?: return mediaItem`, four arms
+    // of which only three are reachable -- `Negotiated.source` is non-null, so the elvis can never
+    // fire from a non-null `negotiated`. Same shape as `MuPlayer`'s one dead arm above, and left in
+    // the denominator for the same reason.
+    //
+    // Falsified by raising the minimum to 0.95: "branches covered ratio is 0.94, but expected
+    // minimum is 0.95", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TranscodeOffsetSupport"),
+      requiresInstrumentedData = true,
+    ),
+    // The LINE half of the same family, all at 1.0000, instrumented: `TranscodeOffsetSupport`
+    // 24/24, its `refresh` body 5/5, its private `Negotiated` record 1/1,
+    // `TranscodeSeekSupport$None` 3/3, `SeekMethod$ReissueWithOffset` 1/1 and `MuPlayerKt` 4/4.
+    //
+    // Not redundant with the BRANCH rule above, for the reason `:core:model`'s `BrowseId` entry
+    // gives: most of these classes carry **no BRANCH counter at all**. `None` is three
+    // unconditional overrides and is the *default* every player in this module's own suites gets --
+    // a `None` that answered anything but `InPlace` would silently change what nine other
+    // instrumented tests measure. `MuPlayerKt` is the file-private `SEEK_COMMANDS` array, i.e. the
+    // exact set of commands a transcode grants or withdraws.
+    //
+    // `refresh$2` -- the `withContext(Dispatchers.IO)` body -- rides on LINE and deliberately not on
+    // BRANCH: it measures 9/12, and the three missing arms are the coroutine state machine's
+    // suspension points rather than anything anyone wrote. `refresh$1` and the two `$Companion`s
+    // carry no counters of either kind, so `warnUngatedClasses` skips them.
+    //
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
+    // have: "lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per
+    // class.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.TranscodeOffsetSupport",
+        "app.muplay.media.TranscodeOffsetSupport*",
+        "app.muplay.media.TranscodeSeekSupport*",
+        "app.muplay.media.SeekMethod*",
+        "app.muplay.media.MuPlayerKt",
+      ),
       requiresInstrumentedData = true,
     ),
     // `ProgressWriter` 16/16 and its `write` body 12/12 = 1.0000 BRANCH, instrumented.
@@ -2164,6 +2289,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ContentTypeSwitcher",
         "app.muplay.media.PlaybackLauncher",
         "app.muplay.media.PlaybackLauncher*play*2",
+        // Plan 3 Task 12: the `coroutineScope { async { refreshIfUnknown() } .. }` block, 5/5, and
+        // the `async` body itself, 1/1. LINE and deliberately not BRANCH -- `*play*items*1`
+        // measures 6/8 branches and the two missing arms are the `coroutineScope`/`async` state
+        // machine's own suspension points, not a decision anyone wrote. The decision that *is*
+        // there -- negotiate only when the answer is unknown -- lives in `TranscodeOffsetSupport`
+        // and is gated on BRANCH there.
+        "app.muplay.media.PlaybackLauncher*play*items*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2527,6 +2659,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ChapterRepository*",
       ),
       requiresInstrumentedData = true,
+    ),
+    // Plan 4 Task 5. `SmartRewind` **10/10 = 1.0000 BRANCH from JVM data alone** --
+    // `SmartRewindTest`, thirteen tests, no emulator, no Android type anywhere in the file. Eight
+    // of the ten are the band table read from both sides (four thresholds, each asserted at
+    // `threshold - 1` and at `threshold`); the other two are `resumePositionMs`'s clamp.
+    //
+    // **1.00 and not 0.90, because there is nothing in this class a test cannot reach.** This
+    // table's own doc rules out a floor a check cannot fail at, and it rules in the opposite too:
+    // 0.90 on ten branches passes at 9/10, so it would tolerate losing a whole boundary. Contrast
+    // `StreamRetryPolicy` above, whose 0.90 exists to leave room for one genuinely unreachable
+    // branch -- `SmartRewind` has none, and an arm that was going to be one (an `awayMs < 0L`
+    // guard in front of the table) was deleted rather than gated: removing it changes the answer
+    // at no input at all, `Long.MIN_VALUE` included, so it was a branch this rule would have
+    // scored 2/2 while no mutation could redden it. See `SmartRewind`'s own KDoc.
+    //
+    // FALSIFIED, not assumed: `@Disabled` on the three tests that reach `resumePositionMs`'s
+    // taken clamp -- `a rewind never goes past the start of the file`, `a negative stored position
+    // is treated as the start` and `a stored position at the bottom of the range does not wrap
+    // into the far future` -- drops it to **9/10 = 0.90** and `jacocoJvmCoverageVerification`
+    // fails with "Rule violated for class app.muplay.media.SmartRewind: branches covered ratio is
+    // 0.90, but expected minimum is 1.00". Three, because that is the minimum: every other branch
+    // in the class is reached by more than one test, which is what "both sides of every boundary"
+    // buys and is also why 0.90 here would have needed five withheld tests to fire.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.media.SmartRewind"),
     ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
@@ -4188,6 +4348,29 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.integrations.lidarr.LidarrClient",
         "app.muplay.integrations.lidarr.LidarrValidationException",
+        // RIDE-ALONGS, gating nothing, and here for a measured reason rather than tidiness.
+        //
+        // `QueueRecordBody` and `AlbumStatisticsBody` are the module's only **nested** @Serializable
+        // DTOs, and a nested one's `Companion` measures **0/1 LINE** where a top-level one measures
+        // 1/1. That is not a coverage gap: Retrofit resolves the *top-level* type's serializer
+        // reflectively, through `Companion.serializer()`, while a nested type is reached from its
+        // parent's generated `$$serializer.childSerializers()` as `Child$$serializer.INSTANCE` --
+        // which never touches the companion. Measured both ways on the same run:
+        // `QueuePageBody.Companion` and `AlbumWithStatisticsBody.Companion` (both top-level) are
+        // 1/1; `QueueRecordBody.Companion` and `AlbumStatisticsBody.Companion` (both nested) are
+        // 0/1.
+        //
+        // So no positive LINE floor can hold them -- 0.0 fails every minimum -- and leaving them
+        // out of the table entirely would print two `warnUngatedClasses` lines on every run,
+        // forever, which is how a warning mechanism dies. They carry **no BRANCH counter at all**,
+        // so on this BRANCH rule they take JaCoCo's NaN path (`Limit.check` returns "no violation"
+        // when COVEREDRATIO is NaN) and gate nothing at any minimum. Same trade, same mechanism, as
+        // the `SetupUiState`/`SetupFailureReason` riders and as `LidarrException` on rule 2.
+        //
+        // `warnVacuousFloors` stays quiet because this rule's other two classes carry 140 real
+        // branches between them, which is the condition that check actually tests.
+        "app.muplay.integrations.lidarr.QueueRecordBody*Companion",
+        "app.muplay.integrations.lidarr.AlbumStatisticsBody*Companion",
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
@@ -4278,6 +4461,33 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // The LINE rule is the one that cannot see it.
         "app.muplay.integrations.lidarr.LidarrAddPayload",
         "app.muplay.integrations.lidarr.LidarrAddOutcome*",
+        // Task 7's three, measured 1.0000 each: `LidarrStatusMapper` 16/16, `LidarrQueueItem` 8/8,
+        // `LidarrAlbumProgress` 2/2.
+        //
+        // Read the same warning this rule already carries for `LidarrAlbumCandidate` before
+        // reading `LidarrQueueItem`'s 8/8 as "every field is observed": it is not. That claim is
+        // enforced by `LidarrQueueTest`'s two-values-per-field `containsExactly` assertions and by
+        // `ci/mutation-probes.sh`'s `integrations/lidarr-queue-*` probes, and by nothing here.
+        //
+        // FALSIFIED, and the interesting half is which withholding does NOT move this rule:
+        // withholding all fourteen `LidarrStatusMapperTest` tests leaves `LidarrStatusMapper`'s
+        // LINE ratio at **16/16 = 1.0000**, because `LidarrQueueTest` maps real queue records
+        // through the same object and every *line* of it runs on any map at all. Only withholding
+        // **both** classes empties it: **0/16**, and this rule then fails with "lines covered ratio
+        // is 0.00, but expected minimum is 0.90".
+        //
+        // Note what DID fire on that first withholding, because reading "16/16" as "the gate is
+        // green" is the mistake this table has already made once for `LidarrAddPayload`: rule 8's
+        // BRANCH floor went to **17/30 = 0.5667** and failed the build. This LINE rule is the one
+        // that sees a mapper stop being exercised at all; rule 8 is the one that sees an arm stop
+        // being reached.
+        //
+        // That same withholding also drops `LidarrQueueItem` to 0/8 and `LidarrClient` to 0.80
+        // LINE / 0.89 BRANCH only when BOTH test classes go -- with `LidarrQueueTest` alone in
+        // place, both stay at 1.0000.
+        "app.muplay.integrations.lidarr.LidarrStatusMapper",
+        "app.muplay.integrations.lidarr.LidarrQueueItem",
+        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
       ),
     ),
     // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
@@ -4352,6 +4562,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // produced, not a number chosen to fit the newcomers.
         "app.muplay.integrations.lidarr.RootFolderBody*",
         "app.muplay.integrations.lidarr.ProfileBody*",
+        // Task 7's four, and the reason they clear 0.40 is worth writing down because the first
+        // draft did not. Measured with every field the endpoints send declared, `QueuePageBody`
+        // read **2/7 = 0.2857** and `AlbumWithStatisticsBody` **1/5 = 0.2000** -- both under this
+        // floor -- because a `data class`'s generated `equals`/`hashCode`/`copy`/`componentN` land
+        // on lines nothing calls, and a wider class has proportionally more of them.
+        //
+        // The fix was **not** to lower the floor. It was to declare only the fields this client
+        // actually reads, which is this module's own stated rule ("a field this client parses is a
+        // field it then owns") arriving at the same answer the measurement did: `QueuePageBody`
+        // dropped `page`/`pageSize`/`totalRecords`, `AlbumWithStatisticsBody` dropped `id`, and
+        // `QueueRecordBody` dropped the queue `id` this app never correlates on. Re-measured:
+        // `QueuePageBody` **2/2 = 1.0000**, `QueueRecordBody` **7/10 = 0.7000**,
+        // `AlbumWithStatisticsBody` **1/2 = 0.5000**, `AlbumStatisticsBody` **1/2 = 0.5000**.
+        //
+        // The two nested types are matched WITHOUT a trailing `*` on purpose: their `Companion`s
+        // measure 0/1 and are ride-alongs on rule 1 instead -- see the long note there.
+        "app.muplay.integrations.lidarr.QueuePageBody*",
+        "app.muplay.integrations.lidarr.QueueRecordBody",
+        "app.muplay.integrations.lidarr.AlbumWithStatisticsBody*",
+        "app.muplay.integrations.lidarr.AlbumStatisticsBody",
       ),
     ),
     // 6. Task 5's `LidarrAddTargets`, at **1.00 BRANCH** -- the only floor in this module that
@@ -4419,6 +4649,51 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
+    ),
+    // 8. Task 7's decision code, at **1.00 BRANCH** -- the third floor in this module that demands
+    // every branch, and, like the other two, only because the classes can honestly carry one.
+    //
+    // Measured with no emulator, no server and no fixture: `LidarrStatusMapper` **30/30** and
+    // `LidarrAlbumProgress` **4/4**. Both are pure functions over their arguments -- the
+    // statistics-outrank-the-queue short circuit, the no-queue-item short circuit, the blank-message
+    // guard, each `?:` fallback, each arm of the state cascade, the zero-size guard, and both halves
+    // of `totalTrackCount > 0 && trackFileCount >= totalTrackCount` -- so every arm is reachable
+    // from a JVM test. This is the argument `LidarrAddTargets` and Plan 3's `StreamRetryPolicy`
+    // make, and it is why `LidarrStatusMapperTest` has no HTTP in it at all.
+    //
+    // 1.00 rather than 0.90 because 0.90 over 34 branches permits three uncovered arms, and the
+    // arms here are *the* thing these classes are: whether a user is told their download failed
+    // while it is running, and whether an album with no tracks reads as fully downloaded. There is
+    // no Kotlin-unreachable arm in either class to make 1.00 dishonest -- unlike `LidarrClient`,
+    // whose four permanently-missing branches are the reason **its** floor is 0.90 and must stay
+    // there.
+    //
+    // FALSIFIED, in four withholdings, and **every ratio below is measured -- the four this author
+    // predicted before running them were all wrong, three of them badly.** That is the whole reason
+    // this project re-runs falsifications instead of reasoning them out.
+    //
+    //   * Withhold the single test `an album with no tracks yet is not complete, however many files
+    //     it has` -- the one written for the `totalTrackCount > 0` arm. `LidarrAlbumProgress` goes
+    //     to **3/4 = 0.7500** and the gate FAILS: "branches covered ratio is 0.75, but expected
+    //     minimum is 1.00". Predicted 4/4 and green, on a second-caller argument that turned out
+    //     not to hold -- no other test reaches that arm. One test, one arm, and the floor sees it.
+    //   * Withhold that AND `complete statistics report Imported even while a queue item still
+    //     exists`: **2/4 = 0.5000**, and `LidarrStatusMapper` goes to **28/30 = 0.9333** -- which
+    //     is itself a floor violation at 1.00 and would have been green at 0.90. That pair is the
+    //     concrete argument for 1.00 over 0.90 on this rule.
+    //   * Withhold all fourteen `LidarrStatusMapperTest` tests: `LidarrStatusMapper` **17/30 =
+    //     0.5667** (predicted 10/30) and `LidarrAlbumProgress` **2/4 = 0.5000**; both fail.
+    //     `LidarrQueueTest`'s three end-to-end mappings cover the other seventeen branches, which
+    //     is why rule 2's LINE floor stays at 16/16 through the same withholding.
+    //   * Withhold `LidarrStatusMapperTest` AND `LidarrQueueTest`: **0/30** and **0/4**.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.integrations.lidarr.LidarrStatusMapper",
+        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
+      ),
     ),
   ),
   // `:integrations:bindery`, Task 8 -- the second service, and the first evidence that this

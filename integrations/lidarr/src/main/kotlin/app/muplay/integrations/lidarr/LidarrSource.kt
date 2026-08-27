@@ -77,6 +77,27 @@ interface LidarrSource {
    * inventing one would send every later status check at somebody else's album.
    */
   suspend fun findAddedAlbumId(foreignAlbumId: String): Int?
+
+  /**
+   * Everything currently downloading or importing, in Lidarr's own order.
+   *
+   * One page, asked for large enough that a real user's queue fits in it; this client does not
+   * follow the paging. An empty list means the queue is empty **or** that the response was not a
+   * queue page at all -- both mean "nothing is downloading", which is the fail-closed reading.
+   */
+  suspend fun queue(): List<LidarrQueueItem>
+
+  /**
+   * How much of [albumId] is on disk, or `null` if Lidarr does not know or no longer has it.
+   *
+   * `null` covers three measured situations and they are deliberately not separated: the album is
+   * gone (a 404, which a user deleting it in Lidarr produces while MuPlay still holds the request
+   * row), the album exists but Lidarr has not fetched its track list yet (**no `statistics` key at
+   * all** -- observed on a live server seconds after a successful add), or the body carried no
+   * statistics for any other reason. All three mean "there is no count to trust", and
+   * [LidarrStatusMapper] treats them as such.
+   */
+  suspend fun albumProgress(albumId: Int): LidarrAlbumProgress?
 }
 
 /**
@@ -207,6 +228,66 @@ data class LidarrServer(
    * telling a user with a working Lidarr that they have not got one.
    */
   val isLidarr: Boolean get() = appName.equals("Lidarr", ignoreCase = true)
+}
+
+/**
+ * One item in Lidarr's download queue.
+ *
+ * The queue is a **live merge** of the download client's queue and pending releases, so a record's
+ * `id` is not durable across polls -- it is read off the wire and deliberately not carried here,
+ * because every correlation this app makes is on [albumId].
+ *
+ * [albumId] and [artistId] are nullable because `QueueResource` declares them nullable and
+ * Lidarr omits null-valued fields: a record for a release whose album Lidarr cannot resolve
+ * carries neither, and such a record can never be matched to a request row.
+ */
+data class LidarrQueueItem(
+  val albumId: Int?,
+  val artistId: Int?,
+  val sizeBytes: Double,
+  val sizeLeftBytes: Double,
+  /**
+   * One of the nine values Lidarr's OpenAPI document enumerates -- see
+   * [LidarrStatusMapper.KNOWN_STATES] for all of them, and [LidarrStatusMapper.map] for what each
+   * becomes. `""` when the field was absent, which maps the same way any unrecognised value does.
+   */
+  val trackedDownloadState: String,
+  /**
+   * `ok`, `warning` or `error`.
+   *
+   * **Read, carried, and never the sole basis for a verdict.** A `warning` on an item that is
+   * still downloading is not a failure -- Lidarr sets one for a release it is merely unsure about
+   * -- so a client that branched here would tell a user their download had failed while it ran.
+   * [LidarrStatusMapper] branches on [trackedDownloadState] alone; this field exists so a surface
+   * can show it and a bug report can carry it.
+   */
+  val trackedDownloadStatus: String,
+  /** Lidarr's own failure text, or `null`. Replaces this client's generic wording when present. */
+  val errorMessage: String?,
+)
+
+/**
+ * How much of an album Lidarr actually has on disk.
+ *
+ * Two integers compared, deliberately **not** `percentOfTracks` -- which is on the same resource
+ * and is a `double` on a **0-100** scale rather than 0-1, so a client that assumed the other
+ * convention shows `0.73%` forever on a finished album. `trackFileCount >= totalTrackCount` is
+ * arithmetic nobody can get backwards, and it is the only fact about a request that **survives the
+ * queue item vanishing**, which happens the moment an import completes.
+ *
+ * The absence of this value is a fact of its own and is represented by `null` rather than by
+ * `LidarrAlbumProgress(0, 0)`; see [LidarrSource.albumProgress].
+ */
+data class LidarrAlbumProgress(val trackFileCount: Int, val totalTrackCount: Int) {
+  /**
+   * Every track Lidarr knows about has a file.
+   *
+   * **`totalTrackCount > 0` first, and it is not belt-and-braces.** A freshly added album really
+   * does report zero of zero -- measured, an album seconds after `POST /api/v1/album` has no
+   * releases, no tracks and no statistics object at all -- and `0 >= 0` would read as "fully
+   * downloaded" and put a play button on an empty album.
+   */
+  val isComplete: Boolean get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount
 }
 
 /**
