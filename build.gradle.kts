@@ -3523,6 +3523,45 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // why there is no BRANCH entry.
   // `requiresInstrumentedData`: every line here is Compose/DI wiring the emulator journey runs;
   // from the JVM alone this module measures 1/21 = 0.04.
+  // Plan 6 Task 12. The settings **slot** -- a screen that renders whatever `SettingsSection`
+  // implementations the Hilt graph contains and names none of them.
+  ":feature:settings" to listOf(
+    // PLACEHOLDER-SETTINGS-JVM
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.settings.SettingsViewModel", "app.muplay.settings.SettingsSectionKt*"),
+    ),
+    // PLACEHOLDER-SETTINGS-UI
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.settings.SettingsScreenKt"),
+      requiresInstrumentedData = true,
+    ),
+  ),
+  // Plan 6 Task 12 contributes the renderer-direct section into this module; Plan 6 Task 10 owns
+  // the module itself (the device list, the cast button, the volume control).
+  ":feature:castpicker" to listOf(
+    // PLACEHOLDER-PICKER-JVM
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.castpicker.RendererDirectSectionKt"),
+      requiresInstrumentedData = true,
+    ),
+    // PLACEHOLDER-PICKER-SECTION
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.castpicker.RendererDirectSection"),
+      requiresInstrumentedData = true,
+    ),
+  ),
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
   ),

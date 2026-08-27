@@ -49,6 +49,13 @@ dependencies {
   // The player screen and the mini player `MuPlayApp` hosts, and the `PlayerViewModel` behind
   // both. `:app` is the only module that composes them.
   implementation(project(":feature:player"))
+  // Plan 6 Task 12. The settings screen is a *slot*: `:app` composes it and names none of the
+  // sections in it. See `SettingsSection`.
+  implementation(project(":feature:settings"))
+  // Plan 6 Task 12 needs this edge only so the renderer-direct section's `@IntoSet` binding is on
+  // the application's classpath and therefore in the `SingletonComponent` -- nothing in `:app`
+  // names a type from it. Plan 6 Task 10 owns this module and will widen the edge to the picker UI.
+  implementation(project(":feature:castpicker"))
 
   // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing
   // else in the tree may name an :integrations:* project, and `ConventionTest`'s

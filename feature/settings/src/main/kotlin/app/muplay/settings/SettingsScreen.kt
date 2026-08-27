@@ -46,7 +46,7 @@ fun SettingsScreen(
  * module's Compose coverage is measurable without an application component.
  */
 @Composable
-internal fun SettingsScreen(
+fun SettingsScreen(
   sections: List<SettingsSection>,
   modifier: Modifier = Modifier,
 ) {
