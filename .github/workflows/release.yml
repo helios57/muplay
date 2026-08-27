@@ -1,0 +1,189 @@
+name: Release
+
+# Pushing a tag is the whole interface. `v0.2.0` on a commit whose `app/build.gradle.kts` says
+# `versionName = "0.2.0"` produces a signed `.aab` and its R8 mapping file, and there is no local
+# step: nobody needs the upload key on their laptop, and nobody can accidentally upload a bundle
+# built from a dirty tree.
+#
+# Triggers on the tag alone. Not on `master` (a release is a deliberate act, not every merge), and
+# not on `workflow_dispatch` — a manual run has no tag, `verifyReleaseTag` refuses to guess one, and
+# a release artifact that cannot say which commit it is from is the thing this pipeline exists to
+# prevent. Retag if you need to rerun; `verifyReleaseVersion` will stop you reusing a spent version
+# code, which is the case where retagging is the wrong answer anyway.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# One release at a time, and never cancelled: `cancel-in-progress` is right for PR checks and wrong
+# here, because the half-finished state of a cancelled release job is an artifact somebody may
+# already be looking at.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# The default `contents: read`, stated rather than inherited. This job deliberately publishes
+# nothing to a GitHub Release: the `.aab` and `mapping.txt` go to the workflow's own artifact
+# storage, which is visible to repository collaborators and to nobody else. A GitHub Release is
+# public on a public repository, and while an app bundle is not a secret, `mapping.txt` is a
+# complete list of this application's class and method names and there is no reason to publish one.
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    # `bundleRelease` from cold measured 4 m 33 s locally (24 cores) and `releaseCheck` adds R8's
+    # mapping parse over a 55 MB file. 30 minutes is slack over that on a 4-core runner, not a
+    # target.
+    timeout-minutes: 30
+    env:
+      # `github.ref_name` is `v0.2.0` for a tag push. `verifyReleaseTag` holds it against the
+      # `versionName` the artifact actually carries, and fails when this is unset — so this line is
+      # load-bearing, not informational.
+      MUPLAY_RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Require the signing secrets
+        # Before anything expensive, and before Gradle sees an environment it would interpret.
+        #
+        # `releaseSigningConfig` in build-logic already makes a *half*-configured environment a hard
+        # error: MUPLAY_KEYSTORE_PATH set with any of the other three missing throws immediately. It
+        # deliberately does NOT fail when all four are absent, because that is how a developer's
+        # machine — and a CI job that only wants to compile the release variant — builds an unsigned
+        # artifact as a compile gate. Both of those are right, and between them they leave exactly
+        # one hole: a release job whose secrets never arrived takes the second path and builds a
+        # perfectly valid *unsigned* bundle. Measured on this repository with no key configured:
+        # `bundleRelease` succeeded and the resulting 6,948,199-byte `.aab` contained no META-INF
+        # entry at all.
+        #
+        # Two things close it. This step, which names what is missing in one line at second zero,
+        # and `verifyReleaseSigned` below, which reads the finished artifact and refuses it if the
+        # signature does not cover the code. The second is the guarantee; this one is the good
+        # error message.
+        #
+        # Nothing is printed but the variable's *name* and the word "set" -- not the value, and not
+        # its length either. GitHub masks known secret values in logs, but a masked value is still a
+        # value that reached a log, and the mask only covers exact matches: a base64 fragment, or a
+        # password with a trailing newline stripped, is not one.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MUPLAY_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.MUPLAY_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MUPLAY_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.MUPLAY_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing="$missing MUPLAY_$name"
+            else
+              echo "ok: MUPLAY_$name is set"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secret(s):$missing"
+            echo "::error::see .github/workflows/release.yml for what each one holds, and"
+            echo "::error::releaseSigningConfig in build-logic for how they reach the build."
+            exit 1
+          fi
+
+      - name: Materialise the upload key
+        # Into RUNNER_TEMP, which is outside `github.workspace`. That is deliberate and it is the
+        # difference between a keystore that cannot be committed and one that merely was not:
+        # nothing in the checkout is ever the key, so `git status` cannot show it, an
+        # `actions/upload-artifact` glob cannot sweep it up, and a step that runs `git add -A`
+        # cannot stage it. `ConventionTest`'s `no keystore material is tracked by git` is the same
+        # rule asked of the index.
+        #
+        # `umask 077` before the redirect, so the file is created 0600 rather than chmod'ed after
+        # a window in which it was not.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MUPLAY_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+          # Size only. A keystore that decoded to nothing (a secret pasted with the wrong encoding)
+          # would otherwise reach AGP as "keystore was tampered with, or password was incorrect",
+          # which names the wrong cause.
+          echo "keystore: $(stat -c%s "$RUNNER_TEMP/upload-keystore.jks") bytes"
+
+      - name: Bundle and gate
+        # One Gradle invocation, so the artifact the gates read is the artifact the build produced
+        # and there is no window in which a second build could replace it.
+        #
+        #   bundleRelease                     the .aab, signed by the config below
+        #   releaseCheck                      every gate that needs neither key nor tag:
+        #                                     verifyReleaseArtifact (minified, no debug-only type,
+        #                                     no cleartext, 16 KB pages), verifyReleaseManifest,
+        #                                     verifyReleaseVersion. Collected by name-matching in
+        #                                     ReleaseGates.kt, so a new gate joins without an edit
+        #                                     here.
+        #   verifyReleaseSigned               the signature covers the dex. Excluded from
+        #   verifyReleaseTag                  the tag names this versionName.  releaseCheck because
+        #                                     each needs something a developer's machine has not
+        #                                     got; ConventionTest's `every release gate is run by
+        #                                     releaseCheck or by the release workflow` is what makes
+        #                                     that exclusion mean "run here" instead of "run
+        #                                     nowhere".
+        #   verifyReleaseNoDestructiveMigration   unqualified, exactly as in pr.yml: the root build
+        #                                     registers it in every module that applies
+        #                                     muplay.android.room, so a future second Room module is
+        #                                     covered without a second line here.
+        #
+        # `--no-build-cache`: a release artifact must be built from this checkout's sources, not
+        # assembled from cache entries produced somewhere else. This repository has already measured
+        # a shared build cache replaying another tree's *failure* into a green run's report; the
+        # inverse — replaying a success — is the one that would matter here.
+        env:
+          MUPLAY_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+          MUPLAY_KEYSTORE_PASSWORD: ${{ secrets.MUPLAY_KEYSTORE_PASSWORD }}
+          MUPLAY_KEY_ALIAS: ${{ secrets.MUPLAY_KEY_ALIAS }}
+          MUPLAY_KEY_PASSWORD: ${{ secrets.MUPLAY_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-build-cache \
+            :app:bundleRelease \
+            :app:releaseCheck \
+            :app:verifyReleaseSigned \
+            :app:verifyReleaseTag \
+            verifyReleaseNoDestructiveMigration
+
+      - name: Shred the upload key
+        # `if: always()`, so a failed build does not leave the key on a runner. GitHub's hosted
+        # runners are ephemeral, which makes this belt-and-braces rather than the guarantee — the
+        # guarantee is that the key was never in the workspace at all.
+        if: always()
+        run: |
+          shred -u "$RUNNER_TEMP/upload-keystore.jks" 2> /dev/null \
+            || rm -f "$RUNNER_TEMP/upload-keystore.jks"
+
+      - name: Upload the release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: muplay-${{ github.ref_name }}
+          # The bundle is what goes to Play. `mapping.txt` is what makes a crash report from a
+          # minified build readable, and it has to be uploaded to Play *for this exact bundle* --
+          # a mapping file from a later build deobfuscates nothing. `release-artifact.txt` and
+          # `release-signing.txt` are the two gates' own censuses, kept beside the artifact so the
+          # numbers behind a release are recoverable a year later.
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/reports/release/*.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-reports
+          path: |
+            **/build/reports/**

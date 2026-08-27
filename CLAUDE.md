@@ -574,3 +574,81 @@ And note what a **host reboot** looks like from inside a session, because it has
 happened here: every agent stops at once with no completion record, the emulator's
 qemu process is gone, and the container shows `Exited (0)` — a clean stop, not a
 crash. `last reboot` distinguishes it from anything you did in one command.
+
+## A plan's sample code does not necessarily pass the plan's own sample tests
+
+Plan 6 Task 7 shipped both halves in the plan document: a `CastRouterTest` and the
+`CastRouter` meant to satisfy it. Three of the listed tests could not pass against
+the listed implementation, and none of the three was a typo:
+
+- a test required the failure message to name the device, and the function that
+  builds that message was given no device and no way to reach one;
+- two tests exercised a "fast path" constructor parameter that **nothing in the
+  listing ever called** — it was declared, defaulted, and dead;
+- one assertion was arithmetically false: `10.0.1.20` and `10.0.2.50` really are
+  in the same `/22` (`10.0.0.0/22` spans `10.0.0.0–10.0.3.255`), and the listing
+  asserted they are not.
+
+All three surfaced within one run of writing the code and running the tests, and
+none of them is visible by reading. So: **type the plan's tests in first and run
+them before believing either half.** A red there is as likely to be the plan as
+the implementation, and the third case above — an expectation that is simply
+wrong about the world — only ever surfaces as a failure against *correct* code.
+
+Related: a defaulted constructor parameter no caller omits compiles to a second,
+synthetic constructor that no test can reach, and it measures as permanently
+uncovered lines. `CastRoute.Proxied` read LINE 5/6 with the default and 5/5
+without it. If a floor is a line or two short on a `data class`, look for a
+default before looking for a missing test.
+
+## An IPv6 address interpolated into a URL silently produces a URL with no host
+
+Measured on JDK 21, and it is the whole reason `CastRouter` has a `urlHost`:
+
+    URI("http://fd00:0:0:0:0:0:0:1:8080/m/x.mp3").host   ->  null
+    URI("http://[fd00:0:0:0:0:0:0:1]:8080/m/x.mp3").host  ->  "[fd00:0:0:0:0:0:0:1]", port 8080
+
+`InetAddress.hostAddress` never brackets, and for a link-local address it appends
+this machine's own scope id (`fe80::1%7`), which means nothing to a peer. So
+`"http://$host:$port$path"` over an `InetAddress` is correct for IPv4 and produces
+an unfetchable URL for IPv6 — with no error anywhere, on a test bed that is
+loopback IPv4 and therefore cannot see it.
+
+Note also that `URI.getHost()` **keeps the brackets** for an IPv6 literal, and
+`InetAddress.getByName` accepts them, so a host string round-trips; it is only
+string interpolation that breaks.
+## Kotlin block comments **nest**, so a glob in a KDoc can eat the rest of the file
+
+`/*` inside a `/** ... */` opens a nested comment. Writing a perfectly ordinary
+path in prose is enough:
+
+    /** ... it parses `META-INF/*.SF`, checks the signature ... */
+
+That `/*` opens a comment the closing `*/` then only half-closes, and the
+compiler reports **`Syntax error: Unclosed comment`** at the *last line of the
+file* — plus, in the same run, seventeen `Unresolved reference` errors in a
+**different** file that happened to use the swallowed declarations. Nothing in
+that output names the glob. `*/` in prose (`*/src/debug/kotlin/**`) closes the
+KDoc early and produces the same shape from the other direction.
+
+Both were hit in one compile while writing Plan 8's release gates. Grep for
+`/\*` and `\*/src` inside comments before believing a nonsensical
+`Unresolved reference` list.
+
+## `build-logic` is an included build, so root `check` never runs its tests
+
+`settings.gradle.kts` has `pluginManagement { includeBuild("build-logic") }`.
+`./gradlew check` at the root builds and tests the eleven project modules and
+stops — it does not reach `build-logic`.
+
+Measured 2026-08-27: no workflow file mentioned `build-logic` in any `run:` line,
+so **thirteen tests had never executed in CI** — including
+`VerifyMergedManifestTaskTest`, whose own header records that it is the only
+thing in this repository that goes red when the merged-manifest gate stops
+checking. `pr.yml` now runs `./gradlew :build-logic:convention:test` and
+`ConventionTest`'s `build-logic's own tests are run by CI` derives the module
+list from the tree.
+
+To run them yourself: `./gradlew :build-logic:convention:test` from the root
+(the `:build-logic:` prefix addresses the included build), or
+`./gradlew -p build-logic test`.

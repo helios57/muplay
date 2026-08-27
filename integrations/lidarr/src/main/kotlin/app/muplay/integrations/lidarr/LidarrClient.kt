@@ -2,6 +2,9 @@ package app.muplay.integrations.lidarr
 
 import app.muplay.integrations.IntegrationCredentials
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Response
@@ -52,6 +55,77 @@ class LidarrClient internal constructor(
     )
   }
 
+  override suspend fun lookupAlbums(term: String): List<LidarrAlbumCandidate> =
+    call { api.albumLookup(term) }.mapNotNull(::toCandidate)
+
+  override suspend fun rootFolders(): List<LidarrRootFolder> =
+    call { api.rootFolders() }.map { body ->
+      LidarrRootFolder(
+        id = body.id,
+        // A folder with no name is shown by its path rather than by a blank row.
+        name = body.name?.takeIf { it.isNotBlank() } ?: body.path.orEmpty(),
+        path = body.path.orEmpty(),
+        accessible = body.accessible,
+        freeSpaceBytes = body.freeSpace,
+        defaultQualityProfileId = body.defaultQualityProfileId,
+        defaultMetadataProfileId = body.defaultMetadataProfileId,
+        defaultMonitorOption = body.defaultMonitorOption.orEmpty(),
+        defaultNewItemMonitorOption = body.defaultNewItemMonitorOption.orEmpty(),
+      )
+    }
+
+  override suspend fun qualityProfiles(): List<LidarrProfile> =
+    call { api.qualityProfiles() }.map { LidarrProfile(it.id, it.name.orEmpty()) }
+
+  override suspend fun metadataProfiles(): List<LidarrProfile> =
+    call { api.metadataProfiles() }.map { LidarrProfile(it.id, it.name.orEmpty()) }
+
+  /**
+   * A typed view over one lookup element, or `null` when the element cannot be used for an add.
+   *
+   * An element with no `foreignAlbumId`, or whose nested artist has no `foreignArtistId`, is
+   * unusable: both are required by `AlbumController`'s `PostValidator`. Dropping such a row keeps
+   * every other result usable, where failing the whole parse would lose all of them.
+   */
+  private fun toCandidate(element: JsonElement): LidarrAlbumCandidate? {
+    val obj = element as? JsonObject ?: return null
+    val artist = obj["artist"] as? JsonObject
+    val foreignAlbumId = obj.string("foreignAlbumId") ?: return null
+    val foreignArtistId = artist?.string("foreignArtistId") ?: return null
+    return LidarrAlbumCandidate(
+      foreignAlbumId = foreignAlbumId,
+      title = obj.string("title").orEmpty(),
+      // Blank collapses to null. Measured on a real lookup, `disambiguation` is `""` on every
+      // element rather than omitted, so without this a surface would have two ways to say nothing.
+      disambiguation = obj.string("disambiguation")?.takeIf { it.isNotBlank() },
+      albumType = obj.string("albumType"),
+      releaseDate = releaseDate(obj),
+      // `remoteCover`, never `remotePoster`: AlbumLookupController sets the former and only
+      // ArtistLookupController sets the latter. Measured, an album-lookup element carries no
+      // `remotePoster` key at all, so reading the wrong one yields null on every row silently.
+      remoteCoverUrl = obj.string("remoteCover"),
+      artistName = artist.string("artistName").orEmpty(),
+      foreignArtistId = foreignArtistId,
+      alreadyAdded = (obj["id"] as? JsonPrimitive)?.content?.toIntOrNull()?.let { it != 0 } ?: false,
+      raw = obj,
+    )
+  }
+
+  /**
+   * `releaseDate` with .NET's `DateTime.MinValue` read as "unknown".
+   *
+   * Measured on `3.1.0.4875-ls40`: an album whose release date Lidarr does not know sends
+   * `"0001-01-01T00:00:00Z"` rather than omitting the field — one of the seven elements in
+   * `fixtures/lidarr/album-lookup.json` does exactly that. Matching the date part rather than the
+   * whole instant, because the sentinel is the *value* `DateTime.MinValue` and its rendering is
+   * the serializer's business, not this client's.
+   */
+  private fun releaseDate(obj: JsonObject): String? =
+    obj.string("releaseDate")?.takeIf { !it.startsWith(DATE_TIME_MIN_VALUE) }
+
+  private fun JsonObject.string(name: String): String? =
+    (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
   /**
    * Runs [request] and returns its body only once the response is proven successful.
    *
@@ -100,6 +174,15 @@ class LidarrClient internal constructor(
       .map { LidarrValidationFailure(it.propertyName, it.errorMessage) }
 
   internal companion object {
+
+    /**
+     * The date part of .NET's `DateTime.MinValue` as Lidarr's serializer renders it.
+     *
+     * `0001-01-01T00:00:00Z` on the build measured here; the prefix is matched so that a
+     * serializer change to the time part or the offset does not turn the sentinel back into a
+     * release date in the year 1.
+     */
+    private const val DATE_TIME_MIN_VALUE = "0001-01-01"
 
     val json: Json = Json {
       // Lidarr adds fields between versions and omits every null-valued one. Neither may break

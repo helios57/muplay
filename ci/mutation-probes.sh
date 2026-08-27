@@ -188,6 +188,11 @@ BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
 BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
 BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
+# Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
+# the DAOs and the migration behind them need a device and are recorded by hand in
+# task-2-report.md, per this file's own INSTRUMENTED TIER note above.
+CHAPTER = "core/model/src/main/kotlin/app/muplay/model/Chapter.kt"
+BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -197,6 +202,8 @@ MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/Media
 LIDARR_INT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
 LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrClient.kt"
 LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
+LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
+LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -225,6 +232,8 @@ PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer
 CONTROL_STATE = "core/cast/src/main/kotlin/app/muplay/cast/control/TransportState.kt"
 CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabilities.kt"
 CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
+ROUTE_SUBNET = "core/cast/src/main/kotlin/app/muplay/cast/route/SubnetMatch.kt"
+ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -2405,6 +2414,85 @@ PROBES = [
      "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList().sorted()",
      "the declared seek modes are read, in the order the device declared them", 1),
 
+    # ---- Plan 6 Task 7: the routing decision, and the silence that is the answer --------------
+    #
+    # The defect this family exists against is the one the task's own deliverable names: *"the
+    # renderer either fetched from the phone or the app says out loud that it could not"*. Every
+    # mutation below leaves a cast looking exactly as successful as a working one -- `Play` returns
+    # 200, the UI says "Playing on Kitchen" -- and produces silence. No coverage floor can see any
+    # of them: each one leaves every branch in the file executing, in both directions.
+    #
+    # Every count was MEASURED against `:core:cast:test`, one mutation at a time, before it was
+    # written down.
+
+    # THE PROBE THIS TASK EXISTS FOR, and the one that restores the silent failure. `confirm` that
+    # always says yes is a router that never proves anything: the renderer is handed a URL it
+    # cannot reach, the session reports success, and nothing ever comes out of the speaker.
+    ("route/proof-always-succeeds", ROUTE_ROUTER,
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route",
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs) || true) return route",
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 6),
+
+    # The other direction, so the branch is a discrimination and not a constant: a `confirm` that
+    # always says no fails every cast that would have worked.
+    ("route/proof-always-fails", ROUTE_ROUTER,
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route",
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs) && false) return route",
+     "a renderer that fetches confirms the proxied route", 5),
+
+    # The two fallbacks swapped. Each test still sees a route object of *some* kind, the enum is
+    # still populated, and the user is told the opposite of what happened -- or, worse, handed
+    # their Subsonic credentials to a speaker they never agreed to give them to.
+    ("route/fallback-branches-swapped", ROUTE_ROUTER,
+     "    return if (allowRendererDirect) {",
+     "    return if (!allowRendererDirect) {",
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 5),
+
+    # The proof waits on THIS route's token. Keyed on a constant instead, a stale request from the
+    # previous track confirms the current one -- which is the silent failure again, arriving one
+    # track later and looking like a random skip.
+    ("route/proof-matches-any-token", PROXY_SERVER,
+     "    fetchLatches.computeIfAbsent(token) { CountDownLatch(1) }",
+     '    fetchLatches.computeIfAbsent("any") { CountDownLatch(1) }',
+     "the proof waits for this renderer's own token and not for any request at all", 2),
+
+    # The partial byte. A /22 or a /26 is ordinary on a real network, and a byte-wise-only
+    # comparison answers "same subnet" for addresses that are not -- which takes the fast path,
+    # which skips the proof, for exactly the devices the proof was needed for.
+    ("route/partial-byte-prefix-ignored", ROUTE_SUBNET,
+     "    if (remainingBits == 0) return true",
+     "    if (remainingBits >= 0) return true",
+     "a prefix that is not a whole number of bytes is handled", 2),
+
+    # The fast path asked about one address twice. `sameSubnet(x, x)` is true for every device on
+    # earth, so the proof is switched off globally while the parameter, the branch and the coverage
+    # all still look exactly like a working optimisation.
+    ("route/fast-path-compares-one-address-twice", ROUTE_ROUTER,
+     "      proofRequired = !sameSubnetFastPath(phoneAddress, rendererAddress),",
+     "      proofRequired = !sameSubnetFastPath(rendererAddress, rendererAddress),",
+     "the fast path is asked about this phone's address and the renderer's, in that order", 1),
+
+    # An IPv6 phone address without its brackets. `http://fd00:0:0:0:0:0:0:1:PORT/media/x.mp3` has
+    # a null host -- measured -- so the renderer fetches nothing and the cast plays silence. Every
+    # test on an IPv4 test bed stays green.
+    ("route/ipv6-host-not-bracketed", ROUTE_ROUTER,
+     '      return if (address is Inet6Address) "[$literal]" else literal',
+     "      return literal",
+     "an ipv6 phone address is bracketed and unscoped, so the url a renderer is handed parses", 1),
+
+    # Publishing before the route is known mints a capability for a device that cannot fetch it --
+    # a token left on the LAN with no owner, serving Navidrome-authenticated audio, for a cast that
+    # never started. The returned route is identical either way.
+    ("route/publishes-before-it-knows-there-is-a-route", ROUTE_ROUTER,
+     "    val phoneAddress = localAddress(rendererAddress)\n"
+     '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")\n'
+     "\n"
+     "    val media = registry.publish(upstreamUrl, served)",
+     "    val media = registry.publish(upstreamUrl, served)\n"
+     "    val phoneAddress = localAddress(rendererAddress)\n"
+     '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")',
+     "a renderer with no route from this phone is Unroutable before anything is published", 1),
+
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
     # they belong here rather than behind a coverage floor.
@@ -2508,9 +2596,10 @@ PROBES = [
     #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
     ("integrations/lidarr-api-key-header", LIDARR_INT,
      '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
-     # 5, measured: it also reddens the four other tests that read the header back off a
-     # RecordedRequest -- the redirect one, and `LidarrWiringTest`'s factory test among them.
-     "the header carries whichever key the client was given", 5),
+     # 6, RE-MEASURED AT TASK 5 (was 5): every test that reads the header back off a
+     # RecordedRequest reddens, and Task 5's `no new request carries the key anywhere but the
+     # header` -- which drives all four of the new endpoints -- is the sixth.
+     "the header carries whichever key the client was given", 6),
 
     # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
     #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
@@ -2519,15 +2608,20 @@ PROBES = [
     ("integrations/lidarr-api-key-on-url", LIDARR_INT,
      '.header("X-Api-Key", apiKey)',
      '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
-     # 2, measured: `LidarrWiringTest`'s factory test asserts the same negative one layer up.
-     "no request this client makes carries the key on its url", 2),
+     # 4, RE-MEASURED AT TASK 5 (was 2): `LidarrWiringTest`'s factory test asserts the same
+     # negative one layer up, and Task 5 adds two more observations -- the whole-request scan over
+     # the four new endpoints, and the lookup's exact `encodedQuery`, which a smuggled parameter
+     # lengthens.
+     "no request this client makes carries the key on its url", 4),
 
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
     #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
     ("integrations/lidarr-accept-json", LIDARR_INT,
      '.header("Accept", "application/json")', '.header("Accept", "*/*")',
-     "every request declares that it accepts json", 1),
+     # 2, RE-MEASURED AT TASK 5 (was 1): the new four-endpoint scan asserts `Accept` too, which is
+     # the point of putting it on the interceptor rather than on each `@GET`.
+     "every request declares that it accepts json", 2),
 
     # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
     #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
@@ -2557,7 +2651,96 @@ PROBES = [
     ("integrations/lidarr-503-collapsed", LIDARR_CLIENT,
      "503 -> if (isStartingUp(raw)) LidarrStartingUpException() else LidarrHttpException(503)",
      "503 -> LidarrStartingUpException()",
-     "a 503 starting-up body is its own failure, distinct from any other 503", 1),
+     # 2, RE-MEASURED AT TASK 5 (was 1). The second is `a lookup that fails upstream is a plain
+     # http failure and not a starting-up one`, which is the same discrimination against a REAL
+     # 503 -- `fixtures/lidarr/lookup-unavailable.json`, captured by blackholing api.lidarr.audio
+     # inside the pinned container. Its body's key is `message`, not `errorMessage`, so this
+     # mutation is what would turn "the metadata service is down" into "wait for your container".
+     "a 503 starting-up body is its own failure, distinct from any other 503", 2),
+
+    # ---- Plan 7 Task 5: the lookup, the two traps in it, and where an add is aimed -------------
+    # Same argument as the family above: the coverage gate cannot see most of this. Every mutation
+    # below leaves `LidarrClient`'s BRANCH floor and `LidarrAddTargets$Companion`'s 1.00 BRANCH
+    # floor exactly where they are, because each one substitutes a constant for a value rather than
+    # removing an arm -- which is the shape a lazy implementation actually ships.
+    #
+    # 1. The search term. A lookup that ignores its argument returns Lidarr's results for whatever
+    #    the implementer was testing with, forever, and looks like a working search box.
+    ("integrations/lidarr-lookup-term", LIDARR_CLIENT,
+     "call { api.albumLookup(term) }", 'call { api.albumLookup("kind of blue") }',
+     # 2, measured: the four-endpoint key scan pins the lookup's exact `encodedQuery` too.
+     "the lookup sends whichever term it is given, url-encoded, to album slash lookup", 2),
+
+    # 2. TRAP 1, and the sharpest defect in this task: `AlbumLookupController` sets `RemoteCover`
+    #    and only `ArtistLookupController` sets `RemotePoster`. Measured against a real
+    #    3.1.0.4875-ls40 lookup, an album element carries NO `remotePoster` key at all -- so this
+    #    mutation yields null artwork on every row, with nothing reported anywhere.
+    ("integrations/lidarr-remoteCover", LIDARR_CLIENT,
+     'remoteCoverUrl = obj.string("remoteCover"),', 'remoteCoverUrl = obj.string("remotePoster"),',
+     # 3, measured: also the real-fixture test and the two-values-per-field test, which both read
+     # `remoteCoverUrl` back and get null under the mutation.
+     "the cover comes from remoteCover and not from remotePoster", 3),
+
+    # 3. The .NET `DateTime.MinValue` sentinel. Measured: an album whose release date Lidarr does
+    #    not know sends `0001-01-01T00:00:00Z` rather than omitting the field, so dropping this
+    #    `takeIf` prints "the year 1" at a user with no error anywhere.
+    ("integrations/lidarr-releaseDate-sentinel", LIDARR_CLIENT,
+     'obj.string("releaseDate")?.takeIf { !it.startsWith(DATE_TIME_MIN_VALUE) }',
+     'obj.string("releaseDate")',
+     "the real lookup body from a pinned lidarr maps as this client claims", 1),
+
+    # 4. The identity guard. An element with no `foreignAlbumId` cannot be added -- `PostValidator`
+    #    requires it -- so keeping it produces a row that looks fine and fails at the add.
+    ("integrations/lidarr-candidate-needs-album-id", LIDARR_CLIENT,
+     'val foreignAlbumId = obj.string("foreignAlbumId") ?: return null',
+     'val foreignAlbumId = obj.string("foreignAlbumId").orEmpty()',
+     "an element with no usable identity is skipped rather than crashing the list", 1),
+
+    # 5. Two endpoints, not one. Quality and metadata profiles share a DTO and differ only by path,
+    #    which is exactly the copy-paste a reviewer's eye slides over -- and the consequence is an
+    #    add filed under a metadata profile id that is really a quality profile id.
+    ("integrations/lidarr-metadataprofile-endpoint", LIDARR_API,
+     '@GET("api/v1/metadataprofile")', '@GET("api/v1/qualityprofile")',
+     # 2, measured: the four-endpoint key scan asserts the paths in order, so it sees this too.
+     "quality and metadata profiles are two different endpoints and both are read", 2),
+
+    # 6 and 7. Two of `LidarrAddTargets`'s pass-throughs, one representative of each risk: the
+    #    path decides where the files land, and the profile id decides what gets downloaded. The
+    #    constant a lazy implementation reaches for is the fixture's own value, so a single-folder
+    #    test would stay green under both.
+    ("integrations/lidarr-targets-rootpath-passthrough", LIDARR_TARGETS,
+     "rootFolderPath = rootFolder.path,", 'rootFolderPath = "/music",',
+     "every field comes from the folder it was given, not from a constant", 1),
+    ("integrations/lidarr-targets-quality-passthrough", LIDARR_TARGETS,
+     "qualityProfileId = quality,", "qualityProfileId = 1,",
+     # 6, measured. Every test in `LidarrAddTargetsTest` that reads a quality id back reddens --
+     # which is what a dense pure-function suite looks like, and is the argument for having one.
+     "every field comes from the folder it was given, not from a constant", 6),
+
+    # 8. The fallback that is the reason this class exists. `ValidId` requires a profile id above
+    #    zero, and a root folder created through the API rather than the UI can carry zeros; without
+    #    the fallback the add fails with a 400 about profiles that the user cannot act on.
+    ("integrations/lidarr-targets-zero-fallback", LIDARR_TARGETS,
+     "if (preferred > 0) preferred else profiles.firstOrNull()?.id", "preferred",
+     # 4, measured: the give-up case flips too -- without the fallback, `resolve` returns a
+     # LidarrAddTargets carrying profile id 0, which is exactly the 400 the fallback exists to avoid.
+     "a zero default falls back to the first profile the server reports", 4),
+
+    # 9. The inaccessible folder. Offering it produces an add that fails on a path validation --
+    #    measured, "Folder '/music' is not writable by user 'abc'" -- shown to somebody who was
+    #    choosing an album.
+    ("integrations/lidarr-targets-inaccessible", LIDARR_TARGETS,
+     "if (!rootFolder.accessible || rootFolder.path.isBlank()) return null",
+     "if (rootFolder.path.isBlank()) return null",
+     "an inaccessible root folder has no answer", 1),
+
+    # 10. The blank monitor substitution, on the field that is easier to forget. `MonitorTypes` has
+    #     no empty member, so an empty string on the wire is a 400 -- and this is the half of the
+    #     pair a per-folder substitution would silently discard.
+    ("integrations/lidarr-targets-newitem-monitor", LIDARR_TARGETS,
+     "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption.ifBlank { DEFAULT_MONITOR },",
+     "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption,",
+     "a blank monitor default becomes all rather than an empty string on the wire", 2),
 
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
@@ -2718,6 +2901,52 @@ PROBES = [
      # `EMPTY` is what a caller that must answer unconditionally hands back. An index of 1 into no
      # songs is an `IllegalArgumentException` the moment anything tries to play it.
      "the empty selection is empty and starts at zero", 1),
+    # ---- Plan 4 Task 2: the audiobook value types ---------------------------------------------
+    ("audiobook/chapter-contains-upper-bound", CHAPTER,
+     "positionMs >= startMs && positionMs < endMs",
+     "positionMs >= startMs && positionMs <= endMs",
+     # Half-open is what makes "which chapter am I in" one answer. Closed at the top and the
+     # instant a chapter ends belongs to two chapters at once, so the answer depends on which end
+     # of the list the caller searched from. Only an assertion that names the boundary exactly
+     # sees this -- a fixture probed at 61_999/100_000/181_501 would not.
+     "containment is half-open, so a position on a boundary is in the later chapter", 3),
+    ("audiobook/chapter-contains-lower-bound", CHAPTER,
+     "positionMs >= startMs && positionMs < endMs",
+     "positionMs > startMs && positionMs < endMs",
+     "containment is half-open, so a position on a boundary is in the later chapter", 2),
+    ("audiobook/chapter-duration-clamp", CHAPTER,
+     "val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0L)",
+     "val durationMs: Long get() = endMs - startMs",
+     # A tagger really does write these backwards, and the unclamped answer is a negative length
+     # that every consumer renders.
+     "a chapter whose atoms are out of order is zero long rather than negative", 1),
+    ("audiobook/chapter-duration-offset", CHAPTER,
+     "val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0L)",
+     "val durationMs: Long get() = endMs",
+     # The fixture starts at 62_000 rather than 0 for exactly this reason: against chapter 0 of
+     # any book these two programs are the same function.
+     #
+     # 2, measured rather than assumed: `endMs` alone also reddens `a chapter whose atoms are out
+     # of order is zero long rather than negative` (9_000 instead of 0), because that test's own
+     # fixture has a non-zero `endMs` too. Submitted as 1 and reported MISSED on the first run --
+     # the named test failed exactly as intended, which is the stale-count case this table's
+     # `expected failures` note describes, not a code regression.
+     "a chapter's duration is the gap between its two atoms", 2),
+    ("audiobook/speed-nan", BOOK_SETTINGS,
+     "speed.isNaN() -> DEFAULT_SPEED", "speed.isNaN() -> speed",
+     # `Float.NaN.coerceIn(0.5f, 3.0f)` is NaN, and `setPlaybackSpeed(NaN)` throws from a listener
+     # callback -- playback dies with no message. Note the assertion this names checks
+     # `isNaN()` explicitly: a `containsExactly` row would compare NaN to NaN and pass.
+     "not a number becomes the default rather than surviving the clamp", 1),
+    ("audiobook/speed-clamp", BOOK_SETTINGS,
+     "else -> speed.coerceIn(MIN_SPEED, MAX_SPEED)", "else -> speed",
+     "the speed clamp holds both ends and passes everything between them through", 1),
+    ("audiobook/default-book-id", BOOK_SETTINGS,
+     "BookSettings(bookId = bookId, speed = DEFAULT_SPEED, skipSilence = false)",
+     'BookSettings(bookId = "book-42", speed = DEFAULT_SPEED, skipSilence = false)',
+     # The second id in that test is what catches this: with one id, "returned the id it was
+     # given" and "returned the id this test happens to use" are the same observation.
+     "a book with no stored settings plays at one times with no silence skipping", 1),
 ]
 
 
@@ -2769,6 +2998,14 @@ def apply(path, old, new):
 # stray-mutation incident this script's header describes -- so add the file here in the same edit
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
+    # Plan 4 Task 2. Added AFTER the probes were, which is the wrong order and cost a real stray:
+    # the first `audiobook/` probe mutated Chapter.kt, `revert()` named no file that matched, and
+    # the second probe aborted the whole run with "PROBE TEXT NOT FOUND ... 0 matches" against a
+    # file the first probe had left mutated. This list's own comment predicts that failure exactly.
+    # The guard behaved correctly -- it failed loudly rather than probing a mutated tree -- and the
+    # stray was found by `git status` immediately afterwards, per CLAUDE.md.
+    CHAPTER,
+    BOOK_SETTINGS,
     RESUME_POLICY,
     BROWSE_ID,
     BASE_URL,
@@ -2786,6 +3023,10 @@ LATER_PROBE_FILES = [
     LIDARR_INT,
     LIDARR_CLIENT,
     LIDARR_EXC,
+    # Plan 7 Task 5, added in the same edit as the ten `integrations/lidarr-{lookup,targets,...}`
+    # probes, per this list's own comment.
+    LIDARR_API,
+    LIDARR_TARGETS,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,

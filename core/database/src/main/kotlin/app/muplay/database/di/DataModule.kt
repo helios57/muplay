@@ -8,11 +8,14 @@ import androidx.room.Room
 import app.muplay.database.Bookshelf
 import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
+import app.muplay.database.MIGRATION_6_7
 import app.muplay.database.MirrorBookshelf
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.SubsonicSourceProvider
 import app.muplay.database.SyncEngine
+import app.muplay.database.dao.BookSettingsDao
 import app.muplay.database.dao.BrowseDao
+import app.muplay.database.dao.ChapterDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.dao.SyncWatermarkDao
@@ -45,15 +48,25 @@ object DataModule {
   @Singleton
   fun provideDatabase(@ApplicationContext context: Context): MuPlayDatabase =
     Room.databaseBuilder(context, MuPlayDatabase::class.java, MuPlayDatabase.DATABASE_NAME)
-      // Pre-release only. Every task in this plan that adds a table bumps `version` and writes no
-      // migration, so a developer's device (and the emulator that runs the required Tier 2 gate)
-      // must be allowed to throw its mirror away and re-sync — the mirror is a cache of the
-      // server, and re-fetching it costs one sync.
+      // Consulted FIRST, and that ordering is the whole point: Room looks for a migration path
+      // before it considers the escape hatch below, so a device carrying the version-6 database
+      // is migrated rather than emptied. Without this line the very next line silently deletes
+      // every listener's book position -- the one thing this application exists to keep -- and no
+      // migration test that is handed `MIGRATION_6_7` by name can see it happen.
+      // `MigrationTest.theRealBuilderMigratesRatherThanDropping` is the one that can.
+      .addMigrations(MIGRATION_6_7)
+      // Pre-release only, and still needed. Versions 1 through 6 have no `Migration` between them
+      // -- Plan 2 Tasks 4, 5 and 6 and Plan 3 Task 11 each bumped `version` and wrote none -- so a
+      // developer's device (and the emulator that runs the required Tier 2 gate) must be allowed
+      // to throw its mirror away and re-sync rather than refuse to open at all. Deleting this line
+      // today does not make anything safer: those versions move from "dropped" to
+      // `IllegalStateException: A migration from 2 to 7 was required but not found`.
       //
       // THIS LINE MUST BE REMOVED BEFORE THE FIRST RELEASE, and replaced with real `Migration`
       // objects verified against the exported schema JSON in `core/database/schemas/`. Shipping
       // it means every future schema change silently deletes a user's `media_progress` — every
-      // audiobook position they have.
+      // audiobook position they have. `MIGRATION_6_7` is the first of those objects and the
+      // pattern for the rest; `DESTRUCTIVE_MIGRATION_EXEMPTION.md` lists what is still owed.
       .fallbackToDestructiveMigration(dropAllTables = true)
       .build()
 
@@ -70,6 +83,12 @@ object DataModule {
   @Provides
   fun provideSyncWatermarkDao(database: MuPlayDatabase): SyncWatermarkDao =
     database.syncWatermarkDao()
+
+  @Provides
+  fun provideBookSettingsDao(database: MuPlayDatabase): BookSettingsDao = database.bookSettingsDao()
+
+  @Provides
+  fun provideChapterDao(database: MuPlayDatabase): ChapterDao = database.chapterDao()
 
   @Provides
   @Singleton
