@@ -65,8 +65,8 @@ MADE FOR LISTENING WITH THE SCREEN OFF
 IN THE CAR
 
 MuPlay is an Android Auto media app. The car screen offers Continue, Books, Albums and Artists.
-Books you have started show how much of them is left and pick up in the part you stopped in. One tap
-on the first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay" works
+Books you have started show how much of them is left, and a book in several parts opens at the part
+you had reached. One tap on the first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay" works
 even with the app closed.
 
 WHAT YOU LISTEN TO STAYS YOURS
@@ -239,7 +239,7 @@ audit that produced this list.
 |---|---|
 | Sleep timer | `SleepTimerController` exists and is attached to nothing. `MuPlaybackService` says attaching it is future work. |
 | Shake to extend the sleep timer | `ShakeSensor` is never injected and never started. |
-| Casting to Sonos, DLNA/UPnP or Chromecast | `core/cast` is complete and unreachable: `CastSessionManager.castTo` is called from one file, and it is a test. There is no device picker, and SSDP discovery is never started. **The README still advertises this; the README is wrong.** |
+| Casting to Sonos, DLNA/UPnP or Chromecast | `core/cast` is complete and unreachable: `CastSessionManager.castTo` is called from one file, and it is a test. There is no device picker, and SSDP discovery is never started. The README's status paragraph still says the app *"streams to Sonos and generic DLNA renderers"*; its own roadmap row ("the picker UI ... remain") is the accurate one. |
 | Playback speed | Stored, never set on a player, and no control anywhere. |
 | Silence skipping | Stored, never enabled. |
 | Chapter list / jump to chapter | `ChapterRepository` has no production caller. Android Auto lists a book's *files* ("Part 2 of 5"), not chapters. |
