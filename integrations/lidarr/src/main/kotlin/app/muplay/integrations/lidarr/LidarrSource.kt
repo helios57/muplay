@@ -28,7 +28,98 @@ interface LidarrSource {
 
   /** Identity, version and `urlBase`, authenticated. Throws a [LidarrException] on failure. */
   suspend fun status(): LidarrServer
+
+  /**
+   * Albums matching [term], from Lidarr's metadata lookup.
+   *
+   * **Not served from the user's own database.** It proxies to `api.lidarr.audio`, so it is slow,
+   * can fail while the user's own server is healthy, and is rate-limited upstream. Callers debounce
+   * and do not retry automatically.
+   *
+   * [term] is sent as the user typed it. This client does not send the `lidarr:`/`lidarrid:`/
+   * `mbid:` prefixes `SkyHookProxy.IsMbidQuery` understands, and that is a scope decision rather
+   * than an omission: measured on the pinned container, `term=lidarr:not-a-guid` is answered
+   * **200 with `[]`** — indistinguishable from an honest "nothing matched" — so supporting the
+   * prefixes without also solving that ambiguity would make one of them a lie.
+   */
+  suspend fun lookupAlbums(term: String): List<LidarrAlbumCandidate>
+
+  /** The folders this Lidarr can file an album into, with the defaults an add needs. */
+  suspend fun rootFolders(): List<LidarrRootFolder>
+
+  suspend fun qualityProfiles(): List<LidarrProfile>
+
+  suspend fun metadataProfiles(): List<LidarrProfile>
 }
+
+/**
+ * One album Lidarr's metadata lookup found.
+ *
+ * [raw] is the element **exactly as it came off the wire**, and Task 6 posts it back with five
+ * fields set — the same thing Lidarr's own UI does (`frontend/src/Utilities/Album/getNewAlbum.js`).
+ * Rebuilding a payload from the typed fields below would drop every field this client does not
+ * model, and `openapi.json` declares none of them required because it is Swashbuckle-generated and
+ * does not encode Lidarr's FluentValidation rules. The only complete statement of what Lidarr
+ * wants is what Lidarr sends.
+ *
+ * [alreadyAdded] is `id != 0`. Measured on `3.1.0.4875-ls40`: a lookup element for an album that is
+ * **not** in this Lidarr's database omits `id` entirely rather than sending `0` — all seven
+ * elements of `fixtures/lidarr/album-lookup.json` do, and so does every nested `artist`. Absent and
+ * `0` therefore both have to mean "not added", which is why this reads the key defensively instead
+ * of declaring an `Int` with a default.
+ */
+data class LidarrAlbumCandidate(
+  val foreignAlbumId: String,
+  val title: String,
+  /**
+   * Lidarr's own parenthetical, or `null`.
+   *
+   * Blank collapses to `null`: measured, this arrives as `""` on every element of a real lookup
+   * rather than being omitted, and a surface that has to treat `""` and absent as two different
+   * kinds of nothing renders `Title ()` for one of them.
+   */
+  val disambiguation: String?,
+  val albumType: String?,
+  /**
+   * The raw string Lidarr sent, or `null`. Not parsed: this app has no datetime dependency and
+   * shows it as-is.
+   *
+   * Measured, a real value is a full ISO-8601 instant (`1959-08-17T00:00:00Z`), never a bare date.
+   * **An unknown release date arrives as `0001-01-01T00:00:00Z`** — .NET's `DateTime.MinValue`,
+   * not an omitted field — which [LidarrClient] collapses to `null` so that no surface has to
+   * decide whether to print the year 1.
+   */
+  val releaseDate: String?,
+  /** From `remoteCover`. **Not** `remotePoster`, which only artist lookups carry. */
+  val remoteCoverUrl: String?,
+  val artistName: String,
+  val foreignArtistId: String,
+  val alreadyAdded: Boolean,
+  val raw: kotlinx.serialization.json.JsonObject,
+)
+
+/**
+ * A folder Lidarr can file an album into, and the defaults it carries.
+ *
+ * `RootFolderResource` carries `defaultQualityProfileId`, `defaultMetadataProfileId`,
+ * `defaultMonitorOption` and `defaultNewItemMonitorOption`, so a user who picks one of these has
+ * chosen every remaining required add field — see [LidarrAddTargets.Companion.resolve]. [accessible]
+ * is on the same resource and an inaccessible folder is offered to nobody.
+ */
+data class LidarrRootFolder(
+  val id: Int,
+  val name: String,
+  val path: String,
+  val accessible: Boolean,
+  val freeSpaceBytes: Long?,
+  val defaultQualityProfileId: Int,
+  val defaultMetadataProfileId: Int,
+  val defaultMonitorOption: String,
+  val defaultNewItemMonitorOption: String,
+)
+
+/** A quality or a metadata profile, reduced to the two fields an add and a picker need. */
+data class LidarrProfile(val id: Int, val name: String)
 
 /**
  * What `GET /api/v1/system/status` tells a client that matters to it.

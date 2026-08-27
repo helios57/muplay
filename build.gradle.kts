@@ -3602,10 +3602,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // `:integrations:lidarr`, Task 4.
+  // `:integrations:lidarr`, Tasks 4 and 5.
   //
-  // **Five `"CLASS"` rules, not the one `"BUNDLE"` rule the plan proposed, and that is a
-  // measurement rather than a preference.** The plan's placeholder was
+  // **`"CLASS"` rules, not the one `"BUNDLE"` rule the plan proposed, and that is a
+  // measurement rather than a preference.** (Five at Task 4; a sixth at Task 5, for
+  // `LidarrAddTargets`. The count is left out of this sentence on purpose -- a written-down total
+  // beside a list that grows is the drift this repository has paid for three times.) The plan's
+  // placeholder was
   // `CoverageFloor(counter = "BRANCH", minimum = 0.90)` on the argument that this module is plain
   // Kotlin over Retrofit and therefore Tier-1 enforceable like `:core:network`. Measured, the
   // module's BUNDLE BRANCH is **50/52 = 0.9615 with instrumented data and 46/52 = 0.8846
@@ -3616,23 +3619,41 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":integrations:lidarr" to listOf(
     // 1. The **fast tier's** BRANCH rule: the two classes with author-written branches.
     //
-    //   `LidarrClient`               42/44 = 0.9545
-    //   `LidarrValidationException`   4/4  = 1.0000
+    // **RE-MEASURED AT TASK 5, which more than doubled this class.** Task 4 recorded
+    // `LidarrClient` at 42/44 = 0.9545; the lookup, the two profile endpoints and the root-folder
+    // mapper take it to:
     //
-    // The two `LidarrClient` branches that are missing are Kotlin's unreachable null arms of
-    // `response.errorBody()?.string().orEmpty()`: Retrofit supplies an error body for every
-    // unsuccessful response, and `ResponseBody.string()` is non-null. Same artifact, same reason,
-    // as `IntegrationCredentialStore`'s eighteenth branch and `MediaRequestRepository`'s twelfth
-    // in `:integrations:core` -- so **0.90 against a measured 0.9545 is the honest ceiling** and a
-    // 1.00 here would fail the build on the Kotlin compiler rather than on this project's code.
+    //   `LidarrClient`               109/112 = 0.9732
+    //   `LidarrValidationException`    4/4   = 1.0000
     //
-    // Three branches in this rule were closed by tests written *because* this measurement was
-    // taken, not before it: `ping`'s null-body arm (7/8), `isStartingUp`'s absent-`errorMessage`
-    // arm (1/2) and `isAlreadyAdded`'s null-message arm (3/4). All three are shapes a real Lidarr
-    // produces -- its serializer omits null-valued fields entirely -- and none had an observation.
+    // The three missing `LidarrClient` branches are all Kotlin's unreachable null arms: two on
+    // `response.errorBody()?.string().orEmpty()` (Retrofit supplies an error body for every
+    // unsuccessful response, and `ResponseBody.string()` is non-null) and one on
+    // `(obj["id"] as? JsonPrimitive)?.content?...` (`JsonPrimitive.content` is a non-null
+    // `String`, so the `?.` after it can never take its null arm). Same artifact, same reason, as
+    // `IntegrationCredentialStore`'s eighteenth branch and `MediaRequestRepository`'s twelfth in
+    // `:integrations:core` -- so **0.9732 is the honest ceiling** and a 1.00 here would fail the
+    // build on the Kotlin compiler rather than on this project's code.
     //
-    // Falsified rather than assumed: see task-4-report.md for the ratios each withheld test
-    // produces.
+    // The floor stays at 0.90 rather than rising to meet the new ratio, and that is a decision
+    // rather than an oversight: Tasks 6 and 7 add a POST and a queue reader to this same class, so
+    // a floor two branches under a ceiling would fire on the first Kotlin-unreachable arm either
+    // of them introduces. 0.90 over 112 branches still refuses eleven uncovered ones.
+    //
+    // Three branches in this rule were closed at Task 4 by tests written *because* the measurement
+    // was taken: `ping`'s null-body arm, `isStartingUp`'s absent-`errorMessage` arm and
+    // `isAlreadyAdded`'s null-message arm. **Eight more were closed the same way at Task 5** --
+    // a nameless root folder, a pathless one, a nameless *metadata* profile (the quality one was
+    // already covered and they are separate call sites), a candidate with no title and none with
+    // an artist name, a non-string `albumType`/`disambiguation`/`remoteCover`/`releaseDate` (legal:
+    // `JsonStringEnumConverter(..., allowIntegerValues = true)`), and a quoted or nested `id`.
+    // Every one is a shape a real Lidarr can produce and none had an observation.
+    //
+    // FALSIFIED AT TASK 5, not copied forward from Task 4's record: withholding
+    // `LidarrLookupTest`'s twenty tests drops this class to **44/112 = 0.3929** and
+    // `jacocoJvmCoverageVerification` fails naming it. Withholding only the four that exercise
+    // `toCandidate`'s per-field mapping leaves it at 92/112 = 0.8214, which also fires. See
+    // task-5-report.md for both transcripts.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3684,6 +3705,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.LidarrValidationFailure",
         "app.muplay.integrations.lidarr.DefaultLidarrSourceFactory",
         "app.muplay.integrations.lidarr.di.LidarrModule",
+        // Task 5's three value types, measured at 1.0000 each: `LidarrAlbumCandidate` 11/11,
+        // `LidarrRootFolder` 10/10, `LidarrProfile` 1/1. Kotlin puts a data class's generated
+        // `equals`/`hashCode`/`toString` on the declaration line and gives each property its own,
+        // so these ratios really do say "every field this client maps is read back by some test"
+        // -- which is the assertion the field rule wants and the one a `containsExactly` over a
+        // whole object would not make. Falsified at Task 5: withholding
+        // `every candidate field is read from its own element` alone leaves `LidarrAlbumCandidate`
+        // at 10/11 = 0.9091, still green, so this floor gates the *set* of fields rather than any
+        // one of them; withholding all four of `LidarrLookupTest`'s candidate tests drops it to
+        // 1/11 = 0.0909 and the gate fires.
+        "app.muplay.integrations.lidarr.LidarrAlbumCandidate",
+        "app.muplay.integrations.lidarr.LidarrRootFolder",
+        "app.muplay.integrations.lidarr.LidarrProfile",
+        // Task 5's decision class. 6/6 on the type, 10/10 on the companion that holds `resolve`.
+        "app.muplay.integrations.lidarr.LidarrAddTargets*",
       ),
     ),
     // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
@@ -3741,7 +3777,41 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.SystemStatusBody*",
         "app.muplay.integrations.lidarr.ValidationFailureBody*",
         "app.muplay.integrations.lidarr.StartingUpBody*",
+        // Task 5's two, measured on the same run and for the same reason: `RootFolderBody`
+        // **9/12 = 0.7500** and `ProfileBody` **1/2 = 0.5000**, each `$$serializer` companion at
+        // 1/1. The uncovered lines are the generated `equals`/`hashCode`/`copy`/`componentN`
+        // nothing calls, because these types exist only to be deserialised into. Both clear 0.40
+        // without it being raised for them -- 0.40 is still the number `ValidationFailureBody`
+        // produced, not a number chosen to fit the newcomers.
+        "app.muplay.integrations.lidarr.RootFolderBody*",
+        "app.muplay.integrations.lidarr.ProfileBody*",
       ),
+    ),
+    // 6. Task 5's `LidarrAddTargets`, at **1.00 BRANCH** -- the only floor in this module that
+    // demands every branch, and the only class that can honestly carry one.
+    //
+    // Measured `LidarrAddTargets$Companion` **16/16 = 1.0000** with no emulator, no server and no
+    // fixture: `resolve` is a pure function over three arguments, so every arm of the cascade --
+    // inaccessible, blank path, each profile's greater-than-zero test, each profile's fallback,
+    // each fallback's empty-list give-up, each monitor default's blank substitution -- is reachable
+    // from a JVM test. This is the argument `StreamRetryPolicy` and `StreamFormat.forSuffix` make
+    // in Plan 3, and the reason `LidarrAddTargetsTest` has no HTTP in it at all.
+    //
+    // 1.00 rather than 0.90 because 0.90 over sixteen branches permits one uncovered arm, and the
+    // arms here are *the* thing this class is: the fallback that turns a 400 nobody can act on
+    // into a working add, and the give-up that refuses to fabricate a profile id. There is no
+    // Kotlin-unreachable arm in the class to make 1.00 dishonest -- `LidarrRootFolder`'s fields are
+    // all non-null, so no `?.` appears in `resolve` at all.
+    //
+    // FALSIFIED, not assumed: withholding
+    // `there is no answer when a needed profile is zero and no profile exists to fall back to`
+    // drops it to 14/16 = 0.8750 and `jacocoJvmCoverageVerification` fails naming this class.
+    // The `LidarrAddTargets` type itself rides along on rule 2's LINE list at 6/6.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.integrations.lidarr.LidarrAddTargets*"),
     ),
   ),
 )
