@@ -96,8 +96,16 @@ jobs:
       # the whole release-side cleartext refusal and was verified exactly once, by
       # hand, when it was written. Same shape as the broken device tier this repo
       # already carried for hours: two lanes green apart, green together, tier dead.
+      #
+      # The androidTest half of this list is now held against the tree by
+      # `ConventionTest`'s `every module with instrumented tests is compiled by the
+      # fast tier`. It was hand-written, and it named two of the seven modules that
+      # have a `src/androidTest` -- so five modules' device sources could stop
+      # compiling and only the emulator job, which runs later and costs far more,
+      # would say so. That is the fourth hand-written list in this repository to
+      # drift with nothing noticing.
       - name: Compile the gates check does not
-        run: ./gradlew :app:compileReleaseKotlin :core:media:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestKotlin
+        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :integrations:bindery:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:lidarr:compileDebugAndroidTestKotlin
 
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a
