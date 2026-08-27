@@ -93,6 +93,14 @@ WORDMARK_COLOUR = "#FFFFFF"
 # Absolute floor below which a shrunk string stops being a store asset and starts being a defect.
 MIN_FONT_SIZE = 24
 
+# The icon script supersamples 8x, which is right for a 108dp viewport and wrong here: this canvas
+# is rasterised as a 1024-wide square before cropping, so 8x means a 8192x8192 RGBA buffer -- 268 MB
+# held at once. Agents on this host run inside memory-limited transient scopes and a python3 has
+# already been OOM-killed at ~523 MB resident with tens of gigabytes free on the machine. At 4x the
+# buffer is 67 MB, and for flat fills, circles and rounded polygons at this output size the two are
+# visually indistinguishable. Raise it only if you can afford the square of what you raise it to.
+FEATURE_SUPERSAMPLE = 4
+
 FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -198,6 +206,7 @@ def main():
     # by rendering into a WIDTH x WIDTH square (the viewport is the canvas width in "dp") and
     # cropping the top HEIGHT rows -- every coordinate above is already in final pixels, so the
     # square's own top-left is the canvas's.
+    ICON.SUPERSAMPLE = FEATURE_SUPERSAMPLE
     square = ICON.render(background + shapes, WIDTH, float(WIDTH), (0.0, 0.0))
     image = square.crop((0, 0, WIDTH, HEIGHT)).convert("RGB")
 
