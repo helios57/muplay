@@ -115,6 +115,21 @@ class RequestsRepository @Inject constructor(
         skipped += service
         continue
       }
+      // A credential of the wrong type under this service's key. The shipped
+      // `IntegrationCredentialStore.read` cannot produce one -- it builds the credential *from*
+      // the key it is reading, and `aStoredBinderyEntryReadsAsBinderysNotAsLidarrs` is what holds
+      // it to that -- but `ConfiguredServices` is an interface and its type permits it, and the
+      // one thing this class must never do with a corrupt store is poll Lidarr with Bindery's key.
+      //
+      // Reported as **failed**, not skipped: the user did configure this service, and telling a
+      // screen it was never set up would offer them a setup flow they have already completed.
+      // Checked once here rather than with an `as?` inside each of the two status functions, so
+      // that `nextStatuses` can be exhaustive over the sealed type with no cast at all and
+      // `polled` never counts a row nothing was ever asked about.
+      if (credential.service != service) {
+        failed += service
+        continue
+      }
       val pollable = stored.filter { it.service == service && isPollable(it) }
       // Nothing to ask about is not a reason to open a connection. Note this is NOT a skip: the
       // service is configured, and reporting it as skipped would tell a screen the user had not
@@ -122,7 +137,7 @@ class RequestsRepository @Inject constructor(
       if (pollable.isEmpty()) continue
 
       val next = try {
-        nextStatuses(service, credential, pollable)
+        nextStatuses(credential, pollable)
       } catch (e: CancellationException) {
         // Cancelling the caller's scope is not a service failure and must not be reported as one --
         // `SyncEngine.syncIfStale`'s own rule, for the same reason.
@@ -206,13 +221,19 @@ class RequestsRepository @Inject constructor(
   private fun isPollable(request: MediaRequest): Boolean =
     request.status !is RequestStatus.Arrived && request.remoteId != null
 
+  /**
+   * Dispatched on the **credential's own type**, not on the service key it was filed under.
+   *
+   * `refresh` has already refused a credential whose [IntegrationCredentials.service] disagrees
+   * with its key, so the two are the same fact here and this `when` needs no cast — which is what
+   * keeps both status functions free of an `as?` whose null arm nothing could ever reach.
+   */
   private suspend fun nextStatuses(
-    service: IntegrationService,
     credential: IntegrationCredentials,
     pollable: List<MediaRequest>,
-  ): Map<String, RequestStatus> = when (service) {
-    IntegrationService.LIDARR -> lidarrStatuses(credential, pollable)
-    IntegrationService.BINDERY -> binderyStatuses(credential, pollable)
+  ): Map<String, RequestStatus> = when (credential) {
+    is IntegrationCredentials.Lidarr -> lidarrStatuses(credential, pollable)
+    is IntegrationCredentials.Bindery -> binderyStatuses(credential, pollable)
   }
 
   /**
@@ -222,15 +243,15 @@ class RequestsRepository @Inject constructor(
    * import completes, so files-on-disk is the only fact that survives it, and it is the one the
    * mapper ranks first.
    *
-   * `as?` rather than a cast, exactly as `LidarrSourceProvider.current` does it: a Bindery
-   * credential stored under `LIDARR` is a corrupt store, not a crash.
+   * Takes `IntegrationCredentials.Lidarr` rather than the sealed supertype, so that no cast lives
+   * here at all: a Bindery credential filed under `LIDARR` is a corrupt store rather than a crash,
+   * and [refresh] is the one place that says so.
    */
   private suspend fun lidarrStatuses(
-    credential: IntegrationCredentials,
+    credential: IntegrationCredentials.Lidarr,
     pollable: List<MediaRequest>,
   ): Map<String, RequestStatus> {
-    val source: LidarrSource =
-      (credential as? IntegrationCredentials.Lidarr)?.let(lidarrFactory::create) ?: return emptyMap()
+    val source: LidarrSource = lidarrFactory.create(credential)
     val queue = source.queue()
     return pollable.mapNotNull { request ->
       // Lidarr's album id is an Int and this column is TEXT. A row that will not parse is one this
@@ -249,11 +270,10 @@ class RequestsRepository @Inject constructor(
    * documentation warns is one layer up from a dropped field.
    */
   private suspend fun binderyStatuses(
-    credential: IntegrationCredentials,
+    credential: IntegrationCredentials.Bindery,
     pollable: List<MediaRequest>,
   ): Map<String, RequestStatus> {
-    val source: BinderySource =
-      (credential as? IntegrationCredentials.Bindery)?.let(binderyFactory::create) ?: return emptyMap()
+    val source: BinderySource = binderyFactory.create(credential)
     val books = allBooks(source).associateBy { it.id.toString() }
     return pollable.mapNotNull { request ->
       val book = books[request.remoteId] ?: return@mapNotNull null

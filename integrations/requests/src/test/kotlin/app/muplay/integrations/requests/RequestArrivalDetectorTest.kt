@@ -340,6 +340,23 @@ class RequestArrivalDetectorTest {
   }
 
   /**
+   * An album the mirror holds with **no artist at all** — `artistName` is nullable on `Album` and
+   * Navidrome really does return album rows without one — must not satisfy a request that names an
+   * artist. The empty side is the album's, and it is the side a `null` collapses onto, so a
+   * matcher that compared `null` against a blank requirement would answer confidently here.
+   */
+  @Test
+  fun `an album with no artist at all does not satisfy a request that names one`() = runTest {
+    val search = FakeAlbumSearch(mapOf(1 to listOf(album("al-1", 1, "Kind of Blue", artist = null))))
+    val detector = RequestArrivalDetector(FakeMirrorSync(), search, roles)
+
+    assertThat(detector.locate(request(subtitle = "Miles Davis"))).isNull()
+    // ...and the same album *is* the answer once the request stops naming one, so this is the
+    // artist comparison rather than the album simply being unmatchable.
+    assertThat(detector.locate(request(subtitle = ""))).isEqualTo("al-1")
+  }
+
+  /**
    * The same hole one field over: a *subtitle* that normalises away must not become an artist
    * requirement that only an album with no artist can satisfy.
    */

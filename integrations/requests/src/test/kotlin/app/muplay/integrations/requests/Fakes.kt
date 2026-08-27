@@ -100,6 +100,19 @@ class FakeConfiguredServices : ConfiguredServices {
   fun clear(service: IntegrationService) {
     state.value = state.value - service
   }
+
+  /**
+   * Files [credentials] under a service key that is **not** its own.
+   *
+   * The shipped `IntegrationCredentialStore.read` cannot produce this — it builds each credential
+   * from the key it is reading — but [ConfiguredServices] is an interface and its type permits it,
+   * and `RequestsRepository` has to be right for any implementation of the port rather than for
+   * the one adapter that happens to be wired today. Named `saveUnder` rather than `save` so that no
+   * ordinary test reaches it by accident.
+   */
+  fun saveUnder(service: IntegrationService, credentials: IntegrationCredentials) {
+    state.value = state.value + (service to credentials)
+  }
 }
 
 /**

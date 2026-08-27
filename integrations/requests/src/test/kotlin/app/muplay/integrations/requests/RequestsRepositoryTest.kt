@@ -9,6 +9,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
@@ -362,6 +363,107 @@ class RequestsRepositoryTest {
     assertThat(report.skippedUnconfigured).isEmpty()
   }
 
+  /**
+   * A credential of the **wrong type** filed under a service's key.
+   *
+   * The shipped `IntegrationCredentialStore.read` cannot produce this — it builds each credential
+   * from the key it is reading — but `ConfiguredServices` is an interface, and the one thing this
+   * class must never do with a corrupt store is poll Lidarr with Bindery's key. Fail closed: no
+   * client is built, no row is touched, and the service is reported **failed** rather than skipped,
+   * because the user did configure it.
+   */
+  @Test
+  fun `a credential filed under the wrong service is reported failed and polls nothing`() = runTest {
+    services.saveUnder(IntegrationService.LIDARR, binderyCredentials())
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+
+    val report = repository().refresh()
+
+    assertThat(lidarrFactory.credentialsSeen).isEmpty()
+    assertThat(binderyFactory.credentialsSeen).isEmpty()
+    assertThat(lidarrSource.queueCalls).isZero()
+    assertThat(binderySource.bookCalls).isZero()
+    assertThat(report.failed).containsExactly(IntegrationService.LIDARR)
+    // Not skipped: "you never set this up" is a different sentence from "what you set up is
+    // unreadable", and only one of them is true here.
+    assertThat(report.skippedUnconfigured).containsExactly(IntegrationService.BINDERY)
+    assertThat(report.polled).isZero()
+    assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Requested)
+  }
+
+  /** The mirror image, so neither direction of the type check is the only one anybody exercises. */
+  @Test
+  fun `a lidarr credential filed under bindery is refused the same way`() = runTest {
+    services.saveUnder(IntegrationService.BINDERY, lidarrCredentials())
+    requests.record(IntegrationService.BINDERY, "book", "B", "y", remoteId = "9")
+
+    val report = repository().refresh()
+
+    assertThat(binderyFactory.credentialsSeen).isEmpty()
+    assertThat(binderySource.bookCalls).isZero()
+    assertThat(report.failed).containsExactly(IntegrationService.BINDERY)
+    assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Requested)
+  }
+
+  @Test
+  fun `a lidarr remote id that is not a number is left alone rather than rewritten`() = runTest {
+    // Lidarr's album id is an `Int` and this column is TEXT, so a row can carry something that
+    // will not parse -- a Bindery id copied into a Lidarr row by a bad restore, say. There is
+    // nothing to correlate on, and an empty answer must not be mapped onto it.
+    services.save(lidarrCredentials())
+    requests.record(IntegrationService.LIDARR, "mbid-1", "A", "x", remoteId = "not-a-number")
+    requests.record(IntegrationService.LIDARR, "mbid-2", "B", "y", remoteId = "8")
+    lidarrSource.progress = mapOf(8 to LidarrAlbumProgress(trackFileCount = 5, totalTrackCount = 5))
+
+    val report = repository().refresh()
+
+    // The unparseable row was never asked about...
+    assertThat(lidarrSource.progressAsked).containsExactly(8)
+    val byId = requests.requests().first().associateBy { it.externalId }
+    assertThat(byId.getValue("mbid-1").status).isEqualTo(RequestStatus.Requested)
+    // ...and it did not stop the row beside it from being refreshed.
+    assertThat(byId.getValue("mbid-2").status).isEqualTo(RequestStatus.Imported)
+    assertThat(report.updated).isEqualTo(1)
+  }
+
+  @Test
+  fun `a queue item with no album id is never matched to a request`() = runTest {
+    // Lidarr's `/queue` really does carry records with a null `albumId` -- an import whose album
+    // could not be identified. Treating null as "matches whatever we are looking at" would map a
+    // stranger's download progress onto this request.
+    services.save(lidarrCredentials())
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+    lidarrSource.queue = listOf(
+      queueItem(albumId = null, state = "downloading", size = 100.0, left = 10.0),
+      queueItem(albumId = 99, state = "downloading", size = 100.0, left = 20.0),
+    )
+
+    repository().refresh()
+
+    assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Requested)
+  }
+
+  /**
+   * Cancelling the caller's scope is not a service failure.
+   *
+   * A refresh started by a ViewModel and abandoned when the screen closes must propagate the
+   * cancellation rather than swallow it into `failed` — the same rule `SyncEngine.syncIfStale`
+   * keeps, and for the same reason: a cancelled coroutine reported as an error is an error message
+   * shown to a user who has already navigated away.
+   */
+  @Test
+  fun `a cancellation propagates rather than being reported as a service failure`() = runTest {
+    services.save(lidarrCredentials())
+    requests.record(IntegrationService.LIDARR, "mbid", "A", "x", remoteId = "7")
+    val cancellation = CancellationException("the screen closed")
+    lidarrSource.failWith = cancellation
+
+    val thrown = runCatching { repository().refresh() }.exceptionOrNull()
+
+    assertThat(thrown).isSameAs(cancellation)
+    assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Requested)
+  }
+
   // ---- paging ----------------------------------------------------------------------------------
 
   @Test
@@ -399,6 +501,25 @@ class RequestsRepositoryTest {
 
     assertThat(binderySource.pagesAsked.map { it.third }).containsExactly(0, 1)
     assertThat(requests.requests().first().single().status).isEqualTo(RequestStatus.Imported)
+  }
+
+  @Test
+  fun `a server that keeps sending books forever stops at the paging cap`() = runTest {
+    // The other bound. `page.books.isNotEmpty()` ends an honest server's paging and `page.total`
+    // ends a slow one's; neither ends a server that keeps answering with full pages, and a refresh
+    // that never returns is worse than one that reads part of a library. 10_100 books, so the cap
+    // is reached with rows still to come and the stop is the cap rather than the corpus.
+    services.save(binderyCredentials())
+    requests.record(IntegrationService.BINDERY, "book-0", "B", "y", remoteId = "0")
+    binderySource.library = (0 until 10_100).map { binderyBook(it, "book-$it", "T$it", "wanted") }
+
+    repository().refresh()
+
+    // Derived from the constants rather than written down: 10_000 books at 100 a page.
+    assertThat(binderySource.pagesAsked.map { it.third })
+      .describedAs("offsets requested before the cap stopped the loop")
+      .endsWith(9_900)
+      .hasSize(100)
   }
 
   // ---- the flows, and the recording methods ----------------------------------------------------
