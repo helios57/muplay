@@ -199,6 +199,9 @@ BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 # de-duplication and the whole timeline are plain Kotlin and are gated here.
 CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
 BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
+# Plan 4 Task 5. A pure function over two Longs, on purpose, so the whole of it is reachable from
+# this JVM-only runner -- there is nothing about the smart-rewind table that needs a device.
+SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -217,6 +220,7 @@ PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackServic
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
 AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
+TRANSCODE_SEEK = "core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt"
 
 # Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
 # exported playback session at all.
@@ -3266,7 +3270,6 @@ PROBES = [
      # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
      # is the only fixture in the corpus that catches this at all.
      "Second Book's chapters are unequal in length and in order", 1),
-
     # ---- Plan 5 Task 5: what a tapped browse row expands to ------------------------------------
     #
     # ONLY THE ARITHMETIC IS HERE, AND THAT IS THIS RUNNER'S LIMIT RATHER THAN A CHOICE. The task's
@@ -3469,7 +3472,163 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+    # ---- Plan 4 Task 5: the smart-rewind band table, its four boundaries, and the clamp --------
+    # Every count below was MEASURED by applying the mutation alone against the committed tree and
+    # reading the result XML -- see task-5-report.md for the transcripts.
+    #
+    # The four `*-boundary-inclusive` probes are the point of the family and they are what the
+    # deliverable "every boundary asserted on both sides" buys: each turns one `<` into `<=`, which
+    # moves the answer at EXACTLY ONE input in the whole Long range. A suite that asserted each
+    # band at one interior value only -- the obvious way to test a lookup table, and the way that
+    # proves the table equals itself -- is green against all four of them.
+    ("rewind/band-table-constant", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs < Long.MAX_VALUE -> REWIND_MEDIUM_MS",
+     # The whole table collapsed to one value. Named against the five-band assertion because that
+     # is the one that cannot be satisfied by any constant at all.
+     "each band rewinds its own distinct amount", 9),
+    ("rewind/none-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_NONE_MS -> REWIND_NONE_MS",
+     "    awayMs <= AWAY_NONE_MS -> REWIND_NONE_MS",
+     "the fifteen second threshold is where rewinding starts", 1),
+    ("rewind/short-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "    awayMs <= AWAY_SHORT_MS -> REWIND_SHORT_MS",
+     "the one minute threshold moves the answer", 1),
+    ("rewind/medium-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "    awayMs <= AWAY_MEDIUM_MS -> REWIND_MEDIUM_MS",
+     "the one hour threshold moves the answer", 1),
+    ("rewind/long-boundary-inclusive", SMART_REWIND,
+     "    awayMs < AWAY_LONG_MS -> REWIND_LONG_MS",
+     "    awayMs <= AWAY_LONG_MS -> REWIND_LONG_MS",
+     "the one day threshold moves the answer", 1),
+    ("rewind/top-band-unbounded", SMART_REWIND,
+     "    else -> REWIND_MAX_MS",
+     "    else -> awayMs / AWAY_LONG_MS * REWIND_MAX_MS",
+     # The top band is the one band with no upper threshold, so "both sides" cannot pin it and a
+     # second, much larger input has to. A scale that keeps going rewinds a listener ten minutes
+     # into the previous chapter after a holiday. Note it answers 20_000 at exactly one day, so
+     # `the one day threshold moves the answer` is green against it -- the bound is only visible
+     # from far above the boundary.
+     "a month away rewinds the same as a day away and no more", 2),
+    ("rewind/swap-long-and-max", SMART_REWIND,
+     "  const val REWIND_LONG_MS = 10_000L\n  const val REWIND_MAX_MS = 20_000L",
+     "  const val REWIND_LONG_MS = 20_000L\n  const val REWIND_MAX_MS = 10_000L",
+     # Five DISTINCT values is what makes this catchable at all: with two bands sharing a number,
+     # a swap is invisible. `a month away ...` is NOT among the three, and that is the honest
+     # correction to this task's plan, which expected it: that test names `REWIND_MAX_MS` rather
+     # than `20_000L`, so it moves with the constant and stays green. It is only safe because the
+     # literal is asserted two tests above it.
+     "the one day threshold moves the answer", 3),
+    ("rewind/resume-no-clamp", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return storedPositionMs - rewind",
+     # A negative reaching `seekTo`. Two seconds into a chapter, gone for a week: -18_000.
+     "a rewind never goes past the start of the file", 3),
+    ("rewind/resume-clamp-after-subtracting", SMART_REWIND,
+     "    return if (storedPositionMs <= rewind) 0L else storedPositionMs - rewind",
+     "    return (storedPositionMs - rewind).coerceAtLeast(0L)",
+     # The shorter form, which reads better and is wrong at one input: `Long.MIN_VALUE - 20_000`
+     # wraps to a huge POSITIVE that a lower clamp cannot see. One failure, and it is the test
+     # that exists for it -- `a negative stored position is treated as the start` is green here,
+     # which is why the two are separate tests rather than two assertions in one.
+     "a stored position at the bottom of the range does not wrap into the far future", 1),
+    ("rewind/resume-ignores-away", SMART_REWIND,
+     "    val rewind = rewindMs(awayMs)",
+     "    val rewind = rewindMs(600_000L)",
+     # `resumePositionMs` as a function of one argument. The clamp tests are all green against
+     # this, because a clamped answer of 0 is 0 whatever the band said.
+     "the resume position is the stored position minus the band's rewind", 1),
+
+    # ---- Plan 3 Task 12: transcoded seek via `timeOffset` ---------------------------------------
+    #
+    # WHAT IS AND IS NOT HERE. This runner is JVM-only (see this file's own header), so only the
+    # mutations a JVM test can see are in this table. The two that matter most for this feature --
+    # `TranscodeOffsetSupport` defaulting to "supported", and `MuPlayer.getCurrentPosition` losing
+    # its offset base -- are visible ONLY on the device tier, where this runner reports MISSED with
+    # zero failures. Both were applied by hand against `:core:media`'s connected suite and the
+    # transcripts are in task-12-report.md; they are deliberately absent from this table rather
+    # than left MISSED, which is the treatment Task 7b's hand-built-player probe got for the same
+    # structural reason.
+    #
+    # 1. THE SHIPPED DEFECT, RESTORED. `timeOffset` is the only way to seek a live transcode at
+    #    all: one carries no `Content-Length` and answers `Accept-Ranges: none`, so ExoPlayer's own
+    #    seek either does nothing or resolves against a length it does not have -- and nothing
+    #    throws. Dropping the parameter leaves the whole feature compiling, every player test
+    #    green, the bar moving and the audio where it was.
+    ("stream/no-time-offset", CLIENT,
+     'builder.addQueryParameter("timeOffset", timeOffsetSeconds.coerceAtLeast(0).toString())',
+     'builder.addQueryParameter("nothing", "")',
+     # 3: the offset test, the zero test and the clamp test all read a parameter this line is the
+     # sole source of. It also reddens `LiveNavidromeTest`'s two body-size assertions and the whole
+     # device tier, neither of which this runner executes.
+     "a transcode asked for an offset carries it, in seconds", 3),
+
+    # 2. The same parameter, sent where the server ignores it. `format=raw` disables transcoding,
+    #    so `timeOffset` beside it is a parameter the server discards and a reader misreads -- the
+    #    same class as `maxBitRate` on a raw request, which this file already probes one family up.
+    #    Nothing observable breaks: every raw stream still plays.
+    ("stream/time-offset-on-raw", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (timeOffsetSeconds != null) {",
+     "a raw request never carries a time offset even when one is asked for", 1),
+
+    # 3. `timeOffset=0` mapped to absence. The two produce the same audio -- measured against the
+    #    container, 300369 bytes either way -- so this looks like a nicety and is not: `0` is what
+    #    "re-issue from the top" means, and collapsing it makes the re-issue path's own boundary
+    #    case take a different code path from every other seek, untested and unmeasurable.
+    ("stream/time-offset-zero-dropped", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null && timeOffsetSeconds > 0) {",
+     # 2, measured: `> 0` also swallows the *negative* case, so the clamp test goes red beside the
+     # zero test. Submitted as 1 and reported MISSED on the first run -- the stale-count case this
+     # table's own note describes, not a code regression.
+     "a zero offset is sent, because it is a real request and not an absent one", 2),
+
+    # 4. THE DECISION ITSELF, COLLAPSED TO WHAT EVERY PLAYER DID BEFORE THIS TASK. `InPlace` for a
+    #    transcode is the original bug exactly: a seek that appears to work and plays the wrong
+    #    audio. On the device it fails on the amplitude of the first frames out of the decoder;
+    #    here it fails on the decision.
+    ("seek/always-in-place", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered\n"
+     "    else -> SeekMethod.ReissueWithOffset(offsetSecondsFor(targetPositionMs))",
+     "    else -> SeekMethod.InPlace",
+     # 5, measured. Every test in `TranscodeSeekTest` that expects a `ReissueWithOffset` or a
+     # `NotOffered` goes red: the two-target one this names, the flooring one, the clamping one,
+     # the withdrawal one and the wire-value one. Submitted as 4 and reported MISSED on the first
+     # run -- the stale-count case, not a code regression.
+     "a transcode on a server that supports the extension is re-issued at the offset", 5),
+
+    # 5. The capability gate, ignored. `NotOffered` is the honest form of spec section 4's
+    #    "unsupported features are silent no-ops": offering a seek the server cannot perform is the
+    #    silent wrong answer that rule exists to forbid, and ignoring the gate re-creates it.
+    ("seek/capability-ignored", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered",
+     "    false -> SeekMethod.NotOffered",
+     "a transcode on a server without the extension does not offer the seek at all", 1),
+
+    # 6. Rounding instead of flooring. The server starts the transcode at or before the second
+    #    asked for, so a listener never loses audio they asked to hear; rounding up clips the first
+    #    word of a sentence and there is nothing to see. 5_999 is the only input in the suite that
+    #    tells the two programs apart, which is why it is there.
+    ("seek/offset-rounds-up", TRANSCODE_SEEK,
+     "    (targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND).toInt()",
+     "    Math.round(targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND.toDouble()).toInt()",
+     "the offset floors rather than rounds", 1),
+
+    # 7. The re-issued stream filed under the full track's cache key. `TrackIdCacheKeyFactory`
+    #    files every request under `MediaItem.customCacheKey`, so an offset stream carrying the
+    #    bare id is written INTO THE MIDDLE of the full track's cache entry, and every later read
+    #    of that track is served audio from the wrong place. Nothing observable breaks on the run
+    #    that causes it -- the audio is right THIS time -- which is the whole reason it needs a
+    #    probe rather than a comment.
+    ("seek/offset-shares-the-track-cache-key", TRANSCODE_SEEK,
+     '    if (timeOffsetSeconds <= 0) mediaId else "$mediaId$OFFSET_KEY_SEPARATOR$timeOffsetSeconds"',
+     "    mediaId",
+     "an offset stream is cached under its own key, and the top of the track under the plain id", 1),
 ]
+
 
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's
@@ -3558,6 +3717,12 @@ LATER_PROBE_FILES = [
     # list's own comment.
     REQUEST_STATUS,
     MEDIA_REQUEST,
+    # Plan 3 Task 12. Added AFTER its probes were -- the wrong order, and this list's own comment
+    # says exactly what that costs: `seek/always-in-place` mutated `TranscodeSeek.kt`, `revert()`
+    # named no file that matched, and `seek/capability-ignored` aborted the family with "PROBE TEXT
+    # NOT FOUND ... 0 matches" against the file the first probe had left mutated. The guard behaved
+    # correctly and `git status` showed the stray immediately. It still cost a run.
+    TRANSCODE_SEEK,
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,
@@ -3599,6 +3764,10 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 5. Added in the same edit as the ten `rewind/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    SMART_REWIND,
 ]
 
 

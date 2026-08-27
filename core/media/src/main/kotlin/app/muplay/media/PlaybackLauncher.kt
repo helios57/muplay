@@ -6,7 +6,9 @@ import app.muplay.model.Song
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
@@ -35,6 +37,14 @@ import kotlinx.coroutines.withContext
 class PlaybackLauncher @Inject constructor(
   private val queueRepository: QueueRepository,
   private val playbackConnection: PlaybackConnection,
+  /**
+   * The `transcodeOffset` gate (Plan 3 Task 12), negotiated here because this is the earliest point
+   * at which it *can* be: a capability query needs credentials, and credentials are what a stream
+   * URL is built from one line down. Defaulted to the inert [TranscodeSeekSupport.None] so the two
+   * hand-constructions in `:app`'s instrumented suite -- neither of which plays a transcode -- keep
+   * compiling; Hilt supplies the real one.
+   */
+  private val transcodeSeek: TranscodeSeekSupport = TranscodeSeekSupport.None,
 ) {
 
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -43,7 +53,16 @@ class PlaybackLauncher @Inject constructor(
 
   suspend fun play(songs: List<Song>, startIndex: Int) {
     val queue = launchQueue(songs, startIndex) ?: return
-    val items = queueRepository.mediaItems(queue)
+    // Concurrently with building the queue, not before it: the negotiation is one round trip and
+    // happens once per session, and serialising it would put that round trip between a user's tap
+    // and the first audio. `mediaItems` is mostly local (credentials, one library read, URL
+    // building), so the pair costs about what the slower of the two costs.
+    val items = coroutineScope {
+      val negotiating = async { transcodeSeek.refreshIfUnknown() }
+      val built = queueRepository.mediaItems(queue)
+      negotiating.await()
+      built
+    }
     withContext(mainDispatcher) {
       val controller = playbackConnection.controller()
       // `queue.startIndex` is honoured; the position argument is not, and cannot be -- MuPlayer's

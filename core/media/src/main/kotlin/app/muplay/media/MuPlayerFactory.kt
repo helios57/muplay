@@ -94,6 +94,13 @@ class MuPlayerFactory @Inject constructor(
   private val dataSourceFactory: MuPlayDataSourceFactory,
   private val loadErrorPolicy: NavidromeLoadErrorHandlingPolicy,
   private val resumePolicy: ResumePolicy,
+  // A *constructor* parameter rather than a defaulted argument on `create()`, and that is the whole
+  // point: Hilt supplies it, so the production wiring cannot forget it. A `create(transcodeSeek =
+  // ...)` seam would put the one call site that matters in charge of remembering, and the default
+  // it forgot to override -- `TranscodeSeekSupport.None` -- is precisely the shipped defect this
+  // task removes. The Kotlin default below exists only for the nine hand-constructions in this
+  // module's own instrumented suites, none of which plays a transcode.
+  private val transcodeSeek: TranscodeSeekSupport = TranscodeSeekSupport.None,
 ) {
 
   /**
@@ -108,8 +115,15 @@ class MuPlayerFactory @Inject constructor(
    * The caller's **index** survives: [NeverResume] returns it unchanged, so `PlaybackLauncher`'s
    * `setMediaItems(items, queue.startIndex, 0L)` still starts on the track the user tapped. Only the
    * position is the policy's to choose.
+   *
+   * [transcodeSeek] is handed over here and nowhere else, and forgetting it would be silent in the
+   * way this class's other arguments are: the player would still play, every unit test would stay
+   * green, and a seek inside an Opus track -- the only kind this app transcodes -- would move the
+   * bar and not the audio. `MuPlayer`'s default is `TranscodeSeekSupport.None`, which is exactly
+   * that defect, so the production call site has to pass the real one. `TranscodeSeekJourneyTest`
+   * is what notices if it stops.
    */
-  fun create(): MuPlayer = MuPlayer(createExoPlayer(), resumePolicy)
+  fun create(): MuPlayer = MuPlayer(createExoPlayer(), resumePolicy, transcodeSeek)
 
   /**
    * The **raw** player, for the three device suites whose subject is an `ExoPlayer` behaviour

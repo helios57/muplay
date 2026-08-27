@@ -745,7 +745,16 @@ class PlaybackJourneyTest {
     const val MUSIC_LIBRARY = "Music"
 
     /** The seeded content, per `ci/seed-fixtures.sh` and `ci/configure-libraries.sh`. */
-    val MUSIC_TRACKS = listOf("Track 1", "Track 2", "Track 3")
+    /**
+     * Every title the seeded **music** library can return, which is what a shuffle draws from.
+     *
+     * `Offset Track` is Plan 3 Task 12's Opus fixture and is deliberately last: the three indexed
+     * reads below (`MUSIC_TRACKS[0]`, `[1]`, `[2]`) name tracks inside [MUSIC_ALBUM], and appending
+     * rather than inserting keeps them naming the same three. What the fourth entry is for is
+     * `aShuffleStartsOnTheRowThatWasTapped`, whose `isIn(MUSIC_TRACKS)` is the assertion that goes
+     * red if the shuffle ever surfaces something this list does not know about.
+     */
+    val MUSIC_TRACKS = listOf("Track 1", "Track 2", "Track 3", "Offset Track")
     const val ALBUM_ARTIST = "Test Artist"
     const val MUSIC_ALBUM = "Test Album"
 

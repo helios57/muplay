@@ -1,5 +1,6 @@
 package app.muplay.media
 
+import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -354,4 +355,104 @@ class MediaItemsTest {
   private fun mimeOf(song: Song, format: StreamFormat): String? =
     MediaItems.of(song, "https://host/s", null, isAudiobook = false, format = format)
       .localConfiguration?.mimeType
+
+  // ---- Plan 3 Task 12: the format stamp, and reading it back ----------------------------------
+
+  /**
+   * The `format` wire value the URI was built with, stamped on the item.
+   *
+   * `TranscodeSeek` decides how to seek from this and from nothing else, and nothing else on a
+   * `MediaItem` could answer it: the MIME type reads `audio/mpeg` for a transcoded Opus **and** for
+   * a plain mp3 streamed raw, which is exactly the pair that must not be confused. Two values, so a
+   * stamp hardcoded to either one fails here.
+   */
+  @Test
+  fun theStreamFormatIsStampedWithTheValueTheUriWasBuiltFrom() {
+    val raw = MediaItems.of(first, "https://host/s", null, isAudiobook = false, format = StreamFormat.Raw)
+    val transcoded = MediaItems.of(
+      first,
+      "https://host/s",
+      null,
+      isAudiobook = false,
+      format = StreamFormat.Mp3(192),
+    )
+
+    assertThat(raw.mediaMetadata.extras!!.getString(MediaItems.KEY_STREAM_FORMAT)).isEqualTo("raw")
+    assertThat(transcoded.mediaMetadata.extras!!.getString(MediaItems.KEY_STREAM_FORMAT)).isEqualTo("mp3")
+    // The cap rides along only for a transcode -- a bitrate beside `format=raw` is a value the
+    // server ignores and a re-issue would then ask for.
+    assertThat(raw.mediaMetadata.extras!!.containsKey(MediaItems.KEY_STREAM_MAX_BITRATE_KBPS)).isFalse
+    assertThat(transcoded.mediaMetadata.extras!!.getInt(MediaItems.KEY_STREAM_MAX_BITRATE_KBPS))
+      .isEqualTo(192)
+  }
+
+  /**
+   * ...and read back as the same [StreamFormat], which is what the re-issued URI is built from.
+   *
+   * Round-tripped rather than asserted as a string, because the thing that must not drift is the
+   * *request*: `TranscodeOffsetSupport.reissue` asks the server for whatever this returns, and a
+   * reader that dropped the cap would change the transcode -- and Navidrome's cache entry with it
+   * -- in the middle of a track.
+   */
+  @Test
+  fun theStampedFormatReadsBackAsTheFormatItWasBuiltFrom() {
+    val each = listOf(StreamFormat.Raw, StreamFormat.Mp3(96), StreamFormat.Mp3(320))
+
+    assertThat(
+      each.map { format ->
+        MediaItems.streamFormatOf(
+          MediaItems.of(first, "https://host/s", null, isAudiobook = false, format = format),
+        )
+      },
+    ).containsExactlyElementsOf(each)
+  }
+
+  /**
+   * An item this object did not build carries no stamp, and reads back as `null` -- which
+   * `TranscodeSeek` treats as "seek in place", the behaviour of every player before Task 12.
+   *
+   * Three shapes, because they are three different absences: no extras at all (a `MediaItem`
+   * assembled by the system restoring a session), extras with no format key, and -- the one worth
+   * writing down -- a `"mp3"` stamp with no bitrate beside it, which is not a format anyone can ask
+   * a server for and so must not be guessed at.
+   */
+  @Test
+  fun anItemThisObjectDidNotBuildHasNoStreamFormat() {
+    val bare = MediaItem.Builder().setMediaId("x").build()
+    val emptyExtras = MediaItem.Builder().setMediaId("x")
+      .setMediaMetadata(MediaMetadata.Builder().setExtras(Bundle()).build()).build()
+    val mp3WithNoCap = MediaItem.Builder().setMediaId("x").setMediaMetadata(
+      MediaMetadata.Builder()
+        .setExtras(Bundle().apply { putString(MediaItems.KEY_STREAM_FORMAT, "mp3") })
+        .build(),
+    ).build()
+
+    assertThat(MediaItems.streamFormatOf(bare)).isNull()
+    assertThat(MediaItems.streamFormatOf(emptyExtras)).isNull()
+    assertThat(MediaItems.streamFormatOf(mp3WithNoCap)).isNull()
+  }
+
+  /**
+   * A freshly built item begins at the top of its track, and an item with no extras at all does
+   * too.
+   *
+   * `MediaItems.timeOffsetMsOf` is what `MuPlayer` adds to every position it reports, so a
+   * non-zero answer here would shift the whole clock of every ordinary track. Only
+   * `TranscodeOffsetSupport.reissue` ever writes that key.
+   */
+  @Test
+  fun anItemThatWasNotReissuedBeginsAtZero() {
+    val built = MediaItems.of(first, "https://host/s", null, isAudiobook = false, format = StreamFormat.Raw)
+
+    assertThat(MediaItems.timeOffsetMsOf(built)).isEqualTo(0L)
+    assertThat(MediaItems.timeOffsetMsOf(MediaItem.Builder().setMediaId("x").build())).isEqualTo(0L)
+    // ...and a value that *was* written reads back, so the line above is not "always zero".
+    val reissued = built.buildUpon().setMediaMetadata(
+      built.mediaMetadata.buildUpon()
+        .setExtras(Bundle(built.mediaMetadata.extras).apply { putLong(MediaItems.KEY_TIME_OFFSET_MS, 24_000L) })
+        .build(),
+    ).build()
+    assertThat(MediaItems.timeOffsetMsOf(reissued)).isEqualTo(24_000L)
+  }
+
 }

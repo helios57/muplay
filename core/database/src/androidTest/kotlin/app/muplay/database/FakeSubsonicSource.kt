@@ -6,6 +6,7 @@ import app.muplay.model.AlbumWithSongs
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -115,6 +116,10 @@ class FakeSubsonicSource : SubsonicSource {
    * in a committed expectation. The real thing is `SubsonicClient.streamUrl`, and `StreamUrlTest`
    * is where its auth parameters are asserted.
    */
-  override fun streamUrl(songId: String, format: StreamFormat): String =
-    "https://fake.invalid/rest/stream?id=$songId&format=${format.wireValue}"
+  override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String =
+    "https://fake.invalid/rest/stream?id=$songId&format=${format.wireValue}" +
+      (timeOffsetSeconds?.let { "&timeOffset=$it" } ?: "")
+
+  /** Nothing in the sync engine negotiates capabilities; `TranscodeOffsetSupport` is the caller. */
+  override suspend fun capabilities(): ServerCapabilities = error("not used by the sync suite")
 }
