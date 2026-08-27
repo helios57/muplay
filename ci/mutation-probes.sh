@@ -839,13 +839,18 @@ PROBES = [
      # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
      "the injected clock is a real clock and not a frozen one", 1),
     ("progress/policy-resumes", MEDIA_MODULE,
-     "  fun provideResumePolicy(): ResumePolicy = NeverResume",
-     "  fun provideResumePolicy(): ResumePolicy =\n"
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume",
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy =\n"
      "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
      # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
      # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
      # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
-     "the bound resume policy is the one that resumes nothing", 1),
+     #
+     # RENAMED in Plan 6 Task 9, which re-annotated this provider `@UndecoratedResumePolicy` so that
+     # the one UNQUALIFIED `ResumePolicy` in the graph is the cast decorator. The probe went STALE
+     # -- "0 matches ... (need exactly 1)" -- and the family refused to run, which is the guard
+     # working: a probe whose search text has drifted is a probe that would silently mutate nothing.
+     "the undecorated resume policy is the one that resumes nothing", 1),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone
