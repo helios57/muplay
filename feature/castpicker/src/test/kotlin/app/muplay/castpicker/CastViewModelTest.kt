@@ -146,6 +146,37 @@ class CastViewModelTest {
     }
 
   @Test
+  fun `selecting before any search has finished does nothing rather than throwing`() {
+    // The picker's own button is not the only way in: `:app` hosts the sheet behind a
+    // `rememberSaveable` boolean, so a process death with the sheet open restores a picker whose
+    // first search has not landed yet. `found.value` is `null` there, and this is that path.
+    runTest(dispatcher) {
+      val viewModel = CastViewModel(directory, session)
+
+      viewModel.select("uuid:a")
+      advanceUntilIdle()
+
+      assertThat(session.castTargets).isEmpty()
+    }
+  }
+
+  @Test
+  fun `closing a picker that never opened cancels nothing and is harmless`() {
+    // `:app` drives `close()` from a `LaunchedEffect` keyed on the sheet's visibility, which fires
+    // once with `false` on first composition -- before any search exists to cancel.
+    runTest(dispatcher) {
+      val viewModel = CastViewModel(directory, session)
+
+      viewModel.close()
+      advanceUntilIdle()
+
+      assertThat(directory.searchCount).isZero()
+      assertThat(directory.cancelledSearches).isZero()
+      assertThat(viewModel.uiState.value).isEqualTo(CastUiState.Hidden)
+    }
+  }
+
+  @Test
   fun `disconnecting ends the session`() = runTest(dispatcher) {
     directory.result = DiscoveryResult(listOf(deviceA), emptyList())
     val viewModel = CastViewModel(directory, session)
