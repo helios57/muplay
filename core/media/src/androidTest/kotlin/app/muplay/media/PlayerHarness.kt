@@ -4,12 +4,16 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Drives a real [ExoPlayer] from an instrumented test thread.
+ * Drives a real player from an instrumented test thread.
+ *
+ * Typed `Player`, not `ExoPlayer`, and every member below already used only `Player` API. Plan 3
+ * Task 12 needed to drive a `MuPlayer` -- a `ForwardingPlayer`, which is not an `ExoPlayer` -- and
+ * the alternative was a second copy of the error-capturing wait loop below. Every existing caller
+ * passes an `ExoPlayer`, which is a `Player`, so nothing they do changes.
  *
  * Three jobs, and the third is the one worth reading:
  *
@@ -21,7 +25,7 @@ import java.util.concurrent.atomic.AtomicReference
  *    timed out. The captured [PlaybackException] is rethrown as the assertion failure's cause,
  *    so the message names the real problem.
  */
-class PlayerHarness(val player: ExoPlayer) {
+class PlayerHarness(val player: Player) {
 
   private val error = AtomicReference<PlaybackException?>(null)
 

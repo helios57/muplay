@@ -199,6 +199,7 @@ PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackServic
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
 AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
+TRANSCODE_SEEK = "core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt"
 
 # Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
 # exported playback session at all.
@@ -2671,7 +2672,87 @@ PROBES = [
      # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
      # is the only fixture in the corpus that catches this at all.
      "Second Book's chapters are unequal in length and in order", 1),
+    # ---- Plan 3 Task 12: transcoded seek via `timeOffset` ---------------------------------------
+    #
+    # WHAT IS AND IS NOT HERE. This runner is JVM-only (see this file's own header), so only the
+    # mutations a JVM test can see are in this table. The two that matter most for this feature --
+    # `TranscodeOffsetSupport` defaulting to "supported", and `MuPlayer.getCurrentPosition` losing
+    # its offset base -- are visible ONLY on the device tier, where this runner reports MISSED with
+    # zero failures. Both were applied by hand against `:core:media`'s connected suite and the
+    # transcripts are in task-12-report.md; they are deliberately absent from this table rather
+    # than left MISSED, which is the treatment Task 7b's hand-built-player probe got for the same
+    # structural reason.
+    #
+    # 1. THE SHIPPED DEFECT, RESTORED. `timeOffset` is the only way to seek a live transcode at
+    #    all: one carries no `Content-Length` and answers `Accept-Ranges: none`, so ExoPlayer's own
+    #    seek either does nothing or resolves against a length it does not have -- and nothing
+    #    throws. Dropping the parameter leaves the whole feature compiling, every player test
+    #    green, the bar moving and the audio where it was.
+    ("stream/no-time-offset", CLIENT,
+     'builder.addQueryParameter("timeOffset", timeOffsetSeconds.coerceAtLeast(0).toString())',
+     'builder.addQueryParameter("nothing", "")',
+     # 3: the offset test, the zero test and the clamp test all read a parameter this line is the
+     # sole source of. It also reddens `LiveNavidromeTest`'s two body-size assertions and the whole
+     # device tier, neither of which this runner executes.
+     "a transcode asked for an offset carries it, in seconds", 3),
+
+    # 2. The same parameter, sent where the server ignores it. `format=raw` disables transcoding,
+    #    so `timeOffset` beside it is a parameter the server discards and a reader misreads -- the
+    #    same class as `maxBitRate` on a raw request, which this file already probes one family up.
+    #    Nothing observable breaks: every raw stream still plays.
+    ("stream/time-offset-on-raw", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (timeOffsetSeconds != null) {",
+     "a raw request never carries a time offset even when one is asked for", 1),
+
+    # 3. `timeOffset=0` mapped to absence. The two produce the same audio -- measured against the
+    #    container, 300369 bytes either way -- so this looks like a nicety and is not: `0` is what
+    #    "re-issue from the top" means, and collapsing it makes the re-issue path's own boundary
+    #    case take a different code path from every other seek, untested and unmeasurable.
+    ("stream/time-offset-zero-dropped", CLIENT,
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
+     "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null && timeOffsetSeconds > 0) {",
+     "a zero offset is sent, because it is a real request and not an absent one", 1),
+
+    # 4. THE DECISION ITSELF, COLLAPSED TO WHAT EVERY PLAYER DID BEFORE THIS TASK. `InPlace` for a
+    #    transcode is the original bug exactly: a seek that appears to work and plays the wrong
+    #    audio. On the device it fails on the amplitude of the first frames out of the decoder;
+    #    here it fails on the decision.
+    ("seek/always-in-place", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered\n"
+     "    else -> SeekMethod.ReissueWithOffset(offsetSecondsFor(targetPositionMs))",
+     "    else -> SeekMethod.InPlace",
+     "a transcode on a server that supports the extension is re-issued at the offset", 4),
+
+    # 5. The capability gate, ignored. `NotOffered` is the honest form of spec section 4's
+    #    "unsupported features are silent no-ops": offering a seek the server cannot perform is the
+    #    silent wrong answer that rule exists to forbid, and ignoring the gate re-creates it.
+    ("seek/capability-ignored", TRANSCODE_SEEK,
+     "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered",
+     "    false -> SeekMethod.NotOffered",
+     "a transcode on a server without the extension does not offer the seek at all", 1),
+
+    # 6. Rounding instead of flooring. The server starts the transcode at or before the second
+    #    asked for, so a listener never loses audio they asked to hear; rounding up clips the first
+    #    word of a sentence and there is nothing to see. 5_999 is the only input in the suite that
+    #    tells the two programs apart, which is why it is there.
+    ("seek/offset-rounds-up", TRANSCODE_SEEK,
+     "    (targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND).toInt()",
+     "    Math.round(targetPositionMs.coerceAtLeast(0L) / MILLIS_PER_SECOND.toDouble()).toInt()",
+     "the offset floors rather than rounds", 1),
+
+    # 7. The re-issued stream filed under the full track's cache key. `TrackIdCacheKeyFactory`
+    #    files every request under `MediaItem.customCacheKey`, so an offset stream carrying the
+    #    bare id is written INTO THE MIDDLE of the full track's cache entry, and every later read
+    #    of that track is served audio from the wrong place. Nothing observable breaks on the run
+    #    that causes it -- the audio is right THIS time -- which is the whole reason it needs a
+    #    probe rather than a comment.
+    ("seek/offset-shares-the-track-cache-key", TRANSCODE_SEEK,
+     '    if (timeOffsetSeconds <= 0) mediaId else "$mediaId$OFFSET_KEY_SEPARATOR$timeOffsetSeconds"',
+     "    mediaId",
+     "an offset stream is cached under its own key, and the top of the track under the plain id", 1),
 ]
+
 
 
 # Plan 1's original defect: `authParams()` returning nothing at all left every one of that plan's

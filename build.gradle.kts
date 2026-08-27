@@ -491,6 +491,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.model.ServerCapabilities",
+        // Plan 3 Task 12: `ServerCapabilities$Companion`, which holds one `const val` (the
+        // `transcodeOffset` extension name) and carries no counter of either kind. It rides along
+        // exactly as `BrowseSurface*` does below, so `warnUngatedClasses` has nothing to say about
+        // it and it can never move this ratio.
+        "app.muplay.model.ServerCapabilities*",
         "app.muplay.model.SearchResults",
         "app.muplay.model.ServerInfo",
         "app.muplay.model.MusicLibrary",

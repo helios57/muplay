@@ -118,17 +118,26 @@ class BookFixturesTest {
 
   @Test
   fun `the music tracks are not books`() {
-    // The oracle covers the whole corpus, and the Music subtree must stay chapterless and
-    // three-strong -- Plan 3's gapless measurement is arithmetic over exactly these.
+    // The oracle covers the whole corpus, and the Music subtree must stay chapterless.
+    //
+    // Four tracks since Plan 3 Task 12, and the fourth is deliberately unlike the other three:
+    // `Offset Track` is Opus, thirty seconds, and the only file here that `StreamFormat.forSuffix`
+    // sends through Navidrome's transcoder. In track order, so it is last -- which is what keeps
+    // `Track 1`/`Track 2`/`Track 3` at the indices the gapless measurement and every journey read
+    // them at. (`RealTrackBytes.musicTracks()` filters this module's *device* consumers back down
+    // to the three mp3s for exactly that reason; see its own note.)
     assertThat(BookFixtures.MUSIC_TRACKS.map { it.title })
-      .containsExactly("Track 1", "Track 2", "Track 3")
+      .containsExactly("Track 1", "Track 2", "Track 3", "Offset Track")
+    // 30006, not 30000: `ffprobe` reads Opus's pre-skip into `format.duration` the same way it
+    // reads libmp3lame's padding into the mp3s' 5042. Neither is the number the seed script asked
+    // ffmpeg for, and rounding either here would invent a third answer no reader gives.
     assertThat(BookFixtures.MUSIC_TRACKS.map { it.durationMs })
-      .containsExactly(5_042L, 5_042L, 5_042L)
+      .containsExactly(5_042L, 5_042L, 5_042L, 30_006L)
     // No music path carries a chapter row. Asserted through the parsed table rather than by
     // reading the file again, because this is the claim `ScopedShuffleJourneyTest` and every
     // "books are not music" assertion downstream rest on.
     assertThat(BookFixtures.MUSIC_TRACKS.map { BookFixtures.chaptersOf(it.path) })
-      .containsExactly(emptyList(), emptyList(), emptyList())
+      .containsExactly(emptyList(), emptyList(), emptyList(), emptyList())
   }
 
   @Test
@@ -141,8 +150,9 @@ class BookFixturesTest {
 
     assertThat(named).containsExactlyInAnyOrderElementsOf(BookFixtures.allTrackPaths())
     // ...and the table is not empty, which `containsExactlyInAnyOrder` on two empty lists would
-    // have satisfied. Nine: three music tracks, three single-file books, three book parts.
-    assertThat(named).hasSize(9)
+    // have satisfied. Ten: four music tracks (three mp3s and Task 12's Opus fixture), three
+    // single-file books, three book parts.
+    assertThat(named).hasSize(10)
   }
 
   @Test

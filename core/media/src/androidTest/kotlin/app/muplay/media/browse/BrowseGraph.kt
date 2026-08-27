@@ -20,6 +20,7 @@ import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -350,8 +351,10 @@ class RecordingArtSource : SubsonicSource {
     return "http://art.invalid/$coverArtId/$sizePx"
   }
 
-  override fun streamUrl(songId: String, format: StreamFormat): String =
+  override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String =
     error("the browse tree must never build a stream url; it builds identities")
+
+  override suspend fun capabilities(): ServerCapabilities = error("not used by the browse suite")
 
   override suspend fun ping(): ServerInfo = error("not used by the browse suite")
   override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by the browse suite")

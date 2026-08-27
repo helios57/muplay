@@ -6,6 +6,7 @@ import app.muplay.model.AlbumWithSongs
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
+import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
@@ -93,7 +94,38 @@ interface SubsonicSource {
    * force `raw` or `mp3` and **never** Opus, and the way to enforce that is to make `opus`
    * unrepresentable rather than to check for it.
    */
-  fun streamUrl(songId: String, format: StreamFormat): String
+  /**
+   * [timeOffsetSeconds] is the `transcodeOffset` extension's `timeOffset`: it starts the
+   * **transcode** that many seconds into the track, which is the only way to seek a live transcode
+   * at all. One carries no `Content-Length` and answers `Accept-Ranges: none` (see [StreamFormat.Raw]
+   * and `LiveNavidromeTest`), so there are no byte ranges to seek with and the seek has to happen
+   * server-side, by re-issuing the URI.
+   *
+   * `null` -- the default -- sends no `timeOffset` at all, so every call written before this
+   * parameter existed still asks for exactly what it asked for. `0` is **not** the same as `null`
+   * and is sent: it is what "re-issue this stream from the top" means, and collapsing it to absence
+   * would make the re-issue path untestable at its own boundary.
+   *
+   * Ignored for [StreamFormat.Raw], where a real `Range` request is available and strictly better,
+   * and where a parameter the server ignores is a parameter a reader misreads -- the same reasoning
+   * that keeps `maxBitRate` off a raw request. Ask for an offset only when the server advertises
+   * `transcodeOffset`; `:core:media`'s `TranscodeOffsetSupport` is that gate and [capabilities] is
+   * how it asks.
+   */
+  fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int? = null): String
+
+  /**
+   * The result of OpenSubsonic capability negotiation for this server.
+   *
+   * Plan 1 built the three-tier negotiation and [app.muplay.model.ServerCapabilities]; until this
+   * method existed nothing in the running app could ask it anything, so spec section 4's
+   * *"unsupported features are silent no-ops, not errors"* had never once been applied to a
+   * Subsonic feature. This is the way in, and `transcodeOffset` is its first question.
+   *
+   * `suspend`, unlike [streamUrl] and [coverArtUrl], because it really does talk to the server --
+   * `ping` first, and `getOpenSubsonicExtensions` only if that reported OpenSubsonic support.
+   */
+  suspend fun capabilities(): ServerCapabilities
 }
 
 /**

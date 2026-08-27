@@ -45,7 +45,21 @@ sealed interface StreamFormat {
       }
     }
 
-    override val wireValue: String = "mp3"
+    override val wireValue: String = WIRE_VALUE
+
+    companion object {
+      /**
+       * `"mp3"`, as a constant, because two things outside this module have to *recognise* it and
+       * neither of them holds a [StreamFormat].
+       *
+       * A `MediaItem` carries the wire value it was built with as a string (see `:core:media`'s
+       * `MediaItems.KEY_STREAM_FORMAT` -- a `Bundle` cannot hold a sealed interface), and
+       * `TranscodeSeek` decides how to seek by comparing against it. Both would otherwise compare
+       * against a string literal `"mp3"`, in two files, neither of which would move if
+       * [wireValue] ever did.
+       */
+      const val WIRE_VALUE: String = "mp3"
+    }
   }
 
   companion object {
