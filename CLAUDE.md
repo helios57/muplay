@@ -694,3 +694,50 @@ untouched. `GaplessTest`'s `const val TRACK_COUNT = 3` did not.
 Where a test genuinely needs one *kind* of track, filter rather than count:
 `RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
 and was unaffected.
+
+## Lint's Android Auto checks cannot see a library module's manifest
+
+`AndroidAutoDetector` switches on the moment an application declares itself an Auto media app
+(`com.google.android.gms.car.application` meta-data plus a `res/xml` descriptor whose `uses` names
+`media`). It then reports **two errors** that no declaration in this repository can satisfy, because
+`MuPlaybackService` is declared in `core/media`'s manifest and the detector reads only the
+application module's own manifest sources:
+
+    app/src/debug/AndroidManifest.xml:16: Error: Missing intent-filter for action
+      android.media.action.MEDIA_PLAY_FROM_SEARCH [MissingIntentFilterForMediaSearch]
+    app/src/debug/AndroidManifest.xml:16: Error: Missing intent-filter for action
+      android.media.browse.MediaBrowserService that is required for android auto support
+      [MissingMediaBrowserServiceIntentFilter]
+
+Both were measured against a tree where the merged manifest **did** carry the browse action — AGP's
+own `app/build/intermediates/merged_manifest/debug/` has it, and `verifyDebugManifest` goes red when
+it does not. Adding `android.media.action.MEDIA_PLAY_FROM_SEARCH` to the same service in
+`core/media`'s manifest left the first error reported, *unchanged*. So neither check's verdict
+depends on the thing it claims to check, and neither can ever go green in this layout.
+
+They are disabled in `app/lint.xml`, which carries the measurement, and
+`ConventionTest`'s `no Android Auto lint check is disabled without a named replacement` holds each
+disabled id to the gate that took over. Do not "fix" this by copying the service declaration into
+`:app`'s manifest: that is a second copy of the thing `core/media`'s manifest header exists to keep
+in one place, and lint would then be satisfied by a declaration nothing checks.
+
+Note also the shape, because two rules written on the same afternoon had it: a check that reports
+"missing" whatever the truth is reads exactly like a check that found something.
+
+## AGP's merged manifest keeps every source manifest's comments
+
+Measured: `core/media`'s twenty-line comment explaining the browse actions is reproduced verbatim in
+`app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml`.
+
+`VerifyMergedManifestTask` is a plain `contains`, so a comment that quotes the declaration it
+explains — which is what a good comment beside `android:name="..."` looks like — used to satisfy the
+required half on behalf of a declaration nobody wrote. Proven causally in both directions: with the
+browse action replaced by a comment naming it, `:app:verifyDebugManifest` was **BUILD SUCCESSFUL**
+before the fix and **BUILD FAILED** after, on the identical manifest.
+
+The **required** half now strips XML comments; the **forbidden** half deliberately does not, because
+it is an absence check where over-matching is the safe direction. Both directions are pinned by a
+test in `VerifyMergedManifestTaskTest`.
+
+This is the same defect as `verifyReleaseNoDestructiveMigration` reading comments, running the other
+way: there prose caused a false *failure*, here it caused a false *pass*.
