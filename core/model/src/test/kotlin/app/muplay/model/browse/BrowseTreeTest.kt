@@ -583,6 +583,106 @@ class BrowseTreeTest {
       .isSubsetOf(setOf("cov-a", "cov-b", "cov-ar1", "cov-test", "cov-second", "cov-multi", "cov-tail"))
   }
 
+  // --- search ----------------------------------------------------------------------------------
+
+  @Test
+  fun `search results are books, then albums, then artists, then tracks`() {
+    // Two entries per group, so a rule that interleaved them -- or that dropped one group's second
+    // element -- fails here rather than looking like the right order with a shorter list.
+    //
+    // The fixture is deliberately **not** in alphabetical order end to end: sorted by title it
+    // would read Abbey Road, Blue Train, Come Together, John Coltrane, Multi Part Book, Something,
+    // Tail Book, The Beatles. So "books first" and "sorted" are distinguishable here, which is the
+    // whole claim -- the ordering is a decision about what a driver reads first, not a tie-break.
+    val nodes = BrowseTree.searchNodes(
+      books = listOf(TAIL, MULTI),
+      albums = listOf(ALBUM_A, ALBUM_B),
+      artists = listOf(ARTIST_BEATLES, ARTIST_COLTRANE),
+      songs = listOf(song("tr-1", "Come Together"), song("tr-2", "Something")),
+    )
+
+    assertThat(nodes.map(BrowseNode::title)).containsExactly(
+      "Multi Part Book", "Tail Book",
+      "Abbey Road", "Blue Train",
+      "The Beatles", "John Coltrane",
+      "Come Together", "Something",
+    )
+    // The kinds, in the same order -- so a run of eight rows built by the wrong builder, or four
+    // groups collapsed into one, cannot satisfy the titles above by accident.
+    assertThat(nodes.map(BrowseNode::mediaType)).containsExactly(
+      BrowseMediaType.AUDIO_BOOK, BrowseMediaType.AUDIO_BOOK,
+      BrowseMediaType.ALBUM, BrowseMediaType.ALBUM,
+      BrowseMediaType.ARTIST, BrowseMediaType.ARTIST,
+      BrowseMediaType.TRACK, BrowseMediaType.TRACK,
+    )
+    // ...and the ids, because a search row's whole purpose is to be expanded into a queue.
+    assertThat(nodes.map { it.id.encode() }).containsExactly(
+      "muplay/book/b-multi", "muplay/book/b-tail",
+      "muplay/album/al-a", "muplay/album/al-b",
+      "muplay/artist/ar-1", "muplay/artist/ar-2",
+      // A track id is **bare** on the wire -- see `BrowseId.Track`'s own note on why the leaf is
+      // the only id with no prefix.
+      "tr-1", "tr-2",
+    )
+  }
+
+  @Test
+  fun `a book outranks music that sorts before it in every direction`() {
+    // The sharpest form of "not a tie-break": the one book sorts **last** of the four rows by
+    // title, and it is still first. Every ordering rule other than "books first" -- alphabetical,
+    // reverse alphabetical (which would put the track first), input order, longest title -- gives
+    // a different first row.
+    val nodes = BrowseTree.searchNodes(
+      books = listOf(ZULU_BOOK),
+      albums = listOf(ALBUM_A),
+      artists = listOf(ARTIST_BEATLES),
+      songs = listOf(song("tr-1", "Come Together")),
+    )
+
+    assertThat(nodes.map(BrowseNode::title))
+      .containsExactly("Zulu Book", "Abbey Road", "The Beatles", "Come Together")
+  }
+
+  @Test
+  fun `an empty group contributes nothing and does not move the groups after it`() {
+    // Vary one argument, hold the rest constant, assert both observations. Without the second of
+    // these, an implementation that emitted the album group twice -- or that emitted the books
+    // group in the albums slot -- would satisfy the first on its own.
+    val withBook = BrowseTree.searchNodes(
+      books = listOf(ZULU_BOOK),
+      albums = listOf(ALBUM_A),
+      artists = emptyList(),
+      songs = emptyList(),
+    )
+    val withoutBook = BrowseTree.searchNodes(
+      books = emptyList(),
+      albums = listOf(ALBUM_A),
+      artists = emptyList(),
+      songs = emptyList(),
+    )
+
+    assertThat(withBook.map(BrowseNode::title)).containsExactly("Zulu Book", "Abbey Road")
+    assertThat(withoutBook.map(BrowseNode::title)).containsExactly("Abbey Road")
+    assertThat(BrowseTree.searchNodes(emptyList(), emptyList(), emptyList(), emptyList())).isEmpty()
+  }
+
+  @Test
+  fun `a searched album is the album row and never a shuffle row`() {
+    // `albumsNodes` -- the Albums *tab* -- puts one shuffle row per Music library above the albums.
+    // A search result list must not: "Shuffle Music" is not a search result for anything the user
+    // typed, and it would be the first row a driver takes. The two builders are one line apart in
+    // this file, which is exactly how the wrong one gets called.
+    val nodes = BrowseTree.searchNodes(
+      books = emptyList(),
+      albums = listOf(ALBUM_A, ALBUM_B),
+      artists = emptyList(),
+      songs = emptyList(),
+    )
+
+    assertThat(nodes.map { it.id.encode() }).containsExactly("muplay/album/al-a", "muplay/album/al-b")
+    assertThat(nodes.map { it.id.encode() }).noneMatch { it.startsWith("muplay/shuffle/") }
+  }
+
   private companion object {
 
     fun song(id: String, title: String) = Song(
@@ -656,6 +756,15 @@ class BrowseTreeTest {
 
     /** Two files, started, most recently heard. */
     val TAIL = book("b-tail", "Tail Book", "Anonymous", "cov-tail", 2, 10_000, 4_000, false, 900)
+
+    /** Sorts **last** of every fixture title in the search tests, and is still the first row. */
+    val ZULU_BOOK = book("b-zulu", "Zulu Book", "Anonymous", null, 1, 5_000, 0, false, 0)
+
+    val ARTIST_BEATLES =
+      Artist(id = "ar-1", libraryId = 1, name = "The Beatles", coverArtId = "cov-ar1", albumCount = 13)
+
+    val ARTIST_COLTRANE =
+      Artist(id = "ar-2", libraryId = 1, name = "John Coltrane", coverArtId = "cov-ar2", albumCount = 9)
 
     /** Finished. Belongs on the shelf, never on Continue. */
     val DONE = book("b-done", "Zero Hour", "Anonymous", null, 1, 5_000, 5_000, true, 1_000)

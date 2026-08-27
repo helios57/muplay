@@ -74,6 +74,28 @@
         <action android:name="androidx.media3.session.MediaLibraryService" />
         <action android:name="android.media.browse.MediaBrowserService" />
       </intent-filter>
+      <!-- PLAN 5 TASK 6 - one contiguous block, added by the voice-and-search lane.
+           "Hey Google, play <something> on MuPlay" when nothing is connected yet: the Assistant
+           starts this service with this action and a SearchManager.QUERY extra, and
+           MuPlaybackService.onStartCommand answers it. With the app already connected the same
+           spoken request arrives instead as a legacy playFromSearch, which Media3 turns into
+           MediaLibrarySession.Callback.onSetMediaItems with a query on the item's request metadata;
+           both reach MuPlayLibraryCallback.spokenQueue, which is the one place that decides what a
+           spoken query plays.
+
+           A SEPARATE intent-filter and not a fourth action in the one above, deliberately: the
+           three actions above are all bound by Media3's own onBind and take no category, while this
+           one is a started-service intent that needs DEFAULT to be resolvable by the Assistant.
+           Merging them would make the service claim to answer MEDIA_PLAY_FROM_SEARCH on a bind,
+           which it does not.
+
+           ConventionTest's `a declared play-from-search filter must have a handler and a gate
+           entry` holds this filter, that handler and the AUTOMOTIVE_DECLARATIONS entry to a single
+           answer, so no two of the three can land without the third. -->
+      <intent-filter>
+        <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
     </service>
   </application>
 </manifest>

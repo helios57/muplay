@@ -587,6 +587,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         //                          gated in `:core:media`.
         "app.muplay.model.browse.BrowsePaging",
         "app.muplay.model.browse.BrowseExtras",
+        //   `PlayFromSearch`       Plan 5 Task 6. **10/10 BRANCH**, from `PlayFromSearchTest`, JVM
+        //                          data only. Which one thing a spoken query plays: the blank-query
+        //                          arm, `tierOf`'s three-way `when`, and `normalise`'s
+        //                          letter-or-digit and non-empty-token filters. Every one of those
+        //                          is a decision a listener would feel -- a punctuated query is
+        //                          what a speech recogniser actually hands over, and the tiers are
+        //                          what makes "play Tail Book" start Tail Book rather than the
+        //                          first book on the shelf.
+        //
+        //                          `PlayFromSearch*` rides along for
+        //                          `PlayFromSearch$rank$$inlined$sortedBy$1`, the synthetic
+        //                          comparator Kotlin emits for `sortedBy`, which carries **no
+        //                          BRANCH counter at all** -- included so `warnUngatedClasses` has
+        //                          nothing to say, gating nothing. Its one line is gated by the
+        //                          LINE rule below.
+        "app.muplay.model.browse.PlayFromSearch",
+        "app.muplay.model.browse.PlayFromSearch*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -683,6 +700,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // empty and starts at zero" is a claim worth holding.
         "app.muplay.model.browse.BrowseSelection",
         "app.muplay.model.browse.BrowseSelection*",
+        // Plan 5 Task 6. `PlayFromSearch` **16/16** LINE and its synthetic `sortedBy` comparator
+        // **1/1**, from JVM data alone. It carries the BRANCH rule above as well, and it is here
+        // for the reason `BrowseTree` is: `pick` is a single delegating expression and `rank`'s
+        // filter/sort statements contain no branch of their own, so deleting the tests that reach
+        // them moves no branch at all. The comparator class has only a LINE counter, so this is the
+        // only rule that can gate it.
+        "app.muplay.model.browse.PlayFromSearch",
+        "app.muplay.model.browse.PlayFromSearch*",
       ),
     ),
     // ---- Plan 4 Task 2: the audiobook value types --------------------------------------------

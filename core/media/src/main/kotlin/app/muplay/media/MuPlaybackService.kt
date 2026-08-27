@@ -1,12 +1,15 @@
 package app.muplay.media
 
 import android.app.PendingIntent
+import android.app.SearchManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaLibraryService
@@ -22,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * The service that owns playback.
@@ -146,6 +150,52 @@ class MuPlaybackService : MediaLibraryService() {
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
     session
+
+  /**
+   * Handles the Assistant's cold-start play intent, then hands the intent on to Media3 unchanged.
+   *
+   * *"Hey Google, play Second Book on MuPlay"* reaches a media app two different ways. With the app
+   * already connected it arrives as a legacy `playFromSearch`, which Media3 turns into
+   * `onSetMediaItems` with a query on the item's request metadata; with nothing connected it
+   * arrives **here**, as a plain `Intent` at the exported service. Both funnel into
+   * [MuPlayLibraryCallback.spokenQueue], so there is one answer to "which one thing does that
+   * play" rather than two that drift.
+   *
+   * **`super.onStartCommand` still runs for every intent, including this one.**
+   * `MediaSessionService` uses it for media-button routing and for its own foreground bookkeeping,
+   * and short-circuiting it for one action is how a service ends up alive but deaf to a headset.
+   *
+   * The action is matched through the platform constant rather than a literal; the manifest carries
+   * the literal, and `ConventionTest`'s *a declared play-from-search filter must have a handler and
+   * a gate entry* is what stops the filter, this branch and the merged-manifest requirement from
+   * landing without one another.
+   */
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    if (intent?.action == MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) {
+      playFromSearch(intent.getStringExtra(SearchManager.QUERY).orEmpty())
+    }
+    return super.onStartCommand(intent, flags, startId)
+  }
+
+  /**
+   * Starts whatever [query] should start, on the session's **current** player.
+   *
+   * `session?.player` is read at the moment it is used and never cached, for the reason
+   * [MuPlayLibraryCallback]'s own header gives: Plan 6 swaps the session's player when audio moves
+   * to a speaker.
+   *
+   * `C.TIME_UNSET`, like everywhere else: `MuPlayer` discards it and asks the resume policy, so a
+   * book asked for out loud resumes where it was left.
+   */
+  private fun playFromSearch(query: String) {
+    serviceScope.launch {
+      val queue = libraryCallback.spokenQueue(query) ?: return@launch
+      val player = session?.player ?: return@launch
+      player.setMediaItems(queue.mediaItems, queue.startIndex, C.TIME_UNSET)
+      player.prepare()
+      player.play()
+    }
+  }
 
   /**
    * Stops the service when the user swipes the app away **and nothing is playing**.

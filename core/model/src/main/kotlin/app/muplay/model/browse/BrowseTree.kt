@@ -153,6 +153,27 @@ object BrowseTree {
       )
     }
 
+  /**
+   * A search result list: books, then albums, then artists, then tracks.
+   *
+   * **The order is a decision, not a tie-break.** In an app whose reason to exist is audiobook
+   * resume, a typed or spoken title is far more likely to be a book than an album, and the first
+   * row is the one a driver takes without reading the rest. It is not "books happen to sort first"
+   * and it is not relevance ranking: a book comes above an album that sorts before it, contains the
+   * query more tightly, or was returned first by the mirror.
+   *
+   * Each group is built by the builder that already renders it elsewhere, so a book found by search
+   * carries the same completion pip it carries on the Books tab and an album found by search is the
+   * same row the Albums tab draws -- minus the shuffle rows, which are not results.
+   */
+  fun searchNodes(
+    books: List<BookSummary>,
+    albums: List<Album>,
+    artists: List<Artist>,
+    songs: List<Song>,
+  ): List<BrowseNode> =
+    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)
+
   /** Every library, by id, with its role spelled out -- the phone-only Libraries tab. */
   fun libraryNodes(libraries: List<MusicLibrary>): List<BrowseNode> =
     libraries.sortedBy(MusicLibrary::id).map { library ->
