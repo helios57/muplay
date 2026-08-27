@@ -3649,11 +3649,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `JsonStringEnumConverter(..., allowIntegerValues = true)`), and a quoted or nested `id`.
     // Every one is a shape a real Lidarr can produce and none had an observation.
     //
-    // FALSIFIED AT TASK 5, not copied forward from Task 4's record: withholding
-    // `LidarrLookupTest`'s twenty tests drops this class to **44/112 = 0.3929** and
-    // `jacocoJvmCoverageVerification` fails naming it. Withholding only the four that exercise
-    // `toCandidate`'s per-field mapping leaves it at 92/112 = 0.8214, which also fires. See
-    // task-5-report.md for both transcripts.
+    // FALSIFIED AT TASK 5, not copied forward from Task 4's record. Withholding all twenty of
+    // `LidarrLookupTest`'s tests drops this class to **42/112 = 0.3750**; withholding just the
+    // two that assert the whole candidate field set -- `every candidate field is read from its
+    // own element` and `the real lookup body from a pinned lidarr maps as this client claims` --
+    // drops it to **99/112 = 0.8839**, and `jacocoJvmCoverageVerification` fails with
+    // "branches covered ratio is 0.88, but expected minimum is 0.90". Withholding only the first
+    // of those two leaves it at 107/112 = 0.9554 and green, so the floor gates the pair rather
+    // than either one. Transcripts in task-5-report.md.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3707,14 +3710,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.di.LidarrModule",
         // Task 5's three value types, measured at 1.0000 each: `LidarrAlbumCandidate` 11/11,
         // `LidarrRootFolder` 10/10, `LidarrProfile` 1/1. Kotlin puts a data class's generated
-        // `equals`/`hashCode`/`toString` on the declaration line and gives each property its own,
-        // so these ratios really do say "every field this client maps is read back by some test"
-        // -- which is the assertion the field rule wants and the one a `containsExactly` over a
-        // whole object would not make. Falsified at Task 5: withholding
-        // `every candidate field is read from its own element` alone leaves `LidarrAlbumCandidate`
-        // at 10/11 = 0.9091, still green, so this floor gates the *set* of fields rather than any
-        // one of them; withholding all four of `LidarrLookupTest`'s candidate tests drops it to
-        // 1/11 = 0.0909 and the gate fires.
+        // `equals`/`hashCode`/`toString` on the declaration line and gives each property its own.
+        //
+        // **READ THE FALSIFICATION BEFORE TRUSTING WHAT THAT RATIO LOOKS LIKE IT SAYS.** It is
+        // tempting to read 11/11 as "every field is read back by some test"; it is not. Measured
+        // at Task 5: withholding `every candidate field is read from its own element` leaves
+        // `LidarrAlbumCandidate` at **11/11**, and withholding *that and* the real-fixture test
+        // still leaves it at **11/11**, because the four remaining candidate tests between them
+        // touch every getter. The only withholding that fires it is all twenty of
+        // `LidarrLookupTest`'s tests, which gives **0/11**. So this floor says "some test builds
+        // one of these and reads it", not "every field is observed" -- the field rule is enforced
+        // by `LidarrLookupTest`'s two-values-per-field assertions and by
+        // `ci/mutation-probes.sh`'s `integrations/lidarr-*` family, and by nothing here.
+        //
+        // Worse for `LidarrRootFolder` and `LidarrProfile`, and worth writing down rather than
+        // leaving for the next person: withholding **every** lookup test leaves them at 10/10 and
+        // 1/1, because `LidarrAddTargetsTest` constructs both by hand. Their only falsification is
+        // withholding both test classes at once (0/10 and 0/1, and the gate does then fire). That
+        // is the second-caller effect this repository has already been bitten by once.
         "app.muplay.integrations.lidarr.LidarrAlbumCandidate",
         "app.muplay.integrations.lidarr.LidarrRootFolder",
         "app.muplay.integrations.lidarr.LidarrProfile",
@@ -3805,7 +3818,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // FALSIFIED, not assumed: withholding
     // `there is no answer when a needed profile is zero and no profile exists to fall back to`
-    // drops it to 14/16 = 0.8750 and `jacocoJvmCoverageVerification` fails naming this class.
+    // drops it to **13/16 = 0.8125** and `jacocoJvmCoverageVerification` fails with
+    // "Rule violated for class app.muplay.integrations.lidarr.LidarrAddTargets.Companion:
+    // branches covered ratio is 0.81, but expected minimum is 1.00".
     // The `LidarrAddTargets` type itself rides along on rule 2's LINE list at 6/6.
     CoverageFloor(
       counter = "BRANCH",

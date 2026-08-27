@@ -195,6 +195,8 @@ MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/Media
 LIDARR_INT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
 LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrClient.kt"
 LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
+LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
+LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -2557,6 +2559,82 @@ PROBES = [
      "503 -> LidarrStartingUpException()",
      "a 503 starting-up body is its own failure, distinct from any other 503", 1),
 
+    # ---- Plan 7 Task 5: the lookup, the two traps in it, and where an add is aimed -------------
+    # Same argument as the family above: the coverage gate cannot see most of this. Every mutation
+    # below leaves `LidarrClient`'s BRANCH floor and `LidarrAddTargets$Companion`'s 1.00 BRANCH
+    # floor exactly where they are, because each one substitutes a constant for a value rather than
+    # removing an arm -- which is the shape a lazy implementation actually ships.
+    #
+    # 1. The search term. A lookup that ignores its argument returns Lidarr's results for whatever
+    #    the implementer was testing with, forever, and looks like a working search box.
+    ("integrations/lidarr-lookup-term", LIDARR_CLIENT,
+     "call { api.albumLookup(term) }", 'call { api.albumLookup("kind of blue") }',
+     "the lookup sends whichever term it is given, url-encoded, to album slash lookup", 1),
+
+    # 2. TRAP 1, and the sharpest defect in this task: `AlbumLookupController` sets `RemoteCover`
+    #    and only `ArtistLookupController` sets `RemotePoster`. Measured against a real
+    #    3.1.0.4875-ls40 lookup, an album element carries NO `remotePoster` key at all -- so this
+    #    mutation yields null artwork on every row, with nothing reported anywhere.
+    ("integrations/lidarr-remoteCover", LIDARR_CLIENT,
+     'remoteCoverUrl = obj.string("remoteCover"),', 'remoteCoverUrl = obj.string("remotePoster"),',
+     "the cover comes from remoteCover and not from remotePoster", 2),
+
+    # 3. The .NET `DateTime.MinValue` sentinel. Measured: an album whose release date Lidarr does
+    #    not know sends `0001-01-01T00:00:00Z` rather than omitting the field, so dropping this
+    #    `takeIf` prints "the year 1" at a user with no error anywhere.
+    ("integrations/lidarr-releaseDate-sentinel", LIDARR_CLIENT,
+     'obj.string("releaseDate")?.takeIf { !it.startsWith(DATE_TIME_MIN_VALUE) }',
+     'obj.string("releaseDate")',
+     "the real lookup body from a pinned lidarr maps as this client claims", 1),
+
+    # 4. The identity guard. An element with no `foreignAlbumId` cannot be added -- `PostValidator`
+    #    requires it -- so keeping it produces a row that looks fine and fails at the add.
+    ("integrations/lidarr-candidate-needs-album-id", LIDARR_CLIENT,
+     'val foreignAlbumId = obj.string("foreignAlbumId") ?: return null',
+     'val foreignAlbumId = obj.string("foreignAlbumId").orEmpty()',
+     "an element with no usable identity is skipped rather than crashing the list", 1),
+
+    # 5. Two endpoints, not one. Quality and metadata profiles share a DTO and differ only by path,
+    #    which is exactly the copy-paste a reviewer's eye slides over -- and the consequence is an
+    #    add filed under a metadata profile id that is really a quality profile id.
+    ("integrations/lidarr-metadataprofile-endpoint", LIDARR_API,
+     '@GET("api/v1/metadataprofile")', '@GET("api/v1/qualityprofile")',
+     "quality and metadata profiles are two different endpoints and both are read", 1),
+
+    # 6 and 7. Two of `LidarrAddTargets`'s pass-throughs, one representative of each risk: the
+    #    path decides where the files land, and the profile id decides what gets downloaded. The
+    #    constant a lazy implementation reaches for is the fixture's own value, so a single-folder
+    #    test would stay green under both.
+    ("integrations/lidarr-targets-rootpath-passthrough", LIDARR_TARGETS,
+     "rootFolderPath = rootFolder.path,", 'rootFolderPath = "/music",',
+     "every field comes from the folder it was given, not from a constant", 1),
+    ("integrations/lidarr-targets-quality-passthrough", LIDARR_TARGETS,
+     "qualityProfileId = quality,", "qualityProfileId = 1,",
+     "every field comes from the folder it was given, not from a constant", 1),
+
+    # 8. The fallback that is the reason this class exists. `ValidId` requires a profile id above
+    #    zero, and a root folder created through the API rather than the UI can carry zeros; without
+    #    the fallback the add fails with a 400 about profiles that the user cannot act on.
+    ("integrations/lidarr-targets-zero-fallback", LIDARR_TARGETS,
+     "if (preferred > 0) preferred else profiles.firstOrNull()?.id", "preferred",
+     "a zero default falls back to the first profile the server reports", 2),
+
+    # 9. The inaccessible folder. Offering it produces an add that fails on a path validation --
+    #    measured, "Folder '/music' is not writable by user 'abc'" -- shown to somebody who was
+    #    choosing an album.
+    ("integrations/lidarr-targets-inaccessible", LIDARR_TARGETS,
+     "if (!rootFolder.accessible || rootFolder.path.isBlank()) return null",
+     "if (rootFolder.path.isBlank()) return null",
+     "an inaccessible root folder has no answer", 1),
+
+    # 10. The blank monitor substitution, on the field that is easier to forget. `MonitorTypes` has
+    #     no empty member, so an empty string on the wire is a 400 -- and this is the half of the
+    #     pair a per-folder substitution would silently discard.
+    ("integrations/lidarr-targets-newitem-monitor", LIDARR_TARGETS,
+     "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption.ifBlank { DEFAULT_MONITOR },",
+     "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption,",
+     "a blank monitor default becomes all rather than an empty string on the wire", 2),
+
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
     # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
@@ -2739,6 +2817,10 @@ LATER_PROBE_FILES = [
     LIDARR_INT,
     LIDARR_CLIENT,
     LIDARR_EXC,
+    # Plan 7 Task 5, added in the same edit as the ten `integrations/lidarr-{lookup,targets,...}`
+    # probes, per this list's own comment.
+    LIDARR_API,
+    LIDARR_TARGETS,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,

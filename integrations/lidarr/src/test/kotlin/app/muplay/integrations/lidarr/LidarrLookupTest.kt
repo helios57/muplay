@@ -171,6 +171,7 @@ class LidarrLookupTest {
        {"foreignAlbumId":"m","title":"ok","artist":{"foreignArtistId":"a","artistName":"n"}},
        {"foreignAlbumId":"n","title":"no artist id","artist":{"artistName":"n"}},
        {"foreignAlbumId":"o","title":"no artist at all"},
+       {"title":"no album id","artist":{"foreignArtistId":"z","artistName":"n"}},
        "not an object at all"]
       """.trimIndent(),
     )
