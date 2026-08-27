@@ -309,6 +309,13 @@ reviewer ends up staring at an error message.
   `musicFolders`, so the trap is the default state of a new user and not an artefact of one
   account.
 
+That verification used a **throwaway** `deluan/navidrome:0.63.2` container on the CI host, on a
+port of its own, mounting this repository's own fixtures read-only. It never touched the shared
+`ci-navidrome-1`, and it was removed when the measurement was done. **Nothing about the
+recommended route needs a second container to keep running anywhere** — the route runs on the
+account holder's own server, and the container existed only to prove the recipe before it was
+written down.
+
 **Not walked on a device, and this is the gap that matters most.** The shared emulator
 (`muplay37`) was gone when this document was finished — its `qemu-system-x86_64` process had
 disappeared and 44 GB of host RAM had come back, on a host that had already logged an
