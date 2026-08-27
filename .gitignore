@@ -35,3 +35,7 @@ keystore.properties
 *.pfx
 *.bks
 *.pepk
+
+# Python bytecode from the ci/ generator scripts. Written on import (ci/generate-feature-graphic.py
+# imports ci/generate-launcher-icon.py by path), never by the project.
+__pycache__/
