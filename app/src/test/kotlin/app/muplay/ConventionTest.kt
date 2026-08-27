@@ -1318,6 +1318,78 @@ class ConventionTest {
   }
 
   /**
+   * **No integration may put a credential on a URL.**
+   *
+   * `IntegrationBaseUrl` already makes it impossible for a *base* URL to carry one — `parse` strips
+   * userinfo and refuses a query string, and `IntegrationBaseUrlTest` holds it to that. This rule
+   * is the other half: nothing downstream may put the secret back, on a request URL, after the
+   * base URL was cleaned.
+   *
+   * Asked for by two earlier lanes, and the hazard is a real one rather than a hypothetical. Lidarr
+   * accepts `?apikey=` as a documented alternative to the `X-Api-Key` header — so "the header was
+   * not being sent, let us try the query parameter" is a plausible one-line debugging change that
+   * compiles, works, and changes no existing test's outcome. A URL is the worst possible carrier
+   * for an instance-wide admin key: it reaches the server's access log, any proxy in between, a
+   * `Referer`, and every crash report and bug report that quotes a failing request. The header does
+   * none of that.
+   *
+   * Three forms, because the same mistake has three spellings, and each is separately falsifiable:
+   *
+   *  1. a Retrofit `@Query("apikey")` parameter,
+   *  2. an OkHttp `addQueryParameter("apikey", ...)` / `setQueryParameter(...)` on a builder,
+   *  3. the string form, `"...?apikey=$key"`, which needs no library at all.
+   *
+   * Comments are stripped first by [kotlinCode], deliberately: this file has twice cost this
+   * repository a build over prose (`verifyReleaseNoDestructiveMigration` reading a KDoc, and the
+   * merged-manifest gate being *satisfied* by one), and a paragraph explaining why `?apikey=` is
+   * refused is exactly the comment a future author would write beside this rule's own subject.
+   *
+   * Test sources are excluded for the same reason the logging-interceptor rule excludes them: a
+   * test whose whole point is to assert that a key is **absent** from a URL has to name the shape
+   * it is looking for.
+   */
+  @Test
+  fun `no integration puts a credential on a url`() {
+    val root = repoRoot()
+    val sources = File(root, "integrations").walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { !it.invariantSeparatorsPath.contains("/src/test/") }
+      .filter { !it.invariantSeparatorsPath.contains("/src/androidTest/") }
+      .toList()
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(sources).describedAs("integration main sources").isNotEmpty()
+
+    val secret = """(api[-_]?key|token|secret|password|passwd|pwd)"""
+    val forms = mapOf(
+      "a Retrofit @Query named after a credential" to Regex("""@Query\(\s*"$secret"""", RegexOption.IGNORE_CASE),
+      "a credential added to a URL builder" to
+        Regex("""(add|set)(Encoded)?QueryParameter\(\s*"$secret"""", RegexOption.IGNORE_CASE),
+      // `[?&]name=` followed by a Kotlin interpolation -- the hand-built URL. The interpolation is
+      // required: `"?apikey=" in a constant path` with no value spliced in is not a credential.
+      "a credential interpolated into a URL string" to
+        Regex("""[?&]$secret=\$""", RegexOption.IGNORE_CASE),
+    )
+
+    val offenders = sources.flatMap { file ->
+      val code = kotlinCode(file.readText())
+      forms.filter { (_, pattern) -> pattern.containsMatchIn(code) }
+        .map { (form, _) -> "${file.relativeTo(root).invariantSeparatorsPath} -> $form" }
+    }
+
+    assertThat(offenders)
+      .describedAs(
+        "An integration API key is instance-wide and always treated as admin, and a URL is the " +
+          "one place it must never appear: server access logs, proxies, Referer headers and every " +
+          "bug report that quotes a failing request all copy URLs wholesale. Send it in a header, " +
+          "as LidarrAuthInterceptor and BinderyAuthInterceptor already do -- IntegrationBaseUrl " +
+          "refuses to let a base URL carry one, and this rule is what stops it being added back.",
+      )
+      .isEmpty()
+  }
+
+  /**
    * `:core:media` builds every `MediaItem` this app plays, and each one's URI is an authenticated
    * Subsonic stream URL carrying `u`, `s=salt` and `t=md5(password+salt)` -- a credential that does
    * not expire.
