@@ -173,11 +173,22 @@ class SleepTimerControllerTest {
 
     harness.onMain { subject.start(SleepTimerRequest.Duration(COUNTDOWN_MS)) }
     Thread.sleep(COUNTDOWN_MS - 800L)
-    harness.onMain { subject.extend(byMs = 6_000L) }
+    // The volume is read **inside the same main-thread turn as the extend**, and that is what makes
+    // it discriminate: `extend` restarts the ticker with `launch`, whose first tick is dispatched
+    // rather than immediate, so a separate `onMain` read happens after that tick has already
+    // written the volume for the new deadline. Measured -- with the restore deleted from `begin`,
+    // the two-turn version of this assertion stayed green.
+    val volumeInTheSameTurn = harness.onMain {
+      subject.extend(byMs = 6_000L)
+      harness.player.volume
+    }
     Thread.sleep(2_000L)
 
     // Past the original deadline, still playing. And the volume came back, because the extend
     // happened during the fade.
+    assertThat(volumeInTheSameTurn)
+      .describedAs("the volume the listener would hear between the shake and the next tick")
+      .isEqualTo(FULL_VOLUME)
     assertThat(harness.onMain { harness.player.isPlaying }).isTrue
     assertThat(harness.onMain { harness.player.volume }).isEqualTo(FULL_VOLUME)
     assertThat(subject.state.value).isInstanceOf(SleepTimerState.Running::class.java)
@@ -227,7 +238,11 @@ class SleepTimerControllerTest {
     harness.onMain { subject.start(SleepTimerRequest.Duration(COUNTDOWN_MS)) }
     Thread.sleep(COUNTDOWN_MS - 800L)
     val remainingBeforeTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
-    harness.onMain { subject.onShake() }
+    // Same turn as the shake, for the reason `extendingPushesTheDeadlineOut` records.
+    val volumeInTheSameTurn = harness.onMain {
+      subject.onShake()
+      harness.player.volume
+    }
     val remainingAfterTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
 
     // Read with no wait: `extend` republishes synchronously, so this cannot be satisfied by
@@ -235,7 +250,9 @@ class SleepTimerControllerTest {
     assertThat(remainingAfterTheShake - remainingBeforeTheShake)
       .describedAs("one shake buys EXTENSION_MS more, from %d ms remaining", remainingBeforeTheShake)
       .isBetween(SleepTimerController.EXTENSION_MS - 500L, SleepTimerController.EXTENSION_MS + 500L)
-    assertThat(harness.onMain { harness.player.volume }).isEqualTo(FULL_VOLUME)
+    assertThat(volumeInTheSameTurn)
+      .describedAs("the volume the listener would hear between the shake and the next tick")
+      .isEqualTo(FULL_VOLUME)
     Thread.sleep(1_500L)
     assertThat(harness.onMain { harness.player.isPlaying })
       .describedAs("past the original deadline, still playing").isTrue
