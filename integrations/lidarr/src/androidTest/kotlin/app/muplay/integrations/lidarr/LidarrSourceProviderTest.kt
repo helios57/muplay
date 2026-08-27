@@ -87,6 +87,19 @@ class LidarrSourceProviderTest {
 
         override suspend fun metadataProfiles(): List<LidarrProfile> =
           throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        // Task 6's two, on the same rule, and the throw matters more here than anywhere above:
+        // an `submitAlbum` that quietly returned `AlreadyAdded` would be a fake that silently
+        // succeeds at adding nothing, which is the one behaviour this module must never fake.
+        override suspend fun submitAlbum(
+          candidate: LidarrAlbumCandidate,
+          targets: LidarrAddTargets,
+          searchNow: Boolean,
+        ): LidarrAddOutcome =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
       }
     }
   }
