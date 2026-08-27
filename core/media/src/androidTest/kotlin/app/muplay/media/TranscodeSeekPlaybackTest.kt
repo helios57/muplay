@@ -119,7 +119,9 @@ class TranscodeSeekPlaybackTest {
     caches.clear()
     dataStoreFiles.forEach { it.delete() }
     dataStoreFiles.clear()
-    cacheDir.deleteRecursively()
+    // Guarded: a `@Before` that dies before this is assigned would otherwise have its real failure
+    // replaced by an `UninitializedPropertyAccessException` from here. See `GaplessTest.tearDown`.
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
   }
 
   // ---- the headline: the audio starts where the seek asked -------------------------------------
@@ -587,10 +589,20 @@ class TranscodeSeekPlaybackTest {
     val neverNegotiated = TranscodeOffsetSupport(provider)
 
     val foreign = MediaItem.Builder().setMediaId("not-ours").build()
+    // Extras, but not *these* extras -- the shape a `MediaItem` from another Media3 component
+    // arrives in. It gets past the "no extras at all" guard and still has no format to rebuild
+    // from, which is a different arm and a different reason.
+    val someoneElsesExtras = MediaItem.Builder().setMediaId("not-ours").setMediaMetadata(
+      androidx.media3.common.MediaMetadata.Builder()
+        .setExtras(android.os.Bundle().apply { putString("someone.elses.key", "value") })
+        .build(),
+    ).build()
     val ours = itemFor(opus)
 
-    // No format stamp: nothing to rebuild a URI from.
+    // No extras at all: nothing to copy and nothing to read a format out of.
     assertThat(negotiated.reissue(foreign, 12)).isSameAs(foreign)
+    // Extras, no format stamp.
+    assertThat(negotiated.reissue(someoneElsesExtras, 12)).isSameAs(someoneElsesExtras)
     // No source: nothing to rebuild it *with*. `refresh` was never called on this one.
     assertThat(neverNegotiated.reissue(ours, 12)).isSameAs(ours)
     // ...and with both, it really does rebuild -- the control that stops the two lines above from
@@ -672,6 +684,97 @@ class TranscodeSeekPlaybackTest {
     assertThat(onMain { seam.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) }).isTrue
     assertThat(onMain { seam.availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) })
       .isTrue
+  }
+
+  /**
+   * The four seek entry points a `Player` has, and which of them the transcode decision applies to.
+   *
+   * `seekTo(index, position)` naming **another** item is queue navigation and goes straight
+   * through: the target item's format is not this item's, and this class has never guarded a
+   * position on that overload -- it guards `setMediaItem(s)`, which is where a queue is chosen.
+   * Naming the **current** item is an ordinary seek and is re-issued.
+   *
+   * `seekBack` and `seekForward` are overridden for a reason that would otherwise be silent:
+   * `ForwardingPlayer` sends them to the wrapped player, which resolves them against its own
+   * position -- the re-issued stream's zero -- so on a transcode they would jump to the wrong place
+   * or, on a live one, do nothing. Advertising the two commands (see the command-set test above) is
+   * only honest if they work.
+   */
+  @Test
+  fun everySeekEntryPointGoesThroughTheSameDecision() {
+    val player = transcodePlayer()
+    val queue = listOf(itemFor(mp3), itemFor(opus))
+    onMain {
+      player.setMediaItems(queue.toMutableList(), /* startIndex = */ 1, /* startPositionMs = */ 0L)
+      player.prepare()
+    }
+    check(onMain { player.currentMediaItemIndex } == 1) { "the queue did not start on the Opus track" }
+
+    // The current item, by index: re-issued, and the position is real-track time.
+    onMain { player.seekTo(1, 24_000L) }
+    assertThat(onMain { player.currentPosition })
+      .describedAs("seekTo(currentIndex, 24s) on a transcode")
+      .isBetween(24_000L, 24_000L + MASKED_POSITION_SLACK_MS)
+    assertThat(onMain { MediaItems.timeOffsetMsOf(player.currentMediaItemAt(1)) }).isEqualTo(24_000L)
+
+    // Another item, by index: queue navigation, untouched.
+    onMain { player.seekTo(0, 2_000L) }
+    assertThat(onMain { player.currentMediaItemIndex }).isEqualTo(0)
+    assertThat(onMain { player.currentPosition })
+      .describedAs("seekTo(otherIndex, 2s), which this seam does not guard")
+      .isBetween(2_000L, 2_000L + MASKED_POSITION_SLACK_MS)
+    assertThat(onMain { MediaItems.timeOffsetMsOf(player.currentMediaItemAt(0)) }).isEqualTo(0L)
+
+    // Back on the transcode, `seekForward` and `seekBack` go through the same decision -- observed
+    // as the offset the item carries, which only a re-issue can have written.
+    onMain { player.seekTo(1, 20_000L) }
+    onMain { player.seekForward() }
+    val afterForward = onMain { MediaItems.timeOffsetMsOf(player.currentMediaItemAt(1)) }
+    onMain { player.seekBack() }
+    val afterBack = onMain { MediaItems.timeOffsetMsOf(player.currentMediaItemAt(1)) }
+
+    assertThat(afterForward)
+      .describedAs("the offset after seekForward from 20 s")
+      .isGreaterThan(20_000L)
+    assertThat(afterBack)
+      .describedAs("the offset after seekBack from ${afterForward}ms")
+      .isLessThan(afterForward)
+  }
+
+  /**
+   * A seek with nothing loaded reaches the wrapped player unchanged, and does not throw.
+   *
+   * There is no current item to ask about, so there is no format, no decision and nothing to
+   * re-issue. `InPlace` is the answer, and it is the same answer this class gave before Task 12.
+   */
+  @Test
+  fun aSeekWithNothingLoadedIsAnOrdinarySeek() {
+    val player = transcodePlayer()
+
+    onMain { player.seekTo(5_000L) }
+
+    assertThat(onMain { player.currentMediaItem }).isNull()
+    assertThat(onMain { player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) })
+      .describedAs("an empty player's command set is the wrapped player's, untouched")
+      .isEqualTo(onMain { player.availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) })
+  }
+
+  /**
+   * An item this app did not build seeks in place, whatever the server supports.
+   *
+   * The complement of [reissuingSomethingThisAppDidNotBuildChangesNothing]: that one drives
+   * `reissue`, this one drives `methodFor`, and they are the two halves of the same "we did not
+   * build this item" answer.
+   */
+  @Test
+  fun anItemWithNoFormatStampSeeksInPlace() {
+    val support = negotiatedSupport()
+    val foreign = MediaItem.Builder().setMediaId("not-ours").build()
+
+    assertThat(support.methodFor(foreign, 24_000L)).isEqualTo(SeekMethod.InPlace)
+    // ...against the control on the same object, so this is not "InPlace for everything".
+    assertThat(support.methodFor(itemFor(opus), 24_000L))
+      .isEqualTo(SeekMethod.ReissueWithOffset(24))
   }
 
   // ---- apparatus ---------------------------------------------------------------------------------
@@ -818,6 +921,9 @@ class TranscodeSeekPlaybackTest {
    * One harness per player, not one per call: [PlayerHarness] installs an error listener in its
    * constructor, and a fresh one per wait would add a listener per wait.
    */
+  /** The queue item at [index], for reading back what a re-issue wrote onto it. */
+  private fun Player.currentMediaItemAt(index: Int): MediaItem = getMediaItemAt(index)
+
   /** A negotiated `TranscodeOffsetSupport` against the real container, over its own DataStore file. */
   private fun negotiatedSupport(): TranscodeOffsetSupport {
     val (provider, file) = fixedSubsonicSourceProvider(context, client, RealTrackBytes.NAVIDROME_URL)
@@ -895,6 +1001,8 @@ class TranscodeSeekPlaybackTest {
     }
 
     override fun reissue(mediaItem: MediaItem, timeOffsetSeconds: Int): MediaItem = mediaItem
+
+    override suspend fun refreshIfUnknown() = Unit
   }
 
   /**

@@ -64,8 +64,6 @@ class MuPlayer(
 
   private var announcedCommands: Player.Commands? = null
 
-  private var released = false
-
   init {
     // On the WRAPPED player, so this class hears every event without competing with the listeners
     // its own callers registered. `onEvents` rather than the individual callbacks: the command set
@@ -304,20 +302,21 @@ class MuPlayer(
   }
 
   /**
-   * Releases the wrapped player and stops announcing.
+   * Releases the wrapped player, dropping any announcement still queued.
    *
-   * The order matters: a posted announcement that ran after the release would ask a released player
-   * for its commands, which is an `IllegalStateException` on a background of nothing being wrong.
+   * `removeCallbacksAndMessages` and **no `released` flag**, which was tried first and is provably
+   * dead code: the handler posts to the player's application looper, and Media3 requires `release`
+   * to be called on that same thread, so a pending announcement cannot be running while this
+   * method is. A guard that can never take its other arm is an uncoverable branch and a reader's
+   * false impression that the case was thought about.
    */
   override fun release() {
-    released = true
     announcements.removeCallbacksAndMessages(null)
     super.release()
   }
 
   private fun scheduleCommandAnnouncement() {
     announcements.post {
-      if (released) return@post
       val commands = availableCommands
       if (commands == announcedCommands) return@post
       announcedCommands = commands
@@ -325,22 +324,27 @@ class MuPlayer(
     }
   }
 
-  private companion object {
-    /**
-     * The commands this class answers for on a transcode -- withdrawn when the server cannot start
-     * one part-way through, and **granted** when it can, because the wrapped player does not offer
-     * them for an unseekable stream and would otherwise veto the feature.
-     *
-     * `COMMAND_SEEK_TO_DEFAULT_POSITION` is deliberately **not** among them: restarting an item
-     * from the top needs no offset and works on a live transcode exactly as it always did.
-     */
-    val SEEK_COMMANDS = intArrayOf(
-      Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
-      Player.COMMAND_SEEK_BACK,
-      Player.COMMAND_SEEK_FORWARD,
-    )
-  }
 }
+
+/**
+ * The commands [MuPlayer] answers for on a transcode -- withdrawn when the server cannot start one
+ * part-way through, and **granted** when it can, because the wrapped player does not offer them for
+ * an unseekable stream and would otherwise veto the feature.
+ *
+ * `COMMAND_SEEK_TO_DEFAULT_POSITION` is deliberately **not** among them: restarting an item from
+ * the top needs no offset and works on a live transcode exactly as it always did.
+ *
+ * File-private and top-level rather than in a `private companion object`, which is where it started:
+ * a companion holding nothing but this compiles to a `MuPlayer$Companion` class whose only line is
+ * its own constructor, measured permanently at 0/1, and a coverage rule over it can only be a floor
+ * that cannot pass or a class nothing gates. Kotlin puts a top-level `private val` on `MuPlayerKt`
+ * instead, where the line is the initialiser and runs the first time anything asks about a command.
+ */
+private val SEEK_COMMANDS = intArrayOf(
+  Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+  Player.COMMAND_SEEK_BACK,
+  Player.COMMAND_SEEK_FORWARD,
+)
 
 /**
  * What [MuPlayer] needs to know to seek a transcode: which of the three [SeekMethod]s applies to an

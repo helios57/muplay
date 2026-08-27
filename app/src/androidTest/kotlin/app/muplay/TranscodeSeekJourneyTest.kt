@@ -56,22 +56,42 @@ class TranscodeSeekJourneyTest {
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   /**
-   * Seek to eight tenths of a thirty-second transcode, on a **stopped** clock, and the readout
-   * lands there; resume, and it keeps running from there.
+   * Seek to eight tenths of a thirty-second transcode from the real seek bar, on a **stopped**
+   * clock, and the readout lands there; resume, and it keeps running from there. And throughout,
+   * the track knows it is thirty seconds long.
    *
-   * Three observations, and each rules out a different failure:
+   * One test rather than two, deliberately: two tests here walked the same seven screens to make
+   * two gestures, and the second gesture in a process was measured failing with *"Failed to inject
+   * touch input"* while the first succeeded. Merging halves the device time this suite holds the
+   * shared emulator for and leaves one gesture, which is all the walk was ever for.
    *
-   *  1. The readout does not move while paused -- so the jump below cannot be playback.
-   *  2. The readout is in the low twenties immediately after the tap, bounded both sides -- so a
-   *     seek that did nothing (still near zero) and a seek that landed elsewhere both fail.
-   *  3. Resumed, it passes a position further on inside a bounded wait far shorter than the
+   * Five observations, and each rules out a different failure:
+   *
+   *  1. **The total readout is thirty seconds before anything is seeked.** This is the first
+   *     end-to-end test of a chain this project has carried untested since Plan 3 Task 1: a live
+   *     transcode declares no `Content-Length`, so ExoPlayer reports `duration == C.TIME_UNSET`,
+   *     and the only reason a length reaches this readout at all is that `MediaItems.of` sets
+   *     `MediaMetadata.durationMs` unconditionally from the mirrored `Song`. Until `Offset Track`
+   *     was seeded there was no file in the corpus that could reach that path.
+   *  2. **The readout does not move while paused** -- so the jump below cannot be playback.
+   *  3. **It is in the low twenties immediately after the drag, bounded both sides** -- so a seek
+   *     that did nothing (still near zero) and one that landed elsewhere both fail.
+   *  4. **The total is still thirty seconds afterwards**, not the six that are left of the
+   *     re-issued stream. (This one discriminates only when Navidrome answers the offset request
+   *     out of its transcoding cache, where it carries a length for the extractor to read;
+   *     `TranscodeSeekPlaybackTest.aReissuedTranscodeReportsTheWholeTracksDuration` warms that
+   *     entry deliberately and is where the override is gated.)
+   *  5. **Resumed, it passes a further position inside a bounded wait** far shorter than the
    *     twenty-plus seconds ordinary playback would need to get there -- so the re-issued stream
-   *     really is producing audio from the offset rather than the readout being a label someone
-   *     wrote once.
+   *     really is producing audio from the offset.
    */
   @Test
-  fun seekingInsideAForcedTranscodeMovesTheStoppedClockAndThenKeepsItRunning() {
+  fun seekingInsideAForcedTranscodeMovesTheStoppedClockAndTheTrackStillKnowsHowLongItIs() {
     playTheOpusTrack()
+
+    assertThat(totalSeconds())
+      .describedAs("the total readout for a live transcode, which declares no Content-Length")
+      .isBetween(FIXTURE_SECONDS_FLOOR, FIXTURE_SECONDS_CEILING)
 
     val whenPaused = pauseAndConfirmTheClockIsStopped()
     assertThat(whenPaused)
@@ -85,49 +105,17 @@ class TranscodeSeekJourneyTest {
     assertThat(afterSeek)
       .describedAs("the elapsed readout after seeking to $SEEK_FRACTION of a 30 s track")
       .isBetween(SEEK_TARGET_FLOOR_SECONDS, SEEK_TARGET_CEILING_SECONDS)
+    assertThat(totalSeconds())
+      .describedAs("the total readout after seeking, which must still be the whole track's")
+      .isBetween(FIXTURE_SECONDS_FLOOR, FIXTURE_SECONDS_CEILING)
+    // ...and the elapsed readout is not the total, which is what stops a screen that rendered the
+    // duration in both slots from satisfying either of the two assertions above.
+    assertThat(afterSeek).isLessThan(totalSeconds())
 
     composeRule.onNodeWithText(PLAY_LABEL).performClick()
     awaitLabel(PAUSE_LABEL)
     awaitElapsedAtLeast(afterSeek + RESUME_ADVANCE_SECONDS, RESUME_WAIT_MILLIS)
     assertThat(elapsedSeconds()).isGreaterThan(afterSeek)
-  }
-
-  /**
-   * The transcode knows how long it is -- thirty seconds -- both before and after a seek.
-   *
-   * **Before** is the first end-to-end test of a chain this project has carried untested since Plan
-   * 3 Task 1: a live transcode declares no `Content-Length`, so ExoPlayer reports
-   * `duration == C.TIME_UNSET`, and the only reason a length reaches the lock screen and this
-   * readout at all is that `MediaItems.of` sets `MediaMetadata.durationMs` unconditionally from the
-   * mirrored `Song`. Until `Offset Track` was seeded there was no file in the corpus that could
-   * reach that path.
-   *
-   * **After** is `MuPlayer.getDuration`'s offset base. Six seconds remain after a seek to twenty-
-   * four, so a player reporting the re-issued stream's own length rather than the track's fails by
-   * a factor of five. Note what this assertion depends on, because it is a property of the server
-   * rather than of this app: it only discriminates when Navidrome answers the offset request out of
-   * its **transcoding cache**, which is when it carries a `Content-Length` for the extractor to
-   * read. `TranscodeSeekPlaybackTest.aReissuedTranscodeReportsTheWholeTracksDuration` warms that
-   * entry deliberately and is where the override is gated; here it rides along.
-   */
-  @Test
-  fun aForcedTranscodeKnowsHowLongItIsBeforeAndAfterASeek() {
-    playTheOpusTrack()
-
-    assertThat(totalSeconds())
-      .describedAs("the total readout for a live transcode, which declares no Content-Length")
-      .isBetween(FIXTURE_SECONDS_FLOOR, FIXTURE_SECONDS_CEILING)
-
-    pauseAndConfirmTheClockIsStopped()
-    seekBarTo(SEEK_FRACTION)
-    awaitElapsedAtLeast(SEEK_TARGET_FLOOR_SECONDS, SEEK_SETTLE_MILLIS)
-
-    assertThat(totalSeconds())
-      .describedAs("the total readout after seeking, which must still be the whole track's")
-      .isBetween(FIXTURE_SECONDS_FLOOR, FIXTURE_SECONDS_CEILING)
-    // ...and the elapsed readout is not the total, which is what stops a screen that rendered the
-    // duration in both slots from satisfying the line above.
-    assertThat(elapsedSeconds()).isLessThan(totalSeconds())
   }
 
   // ---- the walk ---------------------------------------------------------------------------------

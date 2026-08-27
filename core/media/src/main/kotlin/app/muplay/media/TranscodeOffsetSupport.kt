@@ -114,16 +114,22 @@ class TranscodeOffsetSupport @Inject constructor(
    * below. A rebuilt-from-scratch item is how a seek quietly loses a title.
    */
   override fun reissue(mediaItem: MediaItem, timeOffsetSeconds: Int): MediaItem {
+    // Extras first, and only then the format, so there is exactly one null check on each. Written
+    // the other way round -- `Bundle(mediaItem.mediaMetadata.extras ?: Bundle())` after the format
+    // lookup -- the fallback is unreachable: `streamFormatOf` cannot answer non-null for an item
+    // with no extras at all. An arm that can never be taken is not defence, it is an uncoverable
+    // branch that reads as a case someone thought about.
+    val extras = mediaItem.mediaMetadata.extras ?: return mediaItem
     val format = MediaItems.streamFormatOf(mediaItem) ?: return mediaItem
     val source = negotiated?.source ?: return mediaItem
-    val extras = Bundle(mediaItem.mediaMetadata.extras ?: Bundle())
-    extras.putLong(MediaItems.KEY_TIME_OFFSET_MS, timeOffsetSeconds * MILLIS_PER_SECOND)
+    val reissued = Bundle(extras)
+    reissued.putLong(MediaItems.KEY_TIME_OFFSET_MS, timeOffsetSeconds * MILLIS_PER_SECOND)
     return mediaItem.buildUpon()
       .setUri(source.streamUrl(mediaItem.mediaId, format, timeOffsetSeconds).toUri())
       // Not the bare track id -- see `TranscodeSeek.cacheKeyFor`. An offset stream filed under the
       // track's own key is written into the middle of the full track's cache entry.
       .setCustomCacheKey(TranscodeSeek.cacheKeyFor(mediaItem.mediaId, timeOffsetSeconds))
-      .setMediaMetadata(mediaItem.mediaMetadata.buildUpon().setExtras(extras).build())
+      .setMediaMetadata(mediaItem.mediaMetadata.buildUpon().setExtras(reissued).build())
       .build()
   }
 
