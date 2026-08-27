@@ -204,6 +204,50 @@ class LidarrAuthTest {
   }
 
   /**
+   * The hole the test above cannot see, and the reason it cannot: it raises every failure from a
+   * **committed fixture**, and no fixture in this repository contains an API key.
+   *
+   * `LidarrValidationException` used to build its `message` from Lidarr's own `errorMessage`
+   * strings. Nothing this client *sends* is interpolated there — that argument was true and is
+   * still in the type's KDoc — but `errorMessage` is a channel the **server** controls, and a
+   * proxy or a future release that quoted a request header back would put the key straight into
+   * the one string a crash reporter and a bug report copy wholesale. `:integrations:bindery`
+   * found the identical shape in `BinderyMessageException`; this is the same structural fix and
+   * the observation that holds it.
+   *
+   * The server's sentence is still available, by name, so nothing is lost but the default.
+   */
+  @Test
+  fun `a validation message that quotes the api key never reaches the exception message`() = runTest {
+    val client = clientWith(FIRST_KEY)
+    // A refusal that quotes the request's own header back. Contrived on purpose -- the point is
+    // that this client cannot control whether a server does it, so the structure has to hold
+    // regardless. Built from the constant rather than committed as a fixture, so the repository
+    // never carries a file with a key-shaped string in it.
+    server.enqueue(
+      MockResponse.Builder().code(400).body(
+        """[{"propertyName":"ApiKey","errorMessage":"the key $FIRST_KEY is not valid here",""" +
+          """"errorCode":"NotEmptyValidator"}]""",
+      ).build(),
+    )
+
+    val raised = runCatching { client.status() }.exceptionOrNull()
+
+    // Positive first: the response really did raise this exception, and the key really did survive
+    // into the parsed failure. Without both, every negative below is vacuous.
+    assertThat(raised).isInstanceOf(LidarrValidationException::class.java)
+    val validation = raised as LidarrValidationException
+    assertThat(validation.failures.single().errorMessage).contains(FIRST_KEY)
+    assertThat(validation.lidarrMessage).contains(FIRST_KEY)
+
+    // The negatives the test is named for: the message, and everything derived from it.
+    assertThat(validation.message).isEqualTo("Lidarr refused this request as invalid")
+    assertThat(validation.message).doesNotContain(FIRST_KEY)
+    assertThat(validation.toString()).doesNotContain(FIRST_KEY)
+    assertThat(validation.stackTraceToString()).doesNotContain(FIRST_KEY)
+  }
+
+  /**
    * A `urlBase` server answers `/api/v1/...` with a **307** to `{urlBase}/api/v1/...`
    * (`UrlBaseMiddleware.cs`). Measured against a real Lidarr with `<UrlBase>/lidarr</UrlBase>`:
    * `307 Temporary Redirect`, `Location: /lidarr/api/v1/system/status` -- **relative**, not

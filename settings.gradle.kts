@@ -41,3 +41,7 @@ include(":integrations:lidarr")
 // in particular not on `:integrations:lidarr`, which is the severability contract's third clause
 // (neither service is reachable from the other's code path) stated as a build edge.
 include(":integrations:bindery")
+// Plan 7 Task 9. The composition root of this feature's data layer, and the only module that sees
+// all three of the others: `:integrations:core`, `:integrations:lidarr` and `:integrations:bindery`
+// all depend on it being somewhere else. Still inside the one directory a `git rm -r` removes.
+include(":integrations:requests")

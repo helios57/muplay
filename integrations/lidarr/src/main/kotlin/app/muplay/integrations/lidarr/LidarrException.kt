@@ -83,15 +83,41 @@ data class LidarrValidationFailure(
  * `AlbumExistsValidator` produce the messages `"This artist has already been added."` and
  * `"This album has already been added."`
  *
- * The message is built from Lidarr's own `propertyName`/`errorMessage` pairs and from nothing
- * else. Nothing this client sent is interpolated into it — in particular not
- * `attemptedValue`, which Lidarr does send (measured: `"attemptedValue":
- * "c35e782d-be05-380b-ac26-1b9c48878ee5"` on a duplicate add, `999` on a bad profile id) and which
- * this client neither reads nor repeats.
+ * **The `message` is a constant and Lidarr's own sentences are a named field.** It used to be the
+ * other way round — `Exception(failures.joinToString(…))` — which put server-supplied text into the
+ * one string a crash reporter, a `catch (e: Exception) { … e.message … }` and a bug report all copy
+ * wholesale. Nothing this client *sends* is interpolated into that text, in particular not
+ * `attemptedValue` (measured: `"attemptedValue": "c35e782d-be05-380b-ac26-1b9c48878ee5"` on a
+ * duplicate add, `999` on a bad profile id), and that argument is still true — but it is an
+ * argument about this client's inputs, and `errorMessage` is a channel **the server** controls. A
+ * proxy or a future Lidarr that quoted a request header back would put the API key into every
+ * exception message this class produces, and no amount of care on our side would prevent it.
+ *
+ * So the structure prevents it instead, which is the same fix `:integrations:bindery`'s
+ * `BinderyMessageException` makes — and where that one was found by a test that enqueues a refusal
+ * quoting the key back, this one had no such test until Plan 7 Task 9 added
+ * `LidarrAuthTest`'s `a validation message that quotes the api key never reaches the exception
+ * message`. The pre-existing `no failure this client raises names the api key` could not see it:
+ * it raises this exception from a committed fixture, and no fixture in this repository contains a
+ * key.
+ *
+ * [lidarrMessage] is where the server's sentences live, for a surface that wants to show them. A
+ * caller that puts it in a log is making that decision explicitly, which is the whole difference.
  */
 class LidarrValidationException(val failures: List<LidarrValidationFailure>) :
-  Exception(failures.joinToString("; ") { "${it.propertyName}: ${it.errorMessage}" }),
+  Exception(REFUSED_AS_INVALID),
   LidarrException {
+
+  /**
+   * Lidarr's own `propertyName`/`errorMessage` pairs, joined — exactly what used to be the
+   * exception's message.
+   *
+   * A stored `val` rather than a `get()`: this is what a configuration screen renders, so it is
+   * computed once, and a stored initializer runs on construction, which keeps it out of the class
+   * of never-executed line a `get()` nobody calls would add to the module's LINE floor.
+   */
+  val lidarrMessage: String =
+    failures.joinToString("; ") { "${it.propertyName}: ${it.errorMessage}" }
 
   /**
    * Whether this refusal is Lidarr saying it already has the thing, rather than that something is
@@ -130,6 +156,14 @@ class LidarrValidationException(val failures: List<LidarrValidationFailure>) :
     const val ALBUM_EXISTS_VALIDATOR = "AlbumExistsValidator"
   }
 }
+
+/**
+ * This exception's whole message. A constant, deliberately — see [LidarrValidationException]'s doc.
+ *
+ * A file-level `private const` rather than one inside the class's companion, because a companion
+ * constant cannot be referenced from the constructor's own supertype call.
+ */
+private const val REFUSED_AS_INVALID = "Lidarr refused this request as invalid"
 
 /** Any other unsuccessful HTTP status. [status] is the HTTP code, never a Lidarr-level one. */
 class LidarrHttpException(val status: Int) :
