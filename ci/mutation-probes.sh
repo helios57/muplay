@@ -211,6 +211,8 @@ LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr
 LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
 LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
 LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
+LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
+LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrSource.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -2715,10 +2717,12 @@ PROBES = [
     #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
     ("integrations/lidarr-api-key-header", LIDARR_INT,
      '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
-     # 6, RE-MEASURED AT TASK 5 (was 5): every test that reads the header back off a
-     # RecordedRequest reddens, and Task 5's `no new request carries the key anywhere but the
-     # header` -- which drives all four of the new endpoints -- is the sixth.
-     "the header carries whichever key the client was given", 6),
+     # 9, RE-MEASURED AT TASK 7 (was 6 at Task 5, 5 at Task 4). Every test that reads the header
+     # back off a RecordedRequest reddens, so this count grows with every task that adds an
+     # endpoint -- Task 7's `the queue and album progress requests carry the key only in the
+     # header` and the two queue/album requests it drives are the seventh through ninth.
+     # RE-MEASURE THIS WHENEVER A TASK ADDS A REQUEST. It has now been stale twice.
+     "the header carries whichever key the client was given", 9),
 
     # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
     #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
@@ -2727,20 +2731,21 @@ PROBES = [
     ("integrations/lidarr-api-key-on-url", LIDARR_INT,
      '.header("X-Api-Key", apiKey)',
      '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
-     # 4, RE-MEASURED AT TASK 5 (was 2): `LidarrWiringTest`'s factory test asserts the same
-     # negative one layer up, and Task 5 adds two more observations -- the whole-request scan over
-     # the four new endpoints, and the lookup's exact `encodedQuery`, which a smuggled parameter
-     # lengthens.
-     "no request this client makes carries the key on its url", 4),
+     # 7, RE-MEASURED AT TASK 7 (was 4 at Task 5, 2 at Task 4): `LidarrWiringTest`'s factory test
+     # asserts the same negative one layer up; Task 5 added the four-endpoint scan and the lookup's
+     # exact `encodedQuery`, which a smuggled parameter lengthens; Task 7 adds its own two-endpoint
+     # scan, its exact `encodedQuery` pair, and its no-query-value-is-the-key loop.
+     "no request this client makes carries the key on its url", 7),
 
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
     #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
     ("integrations/lidarr-accept-json", LIDARR_INT,
      '.header("Accept", "application/json")', '.header("Accept", "*/*")',
-     # 2, RE-MEASURED AT TASK 5 (was 1): the new four-endpoint scan asserts `Accept` too, which is
-     # the point of putting it on the interceptor rather than on each `@GET`.
-     "every request declares that it accepts json", 2),
+     # 3, RE-MEASURED AT TASK 7 (was 2 at Task 5, 1 at Task 4): Task 5's four-endpoint scan and
+     # Task 6's two-endpoint one both assert every non-key header, so each new whole-request scan
+     # adds one. Task 7's is the third.
+     "every request declares that it accepts json", 3),
 
     # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
     #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
@@ -2987,6 +2992,165 @@ PROBES = [
     ("integrations/lidarr-add-endpoint", LIDARR_API,
      '@POST("api/v1/album")', '@POST("api/v1/artist")',
      "the add is a POST to api v1 album with a json content type", 2),
+
+    # ---- Plan 7 Task 7: what happened to the request ------------------------------------------
+    # Every count below is MEASURED, one probe at a time, on a committed tree; none is reasoned out.
+    # 24 of 24 were caught by the test named beside them, 0 missed, 0 broken.
+    #
+    # READ THIS BEFORE ADDING A PROBE FOR THE `IN_PROGRESS` SET. There is deliberately no probe
+    # that deletes an `in IN_PROGRESS ->` arm from `LidarrStatusMapper.map`, because there is no
+    # such arm: an in-progress state and an unrecognised one must return the SAME
+    # `Downloading(pct)` (the plan's fail-closed rule), so an arm for the first is behaviourally
+    # identical to the fall-through that already handles the second. Written the plan's way first
+    # and then probed: deleting that arm left ALL 117 TESTS GREEN. The arm was removed rather than
+    # papered over, and `status-known-states-drops-one` below is what now holds the set to Lidarr's
+    # nine.
+
+    # 1. The one state whose answer is a terminal success. `imported` reading as anything else
+    #    leaves a finished request looking unfinished forever.
+    ("integrations/lidarr-status-imported", LIDARR_STATUS,
+     "IMPORTED -> RequestStatus.Imported", "IMPORTED -> RequestStatus.Requested",
+     "every tracked download state maps to a status, and no two kinds of failure are conflated", 4),
+
+    # 2. Files on disk outrank the queue. Without this the status is whatever the download client
+    #    last said, which is wrong from the moment the queue item vanishes -- and it vanishes the
+    #    instant an import completes, which is exactly when the answer starts mattering.
+    ("integrations/lidarr-status-progress-beats-queue", LIDARR_STATUS,
+     "if (progress?.isComplete == true) return RequestStatus.Imported",
+     "if (false) return RequestStatus.Imported",
+     "complete statistics report Imported even while a queue item still exists", 1),
+
+    # 3. The two KINDS of failure, merged. This is the defect a nine-element `containsExactly`
+    #    written from the mutated behaviour would NOT catch, and it is why the mapper test asserts
+    #    the five outcome classes separately. "The download failed" sends a user to their indexer;
+    #    "Lidarr could not import the files" sends them to their permissions. Same 400, same
+    #    `Failed`, different fix.
+    ("integrations/lidarr-status-conflate-failures", LIDARR_STATUS,
+     'internal const val IMPORT_FAILED_REASON = "Lidarr could not import the files"',
+     'internal const val IMPORT_FAILED_REASON = "the download failed"',
+     "the five outcome classes are mutually distinguishable", 2),
+
+    # 4. Fail closed on an unknown state. A Lidarr newer than this client will send one, and
+    #    reporting `Failed` is a guess that reads to the user as a verdict.
+    ("integrations/lidarr-status-unknown-is-a-verdict", LIDARR_STATUS,
+     "else -> RequestStatus.Downloading(percentComplete(queueItem))",
+     "else -> RequestStatus.Failed(DOWNLOAD_FAILED_REASON)",
+     "an unrecognised state reports progress rather than a verdict", 9),
+
+    # 5. The enumeration itself, which is the ONLY falsifiable claim about `IN_PROGRESS` -- see the
+    #    note at the head of this family. Dropping a state changes no behaviour whatsoever.
+    ("integrations/lidarr-status-known-states-drops-one", LIDARR_STATUS,
+     'setOf("downloading", "importPending", "importing")',
+     'setOf("downloading", "importPending")',
+     "the client recognises exactly lidarrs nine states", 1),
+
+    # 6 and 7. Lidarr's own failure text, and what counts as text. "No files found are eligible for
+    #    import" tells a user something the generic wording cannot; a whitespace-only message tells
+    #    them nothing and must not displace it.
+    ("integrations/lidarr-status-detail-ignored", LIDARR_STATUS,
+     "val detail = queueItem.errorMessage?.takeIf { it.isNotBlank() }", "val detail: String? = null",
+     "a failure message from lidarr replaces the generic one", 2),
+    ("integrations/lidarr-status-blank-detail", LIDARR_STATUS,
+     "queueItem.errorMessage?.takeIf { it.isNotBlank() }",
+     "queueItem.errorMessage?.takeIf { it.isNotEmpty() }",
+     "a failure message from lidarr replaces the generic one", 1),
+
+    # 8-11. The percentage. Lidarr sends none, so all four of these are this client's arithmetic.
+    #    `percent-inverted` is the one that matters most: it does not break progress, it makes it
+    #    run backwards, and a progress bar counting down looks like a slow download rather than a
+    #    bug. `percent-not-clamped` is a -14% a real download client can produce.
+    ("integrations/lidarr-percent-not-clamped", LIDARR_STATUS,
+     "return (done * 100).roundToInt().coerceIn(0, 100)", "return (done * 100).roundToInt()",
+     "a percentage outside zero to one hundred is clamped rather than shown", 1),
+    ("integrations/lidarr-percent-truncated", LIDARR_STATUS,
+     "return (done * 100).roundToInt().coerceIn(0, 100)",
+     "return (done * 100).toInt().coerceIn(0, 100)",
+     "the percentage is rounded rather than truncated", 1),
+    ("integrations/lidarr-percent-negative-size", LIDARR_STATUS,
+     "if (item.sizeBytes <= 0.0) return null", "if (item.sizeBytes == 0.0) return null",
+     "a zero-size item has an unknown percentage rather than a divide by zero", 1),
+    ("integrations/lidarr-percent-inverted", LIDARR_STATUS,
+     "val done = (item.sizeBytes - item.sizeLeftBytes) / item.sizeBytes",
+     "val done = item.sizeLeftBytes / item.sizeBytes",
+     "the percentage is computed from size and sizeleft, at more than one value", 10),
+
+    # 12 and 13. `isComplete`, from both sides. The zero guard is not belt-and-braces: MEASURED on
+    #    a live 3.1.0.4875, an album seconds after a successful add has no releases, no tracks and
+    #    no statistics object at all, so `0 >= 0` is the state every request passes through. `>=`
+    #    rather than `==` matters for a multi-disc release that files more tracks than Lidarr counts.
+    ("integrations/lidarr-progress-zero-tracks", LIDARR_SOURCE,
+     "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
+     "get() = trackFileCount >= totalTrackCount",
+     "an album with no tracks yet is not complete, however many files it has", 1),
+    ("integrations/lidarr-progress-exact-equality", LIDARR_SOURCE,
+     "get() = totalTrackCount > 0 && trackFileCount >= totalTrackCount",
+     "get() = totalTrackCount > 0 && trackFileCount == totalTrackCount",
+     "complete statistics report Imported even while a queue item still exists", 1),
+
+    # 14. `sizeleft`, lower-case l -- the field this client would most like to have seen on a real
+    #     wire and has not (no download client on the pinned container). Reading the camelCase
+    #     spelling yields kotlinx's default 0.0 on every record and shows every download at 100%
+    #     forever, with no parse error anywhere.
+    ("integrations/lidarr-queue-sizeleft", LIDARR_CLIENT,
+     "sizeLeftBytes = record.sizeleft,", "sizeLeftBytes = 0.0,",
+     "sizeleft is read from the lower-case field lidarr actually sends", 4),
+
+    # 15 and 16. The two query parameters, neither of which has a safe default. MEASURED: a bare
+    #     `GET /api/v1/queue` really does answer `"pageSize": 10`. Accepting either default makes
+    #     the client stop seeing its own request -- at eleven concurrent downloads for the first,
+    #     and for any item whose artist Lidarr has not resolved for the second, which is precisely
+    #     the state a just-added album is in.
+    ("integrations/lidarr-queue-pagesize", LIDARR_CLIENT,
+     "private const val QUEUE_PAGE_SIZE = 100", "private const val QUEUE_PAGE_SIZE = 10",
+     "the queue is asked for a page big enough to contain the answer", 2),
+    ("integrations/lidarr-queue-unknown-artist-items", LIDARR_CLIENT,
+     "includeUnknownArtistItems = true", "includeUnknownArtistItems = false",
+     "the queue is asked for a page big enough to contain the answer", 2),
+
+    # 17 and 18. Two mapped queue fields, one representative of each risk. A defaulted state is a
+    #     constant standing in for a value -- and `"imported"` is the one that would silently mark
+    #     every request done. A dropped `albumId` is the correlation key for every later poll.
+    ("integrations/lidarr-queue-state-default", LIDARR_CLIENT,
+     "trackedDownloadState = record.trackedDownloadState.orEmpty(),",
+     'trackedDownloadState = record.trackedDownloadState ?: "imported",',
+     "a record missing its state fields reads as empty strings rather than failing", 1),
+    ("integrations/lidarr-queue-albumid-dropped", LIDARR_CLIENT,
+     "albumId = record.albumId,", "albumId = 0,",
+     "every queue record field is read from its own record", 3),
+
+    # 19. The id the poll asks about. A constant here reports on one album forever while the poll
+    #     itself keeps working -- the silent-wrong-answer class, on the read side.
+    ("integrations/lidarr-album-id-constant", LIDARR_CLIENT,
+     "call { api.album(albumId) }.statistics", "call { api.album(42) }.statistics",
+     "album progress is fetched by id and read from the statistics object", 1),
+
+    # 20 and 21. The 404 swallow, from both sides. Swallowing nothing surfaces a normal answer -- a
+    #     user deleted the album in Lidarr while MuPlay still holds the row -- as an error.
+    #     Swallowing everything hides a 401, which is the key having stopped working and is not
+    #     something a status poll may turn into "no progress information".
+    ("integrations/lidarr-album-404-not-swallowed", LIDARR_CLIENT,
+     "if (e.status == HTTP_NOT_FOUND) null else throw e", "throw e",
+     "an album that is gone yields null rather than throwing", 1),
+    ("integrations/lidarr-album-swallows-everything", LIDARR_CLIENT,
+     "if (e.status == HTTP_NOT_FOUND) null else throw e", "null",
+     "a failure that is not a 404 still propagates from album progress", 1),
+
+    # 22. "Lidarr has not counted yet" collapsed into "Lidarr counted zero of zero". MEASURED to be
+    #     a real wire shape, not a hypothetical one: a freshly added album carries no `statistics`
+    #     key at all. Only the second of the two could ever be mistaken for a count.
+    ("integrations/lidarr-album-no-statistics-zeroed", LIDARR_CLIENT,
+     "?.let { LidarrAlbumProgress(it.trackFileCount, it.totalTrackCount) }",
+     ".let { LidarrAlbumProgress(it?.trackFileCount ?: 0, it?.totalTrackCount ?: 0) }",
+     "an album with no statistics object yields null rather than a zeroed progress", 1),
+
+    # 23. The key smuggled into a header that is not `X-Api-Key`. The existing
+    #     `lidarr-api-key-on-url` covers the query string; this is the same leak by another name,
+    #     and no URL assertion can see it. A `User-Agent` carrying the key reaches every reverse
+    #     proxy access log exactly as a query parameter would.
+    ("integrations/lidarr-key-into-another-header", LIDARR_INT,
+     '.header("Accept", "application/json")',
+     '.header("Accept", "application/json")\n        .header("User-Agent", "MuPlay/" + apiKey)',
+     "the queue and album progress requests carry the key only in the header", 3),
 
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach

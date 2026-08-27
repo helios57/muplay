@@ -4188,6 +4188,29 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.integrations.lidarr.LidarrClient",
         "app.muplay.integrations.lidarr.LidarrValidationException",
+        // RIDE-ALONGS, gating nothing, and here for a measured reason rather than tidiness.
+        //
+        // `QueueRecordBody` and `AlbumStatisticsBody` are the module's only **nested** @Serializable
+        // DTOs, and a nested one's `Companion` measures **0/1 LINE** where a top-level one measures
+        // 1/1. That is not a coverage gap: Retrofit resolves the *top-level* type's serializer
+        // reflectively, through `Companion.serializer()`, while a nested type is reached from its
+        // parent's generated `$$serializer.childSerializers()` as `Child$$serializer.INSTANCE` --
+        // which never touches the companion. Measured both ways on the same run:
+        // `QueuePageBody.Companion` and `AlbumWithStatisticsBody.Companion` (both top-level) are
+        // 1/1; `QueueRecordBody.Companion` and `AlbumStatisticsBody.Companion` (both nested) are
+        // 0/1.
+        //
+        // So no positive LINE floor can hold them -- 0.0 fails every minimum -- and leaving them
+        // out of the table entirely would print two `warnUngatedClasses` lines on every run,
+        // forever, which is how a warning mechanism dies. They carry **no BRANCH counter at all**,
+        // so on this BRANCH rule they take JaCoCo's NaN path (`Limit.check` returns "no violation"
+        // when COVEREDRATIO is NaN) and gate nothing at any minimum. Same trade, same mechanism, as
+        // the `SetupUiState`/`SetupFailureReason` riders and as `LidarrException` on rule 2.
+        //
+        // `warnVacuousFloors` stays quiet because this rule's other two classes carry 140 real
+        // branches between them, which is the condition that check actually tests.
+        "app.muplay.integrations.lidarr.QueueRecordBody*Companion",
+        "app.muplay.integrations.lidarr.AlbumStatisticsBody*Companion",
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
@@ -4278,6 +4301,33 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // The LINE rule is the one that cannot see it.
         "app.muplay.integrations.lidarr.LidarrAddPayload",
         "app.muplay.integrations.lidarr.LidarrAddOutcome*",
+        // Task 7's three, measured 1.0000 each: `LidarrStatusMapper` 16/16, `LidarrQueueItem` 8/8,
+        // `LidarrAlbumProgress` 2/2.
+        //
+        // Read the same warning this rule already carries for `LidarrAlbumCandidate` before
+        // reading `LidarrQueueItem`'s 8/8 as "every field is observed": it is not. That claim is
+        // enforced by `LidarrQueueTest`'s two-values-per-field `containsExactly` assertions and by
+        // `ci/mutation-probes.sh`'s `integrations/lidarr-queue-*` probes, and by nothing here.
+        //
+        // FALSIFIED, and the interesting half is which withholding does NOT move this rule:
+        // withholding all fourteen `LidarrStatusMapperTest` tests leaves `LidarrStatusMapper`'s
+        // LINE ratio at **16/16 = 1.0000**, because `LidarrQueueTest` maps real queue records
+        // through the same object and every *line* of it runs on any map at all. Only withholding
+        // **both** classes empties it: **0/16**, and this rule then fails with "lines covered ratio
+        // is 0.00, but expected minimum is 0.90".
+        //
+        // Note what DID fire on that first withholding, because reading "16/16" as "the gate is
+        // green" is the mistake this table has already made once for `LidarrAddPayload`: rule 8's
+        // BRANCH floor went to **17/30 = 0.5667** and failed the build. This LINE rule is the one
+        // that sees a mapper stop being exercised at all; rule 8 is the one that sees an arm stop
+        // being reached.
+        //
+        // That same withholding also drops `LidarrQueueItem` to 0/8 and `LidarrClient` to 0.80
+        // LINE / 0.89 BRANCH only when BOTH test classes go -- with `LidarrQueueTest` alone in
+        // place, both stay at 1.0000.
+        "app.muplay.integrations.lidarr.LidarrStatusMapper",
+        "app.muplay.integrations.lidarr.LidarrQueueItem",
+        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
       ),
     ),
     // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
@@ -4352,6 +4402,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // produced, not a number chosen to fit the newcomers.
         "app.muplay.integrations.lidarr.RootFolderBody*",
         "app.muplay.integrations.lidarr.ProfileBody*",
+        // Task 7's four, and the reason they clear 0.40 is worth writing down because the first
+        // draft did not. Measured with every field the endpoints send declared, `QueuePageBody`
+        // read **2/7 = 0.2857** and `AlbumWithStatisticsBody` **1/5 = 0.2000** -- both under this
+        // floor -- because a `data class`'s generated `equals`/`hashCode`/`copy`/`componentN` land
+        // on lines nothing calls, and a wider class has proportionally more of them.
+        //
+        // The fix was **not** to lower the floor. It was to declare only the fields this client
+        // actually reads, which is this module's own stated rule ("a field this client parses is a
+        // field it then owns") arriving at the same answer the measurement did: `QueuePageBody`
+        // dropped `page`/`pageSize`/`totalRecords`, `AlbumWithStatisticsBody` dropped `id`, and
+        // `QueueRecordBody` dropped the queue `id` this app never correlates on. Re-measured:
+        // `QueuePageBody` **2/2 = 1.0000**, `QueueRecordBody` **7/10 = 0.7000**,
+        // `AlbumWithStatisticsBody` **1/2 = 0.5000**, `AlbumStatisticsBody` **1/2 = 0.5000**.
+        //
+        // The two nested types are matched WITHOUT a trailing `*` on purpose: their `Companion`s
+        // measure 0/1 and are ride-alongs on rule 1 instead -- see the long note there.
+        "app.muplay.integrations.lidarr.QueuePageBody*",
+        "app.muplay.integrations.lidarr.QueueRecordBody",
+        "app.muplay.integrations.lidarr.AlbumWithStatisticsBody*",
+        "app.muplay.integrations.lidarr.AlbumStatisticsBody",
       ),
     ),
     // 6. Task 5's `LidarrAddTargets`, at **1.00 BRANCH** -- the only floor in this module that
@@ -4419,6 +4489,51 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
+    ),
+    // 8. Task 7's decision code, at **1.00 BRANCH** -- the third floor in this module that demands
+    // every branch, and, like the other two, only because the classes can honestly carry one.
+    //
+    // Measured with no emulator, no server and no fixture: `LidarrStatusMapper` **30/30** and
+    // `LidarrAlbumProgress` **4/4**. Both are pure functions over their arguments -- the
+    // statistics-outrank-the-queue short circuit, the no-queue-item short circuit, the blank-message
+    // guard, each `?:` fallback, each arm of the state cascade, the zero-size guard, and both halves
+    // of `totalTrackCount > 0 && trackFileCount >= totalTrackCount` -- so every arm is reachable
+    // from a JVM test. This is the argument `LidarrAddTargets` and Plan 3's `StreamRetryPolicy`
+    // make, and it is why `LidarrStatusMapperTest` has no HTTP in it at all.
+    //
+    // 1.00 rather than 0.90 because 0.90 over 34 branches permits three uncovered arms, and the
+    // arms here are *the* thing these classes are: whether a user is told their download failed
+    // while it is running, and whether an album with no tracks reads as fully downloaded. There is
+    // no Kotlin-unreachable arm in either class to make 1.00 dishonest -- unlike `LidarrClient`,
+    // whose four permanently-missing branches are the reason **its** floor is 0.90 and must stay
+    // there.
+    //
+    // FALSIFIED, in four withholdings, and **every ratio below is measured -- the four this author
+    // predicted before running them were all wrong, three of them badly.** That is the whole reason
+    // this project re-runs falsifications instead of reasoning them out.
+    //
+    //   * Withhold the single test `an album with no tracks yet is not complete, however many files
+    //     it has` -- the one written for the `totalTrackCount > 0` arm. `LidarrAlbumProgress` goes
+    //     to **3/4 = 0.7500** and the gate FAILS: "branches covered ratio is 0.75, but expected
+    //     minimum is 1.00". Predicted 4/4 and green, on a second-caller argument that turned out
+    //     not to hold -- no other test reaches that arm. One test, one arm, and the floor sees it.
+    //   * Withhold that AND `complete statistics report Imported even while a queue item still
+    //     exists`: **2/4 = 0.5000**, and `LidarrStatusMapper` goes to **28/30 = 0.9333** -- which
+    //     is itself a floor violation at 1.00 and would have been green at 0.90. That pair is the
+    //     concrete argument for 1.00 over 0.90 on this rule.
+    //   * Withhold all fourteen `LidarrStatusMapperTest` tests: `LidarrStatusMapper` **17/30 =
+    //     0.5667** (predicted 10/30) and `LidarrAlbumProgress` **2/4 = 0.5000**; both fail.
+    //     `LidarrQueueTest`'s three end-to-end mappings cover the other seventeen branches, which
+    //     is why rule 2's LINE floor stays at 16/16 through the same withholding.
+    //   * Withhold `LidarrStatusMapperTest` AND `LidarrQueueTest`: **0/30** and **0/4**.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.integrations.lidarr.LidarrStatusMapper",
+        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
+      ),
     ),
   ),
 )

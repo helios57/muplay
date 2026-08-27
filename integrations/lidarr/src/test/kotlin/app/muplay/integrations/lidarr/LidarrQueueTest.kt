@@ -325,9 +325,15 @@ class LidarrQueueTest {
    * value, the exact `encodedQuery`, userinfo, the fragment, and every header that is not
    * `X-Api-Key`. **Positive controls first**, because `allSatisfy` over an empty list is vacuously
    * true and a client that sent nothing at all would otherwise pass this test with flying colours.
+   *
+   * Named for *these two endpoints* rather than reusing Task 6's phrasing, and that is not fussiness:
+   * `LidarrSubmitTest` already has a test called `neither new request carries the key anywhere but
+   * the header`, and `ci/mutation-probes.sh` identifies the test a probe must redden **by name**.
+   * Two tests sharing one name make that probe ambiguous -- it would report "caught" on the other
+   * class's test while this one had been deleted.
    */
   @Test
-  fun `neither new request carries the key anywhere but the header`() = runTest {
+  fun `the queue and album progress requests carry the key only in the header`() = runTest {
     server.enqueue(emptyPage())
     server.enqueue(json("""{"id":42,"statistics":{"trackFileCount":1,"totalTrackCount":2}}"""))
 
