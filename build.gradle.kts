@@ -1676,6 +1676,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `requiresInstrumentedData = false` is a claim about where the coverage comes from, and it is
     // the same claim `StreamRetryPolicy` and `ReplayGainPolicy` make one screen up: the branch that
     // decides whether a seek re-issues, seeks in place or is withdrawn is gated by the fast tier.
+    //
+    // Falsified, and the falsification had to be chosen carefully. Raising the minimum is not
+    // available at 1.0000 (JaCoCo validates it before comparing), and withholding `TranscodeSeekTest`
+    // is **not enough on its own**: `TranscodeOffsetSupport.methodFor` calls this object, so the
+    // device tier is a second caller and the merged report would stay green -- the exact
+    // stale-falsification shape `CLAUDE.md` records. What fires is withholding that test and
+    // running `jacocoJvmCoverageVerification`, i.e. the task this `requiresInstrumentedData = false`
+    // is a claim about: "Rule violated for class app.muplay.media.TranscodeSeek: branches covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
