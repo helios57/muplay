@@ -13,7 +13,9 @@ import app.muplay.database.entity.ArtistEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
+import app.muplay.media.AudiobookSnapshot
 import app.muplay.media.QueueRepository
+import app.muplay.media.ResumptionQueue
 import app.muplay.media.fixedSubsonicSourceProvider
 import app.muplay.model.Album
 import app.muplay.model.AlbumListType
@@ -58,18 +60,45 @@ class BrowseGraph private constructor(
   val browseRepository: BrowseRepository,
   val treeRepository: BrowseTreeRepository,
   val queueRepository: QueueRepository,
+  /**
+   * The **one** `AudiobookRepository` in this graph, shared by the browse tree and by the
+   * resumption path, exactly as Hilt shares the `@Singleton`.
+   *
+   * Hoisted out of the `BrowseTreeRepository` call it used to be constructed inside: Plan 4 Task 6
+   * needs the same object to answer "which book do I carry on with", and two repositories over one
+   * database is two derivations of the shelf again -- the duplication Task 4 removed.
+   */
+  val audiobookRepository: AudiobookRepository,
   /** Records every cover-art resolution the tree asked for -- see `artworkIsResolvedPerPage`. */
   val artSource: RecordingArtSource,
 ) {
 
+  /**
+   * The snapshot the resume policy reads, over **this** graph's database.
+   *
+   * Not started: `AudiobookSnapshotTest`'s coldest case is a snapshot nobody started, and a graph
+   * that started one for every caller would make that case unreachable. Call `start` or `refresh`.
+   */
+  val audiobookSnapshot: AudiobookSnapshot =
+    AudiobookSnapshot(audiobookRepository, database.mediaProgressDao(), database.bookSettingsDao())
+
+  val resumptionQueue: ResumptionQueue = ResumptionQueue(audiobookRepository)
+
   /** Closes the database and deletes the credential store's backing file. */
   fun close() {
+    audiobookSnapshot.stop()
     database.close()
     storeFile.delete()
   }
 
   fun callback(resolver: SurfaceResolver): MuPlayLibraryCallback =
-    MuPlayLibraryCallback(treeRepository, resolver, queueRepository)
+    MuPlayLibraryCallback(
+      treeRepository,
+      resolver,
+      queueRepository,
+      resumptionQueue,
+      audiobookSnapshot,
+    )
 
   /** The production resolver, reading a real `ControllerInfo`. */
   fun callback(context: Context): MuPlayLibraryCallback = callback(DefaultSurfaceResolver(context))
@@ -130,6 +159,16 @@ class BrowseGraph private constructor(
       }
 
       val libraryRepository = LibraryRepository(database.libraryDao(), provider)
+      // Plan 4 Task 4 replaced `MirrorBookshelf` with the real `AudiobookRepository` behind the
+      // same `Bookshelf` interface -- one derivation of "where is the listener in this book", not
+      // two. A real clock: nothing this suite asserts reads one, and `markFinished` is the only
+      // method that does.
+      val audiobookRepository = AudiobookRepository(
+        database.audiobookDao(),
+        database.mediaProgressDao(),
+        database.bookSettingsDao(),
+        Clock.systemUTC(),
+      )
       return BrowseGraph(
         database = database,
         storeFile = storeFile,
@@ -138,22 +177,14 @@ class BrowseGraph private constructor(
         treeRepository = BrowseTreeRepository(
           LibraryRepository(database.libraryDao(), provider),
           BrowseRepository(database.browseDao(), provider),
-          // Plan 4 Task 4 replaced `MirrorBookshelf` with the real `AudiobookRepository` behind
-          // the same `Bookshelf` interface -- one derivation of "where is the listener in this
-          // book", not two. A real clock: nothing this suite asserts reads one, and
-          // `markFinished` is the only method that does.
-          AudiobookRepository(
-            database.audiobookDao(),
-            database.mediaProgressDao(),
-            database.bookSettingsDao(),
-            Clock.systemUTC(),
-          ),
+          audiobookRepository,
           ShuffleRepository(database.browseDao(), provider),
         ),
         // The **real** `QueueRepository`, over the same fake source: Plan 5 Task 5 makes the
         // browse callback build playable items, and a hand-written stand-in here would prove the
         // callback calls something rather than that a tapped row becomes the queue the app plays.
         queueRepository = QueueRepository(provider, libraryRepository),
+        audiobookRepository = audiobookRepository,
         artSource = artSource,
       )
     }
@@ -279,6 +310,18 @@ class BrowseGraph private constructor(
       // which is what makes it different from `bk-gamma` above.
       progress("bk-tail-p1", positionMs = 100_000, lastPlayedAtEpochMs = 1_000, isFinished = true),
     )
+
+    /**
+     * Every audiobook file id this fixture seeds, derived from [BOOK_SONGS] rather than written out.
+     *
+     * `AudiobookSnapshotTest` asserts the snapshot's key set **exactly**, and a hand-written copy
+     * of these eighteen ids is a second corpus that drifts the first time a book is added here --
+     * which is the class of defect `CLAUDE.md` records against `GaplessTest`'s hardcoded `3`.
+     */
+    val BOOK_SONG_IDS: List<String> get() = BOOK_SONGS.map { it.id }
+
+    /** The same, for the music library -- the ids that must never be in the snapshot. */
+    val MUSIC_SONG_IDS: List<String> get() = MUSIC_SONGS.map { it.id }
 
     private fun album(
       id: String,

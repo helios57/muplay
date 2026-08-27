@@ -444,7 +444,13 @@ class HandoverTest {
    */
   private fun buildPlaybackStack() {
     switch = PlaybackOutputSwitch()
-    oneShot = MediaModule.provideOneShotResumePolicy(MediaModule.provideUndecoratedResumePolicy())
+    // An **empty** item source, which is what Plan 4 Task 6's policy answers for a queue of music
+    // -- and this suite's queue is music. The alternative, a real `AudiobookSnapshot`, would need
+    // a Room database this suite has no other use for, and would make every position assertion
+    // below depend on a seed rather than on the handover.
+    oneShot = MediaModule.provideOneShotResumePolicy(
+      MediaModule.provideUndecoratedResumePolicy({ null }, Clock.systemUTC()),
+    )
     boundResumePolicy = MediaModule.provideResumePolicy(oneShot)
     onMain {
       localPlayer = MuPlayerFactory(

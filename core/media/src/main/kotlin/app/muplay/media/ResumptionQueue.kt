@@ -35,13 +35,22 @@ class ResumptionQueue @Inject constructor(
       .firstOrNull { it.hasStarted && !it.isFinished }
       ?: return null
     val files = audiobookRepository.files(book.bookId)
-    // A shelf row for a book whose files the mirror has not reached yet is a real state (see
-    // `BrowseGraph`'s `bk-empty`), and `PlaybackQueue.of` refuses an empty queue by `require`.
-    if (files.isEmpty()) return null
     val resumeAt = audiobookRepository.resumeFileId(book.bookId)
-    // `coerceAtLeast(0)` covers both "no row yet" and "the row names a file this book no longer
-    // has", which a re-sync that renamed a file really produces.
-    val index = files.indexOfFirst { it.id == resumeAt }.coerceAtLeast(0)
-    return PlaybackQueue.of(files, startIndex = index)
+    val index = files.indexOfFirst { it.id == resumeAt }
+
+    // **One** guard, not two, and `null` rather than a `coerceAtLeast(0)`.
+    //
+    // `-1` covers both ways this can go wrong -- a shelf row whose files the mirror no longer holds
+    // (a `replaceLibraryContents` between the two reads above), and a resume row naming a file this
+    // book no longer has (a re-sync that renamed one). Neither is reachable from the repository as
+    // it stands: a book with no files reports `positionMs == 0`, so `hasStarted` is false and the
+    // filter above never yields it, and `resumeFileId` only ever names a file it read out of this
+    // same book. It is therefore ONE dead arm rather than two, which is the trade this project
+    // already records for `MuPlayer`'s and `StreamRetryPolicy`'s single unreachable branches.
+    //
+    // `coerceAtLeast(0)` was written first and is worse in both directions: it turns "the mirror
+    // and the resume row disagree" into *"start this book from the top"*, silently, which is the
+    // defect this plan exists to remove -- and it carries the same dead arm anyway.
+    return if (index < 0) null else PlaybackQueue.of(files, startIndex = index)
   }
 }
