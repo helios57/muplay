@@ -90,6 +90,24 @@ Kotlin compiles a use of it clean and `check` then fails much later at
 `lintDebug`. Opt in at the module level. `CacheDataSource`, `SimpleCache` and
 `MediaSessionService` are all annotated, so any task touching them meets this.
 
+### Which *declaration* a call resolves to is what decides it, not the method name
+
+Measured on `CastSessionManager` (Plan 6 Task 9), where three calls were flagged and two
+identical-looking ones beside them were not:
+
+    incoming.prepare()   // incoming: MuPlayer -> ForwardingPlayer, @UnstableApi  -> ERROR
+    local.prepare()      // local:    Player,   stable                            -> fine
+    remote.release()     // remote:   UpnpPlayer -> SimpleBasePlayer, @UnstableApi -> ERROR
+
+So "we already call `prepare()` all over this module without an opt-in" is not evidence that a new
+`prepare()` needs none. Read the receiver's static type.
+
+This file arrived on master carrying all three errors, **green in its own worktree** and red on the
+first `--no-build-cache check` after the merge — which is both this trap and the cross-worktree
+build-cache one in the same defect. Annotate with `androidx.annotation.OptIn`, on the declaration,
+with a comment naming which member is unstable; that is this module's house style and every other
+file in it follows it.
+
 ## `ExoPlayer.Builder` has no `setLoadErrorHandlingPolicy`
 
 The retry policy attaches to the `MediaSource.Factory`, not the player builder.
