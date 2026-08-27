@@ -1314,6 +1314,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.database.BrowseTreeRepository",
+        // Plan 5 Task 5 put `startIndexOf` on the companion, which gave it a LINE counter and so
+        // took it out of the standing `$Companion` exception above -- that exception is for
+        // companions carrying **zero** counters, which `warnUngatedClasses` skips because no rule
+        // could gate them. This one measured `line 1/1` and warned on every `check` until it was
+        // named here.
+        //
+        // The trailing `*`, not an escaped `$`: `wildcardToRegex` turns this into
+        // `\QBrowseTreeRepository\E.*`, which is how `BrowseSelection*` and `BrowseSurface*`
+        // already reach their companions. An entry written as `BrowseTreeRepository$Companion`
+        // matches nothing and leaves the warning in place -- measured, because I wrote it that way
+        // first and the warning did not move.
+        "app.muplay.database.BrowseTreeRepository*",
         "app.muplay.database.MirrorBookshelf",
         "app.muplay.database.BookProgress",
         "app.muplay.database.BookPosition",
