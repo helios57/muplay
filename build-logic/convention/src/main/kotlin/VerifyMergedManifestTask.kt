@@ -95,11 +95,16 @@ abstract class VerifyMergedManifestTask : DefaultTask() {
     val missing = requiredDeclarations.get().filterNot { declarations.contains(it) }
     if (missing.isNotEmpty()) {
       throw GradleException(
-        "$manifest is missing ${missing.joinToString(", ")}. A media playback service that is " +
-          "not declared, or that lacks FOREGROUND_SERVICE_MEDIA_PLAYBACK, does not fail the " +
-          "build, the install, or a foreground test -- it throws SecurityException from " +
-          "startForeground the first time the app is backgrounded with audio playing. This is " +
-          "the check that turns that into a build failure.",
+        "$manifest is missing ${missing.joinToString(", ")}. Every entry in this list is a " +
+          "declaration whose absence fails no build, no install and no test, and shows up only " +
+          "in the wild. A playback service that is not declared, or that lacks " +
+          "FOREGROUND_SERVICE_MEDIA_PLAYBACK, throws SecurityException from startForeground the " +
+          "first time the app is backgrounded with audio playing. An app missing " +
+          "android.media.browse.MediaBrowserService, or the com.google.android.gms.car " +
+          "meta-data, simply never appears in a car's media app list -- no error, no log line, " +
+          "no crash. This is the check that turns either into a build failure. If a declaration " +
+          "is only written in a manifest comment, note that comments are stripped before this " +
+          "check: a comment quoting a declaration is not the declaration.",
       )
     }
   }
