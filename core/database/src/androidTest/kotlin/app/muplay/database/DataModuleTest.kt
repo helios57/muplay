@@ -17,8 +17,6 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
 import java.io.File
-import java.time.Clock
-import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
@@ -355,29 +353,6 @@ class DataModuleTest {
     assertThat(dao.findBookAlbum("dm-record", LibraryRole.AUDIOBOOKS)).isNull()
   }
 
-  /**
-   * The project's only wall-clock read, behind every `media_progress.lastPlayedAtEpochMs` the app
-   * writes -- and behind `AudiobookRepository.markFinished`.
-   *
-   * **Moved here from `:core:media`'s `MediaModuleTest` by Plan 4 Task 4**, with the binding: the
-   * consumer that made the module boundary matter lives in this module, and the test follows the
-   * provider rather than staying where the provider used to be.
-   *
-   * Asserted as *moving* rather than as `isNotNull`: a `Clock.fixed(..)` left here by a test edit
-   * would stamp every row with the same instant, and `recentlyPlayed`'s
-   * `ORDER BY lastPlayedAtEpochMs DESC` would then return an arbitrary order forever, silently.
-   */
-  @Test
-  fun theProvidedClockIsARealClockAndNotAFrozenOne() {
-    val clock = DataModule.provideClock()
-
-    assertThat(clock.millis()).isGreaterThan(EARLIEST_PLAUSIBLE_EPOCH_MS)
-    // UTC, because the column is epoch millis: a zoned clock would still report the same instant,
-    // but `Clock.systemDefaultZone()` invites a later `LocalDateTime.now(clock)` that is not.
-    assertThat(clock.zone).isEqualTo(ZoneOffset.UTC)
-    assertThat(clock).isEqualTo(Clock.systemUTC())
-  }
-
   private fun album(id: String, libraryId: Int, name: String) = AlbumEntity(
     id = id, libraryId = libraryId, artistId = null, name = name, artistName = "Anne Author",
     coverArtId = null, songCount = 1, durationSeconds = 4, sortName = name.lowercase(),
@@ -410,7 +385,5 @@ class DataModuleTest {
     /** Distinctive enough that finding it in a file is evidence rather than a coincidence. */
     private const val MARKER_UDN = "uuid:RINCON-cast-store-marker"
 
-    /** 2024-01-01T00:00:00Z. Any real clock is past it; a `Clock.fixed(EPOCH, ..)` is not. */
-    private const val EARLIEST_PLAUSIBLE_EPOCH_MS = 1_704_067_200_000L
   }
 }

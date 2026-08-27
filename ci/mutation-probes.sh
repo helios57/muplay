@@ -189,6 +189,7 @@ BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras
 BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
 BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
 BOOK_SUMMARIES = "core/database/src/main/kotlin/app/muplay/database/BookSummaries.kt"
+DATA_MODULE = "core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
@@ -827,7 +828,14 @@ PROBES = [
     # frozen clock stamps every row with one instant and `recentlyPlayed`'s ORDER BY becomes
     # arbitrary, and a resume policy that answers a position undoes spec section 3's guarantee at
     # the only point in the graph where it is chosen.
-    ("progress/clock-frozen", MEDIA_MODULE,
+    # Plan 4 Task 4 moved `provideClock` (and its test) down into `:core:database`'s `DataModule`:
+    # `AudiobookRepository` is the first class there to take a `Clock`, and a binding declared above
+    # its consumer leaves that module's Hilt tests without one. The probe followed the binding --
+    # its preflight caught the move by refusing to run at all ("0 matches in MediaModule.kt"), which
+    # is that guard doing exactly its job. The witness stayed on the **JVM** tier for the reason
+    # this file's header gives: `run_suite()` names JVM test tasks, so a test that only runs on a
+    # device reports MISSED with zero failures.
+    ("progress/clock-frozen", DATA_MODULE,
      "  fun provideClock(): Clock = Clock.systemUTC()",
      "  fun provideClock(): Clock =\n    Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC)",
      # A `Clock.fixed` left behind by a test edit compiles, injects, and writes a row every five
@@ -3493,6 +3501,8 @@ LATER_PROBE_FILES = [
     # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
     # ends, and the next agent's dirty-tree guard blames them for it.
     BOOK_SUMMARIES,
+    # Plan 4 Task 4, in the same edit that repointed `progress/clock-frozen` at this file.
+    DATA_MODULE,
 ]
 
 
