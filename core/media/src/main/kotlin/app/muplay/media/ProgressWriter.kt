@@ -84,11 +84,11 @@ import kotlinx.coroutines.withContext
  *
  * ### The player is held in a field, on purpose
  *
- * Plan 6 replaces the local `Player` with a remote renderer and needs **one** writer to follow the
- * switch, not two racing for the same row. It will add `fun attach(player: Player)`; this plan does
- * not, because an unused method is untested weight. What this plan owes it is that `attach` stays
- * *possible* -- so the ticker reads [player] on every tick rather than closing over the constructor
- * argument, and [start] and [flushBlocking] keep their meaning if it is ever repointed.
+ * The cast handover replaces the local `Player` with a remote renderer and needs **one** writer to
+ * follow the switch, not two racing for the same row. [attach] is that method, added by Plan 6
+ * Task 9; the property that made it a one-method addition rather than a redesign is that the ticker
+ * reads [player] on every tick rather than closing over the constructor argument, so [start] and
+ * [flushBlocking] keep their meaning after a repoint.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn` -- see `MuPlayerFactory` for the full argument.
 // The annotated member here is `Player.PositionInfo.mediaItem`, which is `@UnstableApi` even though
@@ -127,6 +127,32 @@ class ProgressWriter(
     ticker?.cancel()
     ticker = null
     player.removeListener(this)
+  }
+
+  /**
+   * Point this writer at a different `Player`. **The cast handover's whole use of this class.**
+   *
+   * One writer follows the output switch; a second writer on a second player would race the first
+   * for the same `media_progress` row, and the loser's value is whatever it read before the winner
+   * wrote. That is why this is a *move* and not a second `start()`.
+   *
+   * The ticker needs no restart: it reads [player] on every tick rather than closing over the
+   * constructor argument, which is the property Plan 3 deliberately left in place for this method.
+   * The **listener** does have to move, and only if this writer is running -- calling [attach]
+   * before [start] must not leave a listener registered on a player [start] will then register on
+   * again, and calling it after [stop] must not quietly restart the writer.
+   *
+   * Runs on the players' application thread, like every other `Player` touch here, and both players
+   * must share one: `addListener` verifies it. Attaching a released player is the caller's problem
+   * and there is no `runCatching` here to hide it -- a progress writer that silently stopped
+   * writing is the failure mode this whole class exists to prevent.
+   */
+  fun attach(player: Player) {
+    if (this.player === player) return
+    val running = ticker != null
+    if (running) this.player.removeListener(this)
+    this.player = player
+    if (running) player.addListener(this)
   }
 
   // 1

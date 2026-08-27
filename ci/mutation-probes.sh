@@ -264,11 +264,17 @@ ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
 SESSION_SESSION = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSession.kt"
 SESSION_PLAYBACK = "core/cast/src/main/kotlin/app/muplay/cast/session/CastPlayback.kt"
 SESSION_SOURCE = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSource.kt"
+HANDOVER_POLICY = "core/media/src/main/kotlin/app/muplay/media/cast/OneShotResumePolicy.kt"
+SERVED_MEDIA = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
 # `FakeRendererStrictnessTest`, not one of its assertions.
-SOAP_FAKE = "core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
+# MOVED in Plan 6 Task 9, from `src/test` to `src/testFixtures`: `:core:media`'s instrumented
+# `HandoverTest` drives a handover against this same fake, and a `testFixtures` source set is
+# how one module's test helper reaches another's. `revert()` checks out `core/cast` wholesale,
+# so the move needed no change there -- only here, where the path is written out.
+SOAP_FAKE = "core/cast/src/testFixtures/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -860,13 +866,18 @@ PROBES = [
      # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
      "the injected clock is a real clock and not a frozen one", 1),
     ("progress/policy-resumes", MEDIA_MODULE,
-     "  fun provideResumePolicy(): ResumePolicy = NeverResume",
-     "  fun provideResumePolicy(): ResumePolicy =\n"
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume",
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy =\n"
      "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
      # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
      # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
      # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
-     "the bound resume policy is the one that resumes nothing", 1),
+     #
+     # RENAMED in Plan 6 Task 9, which re-annotated this provider `@UndecoratedResumePolicy` so that
+     # the one UNQUALIFIED `ResumePolicy` in the graph is the cast decorator. The probe went STALE
+     # -- "0 matches ... (need exactly 1)" -- and the family refused to run, which is the guard
+     # working: a probe whose search text has drifted is a probe that would silently mutate nothing.
+     "the undecorated resume policy is the one that resumes nothing", 1),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone
@@ -2714,6 +2725,65 @@ PROBES = [
      # `t` and `s` are password equivalents.
      "a source does not print its credential-bearing upstream url", 1),
 
+    # ---- Plan 6 Task 9: the handover -----------------------------------------------------------
+    # Every count below was measured by applying the mutation to a committed tree and reading the
+    # result XML, one at a time, with the file's bytes snapshotted in memory and written back.
+    #
+    # WHAT IS NOT HERE, AND WHY. The handover's headline behaviour -- casting mid-song lands on the
+    # same second -- lives on the DEVICE tier, in `:core:media`'s `HandoverTest` and
+    # `UpnpPlayerTest`, and this runner cannot see an androidTest source at all: it reports MISSED
+    # with zero failures, because an androidTest file is not an input to the JVM test task and the
+    # cache key therefore does not move (this file's own header records the same limit from Plan 3
+    # Task 7b). Six device-tier mutations were applied by hand instead and their transcripts are in
+    # task-9-report.md, which is the same treatment `LiveNavidromeTest`'s probes get.
+    #
+    # What IS here is everything the fast tier can hold: the one-shot decorator, which takes media
+    # ids and an index and touches no Android type, and the two Hilt bindings whose failure mode is
+    # silent.
+    ("handover/target-never-spent", HANDOVER_POLICY,
+     "val pending = armed.getAndSet(null)", "val pending = armed.get()",
+     # A target that survived one `resolve` would make the next shuffle, the next album and the next
+     # book all start where the last handover was. Three failures, because "the target is spent" is
+     # asserted from three directions: after it is used, after it misses its queue, and after an
+     # empty queue clears it.
+     "an armed target wins over the delegate, once", 3),
+    ("handover/missing-id-applied", HANDOVER_POLICY,
+     "    if (index < 0) return delegate.resolve(mediaIds, requestedIndex)",
+     "    if (index < -1) return delegate.resolve(mediaIds, requestedIndex)",
+     # A handover whose queue changed between arming and setting. Applying the target anyway starts
+     # an unrelated track partway in -- the silent-wrong-answer class, and the exact failure this
+     # architecture exists to prevent for books.
+     "an armed target for a media id that is not in the new queue is discarded", 2),
+    ("handover/armed-index-used", HANDOVER_POLICY,
+     "return ResumeTarget(startIndex = index, startPositionMs = pending.target.startPositionMs)",
+     "return ResumeTarget(startIndex = pending.target.startIndex, "
+     "startPositionMs = pending.target.startPositionMs)",
+     # The media id is the identity; the index is not. A handover can re-fetch an album or
+     # regenerate a shuffle, and the armed index then names a different track.
+     "the armed index is corrected to where the media id actually is in the new queue", 1),
+    ("handover/decorator-not-singleton", MEDIA_MODULE,
+     "  @Provides\n  @Singleton\n  fun provideOneShotResumePolicy(",
+     "  @Provides\n  fun provideOneShotResumePolicy(",
+     # ONE MISSING ANNOTATION. Dagger hands `CastSessionManager` and `MuPlayerFactory` a decorator
+     # each, over the same delegate; every outbound cast still works, and the return leg arms one
+     # object and asks the other. No assertion about a position anywhere else in this project moves.
+     "the decorator is a singleton, because two decorators over one delegate lose the return leg", 1),
+    ("handover/undecorated-binding-wins", MEDIA_MODULE,
+     "  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot",
+     "  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = NeverResume",
+     # The other half of the same silence: a graph with exactly one unqualified `ResumePolicy` --
+     # which is what Hilt requires and what makes this compile -- and it is the WRONG one.
+     "the unqualified resume policy the player factory receives IS the cast decorator", 1),
+    ("handover/mime-guessed", SERVED_MEDIA,
+     "      RAW_TYPES.values.firstOrNull { it.mimeType.equals(mimeType, ignoreCase = true) }",
+     "      RAW_TYPES.values.firstOrNull { it.mimeType.equals(mimeType, ignoreCase = true) }\n"
+     "        ?: ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     # `forExtension` has the same probe for the same reason: this answers a question about what a
+     # *peer* will believe, and "I do not know" is a different answer from "MP3". Guessing here
+     # makes `audio/opus` -- the one format spec section 4 forbids outright -- agree with every MP3
+     # stream this client serves.
+     "forMimeType answers what must be served for a body already decided to be that MIME", 1),
+
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
     # they belong here rather than behind a coverage floor.
@@ -4158,6 +4228,12 @@ LATER_PROBE_FILES = [
     # ends, and the next agent's dirty-tree guard blames them for it.
     SLEEP_FADE,
     SHAKE_DETECTOR,
+    # Plan 6 Task 9, added in the same edit as the six `handover/` probes above, per this
+    # list's own comment. `MEDIA_MODULE` and `core/cast` are already on `revert()`'s checkout
+    # line -- only the decorator's own file is new, which is exactly the state that makes
+    # forgetting this line easy and its consequence a stray mutation the next agent is blamed
+    # for.
+    HANDOVER_POLICY,
 ]
 
 
