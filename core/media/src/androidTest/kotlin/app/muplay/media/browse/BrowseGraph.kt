@@ -2,10 +2,10 @@ package app.muplay.media.browse
 
 import android.content.Context
 import androidx.room.Room
+import app.muplay.database.AudiobookRepository
 import app.muplay.database.BrowseRepository
 import app.muplay.database.BrowseTreeRepository
 import app.muplay.database.LibraryRepository
-import app.muplay.database.MirrorBookshelf
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.entity.AlbumEntity
@@ -27,6 +27,7 @@ import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.network.SubsonicSource
 import java.io.File
+import java.time.Clock
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -136,7 +137,16 @@ class BrowseGraph private constructor(
         treeRepository = BrowseTreeRepository(
           LibraryRepository(database.libraryDao(), provider),
           BrowseRepository(database.browseDao(), provider),
-          MirrorBookshelf(database.libraryDao(), database.browseDao(), database.mediaProgressDao()),
+          // Plan 4 Task 4 replaced `MirrorBookshelf` with the real `AudiobookRepository` behind
+          // the same `Bookshelf` interface -- one derivation of "where is the listener in this
+          // book", not two. A real clock: nothing this suite asserts reads one, and
+          // `markFinished` is the only method that does.
+          AudiobookRepository(
+            database.audiobookDao(),
+            database.mediaProgressDao(),
+            database.bookSettingsDao(),
+            Clock.systemUTC(),
+          ),
           ShuffleRepository(database.browseDao(), provider),
         ),
         // The **real** `QueueRepository`, over the same fake source: Plan 5 Task 5 makes the
@@ -196,7 +206,7 @@ class BrowseGraph private constructor(
       album("bk-beta", AUDIOBOOK_LIBRARY_ID, "Beta Book", "ar-narrator", "Fay Speaker", 2, 200),
       // A book row the mirror holds no files for, and no author for either. Both are real states --
       // an album whose songs a sync has not reached yet, and a rip with no album artist tag -- and
-      // both are branches in `MirrorBookshelf` that every other book here takes the other way.
+      // both are branches in `BookSummaries` that every other book here takes the other way.
       album("bk-empty", AUDIOBOOK_LIBRARY_ID, "Empty Book", "ar-narrator", null, 0, 0),
       album("bk-gamma", AUDIOBOOK_LIBRARY_ID, "Gamma Book", "ar-narrator", "Gil Voice", 2, 200),
       album("bk-multi", AUDIOBOOK_LIBRARY_ID, "Multi Part Book", "ar-narrator", "Dee Narrator", 4, 400),
@@ -209,7 +219,7 @@ class BrowseGraph private constructor(
     /**
      * Every book's parts, 100 s each **except `bk-test`'s**, which are 100 s, 200 s and 300 s.
      *
-     * The uneven one is not decoration. `BookProgress` expresses a file position over the whole
+     * The uneven one is not decoration. `BookSummaries` expresses a file position over the whole
      * book by adding the durations of the files *before* it, and with equal parts a rule that added
      * the wrong ones -- or added them in the wrong order -- reaches the same number. `bk-test` is
      * the book whose stored row sits on part two, so the offset it contributes (100 s) differs from

@@ -524,6 +524,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.RememberedRenderers",
         "app.muplay.model.RememberedRenderers*",
         "app.muplay.model.BookSummary",
+        // Plan 4 Task 4. `ResumePoint` is a three-field `data class` with no body -- the
+        // ride-along shape this list's own paragraph describes, measured with no BRANCH
+        // counter at all -- and its only constructor lives in `:core:database`, so its LINE
+        // counter is that module's to gate and is gated there. Named here so
+        // `warnUngatedClasses` has nothing to say about it.
+        "app.muplay.model.ResumePoint",
         "app.muplay.model.browse.BrowseTree",
         "app.muplay.model.browse.BrowseTree*",
         "app.muplay.model.browse.BrowseText",
@@ -1196,6 +1202,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.SubsonicSourceProvider*",
         "app.muplay.database.BrowseRepository*",
         "app.muplay.database.ShuffleRepository*",
+        // Plan 4 Task 4. `AudiobookRepository`'s two `Flow.map` lambdas -- `observeSettings` and
+        // `observeAudiobookItems` -- are the same artefact as `BrowseRepository`'s four above and
+        // belong to the same rule. Narrow on purpose: the class itself, its companion and its
+        // `combine` lambda are gated at 0.90 by the Plan 4 Task 4 rules below, and that rule
+        // excludes exactly this glob so the two rules cannot both claim a class.
+        "app.muplay.database.AudiobookRepository*inlined*",
       ),
       excludes = listOf(
         "app.muplay.database.CredentialStore",
@@ -1289,9 +1301,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
+        // `MirrorBookshelf` and `BookProgress` were removed from this rule by Plan 4 Task 4 -- not
+        // narrowed away, **deleted from the tree**. `AudiobookRepository` answers `Bookshelf` now
+        // and is gated by the Plan 4 Task 4 rules below rather than folded in here, because its
+        // execution data comes from two connected suites and this rule's recorded falsification is
+        // about one. Whoever re-measures either must re-measure both.
         "app.muplay.database.BrowseTreeRepository",
-        "app.muplay.database.MirrorBookshelf",
-        "app.muplay.database.BookProgress",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1326,9 +1341,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // matches nothing and leaves the warning in place -- measured, because I wrote it that way
         // first and the warning did not move.
         "app.muplay.database.BrowseTreeRepository*",
-        "app.muplay.database.MirrorBookshelf",
-        "app.muplay.database.BookProgress",
-        "app.muplay.database.BookPosition",
+        // Plan 4 Task 4 deleted `MirrorBookshelf`, `BookProgress` and `BookPosition`; see the
+        // BRANCH rule above and the Plan 4 Task 4 rules below.
       ),
       requiresInstrumentedData = true,
     ),
@@ -1386,6 +1400,94 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.entity.ChapterEntity",
         "app.muplay.database.entity.ChapterScanEntity",
       ),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 4 Task 4: what a book is, the shelf order, and the settings write ---------------
+    // The shelf's arithmetic and its order are a plain Kotlin object over plain data classes, so
+    // they are gated from **JVM data alone** -- no `requiresInstrumentedData`, and that is the
+    // point: a three-key comparator with two direction flips is exactly the code that is wrong at
+    // one boundary, and an emulator round trip per mutation is the wrong price for finding out.
+    //
+    // Measured from `BookSummariesTest` (25 tests) with the instrumented `.ec` absent:
+    // `BookSummaries` BRANCH **38/38 = 1.0000**, LINE **53/53**. It read 39/40 first; the one
+    // missed branch was `resumePoint`'s second `?: return null`, unreachable because
+    // `currentFileIndex` only ever names a file that has a row -- **deleted rather than covered**,
+    // the same call `BrowseText`'s own entry above records for its unreachable `max(0L, ..)`, and
+    // the file says so at the line.
+    //
+    // `BookSummaries*` reaches the four comparator classes Kotlin emits for `order`'s
+    // `compareBy`/`thenByDescending`/`thenBy`/`thenBy` chain: `$order$$inlined$thenByDescending$1`,
+    // `$order$$inlined$thenBy$1` and `$order$$inlined$thenBy$2` at **2/2 BRANCH and 2/2 LINE each**
+    // -- the tie-breaks that keep the shelf from reordering itself between two identical reads --
+    // and `$order$$inlined$compareBy$1`, which carries **no BRANCH counter at all** and is gated by
+    // the LINE rule below (1/1) rather than vacuously by this one.
+    //
+    // **Falsified by running it, twice, and the first half is a near-miss worth keeping:**
+    //   * Withholding `the shelf is continue-listening first, then unstarted alphabetically, then
+    //     finished` ALONE leaves this floor **green at 38/38** -- the five smaller order tests
+    //     still take every arm between them. A reader who withholds the headline test and sees
+    //     green has learned nothing, which is why this bullet is here.
+    //   * Withholding the whole `---- order ----` section (6 tests, 19 of 25 left) fires it:
+    //     `BookSummaries` BRANCH **34/38 = 0.8947**, LINE **42/53 = 0.7925**, and all three
+    //     `thenBy*`/`thenByDescending*` classes at **0/2 BRANCH**, BUILD FAILED.
+    // Re-run these when you touch this floor rather than copying them forward.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.BookSummaries",
+        "app.muplay.database.BookSummaries*",
+      ),
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.BookSummaries",
+        "app.muplay.database.BookSummaries*",
+      ),
+    ),
+    // `AudiobookRepository` itself needs Room, so its floors are instrumented -- and its execution
+    // data comes from **two** connected suites: `:core:database`'s own `AudiobookRepositoryTest`
+    // and `:core:media`'s browse suite, which drives it through the `Bookshelf` binding it took
+    // over from `MirrorBookshelf`. That is the "a recorded falsification goes stale when a second
+    // caller appears" shape from the start, so it is recorded as such rather than discovered later.
+    //
+    // `AudiobookRepository*` in the BRANCH rule reaches `$Companion` (`bookIdOf`'s two `?:`, 4
+    // branches) and `$bookshelf$1` (the `combine` lambda's own elvis arms), both of which are
+    // author decisions rather than plumbing. Every other `AudiobookRepository$*` class carries no
+    // BRANCH counter, which JaCoCo scores NaN and reports as no violation.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.AudiobookRepository",
+        "app.muplay.database.AudiobookRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The same classes' LINE, **excluding the `Flow.map` artefacts**, which this module already
+    // gates at 0.50 in the rule below alongside `BrowseRepository`'s and `LibraryRepository`'s --
+    // measured 0.50-0.67 there, and there is no reason this class's two would do better. Excluded
+    // by glob rather than left out of `includes`, because `AudiobookRepository*` is what reaches
+    // `$Companion` and `$bookshelf$1` and a narrower include would drop those too.
+    //
+    // `AudiobookItemRow` is `BookPosition`'s shape exactly: a `data class` whose generated
+    // `equals`/`hashCode`/`copy` JaCoCo's Kotlin filter removes entirely, leaving **1 LINE and zero
+    // BRANCH**. Listed by name for that reason -- a BRANCH rule over it would gate nothing.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.AudiobookRepository",
+        "app.muplay.database.AudiobookRepository*",
+        "app.muplay.database.dao.AudiobookItemRow",
+      ),
+      excludes = listOf("app.muplay.database.AudiobookRepository*inlined*"),
       requiresInstrumentedData = true,
     ),
   ),

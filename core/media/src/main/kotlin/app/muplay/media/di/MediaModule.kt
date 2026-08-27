@@ -9,7 +9,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import java.time.Clock
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import okhttp3.Call
@@ -58,19 +57,12 @@ object MediaModule {
       // different facts, and only one of them survives a refactor.
       .build()
 
-  /**
-   * The project's first injected clock. Global constraint: *"Inject a `Clock`; no direct wall-clock
-   * reads outside the injection point."* This is that injection point, and [ProgressWriter] --
-   * through `MuPlaybackService` -- is its only consumer today.
-   *
-   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
-   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
-   * library plus a Room type converter would be bought for nothing. It also names no Android type,
-   * which is what keeps this whole module JVM-testable -- see this object's own doc.
-   */
-  @Provides
-  @Singleton
-  fun provideClock(): Clock = Clock.systemUTC()
+  // `provideClock` moved to `:core:database`'s `DataModule` (Plan 4 Task 4), where its reasoning
+  // and its test now live: `AudiobookRepository` is the first class down there to take a `Clock`,
+  // and a binding declared above its consumer breaks that module's Hilt tests while making this
+  // module a build-time requirement of one that does not depend on it. Do not re-add it -- two
+  // unqualified `Clock` bindings is a Hilt duplicate-binding failure, and `DataModule`'s is
+  // visible here because `:core:media` depends on `:core:database`.
 
   /**
    * Plan 3 resumes nothing -- spec section 3's stated behaviour for music: *"Only books get resume

@@ -9,6 +9,7 @@ import app.muplay.database.entity.BookSettingsEntity
 import app.muplay.database.entity.ChapterEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.database.entity.SongEntity
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.RememberedRenderer
@@ -16,6 +17,8 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
 import java.io.File
+import java.time.Clock
+import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
@@ -304,6 +307,88 @@ class DataModuleTest {
     assertThat(dao.findScan("m-1")!!.chapterCount).isEqualTo(2)
   }
 
+  /**
+   * Plan 4 Task 4 added `provideAudiobookDao`, and the same rule as the two tests above applies: a
+   * provider nothing calls measures 0/1 LINE.
+   *
+   * It also proves the one thing an in-memory `AudiobookRepositoryTest` cannot -- that the
+   * role-scoped `IN (SELECT ... FROM libraries WHERE role = :role)` sub-select runs against the
+   * **shipped** on-disk database, whose `libraries.role` column arrived through `MIGRATION_6_7`'s
+   * ancestry rather than through `createAllTables`. Two libraries and two albums, so "scoped to the
+   * audiobook library" and "every album there is" are different answers.
+   */
+  @Test
+  fun theProvidedAudiobookDaoWorks() = runTest {
+    val dao = DataModule.provideAudiobookDao(database)
+    val libraryDao = DataModule.provideLibraryDao(database)
+    val browseDao = DataModule.provideBrowseDao(database)
+    libraryDao.mergeFromServer(
+      listOf(
+        LibraryEntity(41, "Music", LibraryRole.UNASSIGNED),
+        LibraryEntity(42, "Audiobooks", LibraryRole.UNASSIGNED),
+      ),
+    )
+    libraryDao.setRole(41, LibraryRole.MUSIC)
+    libraryDao.setRole(42, LibraryRole.AUDIOBOOKS)
+    browseDao.replaceLibraryContents(
+      libraryId = 41,
+      artists = emptyList(),
+      albums = listOf(album("dm-record", 41, "A Record")),
+      songs = listOf(song("dm-track", "dm-record", 41, "A Track")),
+    )
+    browseDao.replaceLibraryContents(
+      libraryId = 42,
+      artists = emptyList(),
+      albums = listOf(album("dm-book", 42, "A Book")),
+      songs = listOf(song("dm-part", "dm-book", 42, "A Part")),
+    )
+
+    assertThat(dao.observeBookAlbums(LibraryRole.AUDIOBOOKS).first().map { it.id })
+      .containsExactly("dm-book")
+    assertThat(dao.observeItems(LibraryRole.AUDIOBOOKS).first().map { it.mediaId })
+      .containsExactly("dm-part")
+    assertThat(dao.observeSongsInRole(LibraryRole.AUDIOBOOKS).first().map { it.id })
+      .containsExactly("dm-part")
+    assertThat(dao.files("dm-book", LibraryRole.AUDIOBOOKS).map { it.id }).containsExactly("dm-part")
+    assertThat(dao.findBookAlbum("dm-book", LibraryRole.AUDIOBOOKS)?.name).isEqualTo("A Book")
+    // The music album, through the same call. Without the role guard this answers a book.
+    assertThat(dao.findBookAlbum("dm-record", LibraryRole.AUDIOBOOKS)).isNull()
+  }
+
+  /**
+   * The project's only wall-clock read, behind every `media_progress.lastPlayedAtEpochMs` the app
+   * writes -- and behind `AudiobookRepository.markFinished`.
+   *
+   * **Moved here from `:core:media`'s `MediaModuleTest` by Plan 4 Task 4**, with the binding: the
+   * consumer that made the module boundary matter lives in this module, and the test follows the
+   * provider rather than staying where the provider used to be.
+   *
+   * Asserted as *moving* rather than as `isNotNull`: a `Clock.fixed(..)` left here by a test edit
+   * would stamp every row with the same instant, and `recentlyPlayed`'s
+   * `ORDER BY lastPlayedAtEpochMs DESC` would then return an arbitrary order forever, silently.
+   */
+  @Test
+  fun theProvidedClockIsARealClockAndNotAFrozenOne() {
+    val clock = DataModule.provideClock()
+
+    assertThat(clock.millis()).isGreaterThan(EARLIEST_PLAUSIBLE_EPOCH_MS)
+    // UTC, because the column is epoch millis: a zoned clock would still report the same instant,
+    // but `Clock.systemDefaultZone()` invites a later `LocalDateTime.now(clock)` that is not.
+    assertThat(clock.zone).isEqualTo(ZoneOffset.UTC)
+    assertThat(clock).isEqualTo(Clock.systemUTC())
+  }
+
+  private fun album(id: String, libraryId: Int, name: String) = AlbumEntity(
+    id = id, libraryId = libraryId, artistId = null, name = name, artistName = "Anne Author",
+    coverArtId = null, songCount = 1, durationSeconds = 4, sortName = name.lowercase(),
+  )
+
+  private fun song(id: String, albumId: String, libraryId: Int, title: String) = SongEntity(
+    id = id, libraryId = libraryId, albumId = albumId, artistId = null, title = title,
+    albumName = albumId, artistName = "Anne Author", trackNumber = 1, discNumber = 1,
+    durationSeconds = 4, suffix = "mp3", coverArtId = null, sortTitle = title.lowercase(),
+  )
+
   private companion object {
     /**
      * The two DataStores the shipped app uses, built **once** for this whole class.
@@ -324,5 +409,8 @@ class DataModuleTest {
 
     /** Distinctive enough that finding it in a file is evidence rather than a coincidence. */
     private const val MARKER_UDN = "uuid:RINCON-cast-store-marker"
+
+    /** 2024-01-01T00:00:00Z. Any real clock is past it; a `Clock.fixed(EPOCH, ..)` is not. */
+    private const val EARLIEST_PLAUSIBLE_EPOCH_MS = 1_704_067_200_000L
   }
 }

@@ -2,6 +2,7 @@ package app.muplay.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import app.muplay.database.dao.AudiobookDao
 import app.muplay.database.dao.BookSettingsDao
 import app.muplay.database.dao.BrowseDao
 import app.muplay.database.dao.ChapterDao
@@ -76,6 +77,14 @@ abstract class MuPlayDatabase : RoomDatabase() {
   abstract fun bookSettingsDao(): BookSettingsDao
 
   abstract fun chapterDao(): ChapterDao
+
+  /**
+   * Plan 4 Task 4. **Adds no entity, so it does not move [version]** -- every query on it reads
+   * `albums`, `songs` and `libraries`, which Plan 2 Task 5 and Task 4 created. A DAO accessor is
+   * not part of the schema Room hashes; adding one to an unchanged entity list leaves the exported
+   * JSON byte-identical, which is why this arrived without a migration.
+   */
+  abstract fun audiobookDao(): AudiobookDao
 
   companion object {
     const val DATABASE_NAME = "muplay.db"

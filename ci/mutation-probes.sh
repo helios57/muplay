@@ -188,6 +188,7 @@ BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
 BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
 BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
+BOOK_SUMMARIES = "core/database/src/main/kotlin/app/muplay/database/BookSummaries.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
@@ -3305,6 +3306,59 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+
+    # ---- Plan 4 Task 4: the shelf's arithmetic and its order ---------------------------------
+    #
+    # Every failure count below is MEASURED by running this family, not predicted -- several of
+    # these mutations redden more than the one test they are named for, because the fixtures
+    # deliberately vary one input at a time against a shared rule.
+    ("shelf/current-file-furthest", BOOK_SUMMARIES,
+     "      if (row != null && (incumbent == null || row.lastPlayedAtEpochMs >= incumbent.lastPlayedAtEpochMs)) {",
+     "      if (row != null) {",
+     # "the last file with a row" rather than "the most recently written row". A listener who
+     # jumped back to chapter 1 gets dragged forward to wherever they had been furthest, which is
+     # the defect you only notice by losing your place.
+     "an older row on a later file does not win", 2),
+    ("shelf/current-file-tie-earlier", BOOK_SUMMARIES,
+     "row.lastPlayedAtEpochMs >= incumbent.lastPlayedAtEpochMs",
+     "row.lastPlayedAtEpochMs > incumbent.lastPlayedAtEpochMs",
+     # `>` is what `maxByOrNull` does: the FIRST maximal element. A batch write really does produce
+     # two rows in one millisecond, and this pins such a listener to part one for good.
+     "two rows written in the same millisecond resolve to the later file", 1),
+    ("shelf/position-no-offset", BOOK_SUMMARIES,
+     "    val offsetMs = ordered.take(currentIndex.coerceAtLeast(0))\n      .sumOf { it.durationSeconds * 1_000L }",
+     "    val offsetMs = 0L",
+     # The whole-book position collapses to the position inside the current file. Every
+     # single-file assertion in this class stays green, which is why the fixtures are multi-file.
+     "a book's position is the files before the current one plus the position inside it", 3),
+    ("shelf/order-by-time-alone", BOOK_SUMMARIES,
+     "    compareBy<BookSummary> { group(it) }\n      .thenByDescending { if (group(it) == GROUP_UNSTARTED) 0L else it.lastPlayedAtEpochMs }",
+     "    compareBy<BookSummary> { 0 }\n      .thenByDescending { it.lastPlayedAtEpochMs }",
+     # The three groups collapse into one. A finished book heard a minute ago goes to the top of
+     # the shelf, which is the most annoying shelf available.
+     "the shelf is continue-listening first, then unstarted alphabetically, then finished", 3),
+    ("shelf/play-order-untagged-first", BOOK_SUMMARIES,
+     "      { it.trackNumber ?: Int.MAX_VALUE },",
+     "      { it.trackNumber ?: 0 },",
+     # The book opens on its own afterword.
+     "a file with no track number sorts after every numbered one, by title", 1),
+    ("shelf/play-order-untagged-disc-zero", BOOK_SUMMARIES,
+     "      { it.discNumber ?: 1 },",
+     "      { it.discNumber ?: 0 },",
+     # The other `?:` in the same comparator, and the opposite default for the opposite reason: a
+     # single-disc rip leaves the column null on every file.
+     "a file with no disc number plays with disc one, not before it", 1),
+    ("shelf/finished-on-any-file", BOOK_SUMMARIES,
+     "      isFinished = ordered.isNotEmpty() && progress[ordered.last().id]?.isFinished == true,",
+     "      isFinished = ordered.any { progress[it.id]?.isFinished == true },",
+     # A book comes off the Continue shelf the first time a chapter runs out on its own.
+     "a book is finished when its last file is finished, and not before", 1),
+    ("shelf/author-from-nowhere", BOOK_SUMMARIES,
+     "      author = album.artistName.orEmpty(),",
+     '      author = "",',
+     # A constant field assignment removes no branch, so coverage cannot see this one at all --
+     # which is the defect class this whole plan is written against.
+     "the album row supplies the identity a file cannot", 1),
 ]
 
 
@@ -3435,6 +3489,10 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 4. Added in the same edit as the eight `shelf/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    BOOK_SUMMARIES,
 ]
 
 

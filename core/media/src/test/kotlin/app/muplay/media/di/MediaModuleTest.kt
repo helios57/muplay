@@ -1,8 +1,6 @@
 package app.muplay.media.di
 
 import app.muplay.media.NeverResume
-import java.time.Clock
-import java.time.ZoneOffset
 import okhttp3.OkHttpClient
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -70,21 +68,6 @@ class MediaModuleTest {
   }
 
   @Test
-  fun `the injected clock is a real clock and not a frozen one`() {
-    // The project's only wall-clock read, behind every `media_progress.lastPlayedAtEpochMs` the app
-    // writes. Asserted as *moving* rather than as `isNotNull`: a `Clock.fixed(..)` left here by a
-    // test edit would stamp every row with the same instant, and `recentlyPlayed`'s
-    // `ORDER BY lastPlayedAtEpochMs DESC` would then return an arbitrary order forever, silently.
-    val clock = MediaModule.provideClock()
-
-    assertThat(clock.millis()).isGreaterThan(EARLIEST_PLAUSIBLE_EPOCH_MS)
-    // UTC, because the column is epoch millis: a zoned clock would still report the same instant,
-    // but `Clock.systemDefaultZone()` invites a later `LocalDateTime.now(clock)` that is not.
-    assertThat(clock.zone).isEqualTo(ZoneOffset.UTC)
-    assertThat(clock).isEqualTo(Clock.systemUTC())
-  }
-
-  @Test
   fun `the bound resume policy is the one that resumes nothing`() {
     // Spec section 3's stated behaviour for music, and the binding Plan 4 replaces. Two
     // observations, because the identity check alone would survive `NeverResume` itself being
@@ -95,10 +78,5 @@ class MediaModuleTest {
     assertThat(policy).isSameAs(NeverResume)
     assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startPositionMs).isZero
     assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startIndex).isEqualTo(1)
-  }
-
-  private companion object {
-    /** 2024-01-01T00:00:00Z. Any real clock is past it; a `Clock.fixed(EPOCH, ..)` is not. */
-    const val EARLIEST_PLAUSIBLE_EPOCH_MS = 1_704_067_200_000L
   }
 }
