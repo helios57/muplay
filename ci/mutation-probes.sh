@@ -3513,6 +3513,18 @@ LATER_PROBE_FILES = [
     # `LIDARR_PAYLOAD` is new -- the other three files this family mutates are already above, which
     # is exactly the state that makes forgetting this line easy and its consequence a stray.
     LIDARR_PAYLOAD,
+    # Plan 7 Task 8, the five files the `integrations/bindery-*` family mutates. **Added after the
+    # probes were, which is the wrong order and cost exactly the run this list's own comment
+    # predicts**: the first probe mutated `BinderyAuthInterceptor.kt`, `revert()` named no file
+    # that matched, and the second probe -- which searches for the same line -- aborted the whole
+    # family with "PROBE TEXT NOT FOUND ... 0 matches". Fourth time in this file. The guard behaved
+    # correctly and `git status` showed the stray immediately, per CLAUDE.md, but it cost 30
+    # minutes. If you are adding a probe family, add its files here in the same edit.
+    BINDERY_INT,
+    BINDERY_CLIENT,
+    BINDERY_API,
+    BINDERY_EXC,
+    BINDERY_STATUS,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,
