@@ -252,20 +252,23 @@ class BookTimelineTest {
   }
 
   @Test
-  fun `the book position is the item's offset, not the chapter's`() {
-    // A chaptered second file: the first entry for "b" starts 0 ms into its own item, so
-    // `bookStartMs - startInItemMs` and `bookStartMs` agree there and hide the subtraction. Ask
-    // about a position inside the SECOND chapter of that file and they no longer agree: the item
-    // begins at 9000, so 5000 ms into the item is 14000 ms into the book -- never 12000, which is
-    // where that chapter starts.
+  fun `the book position is the item's offset, not its first chapter's start`() {
+    // `bookPositionMs` finds the item by its FIRST chapter and then subtracts that chapter's own
+    // `startInItemMs` to recover where the item begins. In every book in the seeded corpus the
+    // first chapter of a file starts at 0, so `bookStartMs - startInItemMs` and `bookStartMs`
+    // agree and the subtraction is invisible -- deleting it leaves every assertion in this file
+    // green. **This fixture exists to make that mutation fail.** Disc Two's first chapter atom
+    // starts a second in, which a file with unmarked front matter really does; the item still
+    // begins at 9000, so 5000 ms into it is 14000 ms into the book, never 15000.
     val files = listOf(BookFile("a", "Disc One", 9_000), BookFile("b", "Disc Two", 12_000))
     val chapters = mapOf(
       "a" to listOf(Chapter(0, 0, 9_000, "One")),
-      "b" to listOf(Chapter(0, 0, 3_000, "Two"), Chapter(1, 3_000, 12_000, "Three")),
+      "b" to listOf(Chapter(0, 1_000, 3_000, "Two"), Chapter(1, 3_000, 12_000, "Three")),
     )
 
     val timeline = BookTimeline.of(files, chapters)
 
+    assertThat(timeline.map { it.bookStartMs }).containsExactly(0L, 10_000L, 12_000L)
     assertThat(BookTimeline.bookPositionMs(timeline, "b", 5_000)).isEqualTo(14_000L)
     assertThat(BookTimeline.bookPositionMs(timeline, "a", 5_000)).isEqualTo(5_000L)
   }
