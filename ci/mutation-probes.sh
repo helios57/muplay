@@ -2528,6 +2528,14 @@ def apply(path, old, new):
 # stray-mutation incident this script's header describes -- so add the file here in the same edit
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
+    # Plan 4 Task 2. Added AFTER the probes were, which is the wrong order and cost a real stray:
+    # the first `audiobook/` probe mutated Chapter.kt, `revert()` named no file that matched, and
+    # the second probe aborted the whole run with "PROBE TEXT NOT FOUND ... 0 matches" against a
+    # file the first probe had left mutated. This list's own comment predicts that failure exactly.
+    # The guard behaved correctly -- it failed loudly rather than probing a mutated tree -- and the
+    # stray was found by `git status` immediately afterwards, per CLAUDE.md.
+    CHAPTER,
+    BOOK_SETTINGS,
     RESUME_POLICY,
     BROWSE_ID,
     BASE_URL,
