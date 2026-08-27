@@ -2998,7 +2998,11 @@ PROBES = [
      "    !serverSupportsTranscodeOffset -> SeekMethod.NotOffered\n"
      "    else -> SeekMethod.ReissueWithOffset(offsetSecondsFor(targetPositionMs))",
      "    else -> SeekMethod.InPlace",
-     "a transcode on a server that supports the extension is re-issued at the offset", 4),
+     # 5, measured. Every test in `TranscodeSeekTest` that expects a `ReissueWithOffset` or a
+     # `NotOffered` goes red: the two-target one this names, the flooring one, the clamping one,
+     # the withdrawal one and the wire-value one. Submitted as 4 and reported MISSED on the first
+     # run -- the stale-count case, not a code regression.
+     "a transcode on a server that supports the extension is re-issued at the offset", 5),
 
     # 5. The capability gate, ignored. `NotOffered` is the honest form of spec section 4's
     #    "unsupported features are silent no-ops": offering a seek the server cannot perform is the
@@ -3112,6 +3116,12 @@ LATER_PROBE_FILES = [
     # list's own comment.
     REQUEST_STATUS,
     MEDIA_REQUEST,
+    # Plan 3 Task 12. Added AFTER its probes were -- the wrong order, and this list's own comment
+    # says exactly what that costs: `seek/always-in-place` mutated `TranscodeSeek.kt`, `revert()`
+    # named no file that matched, and `seek/capability-ignored` aborted the family with "PROBE TEXT
+    # NOT FOUND ... 0 matches" against the file the first probe had left mutated. The guard behaved
+    # correctly and `git status` showed the stray immediately. It still cost a run.
+    TRANSCODE_SEEK,
     PLAYBACK_SERVICE,
     TASK_REMOVAL,
     PLAYBACK_STATE,
