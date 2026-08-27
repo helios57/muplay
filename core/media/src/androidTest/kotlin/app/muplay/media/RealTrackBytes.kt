@@ -4,6 +4,7 @@ import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
+import app.muplay.network.SubsonicSource
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -34,7 +35,10 @@ object RealTrackBytes {
   const val NAVIDROME_URL = "http://localhost:4533"
   const val MUSIC_LIBRARY_ID = 1
 
-  /** `ci/navidrome.compose.yml`'s second library, mounted at `/audiobooks`. */
+  /**
+   * `ci/navidrome.compose.yml`'s second library, mounted at `/audiobooks`, and wired as
+   * `Audiobooks` by `ci/configure-libraries.sh`.
+   */
   const val AUDIOBOOK_LIBRARY_ID = 2
 
   private const val MP3_SUFFIX = "mp3"
@@ -92,6 +96,13 @@ object RealTrackBytes {
    * 5 Task 5, which needs a file long enough that a stored position several seconds in is inside
    * it: the music fixtures are five seconds each, and a resume assertion on a five-second track is
    * satisfied by playback simply reaching the position on its own.
+   *
+   * Plan 4 Task 3's chapter suites use this rather than a second listing of the same library. They
+   * arrived with one -- album-ordered, via `getAlbumList2` + `getAlbum` -- written before this
+   * helper existed on master, and the merge of the two put **both** behind this same `books` field:
+   * two different orderings, one cache, and whichever ran first silently decided what the other
+   * one saw. Nothing about that conflicted textually. It was deleted rather than given its own
+   * field because neither chapter suite needs an order at all: both look a file up by title.
    */
   suspend fun audiobookFiles(): List<Song> =
     books ?: client.getRandomSongs(musicFolderId = AUDIOBOOK_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
@@ -119,6 +130,17 @@ object RealTrackBytes {
    * object private, which is what that merge was for.
    */
   fun rawStreamUrl(song: Song): String = client.streamUrl(song.id, StreamFormat.Raw)
+
+  /**
+   * The one client, as the port production code injects.
+   *
+   * `ChapterRepository` builds its own stream URLs through a `SubsonicSourceProvider`, which is
+   * the thing under test — so the test has to hand it a real source rather than a URL. Returning
+   * **this** object's single client rather than letting a test construct one keeps the property
+   * the accessor's removal was for: exactly one credential holder, and one connection pool, per
+   * process. It is not a second place the credentials live.
+   */
+  fun source(): SubsonicSource = client
 
   /** Two genuinely different tracks' bytes — the pair [MediaCacheTest] needs for its control. */
   suspend fun twoDifferentTracks(): Pair<ByteArray, ByteArray> {

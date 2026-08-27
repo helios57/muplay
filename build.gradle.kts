@@ -1319,6 +1319,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.database.BrowseTreeRepository",
+        // Plan 5 Task 5 put `startIndexOf` on the companion, which gave it a LINE counter and so
+        // took it out of the standing `$Companion` exception above -- that exception is for
+        // companions carrying **zero** counters, which `warnUngatedClasses` skips because no rule
+        // could gate them. This one measured `line 1/1` and warned on every `check` until it was
+        // named here.
+        //
+        // The trailing `*`, not an escaped `$`: `wildcardToRegex` turns this into
+        // `\QBrowseTreeRepository\E.*`, which is how `BrowseSelection*` and `BrowseSurface*`
+        // already reach their companions. An entry written as `BrowseTreeRepository$Companion`
+        // matches nothing and leaves the warning in place -- measured, because I wrote it that way
+        // first and the warning did not move.
+        "app.muplay.database.BrowseTreeRepository*",
         "app.muplay.database.MirrorBookshelf",
         "app.muplay.database.BookProgress",
         "app.muplay.database.BookPosition",
@@ -2516,6 +2528,138 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // ---- Plan 4 Task 3: chapters out of the file's own bytes ---------------------------------
+    // The Android-free half, gated on the FAST tier: `ChapterAssembly` BRANCH **25/26 = 0.9615**
+    // and `BookTimeline` BRANCH **24/24 = 1.0000**, from `./gradlew :core:media:testDebugUnitTest`
+    // alone -- confirmed by `jacocoJvmCoverageVerification`, which reads no `.ec` at all. That
+    // split is the whole reason these two objects exist apart from `ChapterReader`: sorting, end
+    // filling, de-duplication and chapter navigation are the parts most likely to be subtly wrong,
+    // and a mutation to any of them costs seconds here rather than an emulator boot.
+    //
+    // The one missed branch is unreachable and stays in the denominator honestly: the `?.` the
+    // compiler emits after `String.trim()` in `title?.trim()?.takeIf { it.isNotEmpty() }` can never
+    // take its null path, because `trim()` returns a non-null `String`. Exactly
+    // `StreamRetryPolicy`'s situation at the top of this entry, and 0.90 leaves that single dead
+    // branch of room and no more -- one genuinely-uncovered branch takes this to 24/26 = 0.9231,
+    // two to 23/26 = 0.8846 and fails.
+    //
+    // **Falsified by withholding tests and re-running, per rule. Every number below is measured,
+    // and two of them are not the numbers this comment first predicted.**
+    //
+    //   * `ChapterAssembly`: withholding `a duplicate that carries nothing the first one lacked
+    //     leaves it alone` -- the only test that observes either `&&` in the de-duplication `when`
+    //     with its left half true and its right half false -- gives **23/26 = 0.88**, BUILD
+    //     FAILED, message *"branches covered ratio is 0.88, but expected minimum is 0.90"*.
+    //   * `BookTimeline`: withholding `a book with no files has an empty timeline and no
+    //     navigation` ALONE leaves it at **22/24 = 0.9167** and green -- the near-miss, and it is
+    //     the point. Withholding `a position past the final chapter's end still answers the final
+    //     chapter` as well takes it to **21/24 = 0.8750**, BUILD FAILED.
+    //
+    // Two withheld tests rather than one, because one is not enough here and guessing which one
+    // would have been wrong: `chapterAt is scoped to the item it was asked about` was the first
+    // candidate, and withholding it changes nothing at all -- the empty-timeline test reaches the
+    // same `inItem.isEmpty()` arm. That is the "second caller" failure this table's own rule about
+    // stale falsifications describes, met while writing the falsification rather than a year later.
+    //
+    // `RawChapter`, `BookFile`, `BookChapter` and the two synthetic `sortedBy` comparator classes
+    // ride along with **no BRANCH counter of their own**, included so `warnUngatedClasses` has
+    // nothing to say and gating nothing -- the same answer `ReplayGain` and `BookSettings` get.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterAssembly",
+        "app.muplay.media.ChapterAssembly*",
+        "app.muplay.media.RawChapter",
+        "app.muplay.media.BookTimeline",
+        "app.muplay.media.BookTimeline*",
+        "app.muplay.media.BookFile",
+        "app.muplay.media.BookChapter",
+      ),
+    ),
+    // The same objects' LINE -- `ChapterAssembly` **21/21**, `BookTimeline` **40/40**,
+    // `BookChapter` **9/9**, each synthetic comparator **1/1**, all 1.0000 on JVM data alone -- and
+    // it is not redundant with the BRANCH rule above, for the reason `PlaybackQueue` and
+    // `:core:model`'s `Chapter` both carry the pair: the parts of these objects that are
+    // *statements* move no branch when the sole assertion on them is deleted. `BookChapter
+    // .durationMs`'s clamp is the sharp case -- `endInItemMs - startInItemMs` and the same
+    // expression with `.coerceAtLeast(0L)` compile to the same branch count in this class.
+    //
+    // Falsified, and it fires exactly where the BRANCH rule cannot -- **and it took two withheld
+    // tests, not the one predicted**. `a chapter whose atoms run backwards has a zero duration
+    // rather than a negative one` alone leaves `BookChapter` at **9/9 = 1.0000 and green**,
+    // because `a multi-file book whose files also carry chapters is neither of the easy cases`
+    // maps `durationMs` over all five of its entries and is a second reader of the same line.
+    // Withholding both puts `BookChapter` at **8/9 = 0.8889**, BUILD FAILED, **while the BRANCH
+    // rule above stays green at `BookTimeline` 24/24** -- `BookChapter` carries no BRANCH counter
+    // at all, so nothing else in this table can see that line.
+    //
+    // `RawChapter` and `BookFile` are deliberately absent: bodiless `data class`es, and a LINE
+    // floor over a declaration is a floor that cannot fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterAssembly",
+        "app.muplay.media.ChapterAssembly*",
+        "app.muplay.media.BookTimeline",
+        "app.muplay.media.BookTimeline*",
+        "app.muplay.media.BookChapter",
+      ),
+    ),
+    // `ChapterRepository` BRANCH **2/2 = 1.0000**, instrumented: Room and a real Navidrome, so
+    // there is no JVM tier for it at all. Those two branches are the `findScan(..)?.let`
+    // short-circuit -- the decision that makes "this file has no chapters" a *remembered* answer
+    // rather than an HTTP round trip into a `moov` atom every time a screen opens.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside and running the full gate:
+    // *"Rule violated for class app.muplay.media.ChapterRepository: branches covered ratio is
+    // 0.00, but expected minimum is 0.90"*, BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterRepository",
+        "app.muplay.media.ChapterRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // LINE for the two Media3/Room-shaped classes -- `ChapterReader` **19/19**, its `read`
+    // continuation **9/9**, `ChapterRepository` **34/34**, all 1.0000 against merged data.
+    //
+    // **`ChapterReader` deliberately carries no BRANCH rule, and the number is written down rather
+    // than rounded away: 14/18 = 0.7778.** All four missed branches are branches the *seeded
+    // corpus* cannot take, not branches nobody tested:
+    //
+    //   * `entry.endTimeMs.takeIf { it != C.TIME_UNSET }` -- two of them. With
+    //     `setMediaSourceFactory` wired the sentinel never arrives, which is the entire point of
+    //     the line; the only way to cover it is to break the wiring the class exists to get right.
+    //   * `entry.title?.value` -- no chapter atom in the corpus is untitled.
+    //   * `group.getFormat(..).metadata ?: continue` -- every track format in these four files
+    //     carries metadata.
+    //
+    // A BRANCH rule at any minimum this table would accept is therefore either red on correct code
+    // or below 0.78, and this table's own doc rules out a number the check cannot fail at. LINE
+    // gates what is left, which is every statement in the read path.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside and running the full gate: all
+    // three fire at **0.00** -- `ChapterReader`, `ChapterReader.read.2` and `ChapterRepository`,
+    // each *"lines covered ratio is 0.00, but expected minimum is 0.90"* -- BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterReader",
+        "app.muplay.media.ChapterReader*",
+        "app.muplay.media.ChapterRepository",
+        "app.muplay.media.ChapterRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
@@ -3660,6 +3804,110 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.route.UnroutableReason",
       ),
     ),
+    // ---- Plan 6 Task 8: the session over the renderer, and the renderer that disappears --------
+    //
+    // MEASURED, per class, from `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a
+    // plain `--no-build-cache :core:cast:test :core:cast:jacocoTestReport`, at this commit:
+    //
+    //   CastSession            BRANCH 100/105 = 0.9524   LINE 228/229 = 0.9956
+    //   CastPlayback           BRANCH   4/4   = 1.0000   LINE  29/29  = 1.0000
+    //   CastItems              BRANCH   2/2   = 1.0000   LINE  11/11  = 1.0000
+    //   CastSession$seekTo$2$1             BRANCH 2/2    CastSession$setPlayWhenReady$2$1 BRANCH 4/4
+    //
+    // `CastSession`'s five uncovered branches are each unreachable, and each for a different reason
+    // that is written at the line rather than only here:
+    //
+    //   * `load`'s `is CastRoute.RendererDirect -> candidate.url` (1). `CastRouter.candidate` mints
+    //     a `Proxied` route or an `Unroutable` one and never a direct one -- that is only ever
+    //     `confirm`'s fallback -- but `CastRoute` is a three-member sealed type and a `when` over it
+    //     owes a third arm. Both *reachable* arms are driven.
+    //   * `proveRoute`'s `is CastRoute.Proxied -> Unit` (1) is the last instanceof in an exhaustive
+    //     sealed `when`; its false side is a compiler artifact with no source to reach it. All three
+    //     arms of that `when` are driven -- proxied, the renderer-direct fallback, and unroutable.
+    //   * `reportFailure`'s `else` (3, counting the `is UpnpErrorException` false side that leads to
+    //     it). Every `IOException` this class can meet is one of the four named arms, because
+    //     `SoapClient.invoke` wraps even a `NonLocalAddressException` into a `SoapTransportException`
+    //     before it escapes -- verified by reading `SoapClient`, not assumed. It is kept because
+    //     deleting it would not remove the branch but move it: an unexpected `IOException` would
+    //     escape into the poll's coroutine and stop the session polling with nothing reported.
+    //
+    // FALSIFIED by withholding tests rather than by raising the minimum, and the margins are the
+    // point -- see the comment on the LINE floor below for the numbers, which were measured for
+    // both floors in one pass.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.session.CastSession",
+        "app.muplay.cast.session.CastPlayback",
+        "app.muplay.cast.session.CastItems",
+        // The two command lambdas that carry author-written branches. Named through `*` because a
+        // literal `$` in a pattern never matches (this table's own doc, gotcha 3).
+        "app.muplay.cast.session.CastSession*seekTo*",
+        "app.muplay.cast.session.CastSession*setPlayWhenReady*",
+      ),
+    ),
+    // The rest of `app.muplay.cast.session`, on LINE -- and the two exclusions from the BRANCH floor
+    // above are the reason this rule exists rather than one wider include list.
+    //
+    // `CastSession$startPolling$1` measures BRANCH **9/13 = 0.6923** and `CastSession$proveRoute$-
+    // confirmed$1` measures **1/2**, and neither number is about a test. They are the `switch(label)`
+    // state machines Kotlin compiles a suspending lambda into: `startPolling`'s body has three
+    // suspension points (`delay`, `Mutex.lock`, `poll`) and a resume path that takes only some of
+    // them leaves arms JaCoCo counts and no source can select. Putting them under the BRANCH floor
+    // would have meant lowering it to accommodate the compiler, which is the thing this table is
+    // not for. Their LINE coverage is 5/5 and 1/1, and the *decisions* inside them -- the poll
+    // interval, the released check, the three arms of `confirm`'s answer -- are gated on
+    // `CastSession` itself, where they are written.
+    //
+    // MEASURED: CastSession LINE 228/229 = 0.9956, CastSource 13/13, CastSession$startPolling$1
+    // 5/5, and eleven declaration-only ride-alongs at 1/1 or 4/4 (`CastFailure`, `CastFailureKind`,
+    // `CastPlaybackState`, `CastPlayback$Companion`, `CastSession$LoadedItem`, the four
+    // `CastSessionState` members that carry a line, and the four command lambdas that are one line
+    // each). `CastSession$Companion`, `CastSessionState`, `CastSessionState$Idle`,
+    // `CastSource$Companion` and the seven zero-line continuation classes carry no counters at all
+    // and ride along only so `warnUngatedClasses` has nothing to say.
+    //
+    // `CastSource`'s 13 lines are not plumbing: 12 of them are the field mapping and the thirteenth
+    // is the `toString` override that keeps a Navidrome stream URL -- which carries the user's
+    // Subsonic credentials -- out of anything that prints a queue. `a source does not print its
+    // credential-bearing upstream url` is what holds it.
+    //
+    // FALSIFICATION, measured by withholding whole test classes and re-running (the numbers, not the
+    // conclusions -- and re-run them if you touch this floor rather than copying them forward):
+    //
+    //   * withhold `CastPlaybackTest` -> CastPlayback BRANCH **3/4 = 0.7500**, the BRANCH floor
+    //     fires. Predicted 0/4 before running it, and that was wrong in the way this project keeps
+    //     paying for: `CastSessionTest` is a second caller of `positionAtMs` (three of its cases
+    //     ask what the clock reads at a given instant), so the class is NOT solely covered by its
+    //     own test. The floor still fires, by one branch -- the duration clamp, which only the pure
+    //     test reaches.
+    //   * withhold `CastItemsTest` -> CastItems BRANCH **1/2 = 0.5000** (every source the session
+    //     suite queues is music, so the audiobook arm has exactly one caller) AND CastSource LINE
+    //     **10/13 = 0.7692**. Both floors fire. Predicted 12/13 for `CastSource`; measured 10/13,
+    //     because withholding that class takes the `Companion` initialiser and two more of the
+    //     `toString` lines with it, not only the one.
+    //   * withhold `CastSessionTest` -> CastSession BRANCH 0/105 and LINE 0/229, and **17 further
+    //     rules** violated in the same run (every lambda and every `CastSessionState` member). It is
+    //     the only execution data those classes have.
+    //   * withhold all three -> every class above at 0.0000.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.session.CastSession",
+        "app.muplay.cast.session.CastSession*",
+        "app.muplay.cast.session.CastSource",
+        "app.muplay.cast.session.CastSource*",
+        "app.muplay.cast.session.CastItems",
+        "app.muplay.cast.session.CastPlayback",
+        "app.muplay.cast.session.CastPlayback*",
+        "app.muplay.cast.session.CastFailure",
+        "app.muplay.cast.session.CastFailureKind",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
@@ -3994,8 +4242,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   //
   // **`"CLASS"` rules, not the one `"BUNDLE"` rule the plan proposed, and that is a
   // measurement rather than a preference.** (Five at Task 4; a sixth at Task 5, for
-  // `LidarrAddTargets`. The count is left out of this sentence on purpose -- a written-down total
-  // beside a list that grows is the drift this repository has paid for three times.) The plan's
+  // `LidarrAddTargets`; a seventh at Task 6, for `LidarrAddPayload`. The count is left out of this
+  // sentence on purpose -- a written-down total beside a list that grows is the drift this
+  // repository has paid for three times.) The plan's
   // placeholder was
   // `CoverageFloor(counter = "BRANCH", minimum = 0.90)` on the argument that this module is plain
   // Kotlin over Retrofit and therefore Tier-1 enforceable like `:core:network`. Measured, the
@@ -4007,26 +4256,42 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":integrations:lidarr" to listOf(
     // 1. The **fast tier's** BRANCH rule: the two classes with author-written branches.
     //
-    // **RE-MEASURED AT TASK 5, which more than doubled this class.** Task 4 recorded
-    // `LidarrClient` at 42/44 = 0.9545; the lookup, the two profile endpoints and the root-folder
-    // mapper take it to:
+    // **RE-MEASURED AT TASK 6.** Task 4 recorded `LidarrClient` at 42/44 = 0.9545; Task 5's lookup,
+    // profile endpoints and root-folder mapper took it to 109/112 = 0.9732; Task 6's add, its
+    // `findAddedAlbumId` and the `proven`/`call` split take it to:
     //
-    //   `LidarrClient`               109/112 = 0.9732
-    //   `LidarrValidationException`    4/4   = 1.0000
+    //   `LidarrClient`               118/122 = 0.9672
+    //   `LidarrValidationException`    8/8   = 1.0000
     //
-    // The three missing `LidarrClient` branches are all Kotlin's unreachable null arms: two on
+    // The four missing `LidarrClient` branches are all Kotlin's unreachable null arms: two on
     // `response.errorBody()?.string().orEmpty()` (Retrofit supplies an error body for every
-    // unsuccessful response, and `ResponseBody.string()` is non-null) and one on
-    // `(obj["id"] as? JsonPrimitive)?.content?...` (`JsonPrimitive.content` is a non-null
-    // `String`, so the `?.` after it can never take its null arm). Same artifact, same reason, as
+    // unsuccessful response, and `ResponseBody.string()` is non-null) and two on
+    // `(this[name] as? JsonPrimitive)?.content?.toIntOrNull()` in the private `int` helper
+    // (`JsonPrimitive.content` is a non-null `String`, so the `?.` after it can never take its null
+    // arm -- once per call site, and Task 6 added the second). Same artifact, same reason, as
     // `IntegrationCredentialStore`'s eighteenth branch and `MediaRequestRepository`'s twelfth in
-    // `:integrations:core` -- so **0.9732 is the honest ceiling** and a 1.00 here would fail the
+    // `:integrations:core` -- so **0.9672 is the honest ceiling** and a 1.00 here would fail the
     // build on the Kotlin compiler rather than on this project's code.
     //
     // The floor stays at 0.90 rather than rising to meet the new ratio, and that is a decision
-    // rather than an oversight: Tasks 6 and 7 add a POST and a queue reader to this same class, so
-    // a floor two branches under a ceiling would fire on the first Kotlin-unreachable arm either
-    // of them introduces. 0.90 over 112 branches still refuses eleven uncovered ones.
+    // rather than an oversight: Task 7 adds a queue reader to this same class, so a floor two
+    // branches under a ceiling would fire on the first Kotlin-unreachable arm it introduces. 0.90
+    // over 122 branches still refuses twelve uncovered ones.
+    //
+    // `LidarrValidationException`'s own 8/8 doubled at Task 6 with `isAlreadyAdded`'s second arm --
+    // the structural `errorCode == "AlbumExistsValidator"` beside the message match.
+    //
+    // FALSIFIED, and it took two tests to move: withholding `LidarrSubmitTest`'s
+    // `either the validator code or the message alone identifies an already-added album` alone
+    // leaves this class at **8/8 and green**, because Task 4's
+    // `an already-added validation failure is recognised by its message` in `LidarrHandshakeTest`
+    // is a second caller through the same arms. Withholding **both** gives **6/8 = 0.7500** and the
+    // gate fails with "branches covered ratio is 0.75, but expected minimum is 0.90". The
+    // second-caller effect this table has already been bitten by twice, met a third time.
+    //
+    // And note what even 8/8 does not say: that *both* arms of `isAlreadyAdded` are load-bearing.
+    // Only `ci/mutation-probes.sh`'s `integrations/lidarr-alreadyAdded-errorCode` and
+    // `-alreadyAdded-message` say that, by removing each alone.
     //
     // Three branches in this rule were closed at Task 4 by tests written *because* the measurement
     // was taken: `ping`'s null-body arm, `isStartingUp`'s absent-`errorMessage` arm and
@@ -4037,14 +4302,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `JsonStringEnumConverter(..., allowIntegerValues = true)`), and a quoted or nested `id`.
     // Every one is a shape a real Lidarr can produce and none had an observation.
     //
-    // FALSIFIED AT TASK 5, not copied forward from Task 4's record. Withholding all twenty of
-    // `LidarrLookupTest`'s tests drops this class to **42/112 = 0.3750**; withholding just the
-    // two that assert the whole candidate field set -- `every candidate field is read from its
-    // own element` and `the real lookup body from a pinned lidarr maps as this client claims` --
-    // drops it to **99/112 = 0.8839**, and `jacocoJvmCoverageVerification` fails with
-    // "branches covered ratio is 0.88, but expected minimum is 0.90". Withholding only the first
-    // of those two leaves it at 107/112 = 0.9554 and green, so the floor gates the pair rather
-    // than either one. Transcripts in task-5-report.md.
+    // FALSIFIED AT TASK 5, and **RE-RUN AT TASK 6 rather than copied forward** -- which is the
+    // whole point of re-running one: the class grew by ten branches in between, so the recorded
+    // number was guaranteed to be stale even though the conclusion survived. Withholding the two
+    // `LidarrLookupTest` tests that assert the whole candidate field set -- `every candidate field
+    // is read from its own element` and `the real lookup body from a pinned lidarr maps as this
+    // client claims` -- dropped this class to 99/112 = 0.8839 at Task 5 and to **108/122 = 0.8852**
+    // now; `jacocoJvmCoverageVerification` still fails, with "branches covered ratio is 0.88, but
+    // expected minimum is 0.90". Task 5 also measured that withholding only the first of the two
+    // leaves it green, so the floor gates the pair rather than either one; that half was not
+    // re-run at Task 6 and is Task 5's measurement, not this one's. Transcripts in
+    // task-5-report.md and task-6-report.md.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -4059,7 +4327,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `buildApi`), `LidarrAuthInterceptor` 7/7 -- the class that decides where the API key goes,
     // and the reason this rule is in the *fast* tier rather than an instrumented one -- and
     // `LidarrServer` 7/7, the four `Lidarr*Exception` members at 2/2 or 3/3,
-    // `LidarrValidationFailure` 1/1, `DefaultLidarrSourceFactory` 1/1 and `di.LidarrModule` 1/1.
+    // `LidarrValidationFailure` 4/4 (1/1 until Task 6 added `errorCode` and spread the declaration
+    // over four lines -- and note it read **4/5 = 0.80 and FAILED this floor** while that parameter
+    // carried a `= null` no caller omitted; see the class's own comment),
+    // `DefaultLidarrSourceFactory` 1/1 and `di.LidarrModule` 1/1.
     //
     // Those last two are here because they were measured at **0/1 each** on the first run: the
     // production factory and its Hilt binding were exercised by nothing at all while every test in
@@ -4121,6 +4392,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.LidarrProfile",
         // Task 5's decision class. 6/6 on the type, 10/10 on the companion that holds `resolve`.
         "app.muplay.integrations.lidarr.LidarrAddTargets*",
+        // Task 6's payload builder, measured **28/28**, and its outcome type: `Added` 1/1,
+        // `Rejected` 1/1. `LidarrAddOutcome` itself and its `AlreadyAdded` object carry no counters
+        // at all and ride along so `warnUngatedClasses` has nothing to say about them -- the same
+        // NaN pass `LidarrException` uses two entries up.
+        //
+        // FALSIFIED at Task 6, and the result is worth the sentence: withholding all nineteen of
+        // `LidarrAddPayloadTest`'s tests leaves this LINE ratio at **28/28**, because
+        // `LidarrSubmitTest` posts a built payload over a real socket and every line of the builder
+        // runs on any add at all. Only withholding **both** classes empties it (**0/28**). So this
+        // entry says "some test builds a payload", never "the payload is right": that is
+        // `LidarrAddPayloadTest`'s two-values-per-field assertions and `ci/mutation-probes.sh`'s
+        // `integrations/lidarr-add-*` family, and nothing here.
+        //
+        // Note what *did* fire on that first withholding, because reading "28/28" as "the gate is
+        // green" would be the mistake: rule 7's BRANCH floor went to 0.50 and failed the build.
+        // The LINE rule is the one that cannot see it.
+        "app.muplay.integrations.lidarr.LidarrAddPayload",
+        "app.muplay.integrations.lidarr.LidarrAddOutcome*",
       ),
     ),
     // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
@@ -4161,11 +4450,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // here for the identical reason: leaving them ungated would print `warnUngatedClasses` lines
     // on every run forever, which is how a warning mechanism dies.
     //
-    // Measured: `ValidationFailureBody` **2/5 = 0.4000**, `SystemStatusBody` 5/8 = 0.6250,
+    // Measured at Task 4: `ValidationFailureBody` **2/5 = 0.4000**, `SystemStatusBody` 5/8 = 0.6250,
     // `PingBody` and `StartingUpBody` 1/2 = 0.5000 each, and each one's `$$serializer` companion
     // at 1/1. The uncovered lines are a `data class`'s generated `equals`/`hashCode`/`copy`/
     // `componentN`, which nothing calls because these types exist only to be deserialised into.
-    // **0.40 is a number this run produced**, not a round one chosen to fit.
+    // 0.40 was a number that run produced, not a round one chosen to fit.
+    //
+    // **RE-MEASURED AT TASK 6, and 0.40 is no longer any class's own ratio.** Adding `errorCode`
+    // moved `ValidationFailureBody` to **3/6 = 0.5000** -- the third read line is covered, the three
+    // generated ones are still not -- so the lowest measured class here is now 0.5000, shared by
+    // four of the six. The floor stays at 0.40 rather than rising to meet that, and this sentence
+    // is the record of the decision rather than of an oversight: Task 7 adds queue DTOs to this
+    // same list, a wider `data class` has proportionally more generated lines nothing calls, and a
+    // floor sitting exactly on the current minimum would fire on the first one. What 0.40 still
+    // refuses is a DTO that nothing deserialises at all, which measures 0.
     //
     // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
     // pass); LINE is the only counter that can hold them to anything.
@@ -4215,6 +4513,44 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf("app.muplay.integrations.lidarr.LidarrAddTargets*"),
+    ),
+    // 7. Task 6's `LidarrAddPayload`, at **1.00 BRANCH** for the same argument as rule 6 and with
+    // the same honesty about what 1.00 is worth: `build` is a pure function over three arguments
+    // with no I/O, so every arm is reachable from a JVM test and nothing Kotlin generates is
+    // unreachable inside it.
+    //
+    // Measured **4/4 = 1.0000**. All four are the one `(candidate.raw["artist"] as? JsonObject)?.`:
+    // the `as?` cast's two arms and the safe call's two. Both null arms are live rather than
+    // defensive padding -- `LidarrAddPayload` is public, a caller can hand it a candidate built by
+    // hand, and a body with no `artist` object is a 400 (`NotNullValidator` on `Artist`, measured
+    // against the live instance).
+    //
+    // FALSIFIED, not assumed: withholding the two tests that reach those arms --
+    // `a candidate whose raw element has no artist object still produces a valid nested artist` and
+    // `a raw element whose artist is not an object still produces a valid nested artist` -- drops
+    // this to **2/4 = 0.50** and `jacocoJvmCoverageVerification` fails with
+    // "Rule violated for class app.muplay.integrations.lidarr.LidarrAddPayload:
+    // branches covered ratio is 0.50, but expected minimum is 1.00".
+    //
+    // Withholding either one **alone** leaves it at 4/4 and green, and the reason is worth writing
+    // down rather than leaving as "the floor gates the pair": the two tests are coverage-redundant
+    // with each other. An absent `artist` key and an `artist` that is a string both take the same
+    // two arms -- the `as?` cast failing, and the safe call then seeing null. They are not
+    // redundant as *assertions* (an implementation using `raw["artist"]!!.jsonObject` throws a
+    // different exception for each), but no ratio can tell you that, which is this table's
+    // recurring lesson.
+    //
+    // Withholding **every** `LidarrAddPayloadTest` test gives the same 2/4, for the same reason
+    // read from the other side: `LidarrSubmitTest` reaches the other two arms on any add at all.
+    // Withholding both classes gives 0/4.
+    //
+    // The LINE side rides on rule 2 at 28/28, where its own comment records that the LINE ratio is
+    // NOT falsifiable by withholding this class's tests at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
     ),
   ),
 )

@@ -694,3 +694,154 @@ untouched. `GaplessTest`'s `const val TRACK_COUNT = 3` did not.
 Where a test genuinely needs one *kind* of track, filter rather than count:
 `RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
 and was unaffected.
+
+## Lint's Android Auto checks cannot see a library module's manifest
+
+`AndroidAutoDetector` switches on the moment an application declares itself an Auto media app
+(`com.google.android.gms.car.application` meta-data plus a `res/xml` descriptor whose `uses` names
+`media`). It then reports **two errors** that no declaration in this repository can satisfy, because
+`MuPlaybackService` is declared in `core/media`'s manifest and the detector reads only the
+application module's own manifest sources:
+
+    app/src/debug/AndroidManifest.xml:16: Error: Missing intent-filter for action
+      android.media.action.MEDIA_PLAY_FROM_SEARCH [MissingIntentFilterForMediaSearch]
+    app/src/debug/AndroidManifest.xml:16: Error: Missing intent-filter for action
+      android.media.browse.MediaBrowserService that is required for android auto support
+      [MissingMediaBrowserServiceIntentFilter]
+
+Both were measured against a tree where the merged manifest **did** carry the browse action — AGP's
+own `app/build/intermediates/merged_manifest/debug/` has it, and `verifyDebugManifest` goes red when
+it does not. Adding `android.media.action.MEDIA_PLAY_FROM_SEARCH` to the same service in
+`core/media`'s manifest left the first error reported, *unchanged*. So neither check's verdict
+depends on the thing it claims to check, and neither can ever go green in this layout.
+
+They are disabled in `app/lint.xml`, which carries the measurement, and
+`ConventionTest`'s `no Android Auto lint check is disabled without a named replacement` holds each
+disabled id to the gate that took over. Do not "fix" this by copying the service declaration into
+`:app`'s manifest: that is a second copy of the thing `core/media`'s manifest header exists to keep
+in one place, and lint would then be satisfied by a declaration nothing checks.
+
+Note also the shape, because two rules written on the same afternoon had it: a check that reports
+"missing" whatever the truth is reads exactly like a check that found something.
+
+## AGP's merged manifest keeps every source manifest's comments
+
+Measured: `core/media`'s twenty-line comment explaining the browse actions is reproduced verbatim in
+`app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml`.
+
+`VerifyMergedManifestTask` is a plain `contains`, so a comment that quotes the declaration it
+explains — which is what a good comment beside `android:name="..."` looks like — used to satisfy the
+required half on behalf of a declaration nobody wrote. Proven causally in both directions: with the
+browse action replaced by a comment naming it, `:app:verifyDebugManifest` was **BUILD SUCCESSFUL**
+before the fix and **BUILD FAILED** after, on the identical manifest.
+
+The **required** half now strips XML comments; the **forbidden** half deliberately does not, because
+it is an absence check where over-matching is the safe direction. Both directions are pinned by a
+test in `VerifyMergedManifestTaskTest`.
+
+This is the same defect as `verifyReleaseNoDestructiveMigration` reading comments, running the other
+way: there prose caused a false *failure*, here it caused a false *pass*.
+## An instrumented `fun x() = runBlocking { .. }` is refused before it runs
+
+JUnit 4 requires `void` test methods. Kotlin infers a `@Test`'s return type from the block's last
+expression, and **most AssertJ assertions return the assert object** — so the idiomatic
+`@Test fun x() = runBlocking { .. assertThat(a).isEqualTo(b) }` is an `AbstractAssert`-returning
+method, and the whole class is rejected at load time:
+
+    org.junit.runners.model.InvalidTestClassError: Invalid test class 'app.muplay.media.ChapterRepositoryTest':
+    1. Method forgettingAFileMakesTheNextReadParseItAgain() should be void
+    2. Method aSecondReadOfTheSameBookIsServedFromRoomWithoutReParsing() should be void
+    ...
+
+Four methods named, **none of the five run**, and the surviving one is the misleading part: it ends
+in `isEmpty()`, which happens to return `void`, so exactly one test in the class looks fine. Declare
+`fun x(): Unit = runBlocking { .. }`. The JVM tier never sees this — JUnit 5 is happy with any
+return type — so a plan's sample code carries the defect straight onto the device.
+
+## Anything in `:core:media` that fetches through `MuPlayDataSourceFactory` must set a cache key
+
+`TrackIdCacheKeyFactory.buildCacheKey` **throws** `MissingCacheKeyException` on a `DataSpec` with no
+key rather than falling back to the URI — deliberately, and `MediaCacheTest` pins it. So it is not
+only `MediaItems.of` that owes `setCustomCacheKey(song.id)`: **every** `MediaItem` handed to
+anything built on that factory does, including ones no player ever sees.
+
+Measured in Plan 4 Task 3: `ChapterReader` built `MediaItem.fromUri(uri)` for a `MetadataRetriever`
+— no player, no playback, just a read of the file's `moov` atom — and all six of its device tests
+died with *"A media request reached the cache with no custom cache key (track Ra14Y8yMKT8YPrtrt6delD)"*,
+wrapped in a `Loader$UnexpectedLoaderException` inside an `ExecutionException`. Nothing in that
+stack names `MediaItem`. The plan's own listing had the same shape, so expect it.
+
+    MediaItem.Builder().setUri(uri).setCustomCacheKey(mediaId).build()
+
+The alternative — a plain HTTP factory that skips the cache — also skips `RequestedUriDataSource`,
+which is what keeps a credential-bearing redirect target out of `exoplayer_internal.db`. Supply the
+key; do not route around the guard.
+
+## A cache-backed read makes "requests that did not happen" the wrong signal
+
+Plan 3 Task 3 proved its media cache by counting HTTP requests, and that is the right shape *there*.
+It does not transfer to anything layered **above** a `CacheDataSource`, because the byte cache
+satisfies the assertion whether or not the layer under test did anything.
+
+Measured in Plan 4 Task 3: delete `ChapterRepository`'s `findScan` short-circuit — so every call
+re-parses the file over HTTP — and `assertThat(requests.get() - afterFirst).isZero` still passes.
+The second parse read the same `moov` bytes off `SimpleCache`. A request counter cannot distinguish
+"served from Room" from "re-parsed from the byte cache".
+
+What worked was a signal the byte cache cannot fake: a `Clock` the test **moves between reads**, and
+an assertion on the row's stored timestamp. A re-parse rewrites it; a cached read does not touch it.
+If you are asserting that some layer avoided work, check first that the work leaves a trace the
+layer below cannot also produce.
+
+## Sibling lanes share one scratchpad directory, and `falsify.py` is not a unique name
+
+The per-session scratchpad (`/tmp/claude-*/<session-id>/scratchpad`) is shared by **every lane the
+fleet runs in that session**, not one per lane. Two lanes writing a harness to the obvious name
+collide silently.
+
+Measured: this lane's `cat > .../scratchpad/falsify.py` overwrote another lane's file of the same
+name, and its `falsify.log` truncated theirs mid-run, destroying a floor falsification they had
+spent minutes measuring. Worse, `pgrep -af falsify.py` then showed **two** running processes, which
+read as "I somehow launched twice" — and killing the stranger killed *their* harness between
+mutation and revert, leaving a stray `@Disabled` in **their** worktree for their dirty-tree guard
+to blame on whoever came next.
+
+So: **prefix every scratchpad file with your lane name** (`p6t8-falsify.py`), and before killing a
+process you did not expect, check *which worktree* it is running against — the `cd` in its command
+line says so.
+
+Two more things that harness taught, both cheap:
+
+- **A `nohup … &` inside a foreground harness call does not outlive the call.** The probe run
+  launched that way was killed with the call and left a stray mutation. Launch the long command as
+  the background command itself (`run_in_background`), not as a `nohup` inside a short one.
+- **Install a SIGTERM/SIGINT handler that restores the snapshot**, not just a `finally`. A default
+  SIGTERM terminates without running `finally`, which is exactly how a killed harness leaves a
+  stray.
+
+## Two concurrent `ci/mutation-probes.sh` runs trip each other's missing-results guard
+
+Nothing serialises probe runs the way `ci/device-lock.sh` serialises the emulator, and two lanes
+running the script at once share one Gradle daemon and one build cache. Measured here:
+`./ci/mutation-probes.sh session/` aborted with
+
+    run_suite(): no test results were written for ['core/cast', 'integrations/lidarr', 'feature/player']
+
+while another lane was running `./ci/mutation-probes.sh chapters/` in its own worktree. The
+script's own Gradle line, run by hand on the identical tree, was BUILD SUCCESSFUL, and re-running
+the family alone was 13/13. `run_suite()` deletes each module's result directory to force a re-run,
+and the other run's cache entries then satisfy those tasks FROM-CACHE without repopulating them.
+
+Check `pgrep -af mutation-probes` before blaming your own tree, and re-run rather than debug.
+
+## A bare `Metaspace` failure from `./gradlew check` is the shared daemon, not your code
+
+Twice in one afternoon, with several lanes building at once, `./gradlew --no-build-cache check`
+failed with three tasks reporting nothing but
+
+    * What went wrong:
+    Metaspace
+
+naming `:feature:library:kspDebugKotlin` and two unnamed others. A plain retry was green both
+times, on the identical tree. It names no useful task and it is not a compilation error; retry
+before investigating.

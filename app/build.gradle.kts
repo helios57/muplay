@@ -20,6 +20,19 @@ android {
   }
 }
 
+// This application ships to Android Auto. Four words that turn on two gates: they add
+// AUTOMOTIVE_DECLARATIONS to `verify<Variant>Manifest`'s required list -- the browse actions and
+// the car meta-data -- and they turn `verifyAutomotiveDescriptor` from SKIPPED into a real check of
+// res/xml/automotive_app_desc.xml. Deleting them removes both gates and fails nothing at all, which
+// is why `ConventionTest`'s `the app module opts in to Android Auto and ships the descriptor it
+// promises` asserts this line against the tree.
+//
+// The roadmap's `:wear` module deliberately will not set this: a watch app claiming to be a car app
+// would be a wrong claim in a shipped manifest.
+muplayApplication {
+  androidAuto = true
+}
+
 dependencies {
   implementation(project(":core:database"))
   implementation(project(":core:designsystem"))

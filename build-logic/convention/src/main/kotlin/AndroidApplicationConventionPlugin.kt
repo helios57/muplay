@@ -4,6 +4,7 @@ import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 
@@ -31,7 +32,15 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
         configureReleaseGates(this)
       }
 
-      configureMergedManifestVerification()
+      // Per-module policy the plugin cannot decide for itself, created before the two
+      // verifications below read it. `convention`, not `set`: a module that says nothing is not an
+      // Android Auto app, and a module that says `androidAuto = true` in its own build script
+      // overrides this without ordering mattering -- both gates take the value as a `Provider`.
+      val muplay = extensions.create<MuPlayApplicationExtension>("muplayApplication")
+      muplay.androidAuto.convention(false)
+
+      configureMergedManifestVerification(muplay)
+      configureAutomotiveDescriptorVerification(muplay)
     }
   }
 }
@@ -94,7 +103,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
  * unchanged, so `.github/workflows/pr.yml`'s "Release manifest" step still works — it now
  * names both.
  */
-private fun Project.configureMergedManifestVerification() {
+private fun Project.configureMergedManifestVerification(muplay: MuPlayApplicationExtension) {
   val androidComponents = extensions.getByType<ApplicationAndroidComponentsExtension>()
   androidComponents.onVariants { variant ->
     val taskName = "verify${variant.name.replaceFirstChar(Char::titlecase)}Manifest"
@@ -113,34 +122,103 @@ private fun Project.configureMergedManifestVerification() {
           emptyList()
         },
       )
-      // Each entry carries its own `android:name="..."` wrapper rather than being a bare name, and
-      // that is load-bearing rather than tidy -- see `VerifyMergedManifestTask.requiredDeclarations`
-      // for the measurement. In short: `android.permission.FOREGROUND_SERVICE` is a prefix of
-      // `android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK`, so the bare form of this list
-      // reports the shorter permission present in a manifest that declares only the longer one.
-      requiredDeclarations.set(
-        listOf(
-          // The stream comes over the network.
-          """android:name="android.permission.INTERNET"""",
-          // `dangerous` from API 33. Without it the media notification is silently not shown.
-          """android:name="android.permission.POST_NOTIFICATIONS"""",
-          // A foreground service needs both: the generic permission, and the typed one that
-          // matches `foregroundServiceType` from API 34. Missing the typed one throws
-          // SecurityException from `startForeground` -- and only once the app is backgrounded
-          // with audio playing, which no quick manual test covers.
-          """android:name="android.permission.FOREGROUND_SERVICE"""",
-          """android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"""",
-          // The service itself, reaching the application from `:core:media`'s own manifest
-          // through the merger. "It is declared in the library" is a claim about source layout;
-          // this is the evidence.
-          """android:name="app.muplay.media.MuPlaybackService"""",
-          // The intent-filter action that makes a MediaSessionService discoverable by Android
-          // Auto, Wear, Assistant and the system media controls.
-          """android:name="androidx.media3.session.MediaSessionService"""",
-          """android:foregroundServiceType="mediaPlayback"""",
-        ),
+      // Two lists, because they are true of different modules. `BASE_DECLARATIONS` is every
+      // application module's floor; `AUTOMOTIVE_DECLARATIONS` is added only for one that says it
+      // ships to Android Auto. Both are named constants below rather than inline `listOf(...)`
+      // calls so that `ConventionTest` can read each one on its own and see which entries a future
+      // edit dropped.
+      requiredDeclarations.set(BASE_DECLARATIONS)
+      // A `Provider`, not a read: the module's build script sets `androidAuto` *after* this plugin
+      // has been applied, so reading the `Property` here would capture its `false` convention
+      // forever and this whole gate would be dead with every task still green.
+      requiredDeclarations.addAll(
+        muplay.androidAuto.map { if (it) AUTOMOTIVE_DECLARATIONS else emptyList() },
       )
     }
     tasks.named("check").configure { dependsOn(verifyTask) }
   }
 }
+
+/**
+ * Registers `verifyAutomotiveDescriptor` and wires it into `check`.
+ *
+ * Separate from the manifest task rather than a fourth property on it, because it reads a different
+ * artifact for a reason that is structural: see [VerifyAutomotiveDescriptorTask]'s own header. A
+ * merged manifest carries `android:resource="@xml/automotive_app_desc"` and never the resource, so
+ * an empty descriptor passes every manifest check there is.
+ *
+ * `onlyIf`, not "register only when the flag is true": the task exists in every application module
+ * so that `./gradlew :wear:verifyAutomotiveDescriptor` is a task that resolves and reports SKIPPED,
+ * rather than a task name that does not exist and therefore cannot be observed to have not run.
+ * The `onlyIf` reads the `Property` at execution time, which is after the module's build script has
+ * configured it.
+ */
+private fun Project.configureAutomotiveDescriptorVerification(muplay: MuPlayApplicationExtension) {
+  val verifyTask = tasks.register<VerifyAutomotiveDescriptorTask>("verifyAutomotiveDescriptor") {
+    group = "verification"
+    description = "Checks res/xml/automotive_app_desc.xml declares this app as an Auto media app."
+    onlyIf { muplay.androidAuto.get() }
+    descriptor.set(layout.projectDirectory.file("src/main/res/xml/automotive_app_desc.xml"))
+    requiredUses.set(listOf("media"))
+  }
+  tasks.named("check").configure { dependsOn(verifyTask) }
+}
+
+/**
+ * Spec section 7's permission list, plus the service and the one action that would otherwise fail
+ * only in the wild.
+ *
+ * Every entry carries its own `android:name="..."` wrapper rather than being a bare name, and that
+ * is load-bearing rather than tidy -- see [VerifyMergedManifestTask.requiredDeclarations] for the
+ * measurement. In short: `android.permission.FOREGROUND_SERVICE` is a prefix of
+ * `android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK`, so the bare form of this list reports the
+ * shorter permission present in a manifest that declares only the longer one.
+ */
+private val BASE_DECLARATIONS = listOf(
+  // The stream comes over the network.
+  """android:name="android.permission.INTERNET"""",
+  // `dangerous` from API 33. Without it the media notification is silently not shown.
+  """android:name="android.permission.POST_NOTIFICATIONS"""",
+  // A foreground service needs both: the generic permission, and the typed one that
+  // matches `foregroundServiceType` from API 34. Missing the typed one throws
+  // SecurityException from `startForeground` -- and only once the app is backgrounded
+  // with audio playing, which no quick manual test covers.
+  """android:name="android.permission.FOREGROUND_SERVICE"""",
+  """android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"""",
+  // The service itself, reaching the application from `:core:media`'s own manifest
+  // through the merger. "It is declared in the library" is a claim about source layout;
+  // this is the evidence.
+  """android:name="app.muplay.media.MuPlaybackService"""",
+  // The intent-filter action that makes a MediaSessionService discoverable by Android
+  // Auto, Wear, Assistant and the system media controls.
+  """android:name="androidx.media3.session.MediaSessionService"""",
+  """android:foregroundServiceType="mediaPlayback"""",
+)
+
+/**
+ * What Android Auto needs, and what nothing at runtime on a phone will ever tell you is missing.
+ *
+ * `android.media.browse.MediaBrowserService` is the one to read twice. Auto enumerates media apps
+ * by that legacy action and by no other -- it talks `MediaBrowserCompat`, which Media3's session
+ * library bridges -- so an app declaring only Media3's own actions is simply absent from the car's
+ * list. No error, no log line, no crash. Measured off media3-session-1.11.0's bytecode:
+ * `MediaSessionService.onBind` switches on exactly two action strings, and this is the second of
+ * them; anything else gets `null`.
+ *
+ * The last two entries are one declaration between them, split because the presence of the
+ * `<meta-data>` element and the identity of the resource it names are separately losable in a
+ * manifest edit. Neither proves the resource *says* anything -- that is
+ * `verifyAutomotiveDescriptor`'s job, and the reason it exists.
+ *
+ * `android.media.action.MEDIA_PLAY_FROM_SEARCH` is deliberately **not** here. Its handler lives in
+ * `MuPlaybackService.onStartCommand` (Plan 5 Task 6), and requiring the filter before the handler
+ * exists would mean shipping a manifest that claims to answer an Assistant intent nothing answers.
+ * `ConventionTest`'s `a declared play-from-search filter must have a handler and a gate entry` is
+ * what makes that pair land together instead.
+ */
+private val AUTOMOTIVE_DECLARATIONS = listOf(
+  """android:name="androidx.media3.session.MediaLibraryService"""",
+  """android:name="android.media.browse.MediaBrowserService"""",
+  """android:name="com.google.android.gms.car.application"""",
+  """android:resource="@xml/automotive_app_desc"""",
+)

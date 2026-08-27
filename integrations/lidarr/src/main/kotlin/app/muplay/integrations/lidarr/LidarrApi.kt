@@ -1,8 +1,11 @@
 package app.muplay.integrations.lidarr
 
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import retrofit2.Response
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Query
 
 /**
@@ -57,4 +60,39 @@ internal interface LidarrApi {
 
   @GET("api/v1/metadataprofile")
   suspend fun metadataProfiles(): Response<List<ProfileBody>>
+
+  /**
+   * Asks Lidarr to add an album. The body is a raw `JsonObject` built by [LidarrAddPayload].
+   *
+   * A `JsonObject` rather than a typed request DTO, and that is the whole design of this task: the
+   * body is the lookup element **decorated**, so every field this client does not model has to
+   * survive a round trip it has no type for. See [LidarrAddPayload].
+   *
+   * `Response<JsonObject>` on the way back for the same reason it is `Response<...>` everywhere
+   * else here, plus one specific to this call. Measured against `3.1.0.4875-ls40`, a successful add
+   * answers **`201 Created`** (`RestController.Created` -> `CreatedAtAction`) with the persisted
+   * resource, and a **duplicate answers `400`** carrying the ordinary FluentValidation array -- not
+   * a 409, and not anything else structurally distinguishable at the status. Both the status and
+   * the raw error body are needed to tell those apart, and Retrofit's `HttpException` gives
+   * neither.
+   */
+  @POST("api/v1/album")
+  suspend fun addAlbum(@Body body: JsonObject): Response<JsonObject>
+
+  /**
+   * The albums in the user's own library whose `foreignAlbumId` is [foreignAlbumId].
+   *
+   * `AlbumController.GetAlbums` reads this from the **user's database**, not from the metadata
+   * proxy -- so unlike [albumLookup] it is fast, local and cannot fail while the server is healthy.
+   *
+   * **The parameter is not optional in practice, only in the API.** Measured: the same path with no
+   * `foreignAlbumId` returns *every* album in the library, 200. A client that dropped the parameter
+   * would therefore get a perfectly valid answer about the wrong records, which is why
+   * [LidarrClient.findAddedAlbumId] matches the identifier back out of the response rather than
+   * trusting the server to have filtered.
+   */
+  @GET("api/v1/album")
+  suspend fun albumsByForeignId(
+    @Query("foreignAlbumId") foreignAlbumId: String,
+  ): Response<List<JsonObject>>
 }

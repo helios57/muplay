@@ -193,6 +193,12 @@ BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/Brow
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
 CHAPTER = "core/model/src/main/kotlin/app/muplay/model/Chapter.kt"
 BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
+# Plan 4 Task 3. The Android-free half of chapter reading: `ChapterReader` and `ChapterRepository`
+# are Media3/Room-shaped and unreachable from this JVM-only runner (their mutations are recorded by
+# hand in task-3-report.md, per the SCOPE note above), but the sorting, the end-time filling, the
+# de-duplication and the whole timeline are plain Kotlin and are gated here.
+CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
+BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -204,6 +210,7 @@ LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lid
 LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
 LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
 LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
+LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -235,6 +242,9 @@ CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabi
 CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
 ROUTE_SUBNET = "core/cast/src/main/kotlin/app/muplay/cast/route/SubnetMatch.kt"
 ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
+SESSION_SESSION = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSession.kt"
+SESSION_PLAYBACK = "core/cast/src/main/kotlin/app/muplay/cast/session/CastPlayback.kt"
+SESSION_SOURCE = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSource.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -2494,6 +2504,115 @@ PROBES = [
      '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")',
      "a renderer with no route from this phone is Unroutable before anything is published", 1),
 
+    # ---- Plan 6 Task 8: the session over the renderer, and the renderer that disappears -------
+    # Every count below was measured by applying the mutation to a committed tree and reading the
+    # result XML. `core/cast` is already on `revert()`'s checkout line, wholesale, so these three
+    # new files need no entry of their own -- which is exactly why that line names the directory.
+    #
+    # The first four are the disappearing-speaker branch, which is the whole reason Task 8 exists:
+    # spec section 6 says playback STOPPING when the speaker goes away is intended behaviour, and
+    # playback APPEARING TO CONTINUE is not.
+    ("session/lost-position-zeroed", SESSION_SESSION,
+     "CastSessionState.Lost(deviceName, positionMs, queue.getOrNull(index)?.mediaId),",
+     "CastSessionState.Lost(deviceName, 0L, queue.getOrNull(index)?.mediaId),",
+     # **The mutation that loses a listener's place in a book.** Everything else about the session
+     # still behaves: it is declared lost, an error is reported, the clock stops. Only the number
+     # Task 9 resumes from is wrong, and a suite that asserted "a Lost was emitted" would not care.
+     "a renderer that disappears mid-stream ends the session with the last known position", 1),
+    ("session/lost-clock-keeps-running", SESSION_SESSION,
+     '    failure = CastFailure(CastFailureKind.RENDERER_UNREACHABLE, "$deviceName stopped responding")\n'
+     "    playWhenReady = false\n    transport = TransportState.NO_MEDIA\n    publish()",
+     '    failure = CastFailure(CastFailureKind.RENDERER_UNREACHABLE, "$deviceName stopped responding")\n'
+     "    publish()",
+     # The other half, and the half a `Lost` state alone does not give you: the session reports the
+     # loss AND freezes the reported position. Without it the seek bar runs to the end of a track
+     # nobody can hear and a progress writer records a position that was never played.
+     "a renderer that disappears mid-stream stops the clock instead of playing on forever", 1),
+    ("session/lost-after-one-failure", SESSION_SESSION,
+     "const val LOST_AFTER_FAILURES: Int = 3", "const val LOST_AFTER_FAILURES: Int = 1",
+     # THIS PROBE REPORTED **MISSED** THE FIRST TIME IT WAS RUN, and the answer it recorded is a
+     # test-design one rather than a product one. The test withheld `LOST_AFTER_FAILURES - 1`
+     # answers from the fake, so at a threshold of 1 it withheld none, nothing failed, and the whole
+     # suite stayed green against the mutation the test existed to catch. A test parameterised by
+     # the constant under test moves with it and can never fail. It withholds a literal two now.
+     "two consecutive missed polls do not end the session, and a good poll resets the count", 1),
+    ("session/refusal-counts-as-silence", SESSION_SESSION,
+     "      transportFailures = 0\n    } catch (unreachable: SoapTransportException) {",
+     "      transportFailures += 1\n      if (transportFailures >= LOST_AFTER_FAILURES) lose()\n"
+     "    } catch (unreachable: SoapTransportException) {",
+     # Task 5 keeps `UpnpErrorException` and `SoapTransportException` apart so the poll can tell
+     # "the speaker said no" from "the speaker is gone". Collapsed, one 501 on some firmware tears
+     # down every session three seconds in.
+     "a upnp error from a poll is not mistaken for a dead speaker", 1),
+
+    # The end of a track, and the thing that only looks like it.
+    ("session/stopped-always-advances", SESSION_SESSION,
+     "if (previous == TransportState.PLAYING && transport == TransportState.STOPPED && reachedTheEnd) {",
+     "if (previous == TransportState.PLAYING && transport == TransportState.STOPPED) {",
+     # A renderer reports STOPPED for "finished" and for "somebody pressed stop on the speaker".
+     # Read the same way, a track is skipped every time a listener touches the hardware. Two
+     # failures, because `a track whose length this app does not know never declares itself
+     # finished` is the same branch reached through a zero duration.
+     "a stop that is not the end of the track does not skip to the next one", 2),
+    ("session/transport-error-swallowed", SESSION_SESSION,
+     "      if (info.hasError) {", "      if (info.hasError && queue.isEmpty()) {",
+     # `CurrentTransportStatus = ERROR_OCCURRED` arrives in a DIFFERENT out-argument from the state,
+     # usually beside an ordinary STOPPED. Swallowed, it is a track that never starts and never
+     # fails, with nothing reported anywhere.
+     "a renderer reporting ERROR_OCCURRED becomes a reported failure and not a silent stall", 1),
+
+    # Three defects this task found in itself, each fixed and each pinned here.
+    ("session/route-proved-before-play", SESSION_SESSION,
+     "    if (playWhenReady) {\n      if (!proveRoute(loaded)) return\n    } else {\n"
+     "      unprovedRoute = loaded\n    }",
+     "    if (!proveRoute(loaded)) return",
+     # `CastRouter.confirm` proves a route by waiting for the renderer to FETCH, and a renderer
+     # fetches after `Play`. `SimpleBasePlayer` sets the queue before it sets playWhenReady, so
+     # proving at load time sits out the whole proof timeout and then calls a good speaker
+     # unroutable. The count is 25 and not 1 on purpose: nothing can play at all under this
+     # mutation, so the count here is a measurement of the blast radius rather than a discrimination
+     # claim -- if it goes stale because `:core:cast` gained tests, re-measure it, do not delete it.
+     "a queue set while paused is not declared unroutable for never having been fetched", 25),
+    ("session/failed-session-still-accepts-commands", SESSION_SESSION,
+     "private fun refusing(): Boolean = released || failure != null",
+     "private fun refusing(): Boolean = released",
+     # Measured while writing the grouped-Sonos test: `SetAVTransportURI` failed with "this speaker
+     # is grouped with another and is following ...", the `play()` that followed failed with `701
+     # Transition not available` because nothing had been loaded, and the second message REPLACED
+     # the first. What a user would have been shown is the symptom of the symptom.
+     "a failed session ignores later commands rather than replacing the diagnosis with its symptoms", 1),
+    ("session/state-change-not-announced", SESSION_SESSION,
+     "    onPlaybackChanged()\n  }", "  }",
+     # Task 9 passes `SimpleBasePlayer::invalidateState` here and Media3 derives every listener
+     # callback from the diff between the snapshots it then reads. A change that does not announce
+     # itself is a callback that never fires -- for a book cast to a speaker, a position never
+     # recorded, discovered by a listener losing their place.
+     "every change to the snapshot is announced, and the announcements carry the changes", 1),
+    ("session/release-skips-revoke-when-gone", SESSION_SESSION,
+     "      } catch (unreachable: IOException) {", "      } catch (unreachable: NullPointerException) {",
+     # The commonest reason a session is released is that the speaker went away, so a `Stop` that
+     # throws must not be allowed to skip `CastRouter.revokeAll` -- a proxy still serving after its
+     # session has ended is a capability lying on the LAN with nobody watching it.
+     "a session released after the renderer has gone still revokes its tokens", 1),
+
+    # The seek bar between two polls, and the credential that must not be printed.
+    ("session/no-extrapolation", SESSION_PLAYBACK,
+     "positionMs + (nowMs - positionMeasuredAtMs).coerceAtLeast(0L)", "positionMs + 0L",
+     # Six failures: the position supplier is read by both the pure test and three session cases.
+     "the position extrapolates between polls", 6),
+    ("session/seek-always-advertised", SESSION_SESSION,
+     "canSeek = renderer.capabilities().preferredSeekMode != null", "canSeek = true",
+     # A device whose SCPD offers no time seek mode must show NO seek bar, rather than one that
+     # answers 710 to every drag. Task 9 withholds `COMMAND_SEEK_*` on this flag.
+     "a device that cannot seek by time does not report that it can, and one that can does", 1),
+    ("session/upstream-url-printed", SESSION_SOURCE,
+     "upstreamUrl=$REDACTED_UPSTREAM", "upstreamUrl=$upstreamUrl",
+     # `:core:model`'s `SubsonicCredentials` and `:integrations`' Lidarr key have the same probe for
+     # the same reason: a `data class` prints every field, and a `CastSource` lives in a list inside
+     # a live session -- the shape that reaches a log line by accident. A Navidrome stream URL's
+     # `t` and `s` are password equivalents.
+     "a source does not print its credential-bearing upstream url", 1),
+
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
     # they belong here rather than behind a coverage floor.
@@ -2743,6 +2862,133 @@ PROBES = [
      "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption,",
      "a blank monitor default becomes all rather than an empty string on the wire", 2),
 
+    # ---- Plan 7 Task 6: the add payload -- the crux, and the one spec section 8 called unverified -
+    #
+    # Same argument as the two families above: the coverage gate cannot see any of this. Every
+    # mutation below leaves `LidarrAddPayload`'s 1.00 BRANCH floor and `LidarrClient`'s 0.90 BRANCH
+    # floor exactly where they are -- each one substitutes a constant for a value, or drops a
+    # comparison, rather than removing an arm. That is the shape a lazy implementation actually
+    # ships, and it is the shape a ratio is structurally blind to.
+    #
+    # The defect this whole family exists to refuse, in one sentence: **adding the wrong album to
+    # somebody's library.** A live lookup for `kind of blue` returns seven records, four of them
+    # titled exactly that by four different artists. Nothing a user sees separates them; only
+    # `foreignAlbumId` does.
+    #
+    # 1 and 2. The two identifiers. A constant here adds one particular stranger's record forever,
+    #    with a 201, a monitored album and nothing wrong anywhere on the screen.
+    ("integrations/lidarr-add-foreignAlbumId", LIDARR_PAYLOAD,
+     'put("foreignAlbumId", candidate.foreignAlbumId)', 'put("foreignAlbumId", "mbid-a")',
+     "the body carries the identifier that was asked for, not a constant", 4),
+    ("integrations/lidarr-add-foreignArtistId", LIDARR_PAYLOAD,
+     'put("foreignArtistId", candidate.foreignArtistId)', 'put("foreignArtistId", "art-a")',
+     "the nested artist identifier is the one that was asked for", 6),
+
+    # 3. TRAP 1. `AddAlbumService`: if the artist asks for a missing-albums search, the server
+    #    silently sets `album.addOptions.searchForNewAlbum = false` -- a 201, a monitored album, and
+    #    no download, with nothing reported anywhere. Upstream issue Lidarr #5012.
+    #
+    #    Read `LidarrAddPayloadTest`'s own comment on that test before quoting this as measured
+    #    server behaviour: on the container Task 6 drove, no album-add search happened for EITHER
+    #    value of the flag, so that instance cannot demonstrate the interaction. The probe still
+    #    earns its place -- it pins what this client sends, which is the only half this repository
+    #    controls.
+    ("integrations/lidarr-searchForMissingAlbums", LIDARR_PAYLOAD,
+     'put("searchForMissingAlbums", false)', 'put("searchForMissingAlbums", true)',
+     "the artist never asks for a missing-albums search, which would cancel the album search", 4),
+
+    # 4. The caller's own search choice, pinned to a constant -- the "always search" version of the
+    #    same defect, which looks right in every manual test somebody runs with the box ticked.
+    ("integrations/lidarr-searchForNewAlbum", LIDARR_PAYLOAD,
+     'put("searchForNewAlbum", searchNow)', 'put("searchForNewAlbum", true)',
+     "searchForNewAlbum is whatever the caller asked for", 4),
+
+    # 5 and 6. The two profile ids. A constant files every add under one profile; a swap files each
+    #    under the other's -- and a swap is accepted with a 201, because on a default install every
+    #    id that exists in one table exists in the other (measured: quality 1..3, metadata 1..2).
+    ("integrations/lidarr-add-qualityProfileId", LIDARR_PAYLOAD,
+     'put("qualityProfileId", targets.qualityProfileId)', 'put("qualityProfileId", 2)',
+     "the three add targets are written onto the nested artist", 2),
+    ("integrations/lidarr-add-profile-swap", LIDARR_PAYLOAD,
+     'put("metadataProfileId", targets.metadataProfileId)',
+     'put("metadataProfileId", targets.qualityProfileId)',
+     "the quality and metadata profile ids are not swapped", 4),
+
+    # 7. The album's own monitored flag. An unmonitored album is never fetched whatever the search
+    #    flag says, and a lookup element arrives carrying `monitored: false` -- so this is not a
+    #    missing default, it is an overwrite that has to happen.
+    ("integrations/lidarr-add-monitored", LIDARR_PAYLOAD,
+     '      put("monitored", true)\n      put("artist", artist)',
+     '      put("monitored", false)\n      put("artist", artist)',
+     "both monitored flags are set, because an unmonitored album is never fetched", 2),
+
+    # 8 and 9. The two passthroughs -- the reason `LidarrAlbumCandidate.raw` exists at all. The
+    #    pinned Lidarr serves no `openapi.json`, so there is no published statement of what this
+    #    endpoint requires; the only complete one is what Lidarr sent. A payload rebuilt from the
+    #    typed fields drops the rest, including the `artist.id` that attaches a new album to an
+    #    existing artist instead of creating a second one.
+    ("integrations/lidarr-add-album-passthrough", LIDARR_PAYLOAD,
+     "candidate.raw.forEach { (key, value) -> put(key, value) }", "candidate.raw.let { }",
+     "every field the lookup sent that this client does not model survives", 2),
+    ("integrations/lidarr-add-artist-passthrough", LIDARR_PAYLOAD,
+     '(candidate.raw["artist"] as? JsonObject)?.forEach { (key, value) -> put(key, value) }',
+     '(candidate.raw["artist"] as? JsonObject)?.let { }',
+     "every field the lookup sent that this client does not model survives", 3),
+
+    # 10. The id the whole of Task 7 correlates on. A constant here points every later status poll
+    #     at one album forever, and the poll itself keeps working -- it just reports on the wrong
+    #     record, which is the silent-wrong-answer class this plan is built to refuse.
+    ("integrations/lidarr-add-album-id", LIDARR_CLIENT,
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(response.code()),',
+     "albumId = 42,",
+     "a 201 yields the album id from the response body", 2),
+
+    # 11. The same value from the other direction: a success with no id must fail naming the status
+    #     that came back, not the 201 an implementer would type. A proxy that rewrote the status, or
+    #     the 200 Lidarr's own generated spec once documented, would be reported as a 201 that never
+    #     happened.
+    ("integrations/lidarr-add-created-status", LIDARR_CLIENT,
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(response.code()),',
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(201),',
+     "a created response with no id is a failure naming the status that came back", 1),
+
+    # 12. The read side of the identifier rule, and a live wrong path rather than a hypothetical
+    #     one: `GET /api/v1/album` with no `foreignAlbumId` is a legal request that returns the
+    #     WHOLE library, 200 (measured). A client that took the first row would hand every later
+    #     status poll somebody else's album id.
+    ("integrations/lidarr-found-album-must-match", LIDARR_CLIENT,
+     '.firstOrNull { it.string("foreignAlbumId") == foreignAlbumId }', ".firstOrNull()",
+     "an answer that is not the album that was asked for yields null, not its id", 1),
+
+    # 13 and 14. The two independent signals that identify a duplicate add, each removed alone.
+    #     A duplicate is a 400 with the same shape as a real misconfiguration, so getting this
+    #     wrong shows a user "Quality Profile does not exist" energy for an album they already own.
+    #     Both arms are here because a floor cannot tell you either one is load-bearing -- and one
+    #     of them, the `errorCode`, is a field Task 4 read in a fixture and deliberately left
+    #     unmodelled on the grounds that nothing needed it.
+    ("integrations/lidarr-alreadyAdded-errorCode", LIDARR_EXC,
+     "it.errorCode == ALBUM_EXISTS_VALIDATOR ||", 'it.errorCode == "NoSuchValidator" ||',
+     "either the validator code or the message alone identifies an already-added album", 1),
+    ("integrations/lidarr-alreadyAdded-message", LIDARR_EXC,
+     'it.errorMessage?.contains("has already been added", ignoreCase = true) == true',
+     'it.errorMessage?.contains("a phrase lidarr never sends", ignoreCase = true) == true',
+     # 2, measured: Task 4's own `an already-added validation failure is recognised by its message`
+     # in `LidarrHandshakeTest` reddens too, which is the second caller that keeps this arm honest.
+     "either the validator code or the message alone identifies an already-added album", 2),
+
+    # 15. The endpoint itself. `api/v1/artist` is the neighbouring controller and the copy-paste a
+    #     reviewer's eye slides over, the way `qualityprofile`/`metadataprofile` was at Task 5.
+    #
+    #     Measured, and the measurement is the good news: posting this exact body there answers
+    #     **400**, not a 201 -- `GreaterThanValidator` on a top-level `QualityProfileId` of 0,
+    #     because an album payload's profile ids live on its *nested* artist. So this mutation fails
+    #     loudly at the server rather than silently adding the wrong kind of thing. The probe stays
+    #     because a loud failure at the server is still a broken add for the user, and because the
+    #     next such swap need not be lucky.
+    ("integrations/lidarr-add-endpoint", LIDARR_API,
+     '@POST("api/v1/album")', '@POST("api/v1/artist")',
+     "the add is a POST to api v1 album with a json content type", 2),
+
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
     # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
@@ -2947,6 +3193,118 @@ PROBES = [
      # The second id in that test is what catches this: with one id, "returned the id it was
      # given" and "returned the id this test happens to use" are the same observation.
      "a book with no stored settings plays at one times with no silence skipping", 1),
+    # ---- Plan 4 Task 3: chapters out of the file's own bytes ----------------------------------
+    # Every count below was MEASURED by applying the mutation alone against the committed tree and
+    # reading the result XML -- see task-3-report.md for the transcripts.
+    #
+    # These seven defects share a symptom and it is the one this whole feature is for: **the book
+    # plays its epilogue third**, or shows a chapter list that is plausible and wrong. None of them
+    # moves a branch, so no coverage counter can see any of them.
+    ("chapters/assembly-unsorted", CHAPTER_ASSEMBLY,
+     "val ordered = byStart.values.sortedBy { it.startMs }",
+     "val ordered = byStart.values.toList()",
+     # Media3 hands back one entry per (track format x atom) and promises nothing about order.
+     # `LinkedHashMap` then preserves ARRIVAL order, which is why the fixture arrives shuffled.
+     "chapters are ordered by start time, whatever order they arrived in", 2),
+    ("chapters/assembly-end-always-duration", CHAPTER_ASSEMBLY,
+     "val fallback = ordered.getOrNull(index + 1)?.startMs ?: contentDurationMs",
+     "val fallback = contentDurationMs",
+     # Every chapter that arrived with `C.TIME_UNSET` would end at the end of the FILE, so every
+     # chapter but the last would report itself hours long and overlap every one after it.
+     #
+     # 2, measured: `a duplicate that carries nothing the first one lacked leaves it alone` also
+     # reddens, because its two surviving chapters both end at the fallback. Submitted as 1 and
+     # reported MISSED on the first run -- that test was added after this count was written, which
+     # is exactly the stale-count case this table's `expected failures` note describes.
+     "a missing end time is filled from the next chapter's start", 2),
+    ("chapters/assembly-duration-overwrites-end", CHAPTER_ASSEMBLY,
+     "val end = (entry.endMs ?: fallback).coerceAtLeast(entry.startMs)",
+     "val end = fallback.coerceAtLeast(entry.startMs)",
+     # The other direction: throwing away what Media3 actually read. Invisible on the seeded
+     # corpus's *abutting* chapters, which is why the fixture that catches it has a gap.
+     # 3, measured: the same mutation also reddens `a duplicate contributes its end time to a twin
+     # that has none` (its 3000 ms end becomes the next chapter's 4000 ms start) and `an end time
+     # before its own start is clamped ...` (its 4000 ms end becomes the content duration).
+     "a populated end time is never overwritten by the duration", 3),
+    ("chapters/assembly-no-end-clamp", CHAPTER_ASSEMBLY,
+     "val end = (entry.endMs ?: fallback).coerceAtLeast(entry.startMs)",
+     "val end = (entry.endMs ?: fallback)",
+     # A negative `durationMs` reaches a progress bar and reaches `seekTo`.
+     "an end time before its own start is clamped rather than producing a negative duration", 1),
+    ("chapters/assembly-title-untrimmed", CHAPTER_ASSEMBLY,
+     "get() = title?.trim()?.takeIf { it.isNotEmpty() }",
+     "get() = title?.takeIf { it.isNotEmpty() }",
+     # A `chpl` atom padded to a fixed width is a real thing, and " " is not a title -- but it is
+     # not empty either, so it survives as one and de-duplication then prefers it over a real name.
+     "a blank title is the same fact as no title", 2),
+    ("chapters/assembly-duplicate-drops-title", CHAPTER_ASSEMBLY,
+     "        existing.normalisedTitle == null && entry.normalisedTitle != null -> entry\n",
+     "",
+     # A two-track M4B presents its chapter list twice, once titled and once not. Keeping whichever
+     # arrived first is a coin flip between the real names and none.
+     "duplicate entries for the same start time collapse to one, keeping the titled one", 1),
+    ("chapters/assembly-negative-start-kept", CHAPTER_ASSEMBLY,
+     "      if (entry.startMs < 0L) continue\n", "",
+     # Clamping or keeping a negative start puts a second, unseekable "chapter 1" in front of the
+     # real one.
+     "a chapter that starts before the file does is dropped rather than clamped", 1),
+    # ---- and the timeline over them -----------------------------------------------------------
+    ("timeline/book-offset-ignored", BOOK_TIMELINE,
+     "            bookStartMs = bookOffset + chapter.startMs,",
+     "            bookStartMs = chapter.startMs,",
+     # THE multi-file defect. A single-file book cannot see it at all -- its offset is always 0 --
+     # which is exactly why `BookTimelineTest` carries a two-disc book whose files also carry
+     # chapters. 2, measured: `the book position is the item's offset, not the chapter's` reads
+     # `bookStartMs` back through `bookPositionMs`.
+     "a multi-file book whose files also carry chapters is neither of the easy cases", 2),
+    ("timeline/book-position-ignores-chapter-start", BOOK_TIMELINE,
+     "    return itemStart.bookStartMs - itemStart.startInItemMs + positionInItemMs",
+     "    return itemStart.bookStartMs + positionInItemMs",
+     # `firstOrNull` finds the item's FIRST chapter, whose `startInItemMs` is 0 for every book in
+     # the seeded corpus -- so this is the identity there, and the first version of this probe was
+     # MISSED with every assertion in the file green. The fixture the named test now carries gives
+     # Disc Two's first chapter atom a 1000 ms start, which is what makes the subtraction
+     # observable at all. Read that test's comment before touching its numbers.
+     "the book position is the item's offset, not its first chapter's start", 1),
+    ("timeline/restart-threshold-strict", BOOK_TIMELINE,
+     "    if (intoChapter >= restartThresholdMs) return current",
+     "    if (intoChapter > restartThresholdMs) return current",
+     # 2, measured: `previous restarts the current chapter unless you are already near its start`
+     # probes 12000 ms into a chapter that starts at 9000, which is the threshold exactly.
+     "the default restart threshold is the declared one and not some other number", 2),
+    ("timeline/previous-uses-raw-position", BOOK_TIMELINE,
+     "    val intoChapter = positionInItemMs - current.startInItemMs",
+     "    val intoChapter = positionInItemMs",
+     # "Am I near the start of this chapter" measured from the start of the FILE. Every chapter
+     # after the first is then always "deep inside", so `previous` restarts instead of stepping
+     # back -- and chapter 1 of a single-file book cannot see it, because there the two agree.
+     # 4, measured: every `previous` test in the file except the empty-timeline one reads a
+     # position deeper into the FILE than the threshold, which is the whole defect.
+     "previous measures how far into the chapter you are, not how far into the file", 4),
+    ("timeline/chapters-unsorted", BOOK_TIMELINE,
+     "        for (chapter in chapters.sortedBy { it.startMs }) {",
+     "        for (chapter in chapters) {",
+     # The map also arrives out of Room and out of a caller's hands, neither of which is
+     # `ChapterAssembly`'s output by construction -- and SQLite returns rows in whatever order it
+     # likes without an ORDER BY.
+     "chapters inside one file are ordered by start time, whatever order they arrived in", 1),
+    ("timeline/chapter-at-first-match", BOOK_TIMELINE,
+     "    return inItem.lastOrNull { positionInItemMs >= it.startInItemMs } ?: inItem.first()",
+     "    return inItem.firstOrNull { positionInItemMs >= it.startInItemMs } ?: inItem.first()",
+     # `firstOrNull` answers "chapter 1" for every position in the book, because every position is
+     # at or after chapter 1's start. 2, measured: it also reddens `a position past the final
+     # chapter's end still answers the final chapter`.
+     "a position exactly on a boundary belongs to the chapter that starts there", 2),
+    ("timeline/untitled-numbered-per-file", BOOK_TIMELINE,
+     "String.format(Locale.ROOT, UNTITLED_FORMAT, result.size + 1)",
+     "String.format(Locale.ROOT, UNTITLED_FORMAT, 1)",
+     # Chapter 1 of disc two is not "Chapter 1". The fixture puts the second untitled chapter in
+     # the SECOND file for exactly this reason.
+     "an untitled chapter is numbered by its position in the book", 1),
+    ("timeline/chapter-duration-unclamped", BOOK_TIMELINE,
+     "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
+     "  val durationMs: Long get() = endInItemMs - startInItemMs",
+     "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
 
     # ---- Plan 3 Task 12: transcoded seek via `timeOffset` ---------------------------------------
     #
@@ -3115,6 +3473,11 @@ LATER_PROBE_FILES = [
     # probes, per this list's own comment.
     LIDARR_API,
     LIDARR_TARGETS,
+    # Plan 7 Task 6, added in the same edit as the fifteen `integrations/lidarr-add-*` and
+    # `integrations/lidarr-alreadyAdded-*` probes, per this list's own comment. Only
+    # `LIDARR_PAYLOAD` is new -- the other three files this family mutates are already above, which
+    # is exactly the state that makes forgetting this line easy and its consequence a stray.
+    LIDARR_PAYLOAD,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,
@@ -3161,6 +3524,11 @@ LATER_PROBE_FILES = [
     # comment requires: a mutated file no `git checkout` names is left in the tree when the run
     # ends, and the next agent's dirty-tree guard blames them for it.
     BOOK_FIXTURES,
+    # Plan 4 Task 3. Added in the same edit as the fourteen `chapters/` and `timeline/` probes
+    # above, as this list's own comment requires -- a mutated file no `git checkout` names is left
+    # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
+    CHAPTER_ASSEMBLY,
+    BOOK_TIMELINE,
 ]
 
 
