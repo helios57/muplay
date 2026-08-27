@@ -424,11 +424,19 @@ class CastSessionTest {
   }
 
   @Test
-  fun `fewer failures than the threshold do not end the session, and a good poll resets the count`() {
+  fun `two consecutive missed polls do not end the session, and a good poll resets the count`() {
     // The other direction, and the reason the threshold is three rather than one: a single dropped
     // poll on a busy network is ordinary, and ending a session on it makes casting unusable on real
     // Wi-Fi. Counted in requests by the fake rather than timed, so the assertion is exact rather
     // than a race against the poll loop's phase.
+    //
+    // **Two, written as a literal**, and this is the whole discrimination. Writing it as
+    // `LOST_AFTER_FAILURES - 1` was measured to make this test blind to the mutation it exists to
+    // catch: at a threshold of 1 the expression is 0, the fake hangs up on nothing, and the suite
+    // stayed green with `LOST_AFTER_FAILURES = 1` in the tree (probe
+    // `session/lost-after-one-failure`, MISSED). A test parameterised by the constant under test
+    // moves with it and can never fail. This asserts a fact about the product instead: two missed
+    // polls in a row are survivable.
     val session = session()
     runBlocking { session.setQueue(THREE_TRACKS); session.play() }
     awaitPlaying()
@@ -438,10 +446,8 @@ class CastSessionTest {
     // hang-ups were consumed AND that the renderer is being talked to again.
     repeat(2) {
       val before = pollCount()
-      fake.disappearFor(CastSession.LOST_AFTER_FAILURES - 1)
-      awaitCondition("the polls resumed after ${CastSession.LOST_AFTER_FAILURES - 1} hang-ups") {
-        pollCount() >= before + 2
-      }
+      fake.disappearFor(2)
+      awaitCondition("the polls resumed after two hang-ups") { pollCount() >= before + 2 }
     }
 
     assertThat(sessionStates.filterIsInstance<CastSessionState.Lost>()).isEmpty()
@@ -459,11 +465,15 @@ class CastSessionTest {
     awaitPlaying()
 
     val before = pollCount()
-    fake.faultNextControlRequests(CastSession.LOST_AFTER_FAILURES + 2, UpnpError.ACTION_FAILED)
+    // Five, as a literal and not as `LOST_AFTER_FAILURES + 2`, for the reason written out in
+    // `two consecutive missed polls...`: an expression over the constant under test moves with it.
+    // Five refusals in a row is comfortably more than any threshold a renderer should be declared
+    // dead at, which is the fact being asserted.
+    fake.faultNextControlRequests(5, UpnpError.ACTION_FAILED)
 
     // A faulted request IS recorded, so this waits out all five refusals and two good polls after.
     awaitCondition("the renderer refused five polls and then answered again") {
-      pollCount() >= before + CastSession.LOST_AFTER_FAILURES + 4
+      pollCount() >= before + 7
     }
     assertThat(sessionStates.filterIsInstance<CastSessionState.Lost>()).isEmpty()
     assertThat(session.playback.failure).isNull()
