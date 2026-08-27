@@ -28,6 +28,11 @@ include(":core:cast")
 include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
+// Plan 6 Task 10. The cast picker: the device list, the cast button and the volume slider.
+// Depends on `:core:cast` and `:core:media` and on no other feature -- see this module's own
+// build file, and `ConventionTest`'s severability reasoning for `integrations`: dropping casting
+// stays `git rm -r core/cast feature/castpicker` plus these two include lines.
+include(":feature:castpicker")
 
 // Plan 7's own top-level source directory. Kept out of `core/` deliberately: `ConventionTest`'s
 // `nothing outside integrations depends on an integration` makes "Plan 7 can be dropped" a checked
