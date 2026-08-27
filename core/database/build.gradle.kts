@@ -40,4 +40,8 @@ dependencies {
   // every module that puts AssertJ on a device would otherwise rediscover the same failure. See
   // that function for the full account.
   androidTestImplementation(libs.assertj)
+  // Turbine, on the device tier rather than the JVM one: the Flows this module exposes come out of
+  // Room's invalidation tracker, which needs real SQLite. `room-testing` itself arrives from the
+  // `muplay.android.room` convention plugin, not from here.
+  androidTestImplementation(libs.turbine)
 }

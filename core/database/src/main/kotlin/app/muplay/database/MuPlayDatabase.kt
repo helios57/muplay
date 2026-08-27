@@ -2,12 +2,17 @@ package app.muplay.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import app.muplay.database.dao.BookSettingsDao
 import app.muplay.database.dao.BrowseDao
+import app.muplay.database.dao.ChapterDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.dao.SyncWatermarkDao
 import app.muplay.database.entity.AlbumEntity
 import app.muplay.database.entity.ArtistEntity
+import app.muplay.database.entity.BookSettingsEntity
+import app.muplay.database.entity.ChapterEntity
+import app.muplay.database.entity.ChapterScanEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.database.entity.SongEntity
@@ -32,7 +37,16 @@ import app.muplay.database.entity.SyncWatermarkEntity
  *
  * (The brief for that task said "version 4 -> 5". It was written before Task 6's `sync_watermark`
  * landed; master was already at 5. The number a version bump moves *from* is a measurement, not a
- * plan value -- read the file.)
+ * plan value -- read the file. Plan 4 Task 2 met the same thing again and this paragraph is why it
+ * cost nothing: its brief said "schema 5", master was at 6, and the migration is named for the
+ * measurement.)
+ *
+ * **Plan 4 Task 2 takes it to version 7 -- `book_settings`, `chapter_scans` and `chapters` -- and
+ * is the first version bump in this project with a real [MIGRATION_6_7] behind it.** Every earlier
+ * step still relies on the escape hatch in `DataModule`, which is why that hatch is still there
+ * and why removing it is not this task's to do; see `DESTRUCTIVE_MIGRATION_EXEMPTION.md` for the
+ * list of what is still owed. From here on, a task that adds or reshapes a table writes a
+ * `Migration` and commits the schema JSON alongside it -- there is now one to copy.
  */
 @Database(
   entities = [
@@ -42,8 +56,11 @@ import app.muplay.database.entity.SyncWatermarkEntity
     AlbumEntity::class,
     SongEntity::class,
     SyncWatermarkEntity::class,
+    BookSettingsEntity::class,
+    ChapterScanEntity::class,
+    ChapterEntity::class,
   ],
-  version = 6,
+  version = 7,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {
@@ -55,6 +72,10 @@ abstract class MuPlayDatabase : RoomDatabase() {
   abstract fun browseDao(): BrowseDao
 
   abstract fun syncWatermarkDao(): SyncWatermarkDao
+
+  abstract fun bookSettingsDao(): BookSettingsDao
+
+  abstract fun chapterDao(): ChapterDao
 
   companion object {
     const val DATABASE_NAME = "muplay.db"

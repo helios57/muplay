@@ -666,6 +666,66 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.model.browse.BrowseExtras",
       ),
     ),
+    // ---- Plan 4 Task 2: the audiobook value types --------------------------------------------
+    // `Chapter` BRANCH **4/4** and `BookSettings$Companion` BRANCH **2/2**, both 1.0000 from JVM
+    // data alone -- `:core:model` has no instrumented tier at all, so every number here is
+    // `./gradlew :core:model:test` and nothing else.
+    //
+    // The four are `contains`'s two operands, each observed both ways at the boundary itself, and
+    // the two are `clampSpeed`'s `isNaN` arm. Both are decisions a listener would feel: half-open
+    // containment is what makes "which chapter am I in" one answer rather than two at every
+    // boundary, and the `isNaN` arm is what stops a corrupted `REAL` column reaching
+    // `ExoPlayer.setPlaybackSpeed(NaN)`, which throws from a listener callback and kills playback
+    // with no message.
+    //
+    // **Falsified by withholding tests and re-running, and the near-miss is the point.**
+    // Withholding `containment is half-open, so a position on a boundary is in the later chapter`
+    // ALONE leaves `Chapter` at **4/4 = 1.0000** and green -- `a position is in exactly one of two
+    // adjacent chapters` reaches the same four branches on its own. Withholding both takes it to
+    // **2/4 = 0.5000**, BUILD FAILED. For the companion, withholding `not a number becomes the
+    // default rather than surviving the clamp` alone is enough: **1/2 = 0.5000**, BUILD FAILED.
+    //
+    // `BookSettings` itself rides along with **no BRANCH counter of its own** (a `data class` whose
+    // every member lives in the companion), included so `warnUngatedClasses` has nothing to say and
+    // gating nothing -- exactly `ReplayGain`'s and `RememberedRenderer`'s situation above, given the
+    // same answer. It is deliberately absent from the LINE rule below: a LINE floor over four lines
+    // of compiler-generated `equals`/`copy` plumbing is a floor that cannot fail.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.Chapter",
+        "app.muplay.model.BookSettings*Companion",
+        "app.muplay.model.BookSettings",
+      ),
+    ),
+    // The same two classes' LINE -- `Chapter` **7/7**, `BookSettings$Companion` **5/5** -- and it
+    // is not redundant with the BRANCH rule above, for the reason `BrowseTree` carries both:
+    // `Chapter.durationMs` and `BookSettings.default` are *statements* with no branch in them, so
+    // deleting the sole assertion on either moves no branch at all. `durationMs`'s clamp is the
+    // sharp case: `endMs - startMs` and `(endMs - startMs).coerceAtLeast(0L)` compile to the same
+    // branch count in this class, and only a mutation or a LINE-visible assertion tells them apart.
+    //
+    // Falsified, and it fires exactly where the BRANCH rule cannot: withholding the two
+    // `durationMs` tests leaves `Chapter` at **6/7 = 0.8571** and fails this rule **while the
+    // BRANCH rule above stays green at 4/4**. Withholding `a book with no stored settings plays at
+    // one times with no silence skipping` puts `BookSettings$Companion` at **4/5 = 0.8000**, also
+    // with its BRANCH rule green at 2/2.
+    //
+    // That last run also measured what the ride-along above claims: `BookSettings` itself fell to
+    // **0/4 LINE** and nothing failed, because it is in the BRANCH rule only and carries no BRANCH
+    // counter. The ride-along really does gate nothing -- which is what it says, and is now checked
+    // rather than asserted.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.model.Chapter",
+        "app.muplay.model.BookSettings*Companion",
+      ),
+    ),
   ),
   ":core:network" to listOf(CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.90"))),
   // One key, three rules -- added INSIDE this entry rather than as a second ":core:testing" key,
@@ -1238,6 +1298,62 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.MirrorBookshelf",
         "app.muplay.database.BookProgress",
         "app.muplay.database.BookPosition",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 4 Task 2: the audiobook schema and the first Room migration --------------------
+    // Measured 1.0000 LINE on all six, from a merged JVM + instrumented report after a full
+    // `:core:database:connectedDebugAndroidTest` (149 tests): `MigrationsKt` 1/1,
+    // `MigrationsKt$MIGRATION_6_7$1` 9/9, `ChapterDao` 9/9, `BookSettingsEntity` 5/5,
+    // `ChapterEntity` 7/7, `ChapterScanEntity` 5/5.
+    //
+    // **LINE and not BRANCH, and that is a measurement rather than a preference.** Not one of these
+    // classes carries a BRANCH counter at all: `ChapterDao.store` is three statements in a fixed
+    // order with no conditional, `migrate` is four `execSQL` calls, and the three entities are
+    // plain `data class`es. A BRANCH rule over them would match only zero-total counters, which
+    // JaCoCo scores NaN and reports as "no violation" at every minimum -- the vacuous-floor shape
+    // `warnVacuousFloors` exists to name. What LINE *can* see here is the thing that matters:
+    // whether `migrate` ran at all, and whether the ordering inside `store` was executed rather
+    // than merely compiled.
+    //
+    // `MigrationsKt*` rather than the two names: the file-level `val` compiles to `MigrationsKt`
+    // (its getter) and the anonymous `object : Migration` to `MigrationsKt$MIGRATION_6_7$1`, and
+    // the second is where the SQL actually lives. `ChapterDao*` likewise -- `ChapterDao$store$1`
+    // is the suspend continuation and carries no counter of either kind, so it rides for free.
+    //
+    // `requiresInstrumentedData` because Room needs real SQLite: with the emulator's `.ec` absent
+    // every one of these is 0 lines, and `MIGRATION_6_7` in particular can only be *executed* by a
+    // migration test on a device.
+    //
+    // **Falsified in both halves, by withholding classes and re-running the connected suite --
+    // and the second half is the "a recorded falsification goes stale when a second caller
+    // appears" trap, caught here by running it rather than reasoning about it.**
+    //
+    //   * Withhold `MigrationTest` (139 of 149 tests run): `MigrationsKt$MIGRATION_6_7$1` falls to
+    //     **1/9 = 0.1111**, BUILD FAILED. The 1 is the `object`'s own constructor, which
+    //     `addMigrations` executes; the 8 are `migrate`'s body, which nothing else on this tier
+    //     runs. `ChapterDao` and all three entities stayed at 1.0000 through it.
+    //   * Withhold `ChapterDaoTest` ALONE and this floor stays **green**: `DataModuleTest`'s
+    //     `theProvidedChapterDaoWorks` is a second caller and covers the same nine lines. It takes
+    //     withholding **both** (130 of 149) to fire -- `ChapterDao` **1/9 = 0.1111**,
+    //     `ChapterEntity` **0/7**, `ChapterScanEntity` **0/5**, BUILD FAILED.
+    //   * `BookSettingsEntity` has two callers of its own (`MigrationTest` and
+    //     `BookSettingsDaoTest`) and stayed at 5/5 through both runs above. It is gated here and is
+    //     honestly the weakest member of this rule: no pair of withheld classes tried so far moves
+    //     it. Do not read the two bullets above as covering it.
+    //
+    // Re-run these when you touch this floor. Do not copy them forward -- the ChapterDao bullet is
+    // this table's own live example of why.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.database.MigrationsKt*",
+        "app.muplay.database.dao.ChapterDao*",
+        "app.muplay.database.entity.BookSettingsEntity",
+        "app.muplay.database.entity.ChapterEntity",
+        "app.muplay.database.entity.ChapterScanEntity",
       ),
       requiresInstrumentedData = true,
     ),

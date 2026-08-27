@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.database.di.DataModule
 import app.muplay.database.entity.AlbumEntity
+import app.muplay.database.entity.BookSettingsEntity
+import app.muplay.database.entity.ChapterEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.LibraryRole
@@ -262,6 +264,44 @@ class DataModuleTest {
       .contains("getAlbumList2(1, offset=0, size=${SubsonicClient.MAX_ALBUM_LIST_PAGE})")
     credentialStore.clear()
     file.delete()
+  }
+
+  /**
+   * Plan 4 Task 2 added `provideBookSettingsDao` and `provideChapterDao`, and the four tests above
+   * are this class's own record of what happens when a new provider arrives with nothing calling
+   * it: `provideLibraryDao`, `provideBrowseDao`, `provideSyncWatermarkDao` and `provideSyncEngine`
+   * each measured 0/1 LINE until somebody noticed. These two close the same gap on arrival rather
+   * than on review.
+   *
+   * Exercised through the **shipped, on-disk** database, which is also the only place in this
+   * module's suite where the real `Room.databaseBuilder` -- migrations and all -- has to produce
+   * a working `book_settings` and `chapters`.
+   */
+  @Test
+  fun theProvidedBookSettingsDaoWorks() = runTest {
+    val dao = DataModule.provideBookSettingsDao(database)
+
+    dao.upsert(BookSettingsEntity("book-1", speed = 1.4f, skipSilence = true))
+
+    assertThat(dao.find("book-1")!!.speed).isEqualTo(1.4f)
+    assertThat(dao.find("book-1")!!.skipSilence).isTrue
+  }
+
+  @Test
+  fun theProvidedChapterDaoWorks() = runTest {
+    val dao = DataModule.provideChapterDao(database)
+
+    dao.store(
+      "m-1",
+      listOf(
+        ChapterEntity("m-1", 1, 7_000, 12_000, "Tail"),
+        ChapterEntity("m-1", 0, 0, 7_000, "Head"),
+      ),
+      scannedAtEpochMs = 5L,
+    )
+
+    assertThat(dao.find("m-1").map { it.title }).containsExactly("Head", "Tail")
+    assertThat(dao.findScan("m-1")!!.chapterCount).isEqualTo(2)
   }
 
   private companion object {
