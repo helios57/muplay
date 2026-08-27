@@ -192,8 +192,11 @@ class MediaModuleTest {
 
     proxy.use {
       assertThat(it.port).isGreaterThan(0)
-      val published = registry.publish("https://nav.example/rest/stream?id=42", MP3)
-      assertThat(published.path).doesNotContain("42")
+      val published = registry.publish("https://nav.example/rest/stream?id=$TRACK_ID", MP3)
+      // A distinctive id and not a short one. Written as `id=42` first, and a mutation probe caught
+      // it: the token is 32 random hex characters, so `doesNotContain("42")` is a ~1-in-9 flake
+      // that reads as a failure of whatever was being probed at the time.
+      assertThat(published.path).doesNotContain(TRACK_ID)
       assertThat(it.urlFor(published, "192.168.1.9")).startsWith("http://192.168.1.9:${it.port}/")
       assertThat(upstream).isInstanceOf(OkHttpProxyUpstream::class.java)
     }
@@ -266,6 +269,9 @@ class MediaModuleTest {
      * them down.
      */
     const val UPSTREAM = "https://nav.example/rest/stream?id=1&format=raw"
+
+    /** Long enough that a 32-hex random token cannot contain it by chance. */
+    const val TRACK_ID = "trackIdNobodyGuesses"
 
     /** 2024-01-01T00:00:00Z. Any real clock is past it; a `Clock.fixed(EPOCH, ..)` is not. */
     const val EARLIEST_PLAUSIBLE_EPOCH_MS = 1_704_067_200_000L
