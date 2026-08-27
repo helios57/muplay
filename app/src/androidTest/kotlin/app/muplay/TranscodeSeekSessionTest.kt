@@ -13,10 +13,13 @@ import app.muplay.media.PlaybackConnection
 import app.muplay.media.PlaybackEntryPoint
 import app.muplay.media.PlaybackLauncher
 import app.muplay.model.Song
+import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
 import org.junit.Before
@@ -38,9 +41,12 @@ import org.junit.runner.RunWith
  *    takes from a `Player.Listener` callback carrying the **wrapped** player's commands. A
  *    `ForwardingPlayer` that answers differently has to say so itself, or every seek from the app's
  *    own UI is dropped in silence.
- *  * **`MuPlaybackService.onCreate` is the only place `TranscodeOffsetSupport.refresh()` runs.**
+ *  * **`PlaybackLauncher` is the only place `TranscodeOffsetSupport.refreshIfUnknown()` runs.**
  *    Without it the gate answers "not supported" forever and the seek is withdrawn -- correct
  *    behaviour for a server that cannot do it, and a silent removal of the whole feature here.
+ *    (It ran in `MuPlaybackService.onCreate` first, which is *earlier than signing in*: the service
+ *    is created the moment anything binds a `MediaController`, the negotiation failed, and nothing
+ *    retried it. Measured -- this test and the journey both went red.)
  *
  * Both failures look identical from a journey test: the bar moves and the readout does not. This
  * class is where they are told apart, which is why it asserts the command set *before* it asserts
@@ -59,12 +65,13 @@ class TranscodeSeekSessionTest {
   @Before
   fun setUp() {
     context = ApplicationProvider.getApplicationContext()
+    val client = SubsonicClient(SubsonicCredentials(NAVIDROME_URL, USERNAME, PASSWORD))
     runBlocking {
       credentialStore().save(SubsonicCredentials(NAVIDROME_URL, USERNAME, PASSWORD))
-      opus = SubsonicClient(SubsonicCredentials(NAVIDROME_URL, USERNAME, PASSWORD))
-        .getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
+      opus = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
         .single { it.suffix.equals(OPUS_SUFFIX, ignoreCase = true) }
     }
+    warmTheOffsetTranscode(client)
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
       connection = PlaybackConnection(context)
     }
@@ -114,10 +121,43 @@ class TranscodeSeekSessionTest {
     assertThat(onMain { controller.currentPosition })
       .describedAs("the position the session reports after a seek to ${SEEK_TARGET_MS}ms")
       .isBetween(SEEK_TARGET_MS - POSITION_SLACK_MS, SEEK_TARGET_MS + POSITION_SLACK_MS)
-    // ...and the whole track's length, not what is left of the re-issued stream.
+    // ...and the whole track's length, not the six seconds left of the re-issued stream.
+    //
+    // This only means anything because [warmTheOffsetTranscode] ran: Navidrome answers a cold
+    // `format=mp3&timeOffset=N` request chunked with no `Content-Length`, the extractor then has no
+    // duration at all, and `MuPlayer.getDuration` correctly reports `C.TIME_UNSET` -- which is what
+    // this assertion saw, once, on a run where the container had evicted the entry. Warming it is
+    // the difference between an assertion and a coin toss.
     assertThat(onMain { controller.duration })
       .describedAs("the duration the session reports after the seek")
       .isBetween(FIXTURE_DURATION_MS - DURATION_SLACK_MS, FIXTURE_DURATION_MS + DURATION_SLACK_MS)
+  }
+
+  /**
+   * Fetches the offset transcode over plain HTTP so Navidrome's transcoding cache holds the entry
+   * the player is about to ask for, and refuses to run if it did not warm.
+   *
+   * The cache is keyed on (track, requested bitrate, **offset**) and not on the auth salt --
+   * measured against the container -- so this warms exactly the key production will use.
+   * `MediaItems`/`QueueRepository` ask for `StreamFormat.forSuffix(.., DEFAULT_TRANSCODE_BITRATE_KBPS)`,
+   * which for an `opus` suffix is `Mp3(192)`; asking for any other cap here would warm a different
+   * entry and prove nothing.
+   */
+  private fun warmTheOffsetTranscode(client: SubsonicClient) {
+    val format = StreamFormat.forSuffix(opus.suffix, StreamFormat.DEFAULT_TRANSCODE_BITRATE_KBPS)
+    val seconds = (SEEK_TARGET_MS / 1000L).toInt()
+    val http = OkHttpClient()
+    repeat(2) {
+      http.newCall(Request.Builder().url(client.streamUrl(opus.id, format, seconds)).build())
+        .execute().use { checkNotNull(it.body).bytes() }
+    }
+    val warm = http.newCall(
+      Request.Builder().url(client.streamUrl(opus.id, format, seconds)).build(),
+    ).execute().use { it.header("Accept-Ranges") == "bytes" && it.header("Content-Length") != null }
+    check(warm) {
+      "the transcoding cache entry for (Offset Track, 192 kbps, ${seconds}s) did not warm; this " +
+        "test's duration assertion has no premise. Do NOT flush the cache -- see CLAUDE.md."
+    }
   }
 
   private fun awaitPositionAtLeast(positionMs: Long) =
