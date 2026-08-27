@@ -2461,7 +2461,13 @@ PROBES = [
      "val durationMs: Long get() = endMs",
      # The fixture starts at 62_000 rather than 0 for exactly this reason: against chapter 0 of
      # any book these two programs are the same function.
-     "a chapter's duration is the gap between its two atoms", 1),
+     #
+     # 2, measured rather than assumed: `endMs` alone also reddens `a chapter whose atoms are out
+     # of order is zero long rather than negative` (9_000 instead of 0), because that test's own
+     # fixture has a non-zero `endMs` too. Submitted as 1 and reported MISSED on the first run --
+     # the named test failed exactly as intended, which is the stale-count case this table's
+     # `expected failures` note describes, not a code regression.
+     "a chapter's duration is the gap between its two atoms", 2),
     ("audiobook/speed-nan", BOOK_SETTINGS,
      "speed.isNaN() -> DEFAULT_SPEED", "speed.isNaN() -> speed",
      # `Float.NaN.coerceIn(0.5f, 3.0f)` is NaN, and `setPlaybackSpeed(NaN)` throws from a listener
