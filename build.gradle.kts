@@ -1428,16 +1428,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.StreamRetryPolicy"),
     ),
-    // 4/4 = 1.0000 LINE, also JVM-only (`MediaModuleTest`). LINE and not BRANCH because
-    // `MediaModule` has **no branches at all** -- a BRANCH rule over it would match a class with
-    // zero counters of its own kind, which JaCoCo scores `NaN` and reports as "no violation" at
-    // every minimum. That is the vacuous-floor shape this table's own doc describes, and
-    // `warnVacuousFloors` would have said so on every run.
+    // **15/15 = 1.0000 LINE, also JVM-only** (`MediaModuleTest`) -- re-measured at Plan 6 Task 9,
+    // which took this object from four provider lines to fifteen. The 4/4 recorded here before that
+    // is why the number is re-measured rather than carried forward: a floor comment is a
+    // measurement with a timestamp.
     //
-    // Gating it matters more than four lines suggests: those four lines are the media layer's
-    // timeout policy, and the decision they encode is *not* setting a `callTimeout` -- a limit
-    // that would cut off any track longer than the cap. Until `MediaModuleTest` existed that
-    // decision was protected by a comment. Watched failing with that test moved aside: 0/4.
+    // LINE and not BRANCH because `MediaModule` has **no branches at all** -- a BRANCH rule over it
+    // would match a class with zero counters of its own kind, which JaCoCo scores `NaN` and reports
+    // as "no violation" at every minimum. That is the vacuous-floor shape this table's own doc
+    // describes, and `warnVacuousFloors` would have said so on every run.
+    //
+    // Gating it matters more than fifteen lines suggests, and now for two reasons. Four of them are
+    // the media layer's timeout policy, whose decision is *not* setting a `callTimeout` -- a limit
+    // that would cut off any track longer than the cap. Three more are the resume-policy binding
+    // the cast handover rests on: `MuPlayerFactory` must be handed the **decorator**, and a graph
+    // where it is handed the undecorated policy instead compiles, runs, and loses a listener's
+    // place on every handover back. `MediaModuleTest` asserts that shape by reflection because
+    // there is no other way to fail it. Watched failing with that test moved aside: 0/15.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -1696,6 +1703,120 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.ProgressWriter*"),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 6 Task 9: the handover -----------------------------------------------------------
+    // Every number below is MEASURED, per class, from
+    // `core/media/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml` at this commit, with
+    // `:core:media`'s JVM tier and the `app.muplay.media.cast` device package both in the run.
+    // Per class and never as a module blend, because a BRANCH floor over a class with no BRANCH
+    // counters enforces nothing at any minimum and a blend hides which of these is which.
+    //
+    // `OneShotResumePolicy` BRANCH 4/4 = 1.0000, from **JVM data alone** -- which is the whole
+    // reason `ResumePolicy` takes media ids and an index rather than `MediaItem`s: the decorator
+    // that carries a handover's position is gated by the fast tier. `requiresInstrumentedData` is
+    // deliberately absent, and that was measured rather than assumed (see the falsification below).
+    //
+    // Its four branches are the two decisions the class is: is a target armed, and is the armed
+    // media id in the new queue. `OneShotResumePolicy$Armed` is a `data class` whose generated
+    // members JaCoCo's Kotlin filter removes entirely -- one line, no branches -- so it rides in the
+    // LINE rule below rather than here.
+    //
+    // Falsified by moving `OneShotResumePolicyTest` aside: "Rule violated for class
+    // app.muplay.media.cast.OneShotResumePolicy: branches covered ratio is 0.00, but expected
+    // minimum is 0.90", BUILD FAILED. Raising the minimum is not available at 1.0000 -- JaCoCo
+    // validates `minimum` before comparing and rejects 1.01 as a configuration error, which would
+    // have gone red against any code at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.cast.OneShotResumePolicy"),
+    ),
+    // `PlaybackOutputSwitch` BRANCH 4/4 = 1.0000 and `CastSources` BRANCH 20/20 = 1.0000,
+    // instrumented. Both measure 0/N from JVM data alone -- a `Player` is confined to a `Looper` and
+    // a `MediaItem` is built on `android.net.Uri`, and this project has no Robolectric.
+    //
+    // The switch's four branches are its two `local?.let`s, and both arms of both are real: a
+    // remote installed before there is a local player, and a `returnToLocal` on a switch nothing
+    // has been installed into. `CastSources`' twenty are the reads that can be absent -- no
+    // `localConfiguration`, no title, no artist, no artwork, no duration, no `mimeType`, and the
+    // book/song decision -- every one of which is a queue a real user can produce.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.PlaybackOutputSwitch",
+        "app.muplay.media.cast.CastSources",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // `UpnpPlayer` BRANCH 23/25 = 0.9200, instrumented. BRANCH and not LINE because this class is
+    // four `when`s and a handful of sentinel checks, and covering either side of any of them
+    // satisfies a LINE floor: `if (startPositionMs == C.TIME_UNSET) 0L else startPositionMs` with
+    // only the else arm driven is a wrapper that asks a speaker to seek to `-9223372036854775807`,
+    // and it is a line that runs.
+    //
+    // The two branches still missing are `playbackState`'s BUFFERING and ENDED arms. Both are real
+    // and neither is reachable deterministically from this tier: BUFFERING is the window between
+    // `setQueue` and the renderer's first `GetTransportInfo`, and ENDED needs a fixture to play to
+    // its own end through a fake renderer whose clock only moves when a test moves it. What
+    // `CastPlayback`'s four states *mean* is gated in `:core:cast` on the fast tier, against a real
+    // renderer, with every arm reachable -- which is the whole reason those decisions live there.
+    //
+    // 0.90 leaves those two and no more: one further uncovered branch is 22/25 = 0.88 and fails.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.cast.UpnpPlayer"),
+      requiresInstrumentedData = true,
+    ),
+    // The same family's LINE, instrumented, and it reaches what the BRANCH rule cannot: the six
+    // `command { ... }` lambdas -- `handleSetMediaItems$1`, `handleSetPlayWhenReady$1`,
+    // `handlePrepare$1`, `handleStop$1`, `handleSeek$1`, `handleSetDeviceVolume$1`,
+    // `handleRelease$1`, `command$1` -- which carry one or two lines each and no branch worth
+    // gating. Those lines are exactly what a handler loses when its `scope.launch` is deleted, and
+    // a deleted handler is a transport button that silently does nothing.
+    //
+    // `handlePrepare$1` measures BRANCH 1/2: it is the `switch(label)` state machine Kotlin
+    // compiles an empty suspending lambda into, which is a fact about the compiler and not about a
+    // test, so it is named on LINE only. Same treatment `:core:cast` gives `CastSession`'s two
+    // suspending lambdas, and for the same stated reason.
+    //
+    // `*`, not a literal `$`: a literal `$` in an include pattern never matches (this table's own
+    // doc, gotcha 3).
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.cast.UpnpPlayer*"),
+      requiresInstrumentedData = true,
+    ),
+    // `CastSessionManager` LINE 84/84 = 1.0000, instrumented, **and LINE is the honest counter
+    // here rather than the module default**. It measures BRANCH 33/58 = 0.5690, and that number is
+    // not about a test: `castTo` and `handBackTo` are `suspend` functions, so most of those 58 are
+    // the `switch(label)` state machine the Kotlin compiler emits for their suspension points, and
+    // only the sequential path through a state machine is ever taken. Gating BRANCH here would mean
+    // lowering a floor to accommodate the compiler, which is the shape this table exists to refuse.
+    // `:core:cast` records the identical decision for `CastSession`'s two suspending lambdas.
+    //
+    // The plan asked for a BRANCH floor over this class. That was written before the class existed;
+    // the measurement is what stands.
+    //
+    // `CastSessionManager$Handover` (a `data class`, 6 lines) and `$handleSessionState$1` (1 line)
+    // ride in the pattern. `$castTo$1`, `$handBackTo$1` and `$stopCasting$1` are the
+    // `ContinuationImpl` subclasses and carry **zero counters of either kind**, so JaCoCo evaluates
+    // nothing for them and `warnUngatedClasses` skips them.
+    //
+    // Falsified by moving the `app.muplay.media.cast` device package's `.ec` aside: every class
+    // here drops to 0.00 and the build fails naming each one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.cast.CastSessionManager*"),
       requiresInstrumentedData = true,
     ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------

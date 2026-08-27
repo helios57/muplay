@@ -99,6 +99,22 @@ class UpnpPlayer(
   /** The session's own view, for a caller that needs the failure or the last known position. */
   val playback: CastPlayback get() = session.playback
 
+  /**
+   * `PLAYBACK_TYPE_REMOTE` is what makes the volume keys and the notification's volume row drive the
+   * **speaker** rather than the phone's own stream, and `0..100` is UPnP `RenderingControl`'s own
+   * range.
+   *
+   * An instance field rather than a `companion object` constant, which is a coverage decision and
+   * not a style one: a `private companion object` compiles to a second class whose only line is a
+   * synthetic constructor JaCoCo measures as **0/1**, so it would have to be either gated at a
+   * floor it cannot meet or left for `warnUngatedClasses` to name on every run. One `DeviceInfo`
+   * per cast session costs nothing.
+   */
+  private val remoteDevice: DeviceInfo = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
+    .setMinVolume(0)
+    .setMaxVolume(100)
+    .build()
+
   override fun getState(): State {
     val snapshot = session.playback
     val playlist = items.mapIndexed { index, item ->
@@ -124,7 +140,7 @@ class UpnpPlayer(
       .setPlaylist(playlist)
       // Always 1.0. See this class's own note: UPnP has no other speed to offer.
       .setPlaybackParameters(PlaybackParameters.DEFAULT)
-      .setDeviceInfo(REMOTE_DEVICE)
+      .setDeviceInfo(remoteDevice)
       .setDeviceVolume(snapshot.volumePercent)
     if (playlist.isNotEmpty()) {
       builder.setCurrentMediaItemIndex(snapshot.currentIndex.coerceIn(0, playlist.size - 1))
@@ -142,6 +158,20 @@ class UpnpPlayer(
     }
     return builder.build()
   }
+
+  /**
+   * The item Media3 shows **while a command is still in flight**, given this app's own duration.
+   *
+   * `SimpleBasePlayer` masks state between a `setMediaItems` and the future that handler returns,
+   * and its default placeholder carries `durationUs = C.TIME_UNSET`. Measured on `muplay37`:
+   * `player.duration` read immediately after `setMediaItems` was `C.TIME_UNSET` -- so a seek bar
+   * built from it has no length for as long as the speaker takes to answer, which is precisely the
+   * regression against local playback that taking the duration from the library rather than from
+   * `GetPositionInfo` exists to avoid. The library already knows the length; there is no reason for
+   * the masked state not to.
+   */
+  override fun getPlaceholderMediaItemData(mediaItem: MediaItem): MediaItemData =
+    super.getPlaceholderMediaItemData(mediaItem).buildUpon().setDurationUs(durationUs(mediaItem)).build()
 
   override fun handleSetMediaItems(
     mediaItems: MutableList<MediaItem>,
@@ -281,16 +311,4 @@ class UpnpPlayer(
         PlaybackException.ERROR_CODE_IO_UNSPECIFIED
     },
   )
-
-  private companion object {
-    /**
-     * `PLAYBACK_TYPE_REMOTE` is what makes the volume keys and the notification's volume row drive
-     * the *speaker* rather than the phone's own stream, and `0..100` is UPnP `RenderingControl`'s
-     * own range.
-     */
-    val REMOTE_DEVICE: DeviceInfo = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
-      .setMinVolume(0)
-      .setMaxVolume(100)
-      .build()
-  }
 }
