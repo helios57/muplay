@@ -199,6 +199,12 @@ BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 # de-duplication and the whole timeline are plain Kotlin and are gated here.
 CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
 BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
+# Plan 4 Task 8. The two Android-free halves of the sleep timer. `SleepTimerController` needs a real
+# `Player` and `ShakeSensor` needs a real `SensorManager`, so both are out of this runner's reach and
+# their mutations are recorded by hand in task-8-report.md, per the SCOPE note above -- but the fade
+# ramp and the shake decision are plain arithmetic and are gated here.
+SLEEP_FADE = "core/media/src/main/kotlin/app/muplay/media/SleepTimerFade.kt"
+SHAKE_DETECTOR = "core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -3305,6 +3311,50 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+
+    # ---- Plan 4 Task 8: the sleep timer's arithmetic ----------------------------------------
+    ("sleep/fade-zero-divisor", SLEEP_FADE,
+     "    fadeMs <= 0L -> if (remainingMs <= 0L) 0f else 1f\n",
+     "",
+     # A caller that turns the fade off reaches `x / 0f`, which is Infinity or NaN. Both are handed
+     # straight to `player.volume`, which throws for one and is undefined for the other.
+     "a fade length of zero does not divide by zero", 1),
+    ("sleep/fade-negative-volume", SLEEP_FADE,
+     "    remainingMs <= 0L -> 0f\n",
+     "",
+     # The tick lands past the deadline routinely, so this is the ordinary last observation of every
+     # timer, not an edge. `Player.setVolume` throws on a negative.
+     "a negative remaining time is silence, not a negative volume", 2),
+    ("sleep/fade-length-ignored", SLEEP_FADE,
+     "    else -> remainingMs.toFloat() / fadeMs",
+     "    else -> remainingMs.toFloat() / DEFAULT_FADE_MS",
+     # Every other assertion in that file passes 20 000, which is the default -- so a `fadeMs` that
+     # is declared and then ignored is invisible to all of them.
+     "the fade length is a parameter and it moves the answer", 1),
+    ("sleep/shake-peak-gap", SHAKE_DETECTOR,
+     "    if (peaks.isNotEmpty() && timestampMs - peaks.last() < minPeakGapMs) return false\n",
+     "",
+     # A 100 Hz accelerometer produces several above-threshold samples per physical jolt, so without
+     # the gap one sharp knock is three peaks and every knock is a shake.
+     "two samples from the same jolt do not count twice", 2),
+    ("sleep/shake-reset-on-fire", SHAKE_DETECTOR,
+     "    if (peaks.size < requiredPeaks) return false\n    reset()\n    return true",
+     "    if (peaks.size < requiredPeaks) return false\n    return true",
+     # Without it the buffer keeps the peaks that just fired, so the next single jolt fires again and
+     # the phone is hair-trigger for the life of the process.
+     "a second shake is detected after the first", 1),
+    ("sleep/shake-window", SHAKE_DETECTOR,
+     "    while (peaks.isNotEmpty() && timestampMs - peaks.first() > windowMs) peaks.removeFirst()",
+     "    while (peaks.isNotEmpty() && timestampMs - peaks.first() > windowMs * 10) peaks.removeFirst()",
+     # Picking the phone up, putting it down and picking it up again over three seconds is not a
+     # shake. Without a window it is.
+     "three jolts spread beyond the window are not", 2),
+    ("sleep/shake-z-axis-only", SHAKE_DETECTOR,
+     "    val magnitudeG = sqrt(x * x + y * y + z * z) / GRAVITY",
+     "    val magnitudeG = sqrt(z * z) / GRAVITY",
+     # Reading only z looks correct, because a resting phone's gravity is on z -- and every other
+     # test in that file jolts z.
+     "the magnitude uses all three axes", 1),
 ]
 
 
@@ -3435,6 +3485,11 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 8. Added in the same edit as the seven `sleep/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    SLEEP_FADE,
+    SHAKE_DETECTOR,
 ]
 
 
