@@ -1450,4 +1450,58 @@ class ConventionTest {
       .describedAs("nothing may echo a signing secret; GitHub's log masking is not a second chance")
       .isEmpty()
   }
+
+  /**
+   * `build-logic`'s own tests are run by a CI workflow.
+   *
+   * They were not, and nobody had noticed. `build-logic` is an **included build** (see
+   * `settings.gradle.kts`'s `pluginManagement { includeBuild("build-logic") }`), so `./gradlew check`
+   * at the repository root does not reach it: it builds and runs the eleven *project* modules and
+   * stops. Measured while writing this rule -- no workflow file mentioned `build-logic` in any
+   * `run:` line, so **thirteen tests had never executed in CI** -- and those two suites were the
+   * only red-capable evidence for two gates:
+   *
+   *  * `VerifyMergedManifestTaskTest` is the only thing in this repository that fails when the
+   *    merged-manifest gate stops checking. Its own header records the measurement: with the
+   *    `missing` block deleted from `verify()` *and* a real permission deleted from
+   *    `core/media/src/main/AndroidManifest.xml`, every other gate here -- including all of
+   *    `ConventionTest` -- stayed green.
+   *  * `VerifyReleaseVersionTaskTest` is the only thing that watches the version gate say no, and
+   *    that gate's happy path is the path every single build takes.
+   *
+   * This is the fourth time this repository has found a working test suite that no gate runs, after
+   * `:feature:player`'s 24 instrumented tests, `:integrations:core`'s 17 and `:integrations:lidarr`.
+   * The pattern is identical every time and so is the fix: derive the list from the tree rather than
+   * write it down. Any directory under `build-logic` with a `src/test` source set has to be invoked
+   * by name in a workflow's Gradle command line.
+   */
+  @Test
+  fun `build-logic's own tests are run by CI`() {
+    val root = repoRoot()
+    val buildLogic = File(root, "build-logic")
+    val moduleDirectories = buildLogic.listFiles().orEmpty()
+      .filter { it.isDirectory && File(it, "src/test").isDirectory }
+      .map { it.name }
+      .sorted()
+
+    // Vacuity: a `build-logic` that had been renamed or restructured would otherwise satisfy the
+    // assertion below by having nothing to check.
+    assertThat(moduleDirectories)
+      .describedAs("build-logic modules with a src/test source set")
+      .isNotEmpty()
+
+    val workflows = File(root, ".github/workflows").listFiles().orEmpty().filter { it.extension == "yml" }
+    assertThat(workflows).describedAs("workflow files").isNotEmpty()
+    // Comments stripped by `gradleTaskTokens`, and load-bearing here too: the step added for this
+    // rule explains at length what lives in `build-logic`'s test source set, naming it.
+    val tokens = workflows.flatMap { gradleTaskTokens(it.readText()) }
+    assertThat(tokens).describedAs("tokens of every workflow's gradlew command lines").isNotEmpty()
+
+    assertThat(moduleDirectories.filterNot { module -> tokens.any { it == ":build-logic:$module:test" } })
+      .describedAs(
+        "no workflow runs these build-logic modules' tests, so they exist and never execute in " +
+          "CI -- which is exactly what was true of all of build-logic until this rule was written",
+      )
+      .isEmpty()
+  }
 }

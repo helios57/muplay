@@ -43,6 +43,24 @@ jobs:
         # without anyone remembering to add a line here.
         run: ./gradlew verifyNoMockFrameworks
 
+      - name: Convention plugin behaviour
+        # `build-logic` is an **included build**, so `./gradlew check` at the root does not touch it
+        # -- and until this step existed, nothing in CI ran a single one of its tests. That is the
+        # shape this repository has now found four times: a working suite that no gate executes
+        # (`:feature:player`'s 24 instrumented tests, `:integrations:core`'s 17, and this).
+        #
+        # What is in there is not incidental. `VerifyMergedManifestTaskTest` is the only thing that
+        # goes red when the merged-manifest gate stops checking (measured: delete its `missing`
+        # block *and* a real permission and every other gate in this repository stays green);
+        # `VerifyReleaseVersionTaskTest` is the only thing that watches the version gate say no; and
+        # Plan 8 Task 7's three release tasks are verified nowhere else at all, because the defects
+        # they catch -- a mapping that describes a different build, a debug entry point R8 renamed,
+        # a 64-bit library aligned to 4 KB -- cannot be arranged by flipping a build flag.
+        #
+        # Held against the tree by `ConventionTest`'s `build-logic's own tests are run by CI`, so a
+        # second build-logic module with a test source set cannot be forgotten here.
+        run: ./gradlew :build-logic:convention:test
+
       - name: Android Lint
         run: ./gradlew lint
 
