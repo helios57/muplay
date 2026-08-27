@@ -582,6 +582,24 @@ interactive work instead of competing with it. After both, load fell to 24.
 Run `./gradlew --stop` after changing either — a running daemon keeps its old
 settings and will not pick them up.
 
+**Swap was the risk that actually bit, and it is now fixed.** Measured 2026-08-27
+17:28 with seven worktrees building: the 8 GB `/swap.img` was **100% used**, RAM
+available was down to **4 GB**, and `buff/cache` had been squeezed to 3 GB. The
+single largest consumer is not a build at all — the emulator's
+`qemu-system-x86_64` held **35 GB resident**, which no Gradle setting can reach
+and which a restart is forbidden to reclaim.
+
+A 24 GB swapfile now lives on the hot-added raid5 disk at `/mnt/data/swapfile`,
+priority 10 so new pressure lands there rather than on the root disk, in
+`/etc/fstab` with `nofail`, added live with `fallocate`/`mkswap`/`swapon` and
+verified to come back from fstab alone (`swapoff` then `swapon -a`). It is a
+safety net, not a performance feature: swapping to a virtio disk is slow, and the
+point is that a memory spike degrades instead of OOM-killing somebody's lane.
+
+Check `free -h` alongside `df -h /` before blaming a flaky build, and remember
+what the numbers looked like when this was written — `available` under about 5 GB
+with every daemon still warming up is the state to act on.
+
 **Disk is the risk that is not yet fixed.** `/` was at **94% (26 GB free of
 393 GB)** during the same window, and under that load `du` and `docker system df`
 both exceeded a 100-second timeout, which is itself the symptom. A full disk on

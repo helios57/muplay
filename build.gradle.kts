@@ -1611,10 +1611,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.StreamRetryPolicy"),
     ),
-    // **15/15 = 1.0000 LINE, also JVM-only** (`MediaModuleTest`) -- re-measured at Plan 6 Task 9,
-    // which took this object from four provider lines to fifteen. The 4/4 recorded here before that
-    // is why the number is re-measured rather than carried forward: a floor comment is a
-    // measurement with a timestamp.
+    // **14/14 = 1.0000 LINE, also JVM-only** (`MediaModuleTest`) -- measured on master after the
+    // merge, not carried forward from either lane. This one number has now been wrong twice in a
+    // day, both times for the same reason, which is why it is worth the paragraph:
+    //
+    //   * it read 4/4 until Plan 6 Task 9 added the cast-handover bindings and re-measured 15/15;
+    //   * 15 was already stale when it was written, because Plan 4 Task 4 moved `provideClock`
+    //     down into `:core:database`'s `DataModule` with its consumer -- in a **different lane**,
+    //     merging hours later. Neither lane was wrong about the tree it could see.
+    //
+    // A floor comment is a measurement with a timestamp, and two lanes editing one object make the
+    // timestamp the only interesting part. The 1.00 minimum is what actually gates; the count is
+    // here so a reader can tell whether it still describes the object in front of them.
     //
     // LINE and not BRANCH because `MediaModule` has **no branches at all** -- a BRANCH rule over it
     // would match a class with zero counters of its own kind, which JaCoCo scores `NaN` and reports
