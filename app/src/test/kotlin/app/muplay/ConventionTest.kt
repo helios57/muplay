@@ -493,6 +493,61 @@ class ConventionTest {
       .isEmpty()
   }
 
+  /**
+   * **Every module with instrumented tests has those sources compiled by the fast tier.**
+   *
+   * The sibling test above proves the emulator job *runs* them. This one proves the ten-minute job
+   * *compiles* them, which is a different and cheaper guarantee: `check` compiles neither
+   * `src/androidTest` nor the release variant, so a shared test helper can change shape under a
+   * module and the break stays invisible until somebody pays for an emulator. That is not
+   * hypothetical either -- master once carried a `:core:media:compileDebugAndroidTestKotlin`
+   * failure through every gate because two lanes changed `RealTrackBytes.client()` and its caller
+   * independently.
+   *
+   * The step's list was hand-written and named **two** of the seven modules that have a
+   * `src/androidTest`. `:core:database`, `:feature:player`, `:integrations:core`,
+   * `:integrations:lidarr` and `:integrations:bindery` could all have stopped compiling their
+   * device sources with `pr.yml` green. It is the fourth list in this repository written by hand to
+   * describe something discoverable from the tree, and the fourth to drift.
+   *
+   * Derived from the same scan as the emulator-job test, and asserted non-empty first for the same
+   * reason: a scan that found nothing must not be able to report success.
+   */
+  @Test
+  fun `every module with instrumented tests is compiled by the fast tier`() {
+    val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
+    val workflow = workflowFile.readText()
+
+    val modulesWithDeviceTests = moduleBuildFiles()
+      .map { it.parentFile }
+      .filter { File(it, "src/androidTest").isDirectory }
+      .map { ":" + it.relativeTo(repoRoot()).path.replace(File.separatorChar, ':') }
+      .sorted()
+
+    assertThat(modulesWithDeviceTests)
+      .describedAs("the scan for modules with a src/androidTest source set")
+      .isNotEmpty()
+    assertThat(modulesWithDeviceTests).contains(":app", ":core:media")
+
+    val step = workflow.lines().singleOrNull { it.contains("compileDebugAndroidTestKotlin") }
+    assertThat(step)
+      .describedAs(
+        "${workflowFile.path} must have exactly one line invoking compileDebugAndroidTestKotlin; " +
+          "this test cannot check a list it cannot find",
+      )
+      .isNotNull()
+
+    val missing = modulesWithDeviceTests.filterNot {
+      checkNotNull(step).contains("$it:compileDebugAndroidTestKotlin")
+    }
+    assertThat(missing)
+      .describedAs(
+        "${workflowFile.path}'s `Compile the gates check does not` step never compiles these " +
+          "modules' instrumented sources, so they can break and only the emulator job will say so",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `pr yml still runs the destructive-migration gate, unqualified`() {
     val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
