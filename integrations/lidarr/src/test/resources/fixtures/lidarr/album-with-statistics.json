@@ -1,0 +1,523 @@
+{
+  "title": "Aura",
+  "disambiguation": "",
+  "overview": "",
+  "artistId": 4,
+  "foreignAlbumId": "ad706e89-d59f-3833-8b46-bf3fd684b9e0",
+  "monitored": true,
+  "anyReleaseOk": true,
+  "profileId": 1,
+  "duration": 3982996,
+  "albumType": "Album",
+  "secondaryTypes": [],
+  "mediumCount": 1,
+  "ratings": {
+    "votes": 3,
+    "value": 7.3
+  },
+  "releaseDate": "1989-09-12T00:00:00Z",
+  "releases": [
+    {
+      "id": 8,
+      "albumId": 7,
+      "foreignReleaseId": "49314e6c-95b0-4a39-bb79-bfe7236765c2",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 3982996,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "CD"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [
+        "United States"
+      ],
+      "label": [
+        "Columbia"
+      ],
+      "format": "CD",
+      "monitored": true
+    },
+    {
+      "id": 9,
+      "albumId": 7,
+      "foreignReleaseId": "1ec6e9cd-fc13-43ad-a09d-46006de936b5",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 3950000,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "CD"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [
+        "Europe"
+      ],
+      "label": [
+        "CBS"
+      ],
+      "format": "CD",
+      "monitored": false
+    },
+    {
+      "id": 10,
+      "albumId": 7,
+      "foreignReleaseId": "0e84114b-007b-48bd-b468-64d6bf4591ba",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 3950000,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "CD"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [
+        "United States"
+      ],
+      "label": [
+        "Columbia"
+      ],
+      "format": "CD",
+      "monitored": false
+    },
+    {
+      "id": 11,
+      "albumId": 7,
+      "foreignReleaseId": "c68b71fd-4104-4eb2-b240-1565b7700c5a",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 4021000,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "CD"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [],
+      "label": [
+        "Columbia"
+      ],
+      "format": "CD",
+      "monitored": false
+    },
+    {
+      "id": 12,
+      "albumId": 7,
+      "foreignReleaseId": "fbb13e1f-710e-437d-ad78-4afd6a5035a3",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 4019557,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "CD"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [
+        "Europe"
+      ],
+      "label": [
+        "Columbia",
+        "Legacy"
+      ],
+      "format": "CD",
+      "monitored": false
+    },
+    {
+      "id": 13,
+      "albumId": 7,
+      "foreignReleaseId": "7a2bc537-bafc-4fcd-9499-5d747e18ebc0",
+      "title": "Aura",
+      "status": "Official",
+      "duration": 3954474,
+      "trackCount": 10,
+      "media": [
+        {
+          "mediumNumber": 1,
+          "mediumName": "",
+          "mediumFormat": "Digital Media"
+        }
+      ],
+      "mediumCount": 1,
+      "disambiguation": "",
+      "country": [
+        "[Worldwide]"
+      ],
+      "label": [
+        "Columbia"
+      ],
+      "format": "Digital Media",
+      "monitored": false
+    }
+  ],
+  "genres": [
+    "Jazz",
+    "Jazz Fusion"
+  ],
+  "media": [
+    {
+      "mediumNumber": 1,
+      "mediumName": "",
+      "mediumFormat": "CD"
+    }
+  ],
+  "artist": {
+    "status": "ended",
+    "ended": true,
+    "artistName": "Miles Davis",
+    "foreignArtistId": "561d854a-6a28-4aa7-8c99-323e6ce46c2a",
+    "tadbId": 0,
+    "discogsId": 0,
+    "artistType": "Person",
+    "disambiguation": "jazz trumpeter, bandleader, songwriter",
+    "links": [
+      {
+        "url": "http://all-blues.de/music/missing.htm",
+        "name": "all-blues"
+      },
+      {
+        "url": "http://www.kind-of-blue.de/",
+        "name": "kind-of-blue"
+      },
+      {
+        "url": "https://www.discogs.com/artist/23755",
+        "name": "discogs"
+      },
+      {
+        "url": "https://myspace.com/milesdavis",
+        "name": "myspace"
+      },
+      {
+        "url": "https://www.bbc.co.uk/music/artists/561d854a-6a28-4aa7-8c99-323e6ce46c2a",
+        "name": "bbc"
+      },
+      {
+        "url": "https://www.facebook.com/MilesDavis",
+        "name": "facebook"
+      },
+      {
+        "url": "https://www.imdb.com/name/nm0002537/",
+        "name": "imdb"
+      },
+      {
+        "url": "https://www.allmusic.com/artist/mn0000423829",
+        "name": "allmusic"
+      },
+      {
+        "url": "https://secondhandsongs.com/artist/106",
+        "name": "secondhandsongs"
+      },
+      {
+        "url": "http://viaf.org/viaf/97762193",
+        "name": "viaf"
+      },
+      {
+        "url": "https://www.wikidata.org/wiki/Q93341",
+        "name": "wikidata"
+      },
+      {
+        "url": "https://www.last.fm/music/Miles+Davis",
+        "name": "last"
+      },
+      {
+        "url": "https://commons.wikimedia.org/wiki/File:Miles_Davis_by_Palumbo.jpg",
+        "name": "wikimedia"
+      },
+      {
+        "url": "https://open.spotify.com/artist/0kbYTNQb4Pb1rPbbaF0pT4",
+        "name": "spotify"
+      },
+      {
+        "url": "https://vgmdb.net/artist/27058",
+        "name": "vgmdb"
+      },
+      {
+        "url": "https://d-nb.info/gnd/118524046",
+        "name": "d-nb"
+      },
+      {
+        "url": "http://id.loc.gov/authorities/names/n50035608",
+        "name": "loc"
+      },
+      {
+        "url": "https://catalogue.bnf.fr/ark:/12148/cb13893030g",
+        "name": "bnf"
+      },
+      {
+        "url": "https://openlibrary.org/works/OL4359245A",
+        "name": "openlibrary"
+      },
+      {
+        "url": "http://snaccooperative.org/ark:/99166/w68k7wq0",
+        "name": "snaccooperative"
+      },
+      {
+        "url": "https://twitter.com/milesdavis",
+        "name": "twitter"
+      },
+      {
+        "url": "https://www.deezer.com/artist/1910",
+        "name": "deezer"
+      },
+      {
+        "url": "https://www.songkick.com/artists/564879",
+        "name": "songkick"
+      },
+      {
+        "url": "https://genius.com/artists/Miles-davis",
+        "name": "genius"
+      },
+      {
+        "url": "https://www.45cat.com/vinyl/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.45cat.com/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.45cat.com/cdalbum/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.45cat.com/live/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.45cat.com/tape/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.45cat.com/78rpm/artist/miles-davis",
+        "name": "45cat"
+      },
+      {
+        "url": "https://www.muziekweb.nl/Link/M00000286446/",
+        "name": "muziekweb"
+      },
+      {
+        "url": "https://tidal.com/artist/55",
+        "name": "tidal"
+      },
+      {
+        "url": "https://www.youtube.com/channel/UC1ZS17c0DlqUjsXZK3K_bgA",
+        "name": "youtube"
+      },
+      {
+        "url": "https://www.instagram.com/milesdavis/",
+        "name": "instagram"
+      },
+      {
+        "url": "https://music.apple.com/us/artist/44984",
+        "name": "apple"
+      },
+      {
+        "url": "https://music.apple.com/us/artist/44984",
+        "name": "apple"
+      },
+      {
+        "url": "https://music.youtube.com/channel/UCIev2PktTH5mI-QlGmbUkiw",
+        "name": "youtube"
+      },
+      {
+        "url": "https://jaxsta.com/profile/80eaeb6a-e128-4421-8ab5-a4641d03f790",
+        "name": "jaxsta"
+      },
+      {
+        "url": "https://www.youtube.com/channel/UC9NlE_veniVpnvpIegfifMQ",
+        "name": "youtube"
+      },
+      {
+        "url": "https://www.qobuz.com/us-en/interpreter/miles-davis/6760",
+        "name": "qobuz"
+      },
+      {
+        "url": "https://www.qobuz.com/us-en/interpreter/miles-davis/6760",
+        "name": "qobuz"
+      },
+      {
+        "url": "https://www.plosin.com/milesahead/",
+        "name": "plosin"
+      },
+      {
+        "url": "https://www.milesdavis.com/",
+        "name": "milesdavis"
+      },
+      {
+        "url": "https://musicmoz.org/Bands_and_Artists/D/Davis,_Miles/",
+        "name": "musicmoz"
+      },
+      {
+        "url": "https://rateyourmusic.com/artist/miles-davis",
+        "name": "rateyourmusic"
+      },
+      {
+        "url": "https://id.oclc.org/worldcat/entity/E39PBJgHgCKJYFHypjdXmCyKh3",
+        "name": "oclc"
+      },
+      {
+        "url": "https://nla.gov.au/nla.party-911157",
+        "name": "gov"
+      },
+      {
+        "url": "https://www.jazzmusicarchives.com/artist/miles-davis",
+        "name": "jazzmusicarchives"
+      },
+      {
+        "url": "https://www.progarchives.com/artist.asp?id=3906",
+        "name": "progarchives"
+      },
+      {
+        "url": "https://www.musik-sammler.de/artist/miles-davis/",
+        "name": "musik-sammler"
+      },
+      {
+        "url": "https://www.setlist.fm/setlists/miles-davis-3d6b58b.html",
+        "name": "setlist"
+      },
+      {
+        "url": "https://www.tiktok.com/@milesdavis",
+        "name": "tiktok"
+      },
+      {
+        "url": "https://www.whosampled.com/Miles-Davis/",
+        "name": "whosampled"
+      },
+      {
+        "url": "https://us.7digital.com/artist/miles-davis",
+        "name": "7digital"
+      },
+      {
+        "url": "https://www.melon.com/artist/detail.htm?artistId=3658",
+        "name": "melon"
+      },
+      {
+        "url": "https://www.melon.com/artist/detail.htm?artistId=3658",
+        "name": "melon"
+      },
+      {
+        "url": "https://mora.jp/artist/38366/",
+        "name": "mora"
+      },
+      {
+        "url": "https://ototoy.jp/_/default/a/897626",
+        "name": "ototoy"
+      },
+      {
+        "url": "https://open.qobuz.com/artist/6760",
+        "name": "qobuz"
+      },
+      {
+        "url": "https://open.qobuz.com/artist/6760",
+        "name": "qobuz"
+      },
+      {
+        "url": "https://milesdavis.bandcamp.com/",
+        "name": "bandcamp"
+      },
+      {
+        "url": "https://music.apple.com/gb/artist/44984",
+        "name": "apple"
+      }
+    ],
+    "nextAlbum": null,
+    "lastAlbum": null,
+    "images": [],
+    "path": "/music/Miles Davis",
+    "qualityProfileId": 1,
+    "metadataProfileId": 1,
+    "monitored": true,
+    "monitorNewItems": "all",
+    "genres": [
+      "Jazz",
+      "Jazz Fusion",
+      "Modal Jazz",
+      "Cool Jazz",
+      "Hard Bop",
+      "Post-Bop",
+      "Bebop",
+      "Jazz-Funk",
+      "Rock",
+      "Funk",
+      "Classical"
+    ],
+    "cleanName": "milesdavis",
+    "sortName": "miles davis",
+    "tags": [],
+    "added": "2026-08-27T10:24:51Z",
+    "addOptions": {
+      "searchForMissingAlbums": false,
+      "monitor": "all",
+      "albumsToMonitor": [],
+      "monitored": false
+    },
+    "ratings": {
+      "votes": 21,
+      "value": 9.6
+    },
+    "id": 4
+  },
+  "images": [
+    {
+      "url": "/MediaCover/Albums/7/cover.jpg?lastWrite=639234231249115504",
+      "coverType": "cover",
+      "extension": ".jpg",
+      "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/1ec6e9cd-fc13-43ad-a09d-46006de936b5/22641490455-1200.jpg"
+    },
+    {
+      "url": "/MediaCover/Albums/7/disc.jpg",
+      "coverType": "disc",
+      "extension": ".jpg",
+      "remoteUrl": "https://images.lidarr.audio/cache/https://coverartarchive.org/release/1ec6e9cd-fc13-43ad-a09d-46006de936b5/22641492765-1200.jpg"
+    }
+  ],
+  "links": [
+    {
+      "url": "https://www.discogs.com/master/62288",
+      "name": "discogs"
+    },
+    {
+      "url": "https://www.wikidata.org/wiki/Q263119",
+      "name": "wikidata"
+    },
+    {
+      "url": "https://www.allmusic.com/album/mw0000654153",
+      "name": "allmusic"
+    },
+    {
+      "url": "https://www.last.fm/music/Miles+Davis/Aura",
+      "name": "last"
+    }
+  ],
+  "statistics": {
+    "trackFileCount": 0,
+    "trackCount": 10,
+    "totalTrackCount": 10,
+    "sizeOnDisk": 0,
+    "percentOfTracks": 0
+  },
+  "id": 7
+}

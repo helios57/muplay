@@ -98,6 +98,17 @@ class LidarrSourceProviderTest {
         ): LidarrAddOutcome =
           throw UnsupportedOperationException("this fake answers nothing about the wire")
 
+        // Task 7's two, on the same rule. `queue()` throwing rather than returning `emptyList()`
+        // matters for the specific reason the others do: an empty queue is a *meaningful* answer
+        // that `LidarrStatusMapper` reads as "nothing is downloading", so a fake that returned one
+        // would let a later test assert a request's status and be satisfied by a fake that never
+        // asked Lidarr anything.
+        override suspend fun queue(): List<LidarrQueueItem> =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        override suspend fun albumProgress(albumId: Int): LidarrAlbumProgress? =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
         override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? =
           throw UnsupportedOperationException("this fake answers nothing about the wire")
       }

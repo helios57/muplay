@@ -125,6 +125,52 @@ class LidarrClient internal constructor(
       ?.int("id")
 
   /**
+   * One page of the queue, mapped.
+   *
+   * The page size and `includeUnknownArtistItems` are both sent explicitly; see [LidarrApi.queue]
+   * for why neither default is safe. A body that is not a queue page yields an empty list rather
+   * than a throw, because "nothing is downloading" is the fail-closed reading of "I could not read
+   * the queue" and a status poll has nothing to show a user for a `SerializationException`.
+   */
+  override suspend fun queue(): List<LidarrQueueItem> =
+    call { api.queue(pageSize = QUEUE_PAGE_SIZE, includeUnknownArtistItems = true) }
+      .records
+      .orEmpty()
+      .map { record ->
+        LidarrQueueItem(
+          albumId = record.albumId,
+          artistId = record.artistId,
+          sizeBytes = record.size,
+          // `record.sizeleft`, lower-case `l`. See `QueueRecordBody`.
+          sizeLeftBytes = record.sizeleft,
+          trackedDownloadState = record.trackedDownloadState.orEmpty(),
+          trackedDownloadStatus = record.trackedDownloadStatus.orEmpty(),
+          errorMessage = record.errorMessage,
+        )
+      }
+
+  /**
+   * How much of [albumId] is on disk.
+   *
+   * **A 404 is a normal answer to "how is this going"** -- a user can delete an album in Lidarr
+   * while MuPlay still holds a request row naming it, and measured, an id that no longer exists
+   * (and one that never did) answers 404. Anything else still propagates: a 401 here means the key
+   * stopped working, which is not something a poller may swallow.
+   *
+   * A missing `statistics` object yields `null` rather than `LidarrAlbumProgress(0, 0)`, and that
+   * distinction is load-bearing rather than fastidious: measured on the live container, an album
+   * seconds after a successful add carries **no `statistics` key at all**, and only a real
+   * `0`-of-`0` could ever be mistaken by a caller for a count.
+   */
+  override suspend fun albumProgress(albumId: Int): LidarrAlbumProgress? =
+    try {
+      call { api.album(albumId) }.statistics
+        ?.let { LidarrAlbumProgress(it.trackFileCount, it.totalTrackCount) }
+    } catch (e: LidarrHttpException) {
+      if (e.status == HTTP_NOT_FOUND) null else throw e
+    }
+
+  /**
    * A typed view over one lookup element, or `null` when the element cannot be used for an add.
    *
    * An element with no `foreignAlbumId`, or whose nested artist has no `foreignArtistId`, is
@@ -240,6 +286,18 @@ class LidarrClient internal constructor(
       .map { LidarrValidationFailure(it.propertyName, it.errorMessage, it.errorCode) }
 
   internal companion object {
+
+    /**
+     * `PagingResource` defaults `pageSize` to **10** -- measured, a bare `GET /api/v1/queue`
+     * answers `"pageSize": 10`. A client that accepted that would stop seeing its own request as
+     * soon as the user had eleven things downloading, and would report `Requested` forever with
+     * nothing wrong anywhere. This client does not follow paging, so this number is the whole
+     * window it ever sees.
+     */
+    private const val QUEUE_PAGE_SIZE = 100
+
+    /** The one status [albumProgress] swallows. Named rather than inline so the probe can move it. */
+    private const val HTTP_NOT_FOUND = 404
 
     /**
      * The date part of .NET's `DateTime.MinValue` as Lidarr's serializer renders it.
