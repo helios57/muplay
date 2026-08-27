@@ -2508,9 +2508,10 @@ PROBES = [
     #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
     ("integrations/lidarr-api-key-header", LIDARR_INT,
      '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
-     # 5, measured: it also reddens the four other tests that read the header back off a
-     # RecordedRequest -- the redirect one, and `LidarrWiringTest`'s factory test among them.
-     "the header carries whichever key the client was given", 5),
+     # 6, RE-MEASURED AT TASK 5 (was 5): every test that reads the header back off a
+     # RecordedRequest reddens, and Task 5's `no new request carries the key anywhere but the
+     # header` -- which drives all four of the new endpoints -- is the sixth.
+     "the header carries whichever key the client was given", 6),
 
     # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
     #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
@@ -2519,15 +2520,20 @@ PROBES = [
     ("integrations/lidarr-api-key-on-url", LIDARR_INT,
      '.header("X-Api-Key", apiKey)',
      '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
-     # 2, measured: `LidarrWiringTest`'s factory test asserts the same negative one layer up.
-     "no request this client makes carries the key on its url", 2),
+     # 4, RE-MEASURED AT TASK 5 (was 2): `LidarrWiringTest`'s factory test asserts the same
+     # negative one layer up, and Task 5 adds two more observations -- the whole-request scan over
+     # the four new endpoints, and the lookup's exact `encodedQuery`, which a smuggled parameter
+     # lengthens.
+     "no request this client makes carries the key on its url", 4),
 
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
     #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
     ("integrations/lidarr-accept-json", LIDARR_INT,
      '.header("Accept", "application/json")', '.header("Accept", "*/*")',
-     "every request declares that it accepts json", 1),
+     # 2, RE-MEASURED AT TASK 5 (was 1): the new four-endpoint scan asserts `Accept` too, which is
+     # the point of putting it on the interceptor rather than on each `@GET`.
+     "every request declares that it accepts json", 2),
 
     # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
     #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
@@ -2557,7 +2563,12 @@ PROBES = [
     ("integrations/lidarr-503-collapsed", LIDARR_CLIENT,
      "503 -> if (isStartingUp(raw)) LidarrStartingUpException() else LidarrHttpException(503)",
      "503 -> LidarrStartingUpException()",
-     "a 503 starting-up body is its own failure, distinct from any other 503", 1),
+     # 2, RE-MEASURED AT TASK 5 (was 1). The second is `a lookup that fails upstream is a plain
+     # http failure and not a starting-up one`, which is the same discrimination against a REAL
+     # 503 -- `fixtures/lidarr/lookup-unavailable.json`, captured by blackholing api.lidarr.audio
+     # inside the pinned container. Its body's key is `message`, not `errorMessage`, so this
+     # mutation is what would turn "the metadata service is down" into "wait for your container".
+     "a 503 starting-up body is its own failure, distinct from any other 503", 2),
 
     # ---- Plan 7 Task 5: the lookup, the two traps in it, and where an add is aimed -------------
     # Same argument as the family above: the coverage gate cannot see most of this. Every mutation
@@ -2569,7 +2580,8 @@ PROBES = [
     #    the implementer was testing with, forever, and looks like a working search box.
     ("integrations/lidarr-lookup-term", LIDARR_CLIENT,
      "call { api.albumLookup(term) }", 'call { api.albumLookup("kind of blue") }',
-     "the lookup sends whichever term it is given, url-encoded, to album slash lookup", 1),
+     # 2, measured: the four-endpoint key scan pins the lookup's exact `encodedQuery` too.
+     "the lookup sends whichever term it is given, url-encoded, to album slash lookup", 2),
 
     # 2. TRAP 1, and the sharpest defect in this task: `AlbumLookupController` sets `RemoteCover`
     #    and only `ArtistLookupController` sets `RemotePoster`. Measured against a real
@@ -2577,7 +2589,9 @@ PROBES = [
     #    mutation yields null artwork on every row, with nothing reported anywhere.
     ("integrations/lidarr-remoteCover", LIDARR_CLIENT,
      'remoteCoverUrl = obj.string("remoteCover"),', 'remoteCoverUrl = obj.string("remotePoster"),',
-     "the cover comes from remoteCover and not from remotePoster", 2),
+     # 3, measured: also the real-fixture test and the two-values-per-field test, which both read
+     # `remoteCoverUrl` back and get null under the mutation.
+     "the cover comes from remoteCover and not from remotePoster", 3),
 
     # 3. The .NET `DateTime.MinValue` sentinel. Measured: an album whose release date Lidarr does
     #    not know sends `0001-01-01T00:00:00Z` rather than omitting the field, so dropping this
@@ -2599,7 +2613,8 @@ PROBES = [
     #    add filed under a metadata profile id that is really a quality profile id.
     ("integrations/lidarr-metadataprofile-endpoint", LIDARR_API,
      '@GET("api/v1/metadataprofile")', '@GET("api/v1/qualityprofile")',
-     "quality and metadata profiles are two different endpoints and both are read", 1),
+     # 2, measured: the four-endpoint key scan asserts the paths in order, so it sees this too.
+     "quality and metadata profiles are two different endpoints and both are read", 2),
 
     # 6 and 7. Two of `LidarrAddTargets`'s pass-throughs, one representative of each risk: the
     #    path decides where the files land, and the profile id decides what gets downloaded. The
@@ -2610,14 +2625,18 @@ PROBES = [
      "every field comes from the folder it was given, not from a constant", 1),
     ("integrations/lidarr-targets-quality-passthrough", LIDARR_TARGETS,
      "qualityProfileId = quality,", "qualityProfileId = 1,",
-     "every field comes from the folder it was given, not from a constant", 1),
+     # 6, measured. Every test in `LidarrAddTargetsTest` that reads a quality id back reddens --
+     # which is what a dense pure-function suite looks like, and is the argument for having one.
+     "every field comes from the folder it was given, not from a constant", 6),
 
     # 8. The fallback that is the reason this class exists. `ValidId` requires a profile id above
     #    zero, and a root folder created through the API rather than the UI can carry zeros; without
     #    the fallback the add fails with a 400 about profiles that the user cannot act on.
     ("integrations/lidarr-targets-zero-fallback", LIDARR_TARGETS,
      "if (preferred > 0) preferred else profiles.firstOrNull()?.id", "preferred",
-     "a zero default falls back to the first profile the server reports", 2),
+     # 4, measured: the give-up case flips too -- without the fallback, `resolve` returns a
+     # LidarrAddTargets carrying profile id 0, which is exactly the 400 the fallback exists to avoid.
+     "a zero default falls back to the first profile the server reports", 4),
 
     # 9. The inaccessible folder. Offering it produces an add that fails on a path validation --
     #    measured, "Folder '/music' is not writable by user 'abc'" -- shown to somebody who was
