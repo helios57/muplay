@@ -882,6 +882,34 @@ naming `:feature:library:kspDebugKotlin` and two unnamed others. A plain retry w
 times, on the identical tree. It names no useful task and it is not a compilation error; retry
 before investigating.
 
+## An OOM kill here can be a *cgroup* limit, not the host running out
+
+Measured 2026-08-27 22:14, while the host had **tens of gigabytes free**:
+
+    python3 invoked oom-killer ... constraint=CONSTRAINT_MEMCG
+    oom_memcg=/user.slice/.../run-rf90b921e0bfa4e9da2b11c6277dbd7c1.scope
+    Killed process 2123100 (python3) total-vm:545072kB, anon-rss:523164kB
+
+`CONSTRAINT_MEMCG` and a `run-*.scope` mean a **transient systemd scope with its
+own memory limit**, which is what background commands run inside here. So a
+script can be killed at a few hundred megabytes on a machine with 29 GB
+available, and `free -h` will show nothing wrong afterwards.
+
+The consequences are the same shape as every other silent kill in this file: a
+`finally` does not run, a mutation is left in the tree, and the next agent's
+dirty-tree guard blames them. So `grep CONSTRAINT_MEMCG` in `dmesg -T` before
+concluding that a script died of its own bug, and keep long-running scripts
+small in memory — stream rather than accumulate, and write large outputs
+incrementally instead of holding them.
+
+Two settings were added to `~/.gradle/gradle.properties` in the same window, for
+the *host* side of the same pressure: `org.gradle.daemon.idletimeout=600000`, so
+eight worktrees stop holding eight ~2.5 GB JVMs for Gradle's default three
+hours, and `kotlin.daemon.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m`, because
+the Kotlin daemon otherwise sizes itself from a 61 GB machine that is already
+oversubscribed. Do not cut the Kotlin cap further: a too-small one reproduces
+the bare `Metaspace` failure recorded above on purpose.
+
 ## This VM runs at 30-44% steal, so "24 cores" is a lie the load average tells
 
 Measured 2026-08-27 17:15 with seven worktrees building: `vmstat 2` reported
