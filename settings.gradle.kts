@@ -29,6 +29,11 @@ include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
 
+// Plan 5 Task 8. The second APPLICATION module in this build, and the only module whose `minSdk` is
+// not 26 -- Wear OS 3 is API 30 and Compose for Wear OS supports nothing earlier. That floor is set
+// in `muplay.android.wear` (build-logic), never in this module's own `android { }` block.
+include(":wear")
+
 // Plan 7's own top-level source directory. Kept out of `core/` deliberately: `ConventionTest`'s
 // `nothing outside integrations depends on an integration` makes "Plan 7 can be dropped" a checked
 // fact rather than a promise, and that rule is written as a path prefix -- which only means

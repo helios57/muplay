@@ -1,0 +1,13 @@
+# Version codes :wear has already spent, oldest first.
+#
+# Its own ledger, separate from app/release-history.tsv: `verifyReleaseVersion` is registered per
+# application module and reads `<module>/release-history.tsv`, and this module is its own artifact
+# with its own version line even though it shares `:app`'s applicationId.
+#
+# "Spent" means the code has been attached to a release artifact that left this repository. Never
+# edit or remove a line: a spent code stays spent forever. Tab-separated: version code, version
+# name, date the code was spent, and what spent it.
+#
+# See build-logic/convention/src/main/kotlin/VerifyReleaseVersionTask.kt for the code/name scheme
+# (MAJOR * 10000 + MINOR * 100 + PATCH) and for all four rules this file feeds. Empty of entries
+# today: :wear has never shipped, so 100/0.1.0 in wear/build.gradle.kts is still unspent.

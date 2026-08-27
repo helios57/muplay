@@ -86,5 +86,9 @@ gradlePlugin {
       id = "muplay.android.room"
       implementationClass = "AndroidRoomConventionPlugin"
     }
+    register("androidWear") {
+      id = "muplay.android.wear"
+      implementationClass = "AndroidWearConventionPlugin"
+    }
   }
 }

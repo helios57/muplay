@@ -48,6 +48,20 @@ espresso = "3.7.0"
 # Changing this number changes every measured floor in `coverageFloors`; re-measure them, do not
 # just bump it.
 jacoco = "0.8.12"
+# Compose for Wear OS. A DIFFERENT ARTIFACT FAMILY from `androidx.compose.material3`, not a
+# variant of it: the two are not interchangeable, and a watch must use this one.
+#
+# Resolved against dl.google.com's own maven-metadata while this task ran (2026-08-27). `<latest>`
+# is **1.7.0-beta02**; this pins the latest *stable*, 1.6.2, for the same reason the `agp` entry
+# above pins 9.3.1 rather than the 9.4.0 alpha -- a shipped application module does not take a
+# pre-release compile dependency to be a version newer. Re-read the metadata rather than guessing
+# a neighbouring number when this moves.
+#
+# The two `androidx.wear.compose` artifacts share one version train (both publish 1.6.2 as their
+# latest stable), so one ref covers both. `wear-tooling-preview` is on its own train at 1.0.0 and
+# gets its own ref for that reason.
+wearCompose = "1.6.2"
+wearToolingPreview = "1.0.0"
 openapiValidator = "3.0.0"
 
 [libraries]
@@ -135,6 +149,13 @@ coil-network-okhttp    = { module = "io.coil-kt.coil3:coil-network-okhttp", vers
 # implementation-scoped coil-compose dependency. Declared directly in :app, the module that
 # builds the image loader (MuPlayApplication).
 coil                   = { module = "io.coil-kt.coil3:coil", version.ref = "coil" }
+
+# Wear OS. Only `:wear` may declare these -- see `AndroidWearConventionPlugin`.
+wear-compose-material3  = { module = "androidx.wear.compose:compose-material3", version.ref = "wearCompose" }
+wear-compose-foundation = { module = "androidx.wear.compose:compose-foundation", version.ref = "wearCompose" }
+# `debugImplementation` only: it exists so `@Preview(device = WearDevices.SMALL_ROUND)` resolves in
+# the IDE, and a preview annotation has no business in a release APK.
+wear-tooling-preview    = { module = "androidx.wear:wear-tooling-preview", version.ref = "wearToolingPreview" }
 
 # Not in the plan's catalogue draft; added so build-logic/convention can declare these as real
 # `implementation` dependencies and apply them programmatically by class from inside the
