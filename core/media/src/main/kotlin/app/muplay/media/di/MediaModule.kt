@@ -14,6 +14,8 @@ import app.muplay.media.TranscodeSeekSupport
 import app.muplay.media.browse.DefaultSurfaceResolver
 import app.muplay.media.browse.SurfaceResolver
 import app.muplay.media.cast.OneShotResumePolicy
+import app.muplay.media.cast.RendererDirectPolicy
+import app.muplay.media.cast.StoredRendererDirectPolicy
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -187,9 +189,21 @@ object MediaModule {
     MediaProxyServer(upstream, registry).also { it.start() }
 
   /**
-   * `allowRendererDirect = false`: handing a renderer the Navidrome stream URL hands it the user's
-   * Subsonic credentials, and the plan makes that a setting the user turns on knowing what it
-   * costs. Until that setting exists the answer is no.
+   * `allowRendererDirect` is now **the setting**, not a hardcoded `false`.
+   *
+   * Handing a renderer the Navidrome stream URL hands it the user's Subsonic credentials -- `u`,
+   * `t` and `s`, which are password equivalents and do not expire. Plan 6 Task 7 shipped that as a
+   * constructor `Boolean` fixed at `false` with a comment saying *"until that setting exists the
+   * answer is no"*. Task 12 built the setting: it is persisted in `:core:database`
+   * (`CastSettings`), it is off until a user turns it on, and the three consequences of turning it
+   * on are stated beside the switch in `:feature:castpicker`'s `RendererDirectSection`.
+   *
+   * **Passed as a function reference, not as a value read here.** `CastRouter` is a `@Singleton`
+   * and so is this provider, so `allowRendererDirect = runBlocking { ... }` would resolve the
+   * answer once, the first time anything in the app needed a router. A user who turned the switch
+   * on and cast a second later would get the previous answer, silently, while the failure message
+   * named the setting they had just changed. See [RendererDirectPolicy] and `CastRouterTest`'s
+   * `the renderer-direct setting is read when the fallback is taken, not when the router is built`.
    *
    * The `sameSubnetFastPath` is left at its default of *never*, so **every** route is proved by
    * waiting for the renderer to fetch. Wiring the fast path needs the renderer's prefix length from
@@ -198,8 +212,11 @@ object MediaModule {
    */
   @Provides
   @Singleton
-  fun provideCastRouter(proxy: MediaProxyServer, registry: ProxyRegistry): CastRouter =
-    CastRouter(proxy, registry, allowRendererDirect = false)
+  fun provideCastRouter(
+    proxy: MediaProxyServer,
+    registry: ProxyRegistry,
+    rendererDirect: RendererDirectPolicy,
+  ): CastRouter = CastRouter(proxy, registry, allowRendererDirect = rendererDirect::isAllowed)
 
   @Provides
   @Singleton
@@ -261,5 +278,21 @@ object MediaModule {
     @Binds
     @Singleton
     fun bindTranscodeSeekSupport(impl: TranscodeOffsetSupport): TranscodeSeekSupport
+
+    /**
+     * Plan 6 Task 12. The renderer-direct setting, as the graph resolves it.
+     *
+     * `@Binds` rather than a `@Provides` line on the object above, and for this module's usual
+     * measured reason: an `@Binds` method is `abstract` and compiles to no executable line, whereas
+     * a `@Provides` form would add a sixteenth line to [MediaModule] that only a device can execute
+     * -- taking a floor that is 15/15 from the JVM tier today and making it emulator-dependent.
+     *
+     * The seam is what lets `MediaModuleTest` drive [provideCastRouter] with the setting **on** as
+     * well as off, on the JVM tier. Before it, the only test of the refusal was one direction of a
+     * hardcoded `false`, which any constant satisfies.
+     */
+    @Binds
+    @Singleton
+    fun bindRendererDirectPolicy(impl: StoredRendererDirectPolicy): RendererDirectPolicy
   }
 }

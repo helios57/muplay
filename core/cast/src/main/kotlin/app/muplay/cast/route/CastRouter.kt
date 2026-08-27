@@ -69,6 +69,20 @@ import java.util.Locale
  *
  * The three-way check belongs where the document exists, which is the `SetAVTransportURI` path.
  *
+ * @param allowRendererDirect whether the user has said a speaker may be handed the Navidrome URL
+ *   itself. **A lambda, and read inside [confirm] rather than captured at construction.** The
+ *   value behind it is a stored setting a user can change at any moment (`CastSettings` in
+ *   `:core:database`, surfaced by `:feature:castpicker`'s `RendererDirectSection`), and this class
+ *   is a `@Singleton`: a `Boolean` parameter would be resolved once, when the object graph first
+ *   needed a router, so a user who turned the switch on and immediately cast would get the *old*
+ *   answer with nothing to explain why. That is the silent-wrong-answer shape this whole class was
+ *   written against, and a `@Singleton` is exactly how it gets reintroduced.
+ *
+ *   A lambda, not a `Flow` or a `suspend` call: this module carries no Android type and no
+ *   coroutine on its routing path by design, and `confirm` is called from a `Player`'s load path
+ *   which cannot suspend. Whatever supplies the lambda owns being current -- see
+ *   `MediaModule.provideRendererDirectPolicy`.
+ *
  * @param localAddress which of this phone's addresses routes to the renderer. A seam, because
  *   [LocalAddress.towards] answers `127.0.0.1` for every loopback peer and the interesting cases
  *   -- a VPN address, and no route at all -- are not producible on a loopback-only host.
@@ -81,7 +95,7 @@ import java.util.Locale
 class CastRouter(
   private val proxy: MediaProxyServer,
   private val registry: ProxyRegistry,
-  private val allowRendererDirect: Boolean,
+  private val allowRendererDirect: () -> Boolean,
   private val localAddress: (InetAddress) -> InetAddress? = LocalAddress::towards,
   private val sameSubnetFastPath: (InetAddress, InetAddress) -> Boolean = { _, _ -> false },
   private val proofTimeoutMs: Long = DEFAULT_PROOF_TIMEOUT_MS,
@@ -134,7 +148,7 @@ class CastRouter(
     // It did not fetch. Whatever happens next, this token is no longer wanted.
     registry.revoke(route.media.token)
 
-    return if (allowRendererDirect) {
+    return if (allowRendererDirect()) {
       CastRoute.RendererDirect(upstreamUrl)
     } else {
       CastRoute.Unroutable(

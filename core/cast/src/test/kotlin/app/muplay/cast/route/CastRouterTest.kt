@@ -168,7 +168,7 @@ class CastRouterTest {
     val router = CastRouter(
       proxy,
       registry,
-      allowRendererDirect = false,
+      allowRendererDirect = { false },
       sameSubnetFastPath = { _, _ -> SubnetMatch.sameSubnet(VPN_PHONE, HOME_SPEAKER, HOME_PREFIX) },
       proofTimeoutMs = PROOF_TIMEOUT_MS,
     )
@@ -381,7 +381,7 @@ class CastRouterTest {
     val router = CastRouter(
       proxy,
       registry,
-      allowRendererDirect = false,
+      allowRendererDirect = { false },
       localAddress = { phone },
       sameSubnetFastPath = { a, b -> seen += a to b; false },
       proofTimeoutMs = PROOF_TIMEOUT_MS,
@@ -427,7 +427,7 @@ class CastRouterTest {
     // no fast path at all, and the shipped six-second proof. Every other test in this file
     // substitutes at least one of those, so without this one the defaults are untested wiring.
     fake.fetchesMedia = true
-    val router = CastRouter(proxy, registry, allowRendererDirect = false)
+    val router = CastRouter(proxy, registry, allowRendererDirect = { false })
     val route = router.candidate(device, UPSTREAM, MP3) as CastRoute.Proxied
 
     assertThat(route.url).startsWith("http://127.0.0.1:${proxy.port}/media/")
@@ -453,6 +453,71 @@ class CastRouterTest {
     assertThat(http.exchange(URI(first.url), "HEAD").code).isEqualTo(404)
   }
 
+  // ---- the setting, read late -------------------------------------------------------------------
+
+  @Test
+  fun `the renderer-direct setting is read when the fallback is taken, not when the router is built`() {
+    // Plan 6 Task 12's central wiring decision, as an executed observation.
+    //
+    // `CastRouter` is a `@Singleton`. A `Boolean` parameter would be resolved once, the first time
+    // anything in the app needed a router, and a user who turned the switch on and cast a second
+    // later would get the answer from before they touched it -- silently, with the failure
+    // message telling them about a setting they had already changed. That defect passes every
+    // other test in this file.
+    //
+    // Observed by counting, not by trusting: the router is constructed, nothing is read yet, and
+    // the first read happens inside `confirm`.
+    fake.fetchesMedia = false
+    var reads = 0
+    var allowed = false
+    val router = CastRouter(
+      proxy,
+      registry,
+      allowRendererDirect = { reads++; allowed },
+      proofTimeoutMs = PROOF_TIMEOUT_MS,
+    )
+
+    // Constructing and minting a candidate must not consult the setting at all: `candidate` runs
+    // before `SetAVTransportURI`, and a route is proxied regardless of what this setting says.
+    val first = router.candidate(device, UPSTREAM, MP3) as CastRoute.Proxied
+    assertThat(reads).isZero
+
+    play(first.url)
+    assertThat(router.confirm(first, UPSTREAM)).isInstanceOf(CastRoute.Unroutable::class.java)
+    assertThat(reads).isEqualTo(1)
+
+    // The user changes their mind, on the same router object, and the very next cast obeys.
+    allowed = true
+    val second = router.candidate(device, OTHER_UPSTREAM, MP3) as CastRoute.Proxied
+    play(second.url)
+
+    assertThat(router.confirm(second, OTHER_UPSTREAM))
+      .isEqualTo(CastRoute.RendererDirect(OTHER_UPSTREAM))
+    assertThat(reads).isEqualTo(2)
+  }
+
+  @Test
+  fun `a route that never needed a proof does not consult the setting either`() {
+    // The other direction, and it is about a capability rather than tidiness: reading the setting
+    // is a disk read behind a `runBlocking` in production (`MediaModule.provideRendererDirectPolicy`).
+    // A `confirm` that consulted it on every call would pay that on the fast path -- the one that
+    // exists precisely so the ordinary cast does not wait for anything.
+    var reads = 0
+    val router = CastRouter(
+      proxy,
+      registry,
+      allowRendererDirect = { reads++; true },
+      sameSubnetFastPath = { _, _ -> true },
+      proofTimeoutMs = PROOF_TIMEOUT_MS,
+    )
+    val route = router.candidate(device, UPSTREAM, MP3) as CastRoute.Proxied
+    assertThat(route.proofRequired).isFalse
+
+    assertThat(router.confirm(route, UPSTREAM)).isSameAs(route)
+
+    assertThat(reads).isZero
+  }
+
   // ---- helpers ---------------------------------------------------------------------------------
 
   private fun router(
@@ -464,7 +529,11 @@ class CastRouterTest {
   ) = CastRouter(
     proxy,
     registry,
-    allowRendererDirect,
+    // The parameter is a lambda as of Plan 6 Task 12 -- read inside `confirm`, because the value
+    // behind it is a setting a user can change between one cast and the next. Every call site in
+    // this file still passes a plain `Boolean`, so every assertion Task 7 wrote keeps its meaning;
+    // the two tests that care that it is *read late* rather than captured build their own router.
+    { allowRendererDirect },
     localAddress,
     { _, _ -> sameSubnet },
     proofTimeoutMs,
