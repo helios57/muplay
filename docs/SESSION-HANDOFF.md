@@ -5,29 +5,35 @@ Kotlin and androidTest both compile. The app went from "cannot play audio" to
 playing in the background with a session, notification, lock-screen controls, a
 media cache, a player UI and proven gapless playback.
 
-## Where the plans stand — 2026-08-27 14:00
+## Where the plans stand — 2026-08-27 17:20
 
-Master green under `--no-build-cache`, pushed. **Zero ungated-class warnings**,
-121+ coverage floors, 373 mutation probes, signed 6.95 MB AAB that installs and
-plays audio on the emulator.
+Master green under `--no-build-cache` as of the last full gate, pushed. **Zero
+ungated-class warnings**, 121+ coverage floors, 373+ mutation probes, signed
+6.95 MB AAB that installs and plays audio on the emulator.
 
-**58 of 82 tasks merged.**
+**64 of 82 tasks merged.**
 
 | Plan | Done | Remaining |
 | --- | --- | --- |
 | 1 foundation · 2 library | 16/16 | complete |
 | 3 playback core | **12/12** | complete |
-| 4 audiobooks | 4/10 | T4, T8 in flight · T6, T7, T9, T10 |
-| 5 Auto/Wear | 6/11 | T6 in flight · T8, T9, T10, T11 |
-| 6 casting | 8/12 | T9 in flight · T10, T11, T12 |
-| 7 integrations | 6/11 | T7, T8 in flight · T9, T10, T11 |
-| 8 release & Play | 7/10 | T6 (store listing), T8 (reviewer access), T10 (form factors) |
+| 4 audiobooks | 6/10 | T6, T7 in flight · T9, T10 |
+| 5 Auto/Wear | 7/11 | T8 in flight · T9, T10, T11 |
+| 6 casting | 9/12 | T10, T12 in flight · T11 |
+| 7 integrations | 8/11 | T9 in flight · T10, T11 |
+| 8 release & Play | 7/10 | T6 in flight · T8 (needs the account holder), T10 |
 
 ## Lanes live
 
-`p4t4` AudiobookRepository · `p4t8` sleep timer · `p5t6` voice+search ·
-`p6t9` handover (owes the `SimpleBasePlayer` wrapper Task 8 did not build) ·
-`p7t7` request-state mapping · `p7t8` Bindery.
+`p4t6` resume-policy swap · `p4t7` speed + silence skipping · `p5t8` `:wear`
+module · `p6t10` `:feature:castpicker` · `p6t12` `RendererDirect` · `p7t9`
+arrival (**resumed from an abandoned worktree with uncommitted work**) ·
+`p8t6` store listing.
+
+Four lanes were lost mid-task to a session rate limit at 16:30 and their work
+was recovered from their worktrees: `p4t4`, `p4t8`, `p5t6` and `p6t9` had all
+committed and were merged as they stood. `p7t9` had **not** committed, which is
+why its brief now says commit early and often.
 
 ## Remaining waves
 
@@ -52,28 +58,24 @@ plays audio on the emulator.
 
 ## Open decisions, deliberately not made
 
-- **The shared Navidrome transcode cache is degraded, and the repair is ready
-  but not run.** Plan 6 Task 6 exhausted one seeded MP3 track's low-bitrate
-  transcodes while designing its live suite, so `:core:network`'s
-  `LiveNavidromeTest.coldTranscode` — which picks a **random** Music track and
-  searches for an unused bitrate below source — now has roughly a one-in-three
-  chance of failing, **with its own diagnostic**, for any lane that runs the live
-  suite. It will look like that lane's defect.
+- **RESOLVED, and the advice that stood here was the defect.** This section used
+  to recommend `docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'`
+  as a safe repair for `coldTranscode`. **It is the opposite.** Navidrome keeps an
+  in-memory index of that cache; deleting the files underneath a running server
+  leaves every key pointing at a file that is gone, and each one then answers a
+  ~292-byte JSON error document with **no `Accept-Ranges` header at all** —
+  permanently, measured across 28 retries with no recoveries. A restart of the
+  container heals every poisoned key (the index is rebuilt from what is on disk);
+  a file deletion is what creates them. Do not flush.
 
-  Measured: `/data/cache/transcoding` holds **201 entries / 3.4 MB** against a
-  100 MB `ND_TRANSCODINGCACHESIZE`, so it will never evict on its own.
-
-  The repair is a cache flush, not a reseed, and does **not** violate the
-  never-stop-never-restart-never-reseed rule:
-
-      docker exec ci-navidrome-1 sh -c 'rm -rf /data/cache/transcoding/*'
-
-  **Precondition: no device or live suite in flight.** Check
-  `cat /tmp/muplay-device.lock` and `pgrep -f liveNavidrome` first. Not run here
-  because `:core:media:connectedDebugAndroidTest` was mid-run, and a stream that
-  flips from cache-served file to live chunked transcode mid-suite changes
-  `Content-Length` and `Accept-Ranges` under an assertion that is reading them.
-
+  The `one run in three` failure was also not a race and not a probability: it was
+  **which track got drawn**. After the flush, the census was 63 of 63 bitrates
+  unusable on Track 1 and only 4-6 of 10 on Tracks 2 and 3, so drawing the dead
+  track was a certain failure and the other two near-certain passes. `coldTranscode`
+  now searches the whole music library crossed with the bitrate range and reports a
+  LIVE/CACHED/UNAVAILABLE census when it fails. Measured after the fix: **10
+  consecutive green runs** against the warm, still partially-poisoned container.
+  See CLAUDE.md, "Never delete the transcoding cache files".
 
 - **M4, casting picker trust.** `RendererDirectory` uses `distinctBy { it.udn }`,
   which keeps the **first** announcement — and arrival order is attacker
@@ -187,7 +189,7 @@ and it is pinned at a value.
   `project(path = ":integrations:core")`; and the "three assertions were prose-
   satisfiable" comment overstates its own measurement 3:1 — exactly one was.
 
-## HELD MERGE — Plan 4 Task 1 (audiobook fixtures), branch `p4t1-branch`
+## RESOLVED — Plan 4 Task 1 (audiobook fixtures) merged; kept for the lesson below
 
 **Complete on the JVM tier, deliberately not merged.** `check` green,
 `:core:testing` 35/35, `BookFixtures` 18/18 BRANCH + 46/46 LINE, `books/` probes
