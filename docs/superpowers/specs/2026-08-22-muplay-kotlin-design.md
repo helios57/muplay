@@ -375,8 +375,28 @@ One rule covers all three situations:
 Detection is a **subnet comparison**, not SSID sniffing — SSID needs
 `ACCESS_FINE_LOCATION` and fails silently without it.
 
-Under this rule no speaker ever fetches over public HTTPS, which designs the
-Let's Encrypt trust question out of existence entirely.
+Under this rule no speaker fetches over public HTTPS **by default**, which
+*defers* the Let's Encrypt trust question rather than designing it out of
+existence. (Corrected in Plan 6: the implemented rule is not the subnet
+comparison above but "can the renderer open a TCP connection back to this
+phone?", proved by watching for the renderer's own first fetch — a routed VPN is
+routinely not subnet-equal and the table's own row 3 says *proxy*. See
+`CastRouter`.)
+
+The question comes back for anyone who turns renderer-direct on, so:
+
+> Renderer-direct is a switch in **Settings**, off by default, with the three
+> consequences of turning it on stated beside it: the speaker is handed a URL
+> carrying a non-expiring Subsonic auth token, the speaker must trust
+> Navidrome's TLS chain itself, and the library streams over the speaker's own
+> connection. Off, a renderer that cannot reach the phone is reported as
+> `Unroutable` **by name** rather than silently fetching from the internet.
+
+The default is asserted rather than assumed — `CastSettings
+.DEFAULT_ALLOW_RENDERER_DIRECT` is `false`, and `CastSettingsTest` fails on the
+JVM tier if it ever stops being — because this paragraph, `CastRouter.confirm`'s
+fallback branch and `UnroutableReason.PROXY_UNREACHABLE_AND_DIRECT_DISABLED` are
+three separate claims resting on one boolean.
 
 Playback stopping when the phone leaves the network is **intended behaviour**.
 
