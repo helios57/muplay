@@ -2988,7 +2988,10 @@ PROBES = [
     ("stream/time-offset-zero-dropped", CLIENT,
      "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null) {",
      "if (format is StreamFormat.Mp3 && timeOffsetSeconds != null && timeOffsetSeconds > 0) {",
-     "a zero offset is sent, because it is a real request and not an absent one", 1),
+     # 2, measured: `> 0` also swallows the *negative* case, so the clamp test goes red beside the
+     # zero test. Submitted as 1 and reported MISSED on the first run -- the stale-count case this
+     # table's own note describes, not a code regression.
+     "a zero offset is sent, because it is a real request and not an absent one", 2),
 
     # 4. THE DECISION ITSELF, COLLAPSED TO WHAT EVERY PLAYER DID BEFORE THIS TASK. `InPlace` for a
     #    transcode is the original bug exactly: a seek that appears to work and plays the wrong
