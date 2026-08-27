@@ -2396,6 +2396,138 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // ---- Plan 4 Task 3: chapters out of the file's own bytes ---------------------------------
+    // The Android-free half, gated on the FAST tier: `ChapterAssembly` BRANCH **25/26 = 0.9615**
+    // and `BookTimeline` BRANCH **24/24 = 1.0000**, from `./gradlew :core:media:testDebugUnitTest`
+    // alone -- confirmed by `jacocoJvmCoverageVerification`, which reads no `.ec` at all. That
+    // split is the whole reason these two objects exist apart from `ChapterReader`: sorting, end
+    // filling, de-duplication and chapter navigation are the parts most likely to be subtly wrong,
+    // and a mutation to any of them costs seconds here rather than an emulator boot.
+    //
+    // The one missed branch is unreachable and stays in the denominator honestly: the `?.` the
+    // compiler emits after `String.trim()` in `title?.trim()?.takeIf { it.isNotEmpty() }` can never
+    // take its null path, because `trim()` returns a non-null `String`. Exactly
+    // `StreamRetryPolicy`'s situation at the top of this entry, and 0.90 leaves that single dead
+    // branch of room and no more -- one genuinely-uncovered branch takes this to 24/26 = 0.9231,
+    // two to 23/26 = 0.8846 and fails.
+    //
+    // **Falsified by withholding tests and re-running, per rule. Every number below is measured,
+    // and two of them are not the numbers this comment first predicted.**
+    //
+    //   * `ChapterAssembly`: withholding `a duplicate that carries nothing the first one lacked
+    //     leaves it alone` -- the only test that observes either `&&` in the de-duplication `when`
+    //     with its left half true and its right half false -- gives **23/26 = 0.88**, BUILD
+    //     FAILED, message *"branches covered ratio is 0.88, but expected minimum is 0.90"*.
+    //   * `BookTimeline`: withholding `a book with no files has an empty timeline and no
+    //     navigation` ALONE leaves it at **22/24 = 0.9167** and green -- the near-miss, and it is
+    //     the point. Withholding `a position past the final chapter's end still answers the final
+    //     chapter` as well takes it to **21/24 = 0.8750**, BUILD FAILED.
+    //
+    // Two withheld tests rather than one, because one is not enough here and guessing which one
+    // would have been wrong: `chapterAt is scoped to the item it was asked about` was the first
+    // candidate, and withholding it changes nothing at all -- the empty-timeline test reaches the
+    // same `inItem.isEmpty()` arm. That is the "second caller" failure this table's own rule about
+    // stale falsifications describes, met while writing the falsification rather than a year later.
+    //
+    // `RawChapter`, `BookFile`, `BookChapter` and the two synthetic `sortedBy` comparator classes
+    // ride along with **no BRANCH counter of their own**, included so `warnUngatedClasses` has
+    // nothing to say and gating nothing -- the same answer `ReplayGain` and `BookSettings` get.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterAssembly",
+        "app.muplay.media.ChapterAssembly*",
+        "app.muplay.media.RawChapter",
+        "app.muplay.media.BookTimeline",
+        "app.muplay.media.BookTimeline*",
+        "app.muplay.media.BookFile",
+        "app.muplay.media.BookChapter",
+      ),
+    ),
+    // The same objects' LINE -- `ChapterAssembly` **21/21**, `BookTimeline` **40/40**,
+    // `BookChapter` **9/9**, each synthetic comparator **1/1**, all 1.0000 on JVM data alone -- and
+    // it is not redundant with the BRANCH rule above, for the reason `PlaybackQueue` and
+    // `:core:model`'s `Chapter` both carry the pair: the parts of these objects that are
+    // *statements* move no branch when the sole assertion on them is deleted. `BookChapter
+    // .durationMs`'s clamp is the sharp case -- `endInItemMs - startInItemMs` and the same
+    // expression with `.coerceAtLeast(0L)` compile to the same branch count in this class.
+    //
+    // Falsified, and it fires exactly where the BRANCH rule cannot -- **and it took two withheld
+    // tests, not the one predicted**. `a chapter whose atoms run backwards has a zero duration
+    // rather than a negative one` alone leaves `BookChapter` at **9/9 = 1.0000 and green**,
+    // because `a multi-file book whose files also carry chapters is neither of the easy cases`
+    // maps `durationMs` over all five of its entries and is a second reader of the same line.
+    // Withholding both puts `BookChapter` at **8/9 = 0.8889**, BUILD FAILED, **while the BRANCH
+    // rule above stays green at `BookTimeline` 24/24** -- `BookChapter` carries no BRANCH counter
+    // at all, so nothing else in this table can see that line.
+    //
+    // `RawChapter` and `BookFile` are deliberately absent: bodiless `data class`es, and a LINE
+    // floor over a declaration is a floor that cannot fail.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterAssembly",
+        "app.muplay.media.ChapterAssembly*",
+        "app.muplay.media.BookTimeline",
+        "app.muplay.media.BookTimeline*",
+        "app.muplay.media.BookChapter",
+      ),
+    ),
+    // `ChapterRepository` BRANCH **2/2 = 1.0000**, instrumented: Room and a real Navidrome, so
+    // there is no JVM tier for it at all. Those two branches are the `findScan(..)?.let`
+    // short-circuit -- the decision that makes "this file has no chapters" a *remembered* answer
+    // rather than an HTTP round trip into a `moov` atom every time a screen opens.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside and running the full gate:
+    // *"Rule violated for class app.muplay.media.ChapterRepository: branches covered ratio is
+    // 0.00, but expected minimum is 0.90"*, BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterRepository",
+        "app.muplay.media.ChapterRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // LINE for the two Media3/Room-shaped classes -- `ChapterReader` **19/19**, its `read`
+    // continuation **9/9**, `ChapterRepository` **34/34**, all 1.0000 against merged data.
+    //
+    // **`ChapterReader` deliberately carries no BRANCH rule, and the number is written down rather
+    // than rounded away: 14/18 = 0.7778.** All four missed branches are branches the *seeded
+    // corpus* cannot take, not branches nobody tested:
+    //
+    //   * `entry.endTimeMs.takeIf { it != C.TIME_UNSET }` -- two of them. With
+    //     `setMediaSourceFactory` wired the sentinel never arrives, which is the entire point of
+    //     the line; the only way to cover it is to break the wiring the class exists to get right.
+    //   * `entry.title?.value` -- no chapter atom in the corpus is untitled.
+    //   * `group.getFormat(..).metadata ?: continue` -- every track format in these four files
+    //     carries metadata.
+    //
+    // A BRANCH rule at any minimum this table would accept is therefore either red on correct code
+    // or below 0.78, and this table's own doc rules out a number the check cannot fail at. LINE
+    // gates what is left, which is every statement in the read path.
+    //
+    // Falsified by moving `:core:media`'s connected `.ec` aside and running the full gate: all
+    // three fire at **0.00** -- `ChapterReader`, `ChapterReader.read.2` and `ChapterRepository`,
+    // each *"lines covered ratio is 0.00, but expected minimum is 0.90"* -- BUILD FAILED.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.ChapterReader",
+        "app.muplay.media.ChapterReader*",
+        "app.muplay.media.ChapterRepository",
+        "app.muplay.media.ChapterRepository*",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
