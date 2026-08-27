@@ -922,6 +922,53 @@ class ConventionTest {
   }
 
   /**
+   * The sibling of the rule above, for the one logger it cannot see.
+   *
+   * `nothing in integrations writes to a log` matches call sites — `Log.d(`, `println(`,
+   * `System.out`. An OkHttp **logging interceptor** is neither: it is a line of builder
+   * configuration, `addInterceptor(HttpLoggingInterceptor())`, and at `Level.HEADERS` or `BODY` it
+   * writes **every request header of every call** to logcat. For this module that means the
+   * `X-Api-Key` header on every Lidarr request — the exact value Plan 7 spends a Keystore alias, a
+   * redacting `toString()`, a convention rule and two mutation probes keeping out of reach.
+   *
+   * Flagged by Plan 7 Task 4, which proved by test and probe that no URL, no exception message and
+   * no fixture carries the key, and then observed that **the only thing preventing a logging
+   * interceptor was that nobody had added the dependency yet.** That is a property held by
+   * accident, which is this repository's standing definition of a gate that has not been written.
+   *
+   * The catalogue is scanned as well as the sources, because the dependency arriving is the moment
+   * the hazard becomes one line away rather than an import away.
+   */
+  @Test
+  fun `no okhttp logging interceptor may reach an integration`() {
+    val root = repoRoot()
+    val sources = File(root, "integrations").walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" || it.name == "build.gradle.kts" }
+      .filter { !it.invariantSeparatorsPath.contains("/src/test/") }
+      .filter { !it.invariantSeparatorsPath.contains("/src/androidTest/") }
+      .toList()
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(sources).describedAs("integration sources and build files").isNotEmpty()
+
+    val banned = listOf("HttpLoggingInterceptor", "logging-interceptor", "okhttp3.logging")
+    val offenders = sources.mapNotNull { file ->
+      val text = if (file.extension == "kt") kotlinCode(file.readText()) else file.readText()
+      val found = banned.filter { text.contains(it) }
+      if (found.isEmpty()) null else "${file.relativeTo(root).invariantSeparatorsPath} -> $found"
+    }
+
+    assertThat(offenders)
+      .describedAs(
+        "An OkHttp logging interceptor writes every request header to logcat, and an integration's " +
+          "requests carry an instance-wide admin API key in one. Debug a request by asserting on " +
+          "it in a test against mockwebserver3, which is what the rest of this module already does.",
+      )
+      .isEmpty()
+  }
+
+  /**
    * `:core:media` builds every `MediaItem` this app plays, and each one's URI is an authenticated
    * Subsonic stream URL carrying `u`, `s=salt` and `t=md5(password+salt)` -- a credential that does
    * not expire.
