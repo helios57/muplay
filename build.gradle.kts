@@ -5369,24 +5369,28 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Kotlin-unreachable arm that caller introduces. 0.90 over 48 branches still refuses four
     // uncovered ones.
     //
-    // FALSIFIED, and the first attempt failed — which is why the run is worth more than the
-    // prediction. Measured, in order:
+    // FALSIFIED, in both directions, and **the predicted number was wrong** — which is why the run
+    // is worth more than the prediction. Measured:
     //
-    //   * Withholding `RequestArrivalDetectorTest`'s `two equally good matches is no answer, not
-    //     the first one` ALONE leaves that class at **22/22 and green**: three later tests
-    //     (`a second album by the same artist…`, `two matches in two different libraries…`,
-    //     `an ambiguous arrival leaves the row at Imported…` through the repository) walk the same
-    //     `singleOrNull` arm. The obvious single withholding teaches nothing.
-    //   * Withholding **all four** of those takes `RequestArrivalDetector` to **21/22 = 0.9545 —
-    //     still GREEN.** `singleOrNull` is one branch out of twenty-two.
-    //   * What fires it: withholding the whole of `RequestArrivalDetectorTest` takes that class to
-    //     **0/22 = 0.0000** and `jacocoJvmCoverageVerification` fails with "Rule violated for class
-    //     app.muplay.integrations.requests.RequestArrivalDetector: branches covered ratio is 0.00,
-    //     but expected minimum is 0.90".
+    //   * Withholding the whole of `RequestArrivalDetectorTest` takes that class to
+    //     **13/22 = 0.5909**, not the 0/22 this author predicted, and
+    //     `jacocoJvmCoverageVerification` fails with
+    //
+    //         Rule violated for class app.muplay.integrations.requests.RequestArrivalDetector:
+    //         branches covered ratio is 0.59, but expected minimum is 0.90
+    //
+    //     Thirteen of its twenty-two branches survive because `RequestsRepositoryTest` builds a
+    //     **real** `RequestArrivalDetector` and drives it through `refresh()`. That is this table's
+    //     recurring second-caller effect, in the one place nobody expected it: the class's own test
+    //     file is not the only thing that exercises it.
+    //   * Withholding the whole of `RequestsRepositoryTest` takes `RequestsRepository` to
+    //     **0/48 = 0.0000** and fails with "branches covered ratio is 0.00, but expected minimum is
+    //     0.90" — while leaving `RequestArrivalDetector` at a full 22/22, so each half of this rule
+    //     was fired separately rather than by one withholding that reddens everything.
     //
     // Note what that says and does not: this rule fires when a class stops being exercised, and
     // says nothing about whether the answer it gives is right. `ci/mutation-probes.sh`'s
-    // `integrations/arrival-*` and `integrations/requests-*` families are what hold the answers.
+    // `integrations/requests-*` family is what holds the answers.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -5406,14 +5410,27 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // being the `data class`'s generated `equals`/`hashCode`/`copy` that nothing calls, and it is
     // gated by rule 3 below at a floor that admits that.
     //
-    // FALSIFIED: withholding the whole of `TitleMatchingTest` — every assertion in this repository
-    // about how a title is normalised — leaves `TitleMatching` at **7/7 and this rule GREEN**,
-    // because `RequestArrivalDetector` normalises on every call and eleven detector tests walk the
-    // same four lines. That is this table's recurring second-caller effect and it is recorded here
-    // rather than predicted. What fires it: withholding `RequestArrivalDetectorTest` **and**
-    // `TitleMatchingTest` together takes `TitleMatching` to **0/7 = 0.0000** and
-    // `RequestArrivalDetector` to 0/26, and the gate fails with "lines covered ratio is 0.00, but
-    // expected minimum is 0.90" naming both.
+    // FALSIFIED, AND TWICE THE PREDICTION WAS WRONG. **Read this before withholding a test here
+    // and concluding anything from the green you get.** Measured, in order:
+    //
+    //   * Withholding the whole of `TitleMatchingTest` — every assertion in this repository about
+    //     how a title is normalised — leaves `TitleMatching` at **7/7 and this rule GREEN**.
+    //     `RequestArrivalDetector` normalises on every call, and eleven detector tests walk the
+    //     same four lines.
+    //   * Withholding `RequestArrivalDetectorTest` **and** `TitleMatchingTest` together, which was
+    //     predicted to take it to 0/7, **still leaves `TitleMatching` at 7/7 and green** — because
+    //     `RequestsRepositoryTest` constructs a real detector, which normalises. That run is red,
+    //     but on `RequestArrivalDetector`'s BRANCH rule above (13/22) and on nothing here.
+    //
+    // So **no withholding of one or two test classes can fire this rule through `TitleMatching`**;
+    // it would take all three at once. What does fire it, measured: withholding the whole of
+    // `RequestsRepositoryTest` takes `RequestsRepository` to **0/84** and the gate fails with
+    //
+    //     Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //     lines covered ratio is 0.00, but expected minimum is 0.90
+    //
+    // A reader who withholds the obvious single test class and sees green must not read that as
+    // "the floor is vacuous" — it is enforcing, through a different class than they were aiming at.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -5441,13 +5458,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // sitting exactly on the current minimum fires on the first one. What 0.40 still refuses is a
     // class nothing constructs at all, which measures 0.
     //
-    // FALSIFIED: withholding `RequestsRepositoryTest`'s `configuredServices reports exactly what
-    // is configured, and changes when it changes` alone leaves the inlined-map classes at
-    // **2/3 and 1/2 and green** — `all exposes every stored request, newest first` collects the
-    // other flow through the same machinery. Withholding **the whole of
-    // `RequestsRepositoryTest`** takes `RefreshReport` to **0/6 = 0.0000** and fails with "Rule
-    // violated for class app.muplay.integrations.requests.RefreshReport: lines covered ratio is
-    // 0.00, but expected minimum is 0.40".
+    // FALSIFIED: withholding the whole of `RequestsRepositoryTest` takes `RefreshReport` to
+    // **0/6 = 0.0000** and both inlined-map classes to 0.00, and the gate fails with three of this
+    // rule's own violations in one run —
+    //
+    //     Rule violated for class app.muplay.integrations.requests.RefreshReport:
+    //     lines covered ratio is 0.00, but expected minimum is 0.40
+    //     Rule violated for class
+    //     app.muplay.integrations.requests.RequestsRepository.special..inlined.map.1:
+    //     lines covered ratio is 0.00, but expected minimum is 0.40
+    //     ...and the same for `.map.1.2`.
+    //
+    // Note the class names JaCoCo prints: `$` is replaced by `.` before a pattern ever sees the
+    // name (see [CoverageFloor]'s gotcha 3), which is why this rule's include is written with a
+    // `*` across each `$` position and why a literal `$` in it would match nothing.
     //
     // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
     // pass); LINE is the only counter that can.
