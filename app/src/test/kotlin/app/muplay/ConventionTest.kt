@@ -622,10 +622,12 @@ class ConventionTest {
       repoRoot(),
       "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
     )
-    val requiredDeclarations = Regex("""requiredDeclarations\.set\(\s*listOf\(([\s\S]*?)\n\s*\),""")
-      .find(pluginFile.readText())
-      ?.groupValues
-      ?.get(1)
+    // Reads the named constant, not the `set(...)` call: Plan 5 Task 7 split the list in two
+    // (`BASE_DECLARATIONS` plus `AUTOMOTIVE_DECLARATIONS`, added through a `Provider`), and a
+    // pattern anchored on `requiredDeclarations.set(listOf(` stopped matching the moment it did.
+    // The missing-match branch below is what reported that, which is the second time this
+    // regex has gone stale and been caught by its own vacuity guard rather than by a human.
+    val requiredDeclarations = declarationList(pluginFile, "BASE_DECLARATIONS")
 
     assertThat(requiredDeclarations).describedAs(pluginFile.path).isNotNull()
     assertThat(
@@ -642,6 +644,298 @@ class ConventionTest {
       // The list of what is missing, not `allMatch`: a failure has to name which declaration was
       // dropped, and an `allMatch` over an empty required list would be vacuously true.
     ).describedAs("declarations dropped from requiredDeclarations").isEmpty()
+  }
+
+  /**
+   * The body of one named `private val <NAME> = listOf( ... )` declaration in [file], or `null`.
+   *
+   * Named constants rather than an inline `listOf(...)` inside the `set(...)` call, since Plan 5
+   * Task 7: `requiredDeclarations` is now two lists joined by a `Provider`, and the rules below
+   * have to be able to read each half separately to say which half lost an entry.
+   */
+  private fun declarationList(file: File, name: String): String? =
+    Regex("""private val $name = listOf\(([\s\S]*?)\n\)""")
+      .find(file.readText())
+      ?.groupValues
+      ?.get(1)
+
+  /** This file, read as text by the lint-replacement rule below. */
+  private val CONVENTION_TEST_PATH = "app/src/test/kotlin/app/muplay/ConventionTest.kt"
+
+  /** The convention plugin that owns both merged-manifest declaration lists. */
+  private fun applicationPlugin(): File = File(
+    repoRoot(),
+    "build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt",
+  )
+
+  /**
+   * Every `AndroidManifest.xml` this repository owns, comments stripped.
+   *
+   * Comments stripped is the whole point, and it is not hypothetical here: AGP's *merged* manifest
+   * preserves the source manifests' XML comments verbatim (measured -- `core/media`'s twenty-line
+   * comment about the browse actions is in `app/build/intermediates/merged_manifest/debug/`), and
+   * `VerifyMergedManifestTask` is a plain `contains`. A comment that quotes the declaration it
+   * explains -- which is exactly what a good comment about `android:name="..."` looks like --
+   * would answer the check on behalf of a declaration nobody wrote. This repository has already
+   * paid twice for a `contains` that read prose (`verifyReleaseNoDestructiveMigration`, and the
+   * cleartext rule below).
+   */
+  private fun sourceManifests(): List<File> =
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.name == "AndroidManifest.xml" }
+      .toList()
+
+  /**
+   * The Android Auto gate is only as real as the opt-in that turns it on.
+   *
+   * `muplayApplication { androidAuto = true }` is four words in one build file, and deleting them
+   * removes `verifyAutomotiveDescriptor` and four entries from the merged-manifest gate **without
+   * failing anything**: the app still builds, still installs, still passes every instrumented
+   * test, and quietly stops appearing in a car. That is precisely the shape of "a gate that reports
+   * the absence of a problem must be provably incapable of staying quiet when it did not run".
+   *
+   * The second half is the one assumption [VerifyAutomotiveDescriptorTask] makes about reading a
+   * *source* resource rather than a merged one -- that exactly one module in the build declares a
+   * descriptor, so a library dependency cannot introduce a second one behind the check's back the
+   * way it can with a manifest attribute. Derived from the tree, not written down: the opted-in
+   * module list is scanned out of every module build file, so a second module opting in fails here
+   * rather than silently making the descriptor check ambiguous.
+   */
+  @Test
+  fun `the app module opts in to Android Auto and ships the descriptor it promises`() {
+    val optIn = Regex("""androidAuto\s*=\s*true""")
+    val optedIn = moduleBuildFiles()
+      .filter { optIn.containsMatchIn(kotlinCode(it.readText())) }
+      .map { it.parentFile.name }
+      .sorted()
+
+    assertThat(optedIn)
+      .describedAs(
+        "modules declaring `muplayApplication { androidAuto = true }`. `:app` must, or both " +
+          "Android Auto gates silently stop running; nothing else may, or " +
+          "verifyAutomotiveDescriptor's single-descriptor assumption is no longer true.",
+      )
+      .containsExactly("app")
+
+    // `kotlinCode` strips comments, so the assertion above cannot be satisfied by the paragraph in
+    // app/build.gradle.kts that explains the opt-in -- which does quote it. Asserted here rather
+    // than assumed, because a comment answering a `contains` is this repository's recorded defect.
+    assertThat(optIn.containsMatchIn(File(repoRoot(), "app/build.gradle.kts").readText()))
+      .describedAs("the raw text of app/build.gradle.kts mentions the opt-in")
+      .isTrue()
+
+    val descriptor = File(repoRoot(), "app/src/main/res/xml/automotive_app_desc.xml")
+    assertThat(descriptor).describedAs("the descriptor the opt-in promises").exists()
+    val descriptorBody = withoutBlockComments(descriptor.readText())
+    assertThat(descriptorBody).contains("<automotiveApp")
+    assertThat(descriptorBody).containsPattern("""<uses\s+name="media"""")
+  }
+
+  /**
+   * The mirror of the two rules above, for the entries Android Auto needs and nothing else does.
+   *
+   * Two halves, and they fail for different reasons. The first reads
+   * `AndroidApplicationConventionPlugin`'s `AUTOMOTIVE_DECLARATIONS` and names every entry that has
+   * to be in it: deleting one leaves `verifyDebugManifest` and `verifyReleaseManifest` green while
+   * the app quietly disappears from a car, with no error, no log line and no crash.
+   *
+   * The second holds that list against the tree it describes, which is the half this repository
+   * keeps learning it needs: every value the gate requires must actually be written in a manifest
+   * this repository owns. That makes deleting `android.media.browse.MediaBrowserService` from
+   * `core/media`'s service filter red in the **fast** tier as well as in the AGP gate, and -- since
+   * the manifests are read with their comments stripped -- it cannot be satisfied by the comment
+   * next to the declaration explaining what the declaration is for.
+   */
+  @Test
+  fun `the merged-manifest gate still requires every declaration Android Auto discovers this app by`() {
+    val plugin = applicationPlugin()
+    val automotive = declarationList(plugin, "AUTOMOTIVE_DECLARATIONS")
+
+    // A pattern that stops matching the declaration must fail here, not silently treat a missing
+    // match as "nothing to check" -- the same principle as the very first test in this class.
+    assertThat(automotive).describedAs("AUTOMOTIVE_DECLARATIONS in ${plugin.path}").isNotNull()
+
+    val required = listOf(
+      // Media3 MediaBrowsers ask for the library half of the session by this action.
+      """android:name="androidx.media3.session.MediaLibraryService"""",
+      // ANDROID AUTO enumerates media apps by this legacy action and by no other. An app that
+      // declares only Media3's own actions installs, runs, passes every test here, and is simply
+      // absent from the car's list.
+      """android:name="android.media.browse.MediaBrowserService"""",
+      // Auto's entry point into the app's declaration, and the resource it names. Two entries for
+      // one <meta-data> element, because the element and the resource it points at are separately
+      // losable in a manifest edit.
+      """android:name="com.google.android.gms.car.application"""",
+      """android:resource="@xml/automotive_app_desc"""",
+    )
+
+    assertThat(required.filterNot { checkNotNull(automotive).contains(it) })
+      // The list of what is missing, not `allMatch`: a failure has to name which declaration was
+      // dropped, and an `allMatch` over an empty required list would be vacuously true.
+      .describedAs("declarations dropped from AUTOMOTIVE_DECLARATIONS in ${plugin.path}")
+      .isEmpty()
+
+    val manifests = sourceManifests()
+    assertThat(manifests).describedAs("AndroidManifest.xml files in this repository").isNotEmpty()
+    val manifestText = manifests.joinToString("\n") { withoutBlockComments(it.readText()) }
+
+    // Derived from the list itself, not from the four spelled out above: **every** entry the gate
+    // requires has to be written in a manifest this repository owns, including one added later by
+    // a task nobody has written yet. The named list above is the other direction -- that these
+    // four cannot be dropped -- and neither direction implies the other.
+    // Line-wise rather than one regex: an entry is a raw string whose own content ends in `"`, so
+    // the delimiters and the last character of the value run together as four quotes, and a
+    // non-greedy `\"\"\"(.*?)\"\"\"` silently eats the value's closing quote. Measured, not reasoned
+    // about -- it did, and `containsAll` below is what said so.
+    val quote = "\"\"\""
+    val declared = checkNotNull(automotive).lines()
+      .map(String::trim)
+      .filter { it.startsWith(quote) }
+      .map { it.removePrefix(quote).substringBeforeLast(quote) }
+    assertThat(declared)
+      .describedAs("entries parsed out of AUTOMOTIVE_DECLARATIONS")
+      .containsAll(required)
+
+    assertThat(declared.filterNot(manifestText::contains))
+      .describedAs(
+        "the merged-manifest gate requires these and no manifest in this repository declares " +
+          "them, so the only way `check` passes is a dependency supplying them -- or it does not " +
+          "pass at all. Comments are stripped before this check: a comment quoting the " +
+          "declaration it explains is not the declaration.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * A disabled lint check has to say what took over from it, and the replacement has to be there.
+   *
+   * `app/lint.xml` is the only lint configuration in this repository, and it turns off both of
+   * Android Lint's Android Auto checks. That file argues, at length and from measurements, that
+   * neither can evaluate this project's layout at all -- `AndroidAutoDetector` reads the
+   * application module's own manifest sources, and MuPlay's playback service is deliberately
+   * declared in `:core:media`'s. Measured: adding the play-from-search action to that service left
+   * `MissingIntentFilterForMediaSearch` reported, unchanged.
+   *
+   * That argument is exactly the kind that is true when it is written and quietly false a year
+   * later, and "we replaced it with something better" is exactly the kind of claim that outlives
+   * the replacement. So each disabled id is paired here with the thing that took over, and the
+   * pairing is checked: `MissingMediaBrowserServiceIntentFilter` is replaced by a *declaration*
+   * that `AUTOMOTIVE_DECLARATIONS` must still require, and `MissingIntentFilterForMediaSearch` by a
+   * *rule in this very file* that must still exist. An id disabled with no entry here fails, and so
+   * does an entry whose replacement has gone.
+   */
+  @Test
+  fun `no Android Auto lint check is disabled without a named replacement`() {
+    val lintConfig = File(repoRoot(), "app/lint.xml")
+    assertThat(lintConfig).describedAs("the only lint configuration in this repository").exists()
+
+    // What took over from each disabled check. Two maps, not one, because the evidence lives in two
+    // different files and one combined haystack is answerable by the wrong half -- measured: with a
+    // single blob of both sources, deleting the declaration from AUTOMOTIVE_DECLARATIONS left this
+    // rule green, because *this test file* quotes the same declaration in the rule above. Each
+    // replacement is now checked only against the file that is supposed to hold it.
+    val replacedByDeclaration = mapOf(
+      // The merged-manifest gate proves on every `check`, for both variants, what lint could not
+      // see: the action really is in the artifact that ships.
+      "MissingMediaBrowserServiceIntentFilter" to
+        """android:name="android.media.browse.MediaBrowserService"""",
+    )
+    val replacedByRule = mapOf(
+      // Not an equivalent, and the lint.xml comment says so. This rule holds the filter, its
+      // handler and its gate entry to one answer; it does not require any of them to exist.
+      "MissingIntentFilterForMediaSearch" to
+        "a declared play-from-search filter must have a handler and a gate entry",
+    )
+
+    val disabled = Regex("""<issue\s+id="([^"]*)"\s+severity="ignore"""")
+      .findAll(withoutBlockComments(lintConfig.readText()))
+      .map { it.groupValues[1] }
+      .toList()
+
+    // Vacuity, and the direction that matters most: a lint.xml this pattern stopped matching would
+    // otherwise satisfy every assertion below by appearing to disable nothing.
+    assertThat(disabled)
+      .describedAs("ids disabled in ${lintConfig.path}")
+      .containsExactlyInAnyOrderElementsOf(replacedByDeclaration.keys + replacedByRule.keys)
+
+    val declarations = declarationList(applicationPlugin(), "AUTOMOTIVE_DECLARATIONS")
+    assertThat(declarations).describedAs("AUTOMOTIVE_DECLARATIONS").isNotNull()
+    // `kotlinCode`, so a rule named only in a comment -- including the paragraphs above, which name
+    // it -- does not stand in for the rule itself.
+    val rules = kotlinCode(File(repoRoot(), CONVENTION_TEST_PATH).readText())
+
+    // The **declaration** of the named test, not the bare name. Measured: matching the bare name
+    // made this assertion incapable of failing, because the name is a string literal in the map
+    // three lines above -- the rule was reading itself. Renaming the test away left it green.
+    val orphaned =
+      replacedByDeclaration.filterValues { !checkNotNull(declarations).contains(it) }.keys +
+        replacedByRule.filterValues { !rules.contains("fun `$it`(") }.keys
+
+    assertThat(orphaned)
+      .describedAs(
+        "${lintConfig.path} disables these lint checks and names a replacement that is no longer " +
+          "there, so the check is off and nothing took its place. Either restore the replacement " +
+          "or stop disabling the check.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * The Assistant's cold-start filter, its handler and its gate entry must land together.
+   *
+   * Three separately-editable places describe one feature: the `<intent-filter>` in `:core:media`'s
+   * manifest, `MuPlaybackService.onStartCommand`'s branch on
+   * `MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH`, and the entry in `AUTOMOTIVE_DECLARATIONS`
+   * that keeps the filter from being deleted. Every pairing of two-without-the-third is a real
+   * defect that fails nothing else:
+   *
+   *  * filter without handler -- the app claims to answer "play X on MuPlay" and does nothing;
+   *  * handler without filter -- the code is unreachable from a cold start, which is the only case
+   *    the filter exists for, and it is dead weight with a passing test beside it;
+   *  * filter and handler without the gate entry -- the filter can be deleted in a later manifest
+   *    edit and nothing goes red.
+   *
+   * **All three are absent as this rule is written, and that is a state it reports rather than
+   * hides.** Plan 5 Task 6 owns the filter and the handler; Task 7 wrote this and deliberately did
+   * not add a filter whose handler does not exist yet, because a manifest that claims to answer an
+   * intent nothing answers is a wrong claim in a shipped manifest. So this rule is green today by
+   * agreement at *false*, not by having nothing to check -- it goes red the moment any one of the
+   * three arrives alone, which is exactly when it is needed. Falsified in all three directions.
+   */
+  @Test
+  fun `a declared play-from-search filter must have a handler and a gate entry`() {
+    val action = "android.media.action.MEDIA_PLAY_FROM_SEARCH"
+
+    val manifest = File(repoRoot(), "core/media/src/main/AndroidManifest.xml")
+    assertThat(manifest).describedAs("the service's own manifest").exists()
+    val declared = withoutBlockComments(manifest.readText()).contains("""android:name="$action"""")
+
+    val service = File(
+      repoRoot(),
+      "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt",
+    )
+    assertThat(service).describedAs("the service that would handle the intent").exists()
+    // The platform constant, not the literal: `MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH` is
+    // how a handler spells this, and `kotlinCode` strips the comments that would otherwise answer
+    // for it -- including a KDoc explaining the branch, which is what a handler's comment says.
+    val handled = kotlinCode(service.readText()).contains("INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH")
+
+    val automotive = declarationList(applicationPlugin(), "AUTOMOTIVE_DECLARATIONS")
+    assertThat(automotive).describedAs("AUTOMOTIVE_DECLARATIONS").isNotNull()
+    val gated = checkNotNull(automotive).contains(action)
+
+    // `.distinct()` reduced to one value is "all three agree", in either direction, and a failure
+    // prints both values it found alongside the describedAs naming which place holds which.
+    assertThat(listOf(declared, handled, gated).distinct())
+      .describedAs(
+        "play-from-search is declared=$declared in ${manifest.path}, handled=$handled in " +
+          "${service.path}, gated=$gated in AUTOMOTIVE_DECLARATIONS. All three or none: a filter " +
+          "with no handler answers the Assistant with silence, a handler with no filter is " +
+          "unreachable from a cold start, and a filter with no gate entry can be deleted without " +
+          "anything going red.",
+      )
+      .hasSize(1)
   }
 
   /**

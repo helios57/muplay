@@ -147,6 +147,43 @@ class VerifyMergedManifestTaskTest {
   }
 
   @Test
+  fun `a declaration written only in a comment does not satisfy the required half`(
+    @TempDir dir: File,
+  ) {
+    // AGP's merged manifest keeps every source manifest's XML comments verbatim -- measured on this
+    // repository's own build, where `core/media`'s twenty-line comment about the browse actions is
+    // reproduced in `app/build/intermediates/merged_manifest/debug/AndroidManifest.xml`. So the
+    // declaration below is exactly the shape of a good comment sitting beside the thing it
+    // explains, and before `verify()` stripped comments this manifest passed.
+    val declaration = """android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK""""
+    val onlyInAComment = compliantManifest.lines()
+      .map { if (it.contains(declaration)) """  <!-- required: $declaration -->""" else it }
+      .joinToString("\n")
+    assertThat(onlyInAComment).describedAs("the comment still quotes it").contains(declaration)
+    assertThat(onlyInAComment).doesNotContain("<uses-permission $declaration")
+
+    assertThatThrownBy { verify(dir, onlyInAComment, required, forbidden) }
+      .describedAs("a comment quoting a declaration is not the declaration")
+      .isInstanceOf(GradleException::class.java)
+      .hasMessageContaining(declaration)
+  }
+
+  @Test
+  fun `a forbidden attribute written only in a comment still fails`(@TempDir dir: File) {
+    // The other half deliberately keeps reading comments. It is an *absence* check, where
+    // over-matching is the safe direction, and `usesCleartextTraffic` appearing anywhere in a
+    // shipped release manifest -- comment included -- is a change a human should have to look at.
+    // Pinned so a future "tidy the two halves to share one stripped string" makes this red.
+    val commented = compliantManifest.replace(
+      "<application>",
+      "<!-- android:usesCleartextTraffic is never permitted here -->\n  <application>",
+    )
+    assertThatThrownBy { verify(dir, commented, required, forbidden) }
+      .isInstanceOf(GradleException::class.java)
+      .hasMessageContaining("usesCleartextTraffic")
+  }
+
+  @Test
   fun `the debug variant's empty forbidden list forbids nothing`(@TempDir dir: File) {
     // The plugin passes `emptyList()` for debug, because `app/src/debug/AndroidManifest.xml`
     // legitimately carries `usesCleartextTraffic` for the Tier 2 journey's plain-HTTP container. An

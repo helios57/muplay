@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The only lint configuration in this repository, and it exists for one measured reason.
+
+  Android Lint's AndroidAutoDetector turns on as soon as an application declares itself an Android
+  Auto media app - the com.google.android.gms.car.application meta-data plus a res/xml descriptor
+  whose uses element names "media", both of which :app now has. It then looks for the service and
+  the intent filters an Auto media app needs. It looks for them in THIS MODULE'S OWN manifest source
+  files, and MuPlay's playback service is deliberately declared in :core:media's manifest instead
+  (read that file's header: the service class lives there, and a second application module must get
+  the declaration without anyone remembering to copy it).
+
+  So the detector reports both of its errors against an application that satisfies neither check as
+  far as it can see, while the artifact that actually ships satisfies one of them completely.
+
+  MEASURED, in both directions, rather than reasoned about:
+
+    * The merged manifest DOES carry the browse action. AGP's own merged debug manifest
+      (app/build/intermediates/merged_manifest/debug/) contains
+      android:name="android.media.browse.MediaBrowserService" inside MuPlaybackService's
+      intent-filter, and verifyDebugManifest fails the build when it does not.
+      MissingMediaBrowserServiceIntentFilter reports it missing anyway.
+    * The detector does not read library manifests. Adding
+      android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" to the same service in
+      :core:media's manifest and re-running :app:lintDebug left MissingIntentFilterForMediaSearch
+      reported, unchanged. So that check cannot go green in this layout either, whatever the
+      declaration says - it is not currently telling the truth about a gap, it is reporting the
+      only answer it is able to give.
+
+  Both are therefore checks that cannot pass, not checks that found something. A gate whose verdict
+  does not depend on the thing it claims to check is the defect class this repository exists to keep
+  out of its own gates, and leaving it on would train everyone to ignore a red lint.
+
+  WHAT REPLACES THEM, and it is stronger evidence, not weaker:
+
+    * MissingMediaBrowserServiceIntentFilter -> `verifyDebugManifest` / `verifyReleaseManifest`
+      require android:name="android.media.browse.MediaBrowserService" (and the Media3 browse action,
+      and the car meta-data, and the descriptor resource) in AGP's own MERGED manifest, for both
+      variants, on every `check`. See AUTOMOTIVE_DECLARATIONS in AndroidApplicationConventionPlugin.
+      `verifyAutomotiveDescriptor` then reads the descriptor resource itself, which no manifest
+      check of any kind can do.
+    * MissingIntentFilterForMediaSearch -> NOT replaced by an equivalent, and that is stated rather
+      than hidden. Voice search is Plan 5 Task 6's work: the intent filter and its handler in
+      MuPlaybackService.onStartCommand land together. The one gate on it is `ConventionTest`'s
+      `a declared play-from-search filter must have a handler and a gate entry`, which holds the
+      filter, the handler and the merged-manifest entry to a single answer so that no two of the
+      three can land without the third.
+
+  `ConventionTest`'s `no Android Auto lint check is disabled without a named replacement` holds this
+  file to that: an id may be listed here only if the test names what took over from it, and the test
+  checks that the replacement is really there.
+-->
+<lint>
+  <issue id="MissingMediaBrowserServiceIntentFilter" severity="ignore" />
+  <issue id="MissingIntentFilterForMediaSearch" severity="ignore" />
+</lint>
