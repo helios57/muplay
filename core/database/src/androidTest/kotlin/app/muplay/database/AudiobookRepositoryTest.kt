@@ -232,14 +232,22 @@ class AudiobookRepositoryTest {
   fun booksIsTheSameShelfInTheSameOrderAsTheFlow(): Unit = runBlocking {
     // `Bookshelf.books()` is what the browse tree reads and `bookshelf()` is what the screen reads.
     // Plan 5 Task 4's stand-in derived them separately; this asserts they are one derivation.
-    record("multi-2", positionMs = 1_000, at = 900)
-    record("single-1", positionMs = 2_000, at = 100)
+    //
+    // The timestamps put the **single-file** book on top, and that is load-bearing rather than
+    // arbitrary. Written the other way round -- `multi` most recent -- the expected order is
+    // `Multi Part Book`, `Test Book`, which is also alphabetical order, also insertion order, and
+    // also album-id order. Measured: a `books()` mutated to `bookshelf().first().sortedBy { title }`
+    // passed this test with 0 of 27 failures. It is the fixture that discriminates here, not the
+    // assertion.
+    record("single-1", positionMs = 2_000, at = 900)
+    record("multi-2", positionMs = 1_000, at = 100)
 
     val snapshot = repository.books()
 
     repository.bookshelf().test {
       val streamed = awaitItem()
-      assertThat(snapshot.map { it.bookId }).containsExactly("multi", "single")
+      assertThat(snapshot.map { it.bookId }).containsExactly("single", "multi")
+      assertThat(snapshot.map { it.title }).containsExactly("Test Book", "Multi Part Book")
       assertThat(snapshot).isEqualTo(streamed)
       cancelAndIgnoreRemainingEvents()
     }

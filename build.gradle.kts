@@ -1455,10 +1455,22 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // over from `MirrorBookshelf`. That is the "a recorded falsification goes stale when a second
     // caller appears" shape from the start, so it is recorded as such rather than discovered later.
     //
-    // `AudiobookRepository*` in the BRANCH rule reaches `$Companion` (`bookIdOf`'s two `?:`, 4
-    // branches) and `$bookshelf$1` (the `combine` lambda's own elvis arms), both of which are
-    // author decisions rather than plumbing. Every other `AudiobookRepository$*` class carries no
-    // BRANCH counter, which JaCoCo scores NaN and reports as no violation.
+    // Measured over a merged JVM + instrumented report, after a full `:core:database`
+    // connected suite (177 tests) and `:core:media`'s browse suite (66):
+    // `AudiobookRepository` BRANCH **19/20 = 0.9500**, LINE **66/66**; `$Companion` BRANCH **4/4**,
+    // LINE 2/2; `dao.AudiobookItemRow` LINE **1/1**.
+    //
+    // The one missed branch is `setSkipSilence`'s, and it is the coroutine state machine's own
+    // `label` check -- measured per method, `setSkipSilence` BRANCH 3/4 while both arms of its
+    // `existing?.speed ?: DEFAULT_SPEED` are driven by two different tests. That other arm throws
+    // `IllegalStateException("call to 'resume' before 'invoke' with coroutine")` and is unreachable
+    // by construction, which is the same "gating the compiler" case the `RendererStore*` entry above
+    // already records.
+    //
+    // `AudiobookRepository*` reaches `$Companion` (`bookIdOf`'s two `?:`) and would reach
+    // `$bookshelf$1`; that one is excluded and gated by its own rule below, for the reason that rule
+    // gives. Every other `AudiobookRepository$*` class carries no BRANCH counter, which JaCoCo
+    // scores NaN and reports as no violation.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -1467,13 +1479,36 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.database.AudiobookRepository",
         "app.muplay.database.AudiobookRepository*",
       ),
+      excludes = listOf("app.muplay.database.AudiobookRepository*bookshelf*"),
       requiresInstrumentedData = true,
     ),
-    // The same classes' LINE, **excluding the `Flow.map` artefacts**, which this module already
-    // gates at 0.50 in the rule below alongside `BrowseRepository`'s and `LibraryRepository`'s --
-    // measured 0.50-0.67 there, and there is no reason this class's two would do better. Excluded
-    // by glob rather than left out of `includes`, because `AudiobookRepository*` is what reaches
-    // `$Companion` and `$bookshelf$1` and a narrower include would drop those too.
+    // `$bookshelf$1` -- the `combine` transform -- measured **5/6 = 0.8333 BRANCH**, 7/7 LINE, and
+    // 0.90 is therefore unreachable for it: it is a `suspend` lambda, so one of its six branches is
+    // that same unreachable `label` arm. `RendererStore`'s entry above leaves exactly this shape
+    // **ungated** on BRANCH; this rule gates it at the number it can actually reach instead, which
+    // is the "an honest low floor rather than a silent hole" call this table makes elsewhere.
+    //
+    // It is not vacuous: its other four branches are `filesByBook[album.id].orEmpty()` and
+    // `songs.groupBy { it.albumId ?: it.id }`, i.e. "a book whose files have not synced yet" and "a
+    // loose file is its own book", each driven by a test written for it
+    // (`anAlbumWhoseFilesHaveNotSyncedYetIsStillABook`, `aLooseAudiobookFileIsItsOwnBookInTheItemMap`).
+    // Losing either takes this to 4/6 = 0.6667 and fires.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.80"),
+      includes = listOf("app.muplay.database.AudiobookRepository*bookshelf*"),
+      requiresInstrumentedData = true,
+    ),
+    // The same classes' LINE -- `AudiobookRepository` **66/66**, `$Companion` **2/2**,
+    // `$bookshelf$1` **7/7**, `dao.AudiobookItemRow` **1/1** -- **excluding the `Flow.map`
+    // artefacts**, which this module already gates at 0.50 in the rule above alongside
+    // `BrowseRepository`'s and `LibraryRepository`'s. That exclusion is a measurement, not a
+    // preference: `$observeSettings$$inlined$map$1` and `$observeAudiobookItems$$inlined$map$1` both
+    // read **2/3 = 0.6667** with every one of their collectors driven, exactly the 0.50-0.67 band
+    // the other four `$$inlined$map$1` families in this module sit in. Excluded by glob rather than
+    // left out of `includes`, because `AudiobookRepository*` is what reaches `$Companion` and
+    // `$bookshelf$1` and a narrower include would drop those too.
     //
     // `AudiobookItemRow` is `BookPosition`'s shape exactly: a `data class` whose generated
     // `equals`/`hashCode`/`copy` JaCoCo's Kotlin filter removes entirely, leaving **1 LINE and zero
@@ -1530,7 +1565,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.StreamRetryPolicy"),
     ),
-    // 4/4 = 1.0000 LINE, also JVM-only (`MediaModuleTest`). LINE and not BRANCH because
+    // 3/3 = 1.0000 LINE, also JVM-only (`MediaModuleTest`). It was 4/4 until Plan 4 Task 4 moved
+    // `provideClock` down into `:core:database`'s `DataModule` with its consumer; the line and its
+    // test went together, so the ratio did not move. LINE and not BRANCH because
     // `MediaModule` has **no branches at all** -- a BRANCH rule over it would match a class with
     // zero counters of its own kind, which JaCoCo scores `NaN` and reports as "no violation" at
     // every minimum. That is the vacuous-floor shape this table's own doc describes, and
