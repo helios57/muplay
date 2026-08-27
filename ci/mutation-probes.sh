@@ -194,6 +194,9 @@ CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/Integra
 INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
 REQUEST_STATUS = "integrations/core/src/main/kotlin/app/muplay/integrations/RequestStatus.kt"
 MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/MediaRequest.kt"
+LIDARR_INT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
+LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrClient.kt"
+LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -219,6 +222,9 @@ PROXY_RANGE = "core/cast/src/main/kotlin/app/muplay/cast/proxy/RangeHeader.kt"
 PROXY_REGISTRY = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyRegistry.kt"
 PROXY_UPSTREAM = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyUpstream.kt"
 PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt"
+CONTROL_STATE = "core/cast/src/main/kotlin/app/muplay/cast/control/TransportState.kt"
+CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabilities.kt"
+CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -1748,6 +1754,19 @@ PROBES = [
      "    val requireInstanceIdZero: Boolean = true,\n"
      "    /** What `A_ARG_TYPE_SeekMode` allows. Anything else: 710. */\n"
      '    val supportedSeekModes: List<String> = listOf("REL_TIME"),\n'
+     # Task 5's knob. It is NOT one of the strictness switches this probe turns off -- it models an
+     # SCPD that lies, and `null` is the honest device -- but it sits inside the block this probe
+     # matches, so it has to be carried through both halves or the preflight aborts the whole list.
+     "    /**\n"
+     "     * What the SCPD **advertises**, when that differs from what the device actually accepts.\n"
+     "     *\n"
+     "     * `null` -- the default -- means the two agree, which is the honest device. Setting it models\n"
+     "     * **an SCPD that lies**, which is the reason `UpnpRenderer.seek` catches `710` at all despite\n"
+     "     * reading the capability first: firmware has advertised modes it then refuses. Without this\n"
+     "     * knob the two lists cannot disagree, and the `710` arm of that catch is unreachable from any\n"
+     "     * test -- which is a strictness the fake would be claiming and not providing.\n"
+     "     */\n"
+     "    val declaredSeekModes: List<String>? = null,\n"
      '    /** Spec section 4: *"Never Opus. Sonos cannot decode it."* Violation: 714. */\n'
      '    val rejectedMimeTypes: Set<String> = setOf("audio/ogg", "audio/opus", "audio/webm"),\n'
      "  )",
@@ -1759,6 +1778,7 @@ PROBES = [
      "    val requireUrlExtension: Boolean = false,\n"
      "    val requireInstanceIdZero: Boolean = false,\n"
      '    val supportedSeekModes: List<String> = listOf("REL_TIME", "ABS_TIME"),\n'
+     "    val declaredSeekModes: List<String>? = null,\n"
      "    val rejectedMimeTypes: Set<String> = emptySet(),\n"
      "  )",
      # 12, up from 10: an eighth knob (`requireWellFormedBody`) and the two tests that drive it.
@@ -2231,6 +2251,160 @@ PROBES = [
      "  internal val acceptConnection: (ServerSocket) -> Socket? = { it.accept() },",
      "connections are taken through the inbound local-network guard", 1),
 
+    # ---- Plan 6 Task 5: AVTransport, RenderingControl, and the Sonos quirks -------------------
+    #
+    # The defect this task is written against is the one named in the plan's own defect-class
+    # section: *"a SOAP test that asserts a request was sent"*. `assertThat(fake.soapRequests)
+    # .hasSize(1)` is green against an unquoted SOAPACTION, arguments in the wrong order, doubly
+    # escaped metadata and a URL with no extension -- every one of which a real Sonos rejects. So
+    # every probe below is a mutation whose ONLY visible effect is which bytes reached the device,
+    # and every named test reads those bytes back off `FakeRenderer`'s recording rather than off a
+    # convenience object.
+    #
+    # Every count here was MEASURED, one mutation at a time, against `:core:cast:test` before it was
+    # written down -- not predicted. The four with a count above one are the honest ones: a
+    # mutation that reddens a neighbour as well is still a precise discrimination if the named
+    # test is the one that names the defect, and the count is what notices when that stops being
+    # true. Four further mutations were run and are NOT in this list because they redden 20+ tests
+    # each (`INSTANCE_ID` -> "1"; a `followedCoordinator` that always fires; pre-escaping the
+    # metadata; swapping `CurrentURI` and `CurrentURIMetaData`) -- a count that large is drift
+    # waiting to happen, and their transcripts are in task-5-report.md instead.
+
+    # QUIRK 1. `TransportPlaySpeed` is an argument of `Play` and its allowed value list is `{"1"}`
+    # on every renderer this plan targets. Sonos answers 402 when it is missing and **717 Play speed
+    # not supported** for anything else -- which is why the fake sends a code rather than a plain
+    # 500, and why this probe's transcript reads `UPnP error 717`. It is also the shape a future
+    # "just pass the book's 1.3x speed through" change would take, and this is what stops it.
+    ("control/play-speed-not-one", CONTROL_RENDERER,
+     'const val PLAY_SPEED: String = "1"',
+     'const val PLAY_SPEED: String = "1.0"',
+     "play sends speed 1 and moves the device into PLAYING", 3),
+
+    # QUIRK 3, and the reason the SCPD is READ rather than tried. A `seek` that hardcodes REL_TIME
+    # passes every seek assertion against a device that accepts it, and produces `710` on the first
+    # drag of the bar against an ABS_TIME-only one -- while ALSO sending a Seek to a device that
+    # declared it cannot seek by time at all, which is the "offer a control that silently fails"
+    # defect this whole plan is written against.
+    ("control/seek-mode-hardcoded", CONTROL_RENDERER,
+     "    val mode = capabilities().preferredSeekMode ?: return false",
+     "    val mode = RendererCapabilities.REL_TIME",
+     "a device that only accepts ABS_TIME is seeked with ABS_TIME", 2),
+
+    # ...and the other half of that decision: an SCPD can lie, so `710` and `711` are still caught
+    # and answered `false`. Removing the catch turns a dragged progress bar into an exception the
+    # `Player` above has to interpret, which is a session torn down over a seek.
+    ("control/seek-refusal-not-caught", CONTROL_RENDERER,
+     "      if (refused.fault.errorCode in SEEK_REFUSALS) false else throw refused",
+     "      throw refused",
+     "a seek past the end returns false rather than throwing", 2),
+
+    # The seek TARGET, which is the value a status assertion cannot see: a `Seek` that always aims
+    # at the same place is answered 200 by every renderer there is.
+    ("control/seek-target-is-a-constant", CONTROL_RENDERER,
+     '          SoapArgument("Target", UpnpTime.formatClock(positionMs)),',
+     '          SoapArgument("Target", UpnpTime.formatClock(83_000L)),',
+     "a second seek lands somewhere else", 1),
+
+    # QUIRK 4, and the one that is a scope decision. A Sonos grouped in the Sonos app ACCEPTS
+    # `SetAVTransportURI` and plays nothing, because it keeps following its coordinator. Without the
+    # check the cast succeeds at every layer and the user hears silence with no explanation -- which
+    # is why detecting it is in scope even though fixing it is not.
+    ("control/no-rincon-check", CONTROL_RENDERER,
+     "    positionInfo().followedCoordinator?.let { throw RendererFollowsAnotherException(it) }",
+     "    positionInfo()",
+     "a sonos following another speaker is detected and named", 1),
+
+    # `x-rincon:` is stated ONCE, in `PositionInfo`, and `UpnpRenderer` asks the property rather than
+    # carrying a second copy of the prefix. Loosening the prefix to `x-` -- the plausible way to get
+    # this wrong -- calls a line-in source (`x-rincon-stream:`) and an SMB file (`x-file-cifs:`) group
+    # followers, and this app then refuses to cast to a speaker that is perfectly free.
+    #
+    # A `contains`-instead-of-`startsWith` probe was WRITTEN HERE FIRST AND REMOVED, because it was
+    # run and came back MISSED with zero failures in the whole suite. That is not a gap in the test:
+    # `contains` and `startsWith` can only differ for a `TrackURI` carrying `x-rincon:` somewhere
+    # other than at its start, and no value a renderer produces looks like that. The mutation was
+    # undetectable because it is not a defect, which is a different thing from an assertion that
+    # cannot fail -- and worth writing down, because the next person to reach for it will reach for
+    # `contains` too.
+    ("control/rincon-prefix-too-loose", CONTROL_STATE,
+     "  val followedCoordinator: String? get() = trackUri?.takeIf { it.startsWith(FOLLOW_SCHEME) }",
+     '  val followedCoordinator: String? get() = trackUri?.takeIf { it.startsWith("x-") }',
+     "a follower is recognised by its scheme and nothing else is", 1),
+
+    # `UNKNOWN` folded into `STOPPED`. Task 8 reads `STOPPED` after `PLAYING` as "the track ended,
+    # advance" -- so a renderer sending a state this enum has not seen would skip a track, every
+    # time, silently. Both arms of the `when` still execute under the mutation, so no coverage
+    # number moves.
+    ("control/unknown-reads-as-stopped", CONTROL_STATE,
+     "      else -> UNKNOWN",
+     "      else -> STOPPED",
+     "an unrecognised or missing value is UNKNOWN and not STOPPED", 1),
+
+    # `CurrentTransportStatus` is a SECOND state variable, and a renderer that could not fetch or
+    # decode what it was given answers `ERROR_OCCURRED` there while `CurrentTransportState` still
+    # reads an ordinary `STOPPED`. Hardcoding `hasError = false` turns "the speaker refused these
+    # bytes" into "the track finished", which is a queue that advances past a track nobody heard.
+    ("control/transport-error-ignored", CONTROL_STATE,
+     "      hasError = STATUS_ERROR_OCCURRED.equals(status.orEmpty().trim(), ignoreCase = true),",
+     "      hasError = false,",
+     "a device reporting ERROR_OCCURRED is distinguished from one that merely stopped", 2),
+
+    # The volume clamp. A slider's rounding must not become a `402`, and the fake answers exactly
+    # that to anything outside 0..100 -- as real hardware does.
+    ("control/volume-not-clamped", CONTROL_RENDERER,
+     '        SoapArgument("DesiredVolume", level.coerceIn(MIN_VOLUME, MAX_VOLUME).toString()),',
+     '        SoapArgument("DesiredVolume", level.toString()),',
+     "a volume outside 0 to 100 is clamped rather than sent and refused", 1),
+
+    # `RenderingControl` actions must carry `RenderingControl`'s service type, in the SOAPACTION and
+    # in the envelope's `xmlns:u`. A copy-paste of the transport's is a `401` on a conformant device
+    # and is invisible to every assertion about arguments -- this fake accepts it, which is exactly
+    # why the assertion is on the raw header value rather than on the answer.
+    ("control/rendering-uses-transport-service", CONTROL_RENDERER,
+     "    soap.invoke(controlUrl, DeviceDescription.SERVICE_RENDERING_CONTROL, action, arguments)",
+     "    soap.invoke(controlUrl, DeviceDescription.SERVICE_AV_TRANSPORT, action, arguments)",
+     "volume is read and written, and the value that comes back is the one that went in", 1),
+
+    # Reading the wrong out-argument out of a right answer. `GetVolume` answers `CurrentVolume`;
+    # `CurrentMute` is a real argument name on the same service, so this is the neighbouring-field
+    # defect rather than a typo, and it renders as a volume slider that is always at zero.
+    ("control/volume-reads-the-mute-argument", CONTROL_RENDERER,
+     '    )["CurrentVolume"]?.toIntOrNull()',
+     '    )["CurrentMute"]?.toIntOrNull()',
+     "volume is read and written, and the value that comes back is the one that went in", 2),
+
+    # `SetNextAVTransportURI` is called only where the device DECLARED it. Calling it anyway returns
+    # `401` and, on some firmware, clears the queue that is already playing -- in the middle of an
+    # album, which is the worst possible moment.
+    ("control/setnext-capability-ignored", CONTROL_RENDERER,
+     "    if (!capabilities().supportsSetNextUri) return",
+     "    if (false) return",
+     "a device that declares no such action is never asked, rather than asked and refused", 1),
+
+    # ...and the value it carries. A `NextURI` that is always empty queues nothing while answering
+    # 200, which is a gap between every pair of tracks and nothing in a log.
+    ("control/next-uri-is-a-constant", CONTROL_RENDERER,
+     '        SoapArgument("NextURI", item?.resourceUrl.orEmpty()),',
+     '        SoapArgument("NextURI", ""),',
+     "a device that declares SetNextAVTransportURI is given the next track, in order", 1),
+
+    # The SCPD read, cached once per renderer. Re-fetching adds an HTTP round trip to every drag of
+    # the seek bar, and the ONLY place that is visible is the device's own request count -- an
+    # identity check on the returned object goes green against a client that re-fetches and memoises
+    # the second answer.
+    ("control/capabilities-refetched", CONTROL_RENDERER,
+     "    cachedCapabilities ?: loadCapabilities().also { cachedCapabilities = it }",
+     "    loadCapabilities()",
+     "capabilities are fetched once and not on every seek", 1),
+
+    # ORDER IS A PROPERTY, here as in the three other places this plan says so. `preferredSeekMode`
+    # falls back to the device's own first choice, so a sorted `allowedValueList` silently changes
+    # which mode an ABS_TIME-and-TRACK_NR device gets asked for.
+    ("control/scpd-order-sorted", CONTROL_CAPS,
+     "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList()",
+     "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList().sorted()",
+     "the declared seek modes are read, in the order the device declared them", 1),
+
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
     # they belong here rather than behind a coverage floor.
@@ -2319,6 +2493,71 @@ PROBES = [
      'else -> Failed("unrecognised stored status \\"$name\\"")',
      'else -> Requested',
      "an unrecognised stored status reads as a failure that names itself", 1),
+
+    # ---- Plan 7 Task 4: the credential that must never reach a URL -----------------------------
+    # THIS FAMILY EXISTS BECAUSE THE COVERAGE GATE CANNOT SEE ANY OF IT, and that was measured
+    # rather than assumed. `LidarrAuthInterceptor` has **no branches at all** and its seven lines
+    # run on any request whatsoever, so its 7/7 LINE floor stays green under every mutation below;
+    # withholding all seven of `LidarrAuthTest`'s tests -- every assertion in this repository about
+    # where a Lidarr API key goes -- also leaves that floor at 7/7 and both coverage gates GREEN.
+    # A green `./gradlew check` is therefore no evidence at all about the key's placement. These
+    # four probes and the named tests are the whole of it.
+    #
+    # 1. The key itself. A constant here authenticates against nothing and fails loudly in the
+    #    field, but it is the shape that ships: a hardcoded value satisfies "the header is present"
+    #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
+    ("integrations/lidarr-api-key-header", LIDARR_INT,
+     '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
+     # 5, measured: it also reddens the four other tests that read the header back off a
+     # RecordedRequest -- the redirect one, and `LidarrWiringTest`'s factory test among them.
+     "the header carries whichever key the client was given", 5),
+
+    # 2. The key on the URL -- the defect this whole module is named for. Lidarr really does accept
+    #    `?apikey=` (measured against 3.1.0.4875: it answers 200), so this is a live wrong path.
+    #    Adding the query parameter while LEAVING the header in place is deliberate: every
+    #    response assertion in the module still passes, because the request still authenticates.
+    ("integrations/lidarr-api-key-on-url", LIDARR_INT,
+     '.header("X-Api-Key", apiKey)',
+     '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
+     # 2, measured: `LidarrWiringTest`'s factory test asserts the same negative one layer up.
+     "no request this client makes carries the key on its url", 2),
+
+    # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
+    #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
+    #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
+    ("integrations/lidarr-accept-json", LIDARR_INT,
+     '.header("Accept", "application/json")', '.header("Accept", "*/*")',
+     "every request declares that it accepts json", 1),
+
+    # 4 and 5. Two mapped handshake fields, one representative of each risk: `appName` is the
+    #    identity check that stops a Sonarr reading as a working Lidarr, and `urlBase` is the one a
+    #    proxied install needs. A constant in either leaves the fixture-based test green, because
+    #    the constant a lazy implementation reaches for is the fixture's own value.
+    ("integrations/lidarr-appName", LIDARR_CLIENT,
+     "appName = body.appName.orEmpty(),", 'appName = "Lidarr",',
+     # 2, measured: also reddens `a status body with every optional field omitted maps to empty
+     # strings`, which is the second observation of the same field at a third value.
+     "status reads the values from the body, not from constants", 2),
+    ("integrations/lidarr-urlBase", LIDARR_CLIENT,
+     "urlBase = body.urlBase.orEmpty(),", 'urlBase = "",',
+     "status reads the values from the body, not from constants", 1),
+
+    # 6. The 401 message. Lidarr returns a byte-identical bare 401 for a wrong key and a missing
+    #    one (measured: `Content-Length: 0`, no body, both cases), so a message claiming to know
+    #    which is a guess presented to the user as a fact. No ratio moves under this mutation --
+    #    the class is still constructed and still thrown.
+    ("integrations/lidarr-401-overclaims", LIDARR_EXC,
+     'Exception("Lidarr rejected this API key")',
+     'Exception("Lidarr says this API key is incorrect")',
+     "a 401 is an unauthorized failure whose message does not overclaim", 1),
+
+    # 7. The 503 discriminator. A reverse proxy with no upstream answers 503 too, and mapping every
+    #    503 to "starting up" tells a user to wait for a container that is not starting. Every arm
+    #    still executes under the mutation, so the BRANCH floor over `LidarrClient` stays green.
+    ("integrations/lidarr-503-collapsed", LIDARR_CLIENT,
+     "503 -> if (isStartingUp(raw)) LidarrStartingUpException() else LidarrHttpException(503)",
+     "503 -> LidarrStartingUpException()",
+     "a 503 starting-up body is its own failure, distinct from any other 503", 1),
 
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
@@ -2539,6 +2778,14 @@ LATER_PROBE_FILES = [
     # run ends, which is the stray-mutation incident this script's header describes.
     STORE,
     CREDENTIALS,
+    # Plan 7 Task 4, added in the same edit as the seven `integrations/lidarr-*` probes -- and
+    # this list's own comment is not decoration: adding the probes WITHOUT these three names left
+    # `LidarrAuthInterceptor.kt` mutated after the first probe, so the second probe's `apply()`
+    # found 0 matches and aborted the family. It failed loudly and `git status` showed the stray
+    # immediately, which is the mechanism working, but it cost a run.
+    LIDARR_INT,
+    LIDARR_CLIENT,
+    LIDARR_EXC,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,
@@ -2645,6 +2892,14 @@ JVM_TEST_RESULT_DIRS = {
     # Android type, which is exactly why the cleartext decision and the secret-stripping live in
     # this module rather than inside either service client.
     "integrations/core": "testDebugUnitTest",
+    # `:integrations:lidarr` joined in Plan 7 Task 4. An Android library, so `testDebugUnitTest`.
+    # Its JVM tier reaches every class in the module except one: `LidarrSourceProvider`'s single
+    # collaborator is `IntegrationCredentialStore`, which is DataStore over the Android Keystore,
+    # so the provider is instrumented-only and no probe here can see it. The severability
+    # behaviour it owns -- "not configured yields null" -- is proved by `LidarrSourceProviderTest`
+    # on the emulator and recorded in task-4-report.md, the same way `LiveNavidromeTest`'s
+    # test-side probes already are.
+    "integrations/lidarr": "testDebugUnitTest",
     # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
     # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
     # top-level function in its own file, and `PlayerViewModel` is constructed over a
@@ -2711,7 +2966,8 @@ def run_suite():
     subprocess.run(["./gradlew", "--quiet", "--continue", ":core:network:test", ":core:model:test",
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
-                    ":integrations:core:test", ":feature:player:test"],
+                    ":integrations:core:test", ":integrations:lidarr:test",
+                    ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

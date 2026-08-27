@@ -3141,6 +3141,137 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.proxy.OkHttpProxyUpstream*open*1",
       ),
     ),
+    // Plan 6 Task 5, `app.muplay.cast.control`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator and no Navidrome container anywhere.
+    //
+    // Per class, and which class goes on which of the two rules is a MEASUREMENT and not a
+    // preference, for this table's usual reason: a CLASS-element rule over a class carrying no
+    // counter of the rule's kind is a `0/0` COVEREDRATIO, which is `NaN`, which JaCoCo reports as
+    // no violation at any minimum.
+    //
+    //   `TransportState$Companion`        BRANCH   9/9  -- every arm of `fromWire`, including the
+    //                                     two that collapse onto `PAUSED` and the `else` that must
+    //                                     stay `UNKNOWN` rather than becoming `STOPPED`.
+    //   `TransportInfo$Companion`         BRANCH   2/2  -- `CurrentTransportStatus` absent and
+    //                                     present. Absent is NOT an error, and that is the arm.
+    //   `PositionInfo`                    BRANCH   6/6  -- `followedCoordinator` over a null URI, a
+    //                                     non-`x-rincon:` one and an `x-rincon:` one, and
+    //                                     `isFollowingAnotherSpeaker` both ways.
+    //   `PositionInfo$Companion`          BRANCH   6/6  -- `fromWire`'s blank/absent/present
+    //                                     `TrackURI`, and `UpnpTime.parseClock`'s two null sources.
+    //   `RendererCapabilities`            BRANCH   4/4  -- `preferredSeekMode`'s three answers.
+    //   `RendererCapabilities$Companion`  BRANCH   4/4  -- `fromScpd`'s no-match arm, its
+    //                                     empty-`allowedValueList` arm, and both.
+    //   `UpnpRenderer`                    BRANCH 29/30 = 0.9667 -- the whole control surface.
+    //
+    // `UpnpRenderer`'s ONE missing branch is named rather than rounded away: `volume()`'s
+    // `["CurrentVolume"]?.toIntOrNull()` never sees a `GetVolume` response that omits
+    // `CurrentVolume` altogether, because `FakeRenderer` always sends the value and carries no knob
+    // to make it stop. The arm is real (a renderer may implement the action and not the variable)
+    // and it is the honest state of this class at this floor, not a reason to lower the minimum.
+    // What holds the field that *is* read is `control/volume-reads-the-mute-argument` in
+    // `ci/mutation-probes.sh`, which a coverage number could never see.
+    //
+    // FALSIFIED per class by withholding tests and RUNNING the result -- never by raising a minimum
+    // above a measured 1.0000, which JaCoCo cannot even evaluate (it validates the minimum is
+    // inside 0.0..1.0 before it reads a ratio, so that can only ever throw). Every number below was
+    // read off `jacocoJvmCoverageVerification`'s own output on a withheld run, and every one of
+    // these seven fires with the tests named and nothing else withheld:
+    //
+    //   * `TransportState$Companion`: withhold `TransportStateTest`'s `an unrecognised or missing
+    //     value is UNKNOWN and not STOPPED` -> **7/9 = 0.7778**, *"branches covered ratio is 0.77,
+    //     but expected minimum is 0.90"*. So the arm that keeps a value this enum has not seen out
+    //     of `STOPPED` -- the one that would silently skip a track per unrecognised state -- is
+    //     load-bearing for this floor on its own.
+    //   * `TransportInfo$Companion`: withhold `an absent transport status is not an error, and
+    //     every spelling of the error one is` -> **1/2 = 0.5000**.
+    //   * `PositionInfo`: withhold `a follower is recognised by its scheme and nothing else is`
+    //     -> **5/6 = 0.8333**.
+    //   * `PositionInfo$Companion`: withhold `position info reads three fields from three
+    //     arguments, and a blank track uri is no uri` -> **5/6 = 0.8333**. The two are independent:
+    //     each withheld alone fires its own class and leaves the other at 1.0000, which is what a
+    //     floor split across a type and its companion is supposed to look like.
+    //   * `RendererCapabilities$Companion`: withhold `an unreadable scpd falls back to the
+    //     conservative default rather than throwing` -> **3/4 = 0.7500**.
+    //   * `RendererCapabilities`: withhold the four seek-mode tests (`a device offering neither
+    //     time mode reports that it cannot seek`, `abs time is used when rel time is not offered`,
+    //     `a device that cannot seek by time reports so...`, `a device that only accepts ABS_TIME
+    //     is seeked with ABS_TIME`) -> **1/4 = 0.2500**.
+    //   * `UpnpRenderer`: withhold `a device with no RenderingControl reports no volume instead of
+    //     throwing` -> **26/30 = 0.8667**. One test, four branches: it is the only thing that
+    //     drives the `?: return` on `renderingControlUrl` in all three of `volume`, `setVolume` and
+    //     `setMuted`, and the margin here is four branches of thirty. That is the honest state of a
+    //     class this size at a 0.90 floor, not a reason to raise the minimum.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.control.TransportState*Companion",
+        "app.muplay.cast.control.TransportInfo*Companion",
+        "app.muplay.cast.control.PositionInfo",
+        "app.muplay.cast.control.PositionInfo*Companion",
+        "app.muplay.cast.control.RendererCapabilities",
+        "app.muplay.cast.control.RendererCapabilities*Companion",
+        "app.muplay.cast.control.UpnpRenderer",
+      ),
+    ),
+    // The classes in this package with lines and no branches, on LINE -- the same shape and the
+    // same argument as `XmlText`, `ServedMedia` and `MimeDisagreementException` above:
+    //
+    //   `RendererFollowsAnotherException`  LINE 2/2. **Not a ride-along**: its two lines are the
+    //                                      exception's construction and its message, reached only
+    //                                      when a refusal actually happens. So the one class in
+    //                                      this package that exists to say no is gated on whether
+    //                                      anything ever makes it say no.
+    //   `UpnpRenderer$loadCapabilities$2`  LINE 4/4. The `withContext(Dispatchers.IO)` body, whose
+    //                                      BRANCH is 5/6 -- the missing arm being the coroutine
+    //                                      `label` check whose other arm is unreachable by
+    //                                      construction, exactly as recorded for
+    //                                      `SoapClient$invoke$2` and `RendererDirectory$describe$xml$1`
+    //                                      above. Lowering a BRANCH floor to fit that is what this
+    //                                      table refuses to do, so LINE gates what can honestly be
+    //                                      gated. Both of its own arms -- a device with no SCPD URL
+    //                                      at all, and one whose SCPD cannot be fetched -- have
+    //                                      their own tests.
+    //   `TransportState`, `TransportInfo`  LINE 1/1 each, declaration only (JaCoCo's Kotlin filters
+    //                                      remove a data class's generated members and an enum's
+    //                                      `values`/`valueOf`, so what is left is the constructor).
+    //
+    // The eleven other `UpnpRenderer$*$1` suspend continuations carry **no counter of either kind**
+    // and are deliberately absent from both rules rather than listed as ride-alongs:
+    // `warnUngatedClasses` skips a class with zero BRANCH and zero LINE counters by construction,
+    // so listing them would add names that gate nothing and silence nothing.
+    //
+    // Falsified: withholding `UpnpRendererTest`'s `a sonos following another speaker is detected
+    // and named` **alone** takes `RendererFollowsAnotherException` to **0/2 = 0.0000** and this
+    // floor fires -- *"Rule violated for class
+    // app.muplay.cast.control.RendererFollowsAnotherException: lines covered ratio is 0.00, but
+    // expected minimum is 0.90"*. So the one class in this package that exists to say no is gated
+    // on whether anything ever makes it say no.
+    //
+    // `loadCapabilities$2`'s half of this rule was ALSO falsified, and the attempt FAILED -- which
+    // is recorded rather than quietly re-tried, because a floor whose falsification nobody ran is
+    // a floor nobody knows the strength of. Withholding `a device that declares no scpd url at all
+    // is castable on the conservative default` -- the only test that drives that body's
+    // `?: return@withContext DEFAULT` -- leaves it at **LINE 4/4 = 1.0000 and this rule GREEN**,
+    // while its BRANCH moves 5/6 -> 4/6. The `return@withContext` shares its line with the
+    // assignment above it, so no LINE counter can move for it. Read this entry for what it is: a
+    // ride-along that keeps `warnUngatedClasses` quiet and asserts only that *something* still
+    // calls `capabilities()`. What actually holds that body is the BRANCH rule over `UpnpRenderer`
+    // and the `control/*` mutation probes.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.control.RendererFollowsAnotherException",
+        "app.muplay.cast.control.TransportState",
+        "app.muplay.cast.control.TransportInfo",
+        "app.muplay.cast.control.UpnpRenderer*loadCapabilities*2",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH
@@ -3469,6 +3600,148 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.integrations.MediaRequestRepository*"),
       excludes = listOf("app.muplay.integrations.MediaRequestRepository"),
       requiresInstrumentedData = true,
+    ),
+  ),
+  // `:integrations:lidarr`, Task 4.
+  //
+  // **Five `"CLASS"` rules, not the one `"BUNDLE"` rule the plan proposed, and that is a
+  // measurement rather than a preference.** The plan's placeholder was
+  // `CoverageFloor(counter = "BRANCH", minimum = 0.90)` on the argument that this module is plain
+  // Kotlin over Retrofit and therefore Tier-1 enforceable like `:core:network`. Measured, the
+  // module's BUNDLE BRANCH is **50/52 = 0.9615 with instrumented data and 46/52 = 0.8846
+  // without** -- so that entry would have failed `jacocoJvmCoverageVerification` outright, and the
+  // only way to make it pass would have been `requiresInstrumentedData = true`, which moves every
+  // branch in the client into the 45-minute tier to accommodate one class that needs a device.
+  // The `"CLASS"` form puts each class in the tier that can actually see it.
+  ":integrations:lidarr" to listOf(
+    // 1. The **fast tier's** BRANCH rule: the two classes with author-written branches.
+    //
+    //   `LidarrClient`               42/44 = 0.9545
+    //   `LidarrValidationException`   4/4  = 1.0000
+    //
+    // The two `LidarrClient` branches that are missing are Kotlin's unreachable null arms of
+    // `response.errorBody()?.string().orEmpty()`: Retrofit supplies an error body for every
+    // unsuccessful response, and `ResponseBody.string()` is non-null. Same artifact, same reason,
+    // as `IntegrationCredentialStore`'s eighteenth branch and `MediaRequestRepository`'s twelfth
+    // in `:integrations:core` -- so **0.90 against a measured 0.9545 is the honest ceiling** and a
+    // 1.00 here would fail the build on the Kotlin compiler rather than on this project's code.
+    //
+    // Three branches in this rule were closed by tests written *because* this measurement was
+    // taken, not before it: `ping`'s null-body arm (7/8), `isStartingUp`'s absent-`errorMessage`
+    // arm (1/2) and `isAlreadyAdded`'s null-message arm (3/4). All three are shapes a real Lidarr
+    // produces -- its serializer omits null-valued fields entirely -- and none had an observation.
+    //
+    // Falsified rather than assumed: see task-4-report.md for the ratios each withheld test
+    // produces.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.lidarr.LidarrClient",
+        "app.muplay.integrations.lidarr.LidarrValidationException",
+      ),
+    ),
+    // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
+    // Measured, all at 1.0000: `LidarrClient` 35/35, its companion 10/10 (the `Json` config and
+    // `buildApi`), `LidarrAuthInterceptor` 7/7 -- the class that decides where the API key goes,
+    // and the reason this rule is in the *fast* tier rather than an instrumented one -- and
+    // `LidarrServer` 7/7, the four `Lidarr*Exception` members at 2/2 or 3/3,
+    // `LidarrValidationFailure` 1/1, `DefaultLidarrSourceFactory` 1/1 and `di.LidarrModule` 1/1.
+    //
+    // Those last two are here because they were measured at **0/1 each** on the first run: the
+    // production factory and its Hilt binding were exercised by nothing at all while every test in
+    // the module passed. `LidarrWiringTest` is what covers them now, and this rule is what stops
+    // that quietly going away again -- the same argument `:integrations:core` makes for
+    // `IntegrationsDataModule`.
+    //
+    // `LidarrClient*` also matches the coroutine state machines `call$1`/`ping$1`/`status$1`,
+    // which carry no LINE counter at all (JaCoCo's isNaN pass, which is not the same thing as
+    // excluded), and `status$body$1` at 1/1. `Lidarr*Exception` also matches the sealed interface
+    // `LidarrException`, which carries no counters and rides along so `warnUngatedClasses` has
+    // nothing to say about it.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.lidarr.LidarrClient*",
+        // `LidarrAuthInterceptor` is here so it is *gated*, and this rule is measured at 7/7 --
+        // but read the next sentence before trusting it, because it was falsified and the
+        // falsification FAILED. Withholding **all seven** of `LidarrAuthTest`'s tests -- every
+        // assertion in the repository about where the API key goes -- leaves this class at 7/7
+        // and both coverage gates GREEN, because `LidarrHandshakeTest` and `LidarrWiringTest`
+        // also send real requests through the same interceptor and its lines run on any request
+        // at all. The class has no branches, so no BRANCH rule can gate it either.
+        //
+        // So this floor cannot see a wrong header name, a constant key, or a key moved onto the
+        // query string. `ci/mutation-probes.sh`'s `integrations/lidarr-*` family is what does --
+        // three of those four probes leave every ratio in this table exactly where it is. Do not
+        // read a green coverage gate as evidence about the key's placement.
+        "app.muplay.integrations.lidarr.LidarrAuthInterceptor",
+        "app.muplay.integrations.lidarr.LidarrServer",
+        "app.muplay.integrations.lidarr.Lidarr*Exception",
+        "app.muplay.integrations.lidarr.LidarrValidationFailure",
+        "app.muplay.integrations.lidarr.DefaultLidarrSourceFactory",
+        "app.muplay.integrations.lidarr.di.LidarrModule",
+      ),
+    ),
+    // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
+    // emulator's execution data, and **0/4 and 0/6 without it**. That is a measurement, taken by
+    // moving the `.ec` aside and regenerating the report, not a judgement: the provider's one
+    // collaborator is `IntegrationCredentialStore`, which is DataStore over the Android Keystore
+    // and has no JVM tier at all, and this project ships no mock framework to stand in for it.
+    //
+    // Its own rules rather than a ride-along, because "returns `null` when nothing is configured"
+    // is the single most important behaviour in this module: it is the state a real user with no
+    // Lidarr is in permanently, and the plan's severability contract names a not-configured path
+    // that every test configures around as this plan's most likely defect.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.lidarr.LidarrSourceProvider"),
+      requiresInstrumentedData = true,
+    ),
+    // The BRANCH rule above is falsifiable by withholding tests and the LINE rule below is not,
+    // which is worth writing down rather than leaving for the next person to rediscover.
+    // Withholding the four `LidarrSourceProviderTest` methods that reach `?.let(factory::create)`
+    // drops BRANCH to **2/4 = 0.50** and the full gate fails; the same withholding leaves LINE at
+    // **6/6**, because `?.let` compiles onto the same lines as the `as?` before it. The only
+    // falsification the LINE rule has is the absence of instrumented data altogether (0/6), which
+    // is what makes it worth keeping -- it is the rule that would fire if this class stopped being
+    // exercised on a device at all, and it is what keeps `warnUngatedClasses` quiet about
+    // `current$1`.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.lidarr.LidarrSourceProvider*"),
+      requiresInstrumentedData = true,
+    ),
+    // 5. The four wire DTOs, gated **low rather than not at all** -- the identical trade
+    // `:integrations:core` makes for `IntegrationCredentialStore*`'s coroutine machinery, and made
+    // here for the identical reason: leaving them ungated would print `warnUngatedClasses` lines
+    // on every run forever, which is how a warning mechanism dies.
+    //
+    // Measured: `ValidationFailureBody` **2/5 = 0.4000**, `SystemStatusBody` 5/8 = 0.6250,
+    // `PingBody` and `StartingUpBody` 1/2 = 0.5000 each, and each one's `$$serializer` companion
+    // at 1/1. The uncovered lines are a `data class`'s generated `equals`/`hashCode`/`copy`/
+    // `componentN`, which nothing calls because these types exist only to be deserialised into.
+    // **0.40 is a number this run produced**, not a round one chosen to fit.
+    //
+    // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
+    // pass); LINE is the only counter that can hold them to anything.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.40"),
+      includes = listOf(
+        "app.muplay.integrations.lidarr.PingBody*",
+        "app.muplay.integrations.lidarr.SystemStatusBody*",
+        "app.muplay.integrations.lidarr.ValidationFailureBody*",
+        "app.muplay.integrations.lidarr.StartingUpBody*",
+      ),
     ),
   ),
 )

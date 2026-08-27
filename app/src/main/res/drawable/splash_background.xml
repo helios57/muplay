@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launch window for API 26-30, where there is no platform splash screen at all: a brand field
+  with the MuPlay mark centred on it, installed as `android:windowBackground`. On API 31+ this file
+  is not used — `values-v31/themes.xml` replaces it with a plain colour and hands the splash to the
+  platform's own `windowSplashScreen*` attributes instead, which is also why it must not be a
+  layer-list there (the platform splash reads `windowBackground` expecting a single colour).
+
+  The foreground layer is reused rather than copied, so the splash mark and the launcher mark
+  cannot drift. Its artwork occupies the middle ~61% of its own 108dp viewport (the adaptive-icon
+  safe zone), so 192dp of box yields roughly a 117dp mark.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+  <item android:drawable="@color/muplay_splash_background" />
+  <item
+      android:drawable="@drawable/ic_launcher_foreground"
+      android:gravity="center"
+      android:width="192dp"
+      android:height="192dp" />
+</layer-list>

@@ -34,3 +34,5 @@ include(":feature:player")
 // fact rather than a promise, and that rule is written as a path prefix -- which only means
 // anything while these modules live somewhere of their own.
 include(":integrations:core")
+// Plan 7 Task 4. Depends on `:integrations:core` and on nothing else in the build.
+include(":integrations:lidarr")

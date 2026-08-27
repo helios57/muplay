@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+ draws a splash screen for every cold start whether an app asks for one or not. Left
+  unconfigured it uses the launcher icon on the *system* window background, which is the default
+  this task exists to replace; configured here it is the MuPlay mark on the brand field.
+
+  `windowSplashScreenAnimatedIcon` is the launcher's own foreground layer, not a copy of it, so the
+  splash and the launcher icon cannot drift apart. The platform draws that drawable into a 288dp
+  box and shows the middle two thirds of it; the layer's artwork sits inside the adaptive-icon safe
+  zone, which is 66/108 = 0.61 of its viewport, so it is inside the visible circle by construction.
+  No `windowSplashScreenIconBackgroundColor`: the mark is white on the brand field already, and a
+  circle behind it would only cover the field it is meant to sit on.
+
+  `windowBackground` is a plain colour here rather than `@drawable/splash_background` for two
+  reasons. It is what the window shows *after* the splash animates away and before the first
+  Compose frame, so it wants the surface colour, not the brand one. And the platform splash reads
+  `windowBackground` as its own fallback field, which a layer-list cannot supply.
+-->
+<resources>
+  <style name="Theme.MuPlay" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">@color/muplay_window_background</item>
+    <item name="android:windowSplashScreenBackground">@color/muplay_splash_background</item>
+    <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+  </style>
+</resources>

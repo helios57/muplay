@@ -165,6 +165,16 @@ class FakeRenderer(
     val requireInstanceIdZero: Boolean = true,
     /** What `A_ARG_TYPE_SeekMode` allows. Anything else: 710. */
     val supportedSeekModes: List<String> = listOf("REL_TIME"),
+    /**
+     * What the SCPD **advertises**, when that differs from what the device actually accepts.
+     *
+     * `null` -- the default -- means the two agree, which is the honest device. Setting it models
+     * **an SCPD that lies**, which is the reason `UpnpRenderer.seek` catches `710` at all despite
+     * reading the capability first: firmware has advertised modes it then refuses. Without this
+     * knob the two lists cannot disagree, and the `710` arm of that catch is unreachable from any
+     * test -- which is a strictness the fake would be claiming and not providing.
+     */
+    val declaredSeekModes: List<String>? = null,
     /** Spec section 4: *"Never Opus. Sonos cannot decode it."* Violation: 714. */
     val rejectedMimeTypes: Set<String> = setOf("audio/ogg", "audio/opus", "audio/webm"),
   )
@@ -179,18 +189,42 @@ class FakeRenderer(
     val embedRenderer: Boolean = true,
     /** When set, `GetPositionInfo` reports this as `TrackURI` -- the Sonos group-follower case. */
     val followingCoordinator: String? = null,
+    // ---- Task 5 additions, kept together ------------------------------------------------------
+    /**
+     * Whether this device declares `SetNextAVTransportURI` in its SCPD **and** answers it.
+     *
+     * `false` by default because that is the honest majority: plenty of renderers -- and several
+     * Sonos firmwares -- carry no such action, and a client that assumed otherwise would get 401
+     * at every track transition. Both arms exist so `RendererCapabilities.supportsSetNextUri` can
+     * be observed at two values against a real device rather than only against a string.
+     */
+    val supportsSetNextUri: Boolean = false,
+    /**
+     * `CurrentTransportStatus`, which is a **separate variable** from the transport state.
+     *
+     * A renderer that could not fetch or decode what it was given answers `ERROR_OCCURRED` here
+     * while `CurrentTransportState` still reads an ordinary `STOPPED`. Held as a knob rather than
+     * derived from a failed media fetch on purpose: the fetch happens on a background thread, so
+     * deriving it would make every `Play` assertion in the suite race a socket timeout.
+     */
+    val transportStatus: String = "OK",
   )
 
   private val server = ServerSocket(0, BACKLOG, InetAddress.getLoopbackAddress())
   private val soap = CopyOnWriteArrayList<RecordedSoap>()
   private val media = CopyOnWriteArrayList<RecordedMedia>()
+  private val documents = CopyOnWriteArrayList<String>()
   private val firstMedia = CountDownLatch(1)
 
   /** Whether the renderer actually fetches `CurrentURI` on `Play`. Task 7 turns this off. */
   @Volatile var fetchesMedia: Boolean = true
 
+  /** Set by [disappear]. The socket stays bound; every connection is hung up on. */
+  @Volatile private var vanished: Boolean = false
+
   @Volatile private var currentUri: String? = null
   @Volatile private var currentMetadata: String = ""
+  @Volatile private var nextUri: String? = null
   @Volatile private var transportState: String = "STOPPED"
   @Volatile private var positionMs: Long = 0L
   @Volatile private var durationMs: Long = 0L
@@ -200,6 +234,21 @@ class FakeRenderer(
   val port: Int get() = server.localPort
   val soapRequests: List<RecordedSoap> get() = soap.toList()
   val mediaRequests: List<RecordedMedia> get() = media.toList()
+
+  /**
+   * Every **document** this renderer served -- its description and its SCPDs -- by request target,
+   * in order.
+   *
+   * Task 5 counts SCPD fetches with it, and the counting is the assertion rather than a
+   * convenience: `capabilities()` caches, and the only way to tell a cache from a re-derivation
+   * that happens to return an equal value is to ask the device how many times it was asked. An
+   * identity check on the returned object would go green against a client that re-fetched and
+   * memoised the *second* answer.
+   */
+  val documentRequests: List<String> get() = documents.toList()
+
+  /** What `SetNextAVTransportURI` last queued, or `null` if it was cleared or never called. */
+  fun queuedNextUri(): String? = nextUri
 
   val descriptionUrl: URI get() = URI("http://127.0.0.1:$port/xml/device_description.xml")
   val controlUrl: URI get() = URI("http://127.0.0.1:$port/MediaRenderer/AVTransport/Control")
@@ -215,8 +264,24 @@ class FakeRenderer(
     return port
   }
 
-  /** Stops answering, without a clean shutdown -- what a speaker losing power looks like. */
-  fun disappear() = server.close()
+  /**
+   * Stops answering, without a clean shutdown -- what a speaker losing power looks like.
+   *
+   * It **keeps its port**, and hangs up on every connection instead of releasing the listener. The
+   * difference is not cosmetic and it was measured: releasing an ephemeral port and then asserting
+   * that connecting to it fails is a race against every other process on the machine, and this
+   * repository's own fleet runs many JVMs at once. `a seek at a speaker that has gone away is not
+   * swallowed as a false` failed exactly once that way -- `seek` returned `true`, which means
+   * *something else on the box had taken the port and answered the Seek*. Holding the socket bound
+   * makes the failure this fake is imitating the only one a client can observe.
+   *
+   * From the client's side an immediate hang-up is what a rebooting speaker looks like anyway: a
+   * connect that succeeds and a stream that ends before a status line -- `MalformedHttpException`,
+   * which is an `IOException`, which `SoapClient` reports as a `SoapTransportException`.
+   */
+  fun disappear() {
+    vanished = true
+  }
 
   fun awaitMediaRequest(timeoutMs: Long): RecordedMedia? =
     if (firstMedia.await(timeoutMs, TimeUnit.MILLISECONDS)) media.firstOrNull() else null
@@ -233,6 +298,7 @@ class FakeRenderer(
   // ---- the server --------------------------------------------------------------------------
 
   private fun serve(connection: Socket) {
+    if (vanished) return
     val input = RecordingInputStream(connection.getInputStream())
     val head = HttpWire.readRequestHead(input)
     // Exactly the bytes of the head, terminating blank line included, taken off the socket before
@@ -241,8 +307,10 @@ class FakeRenderer(
     val body = head.headers.contentLength()?.let { input.readNBytes(it.toInt()) } ?: ByteArray(0)
 
     val response = when {
-      head.target.endsWith("device_description.xml") -> ok("text/xml", description())
-      head.target.endsWith("AVTransport1.xml") -> ok("text/xml", avTransportScpd())
+      head.target.endsWith("device_description.xml") ->
+        ok("text/xml", description()).also { documents += head.target }
+      head.target.endsWith("AVTransport1.xml") ->
+        ok("text/xml", avTransportScpd()).also { documents += head.target }
       head.target.contains("AVTransport/Control") -> control(headBytes, body, avTransport = true)
       head.target.contains("RenderingControl/Control") -> control(headBytes, body, avTransport = false)
       else -> HttpWire.renderResponseHead(404, "Not Found", HttpHeaders.of("Content-Length" to "0"))
@@ -343,6 +411,20 @@ class FakeRenderer(
         ok("text/xml", responseEnvelope("SetAVTransportURI", emptyList()))
       }
 
+      // Task 5. Present ONLY when the identity declares it, and a 401 otherwise -- which is what a
+      // real renderer without the action answers, and the reason `UpnpRenderer.setNextUri` reads
+      // the SCPD before calling rather than trying and catching.
+      "SetNextAVTransportURI" -> {
+        if (!identity.supportsSetNextUri) return fault(UpnpError.INVALID_ACTION)
+        if (strictness.requireArgumentOrder &&
+          arguments.map { it.first } != listOf("InstanceID", "NextURI", "NextURIMetaData")
+        ) {
+          return fault(UpnpError.INVALID_ARGS)
+        }
+        nextUri = arguments.firstOrNull { it.first == "NextURI" }?.second?.takeIf { it.isNotBlank() }
+        ok("text/xml", responseEnvelope("SetNextAVTransportURI", emptyList()))
+      }
+
       "Play" -> {
         val uri = currentUri ?: return fault(UpnpError.TRANSITION_NOT_AVAILABLE)
         // A real Sonos requires Speed, and requires it to be "1".
@@ -365,6 +447,11 @@ class FakeRenderer(
       }
 
       "Seek" -> {
+        // Nothing loaded, nothing to seek within: a real device answers 701 here, the same as it
+        // does to `Play`. Task 5 relies on it -- `UpnpRenderer.seek` swallows exactly 710 and 711
+        // and must let every other refusal through, and without a refusal that is neither of those
+        // that arm of the catch is unreachable from any test.
+        currentUri ?: return fault(UpnpError.TRANSITION_NOT_AVAILABLE)
         val unit = arguments.firstOrNull { it.first == "Unit" }?.second.orEmpty()
         if (unit !in strictness.supportedSeekModes) return fault(UpnpError.SEEK_MODE_NOT_SUPPORTED)
         val target = UpnpTime.parseClock(arguments.firstOrNull { it.first == "Target" }?.second)
@@ -380,7 +467,7 @@ class FakeRenderer(
           "GetTransportInfo",
           listOf(
             "CurrentTransportState" to transportState,
-            "CurrentTransportStatus" to "OK",
+            "CurrentTransportStatus" to identity.transportStatus,
             "CurrentSpeed" to "1",
           ),
         ),
@@ -557,14 +644,17 @@ class FakeRenderer(
       "<scpd xmlns=\"urn:schemas-upnp-org:service-1-0\">" +
       "<specVersion><major>1</major><minor>0</minor></specVersion>" +
       "<actionList>" +
-      listOf("SetAVTransportURI", "Play", "Pause", "Stop", "Seek", "GetTransportInfo", "GetPositionInfo")
-        .joinToString("") { "<action><name>$it</name></action>" } +
+      (
+        listOf("SetAVTransportURI", "Play", "Pause", "Stop", "Seek", "GetTransportInfo", "GetPositionInfo") +
+          listOfNotNull("SetNextAVTransportURI".takeIf { identity.supportsSetNextUri })
+        ).joinToString("") { "<action><name>$it</name></action>" } +
       "</actionList>" +
       "<serviceStateTable>" +
       "<stateVariable sendEvents=\"no\">" +
       "<name>A_ARG_TYPE_SeekMode</name><dataType>string</dataType>" +
       "<allowedValueList>" +
-      strictness.supportedSeekModes.joinToString("") { "<allowedValue>$it</allowedValue>" } +
+      (strictness.declaredSeekModes ?: strictness.supportedSeekModes)
+        .joinToString("") { "<allowedValue>$it</allowedValue>" } +
       "</allowedValueList>" +
       "</stateVariable>" +
       "</serviceStateTable>" +

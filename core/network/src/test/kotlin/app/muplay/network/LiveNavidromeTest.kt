@@ -9,6 +9,7 @@ import app.muplay.network.model.SubsonicResponseBody
 import app.muplay.testing.BookFixtures
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -55,6 +56,29 @@ import org.junit.jupiter.api.Test
 class LiveNavidromeTest {
 
   private val baseUrl = "http://localhost:4533"
+
+  /**
+   * The one raw HTTP client every helper in this class uses, with timeouts set **explicitly**
+   * rather than left at OkHttp's 10-second defaults.
+   *
+   * Measured: over 14 back-to-back runs of this suite, one run failed with a
+   * `SocketTimeoutException` out of [rawCommand] — not an assertion, a 10-second read timeout on a
+   * trivial REST call, while the shared container was busy serving another lane. A red that means
+   * "the container was slow" is indistinguishable at the report from a red that means "the server
+   * is wrong", and this suite exists to produce the second kind.
+   *
+   * 30 seconds is well beyond anything this corpus can legitimately take (the largest fixture is a
+   * 21-second, 32 kbps m4b, and a full transcode of one measured under a second) while still
+   * bounded, so a genuine hang still fails rather than parking the build.
+   *
+   * One instance rather than one per call: each `OkHttpClient()` brings its own connection pool
+   * and dispatcher threads, and this class makes hundreds of requests in a run.
+   */
+  private val http = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .callTimeout(60, TimeUnit.SECONDS)
+    .build()
 
   private fun client(password: String) =
     SubsonicClient(SubsonicCredentials(baseUrl = baseUrl, username = "admin", password = password))
@@ -500,29 +524,74 @@ class LiveNavidromeTest {
    * Bitrates below the fixtures' own encoding only: see
    * [`an mp3 cap at or above the source bitrate is not a transcode at all`], which pins the
    * server behaviour that makes higher caps useless here.
+   *
+   * ### The intermittent red this test carried was the container, and the flush that "fixed" it
+   *
+   * This test failed roughly one run in three for a while, and both published explanations were
+   * wrong. It was not cache *exhaustion*, and it was not the cold half racing the transcoder.
+   * Measured here, against the shared container:
+   *
+   * - The searching GET's own response **is** what the cold half asserts on — [coldTranscode]
+   *   returns it — so there is no second request for the transcoder to beat. The hypothesised
+   *   race cannot occur in the code as written.
+   * - The *cache-hit* half's re-fetch is not racy either: over **54** freshly-cold keys the
+   *   immediate re-fetch came back `Accept-Ranges: bytes` **54** times, no exceptions. Navidrome
+   *   commits the cache entry before the live response finishes.
+   * - What actually failed was [TranscodeOutcome.UNAVAILABLE] being scored as "already cached".
+   *   See [coldTranscode]: deleting the contents of `/data/cache/transcoding` on a *running*
+   *   container poisons every entry in its in-memory index permanently, and the old search read
+   *   those permanent errors as warm entries and eventually ran out of bitrates.
+   *
+   * And the one-in-three was not a probability at all — it was **which track got picked**. The
+   * old body took `getRandomSongs(...).first()`, one of the three music fixtures. Censused on the
+   * shared container after the flush: **63 of 63** bitrates unusable on Track 1, 6 of 10 sampled
+   * on Track 2, 4 of 10 on Track 3. Drawing the fully-poisoned track is a certain failure and the
+   * other two are near-certain passes, so the run-to-run outcome was a coin weighted one in three
+   * — which reads exactly like a race and is not one.
+   *
+   * Hence the search space here is the whole library crossed with the bitrate range, not one
+   * track's. A single unusable track can no longer decide a run, and the census in
+   * [coldTranscode]'s failure message reports across all of them so the next reader gets the
+   * distribution rather than a guess.
    */
   @Test
   fun `a live transcode returns no content length and refuses ranges`() = runTest {
     val client = client("testpass")
-    val song = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500).first()
-    val (_, raw) = fetch(client.streamUrl(song.id, StreamFormat.Raw))
+    // Every track in the music library, not `first()`. The whole library is one search space:
+    // a (track, bitrate) pair is what the transcoding cache is keyed on, so one track whose
+    // entries are all unusable no longer decides the run. On the shared container this was
+    // measured at exactly that: 63 of 63 bitrates unusable on one of the three fixtures and
+    // usable on the other two, which is what made a random `first()` fail about one run in three.
+    val songs = client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = 500)
 
-    val cold = coldTranscode(client, song.id)
+    val cold = coldTranscode(client, songs.map { it.id })
+    // Raw for whichever track the search settled on -- the `isLessThan(raw.size)` assertion below
+    // is only evidence if both sides are the same audio.
+    val (_, raw) = fetch(client.streamUrl(cold.songId, StreamFormat.Raw))
 
     assertThat(cold.response.code).isEqualTo(200)
     assertThat(cold.bytes.size).isGreaterThan(1000)
-    assertThat(cold.response.header("Accept-Ranges")).isEqualTo("none")
+    assertThat(outcomeOf(cold.response)).isEqualTo(TranscodeOutcome.LIVE)
     assertThat(cold.response.header("Content-Length")).isNull()
+    // Audio, not an error document. `Accept-Ranges: none` alone does not say this, and the
+    // failure mode that made this test flaky answered with `application/json` — so the content
+    // type is asserted where a reader will see it rather than left to the search's predicate.
+    assertThat(cold.response.header("Content-Type")).contains("audio/")
     // A real transcode rather than the source passed through: the cap is below the fixture's own
     // bitrate, so the body has to be smaller. Without this the test would pass against a server
     // that answered every `format=mp3` with the original file.
     assertThat(cold.bytes.size).isLessThan(raw.size)
 
-    // ...and the same URL fetched again is a cache hit, which *is* seekable. This is the half that
-    // makes a fixed-bitrate version of this test flaky, so it is asserted rather than described.
-    val (cached, cachedBytes) = fetch(cold.url)
-    assertThat(cached.header("Accept-Ranges")).isEqualTo("bytes")
-    assertThat(cached.header("Content-Length")?.toLong()).isEqualTo(cachedBytes.size.toLong())
+    // ...and the same URL fetched again is a cache hit, which *is* seekable. Asserted rather than
+    // described because it is the other half of the behaviour the format policy is built on. This
+    // re-fetch is safe to make: it was measured over 54 freshly-cold keys and was a cache hit
+    // every time, because Navidrome commits the entry before the live response completes.
+    val (cachedResponse, cachedBytes) = fetch(cold.url)
+    assertThat(outcomeOf(cachedResponse))
+      .describedAs("re-fetch of a URL just transcoded live answered %s", cachedResponse.code)
+      .isEqualTo(TranscodeOutcome.CACHED)
+    assertThat(cachedResponse.header("Content-Length")?.toLong())
+      .isEqualTo(cachedBytes.size.toLong())
     assertThat(cachedBytes).isEqualTo(cold.bytes)
   }
 
@@ -637,7 +706,37 @@ class LiveNavidromeTest {
   }
 
   /** A `/rest/stream` transcode this container had not produced before, and its first response. */
-  private class ColdTranscode(val url: String, val response: Response, val bytes: ByteArray)
+  private class ColdTranscode(
+    val songId: String,
+    val url: String,
+    val response: Response,
+    val bytes: ByteArray,
+  )
+
+  /**
+   * What this container did with one `format=mp3` request — the three outcomes it actually has,
+   * not the two the first version of this helper assumed.
+   *
+   * [UNAVAILABLE] is the one that cost the time. It is not a transcode at all: a 200 carrying a
+   * *JSON error document* and no `Accept-Ranges` header whatsoever. See [coldTranscode] for what
+   * produces it.
+   */
+  private enum class TranscodeOutcome { LIVE, CACHED, UNAVAILABLE }
+
+  /**
+   * Which of the three [TranscodeOutcome]s [response] is, read off `Accept-Ranges`.
+   *
+   * The header has three states and they are all meaningful: `none` is a transcode being produced
+   * right now, `bytes` is one served back out of the cache as a file, and *absent* is not audio at
+   * all. The original predicate was `header("Accept-Ranges") == "none"`, which collapses the last
+   * two into "not live" — the defect this enum exists to make unrepresentable.
+   */
+  private fun outcomeOf(response: Response): TranscodeOutcome =
+    when (response.header("Accept-Ranges")) {
+      "none" -> TranscodeOutcome.LIVE
+      "bytes" -> TranscodeOutcome.CACHED
+      else -> TranscodeOutcome.UNAVAILABLE
+    }
 
   /**
    * The first `format=mp3` request for [songId] that this container answers with a **live**
@@ -648,19 +747,64 @@ class LiveNavidromeTest {
    * and still occupy three separate cache entries — measured), so a bitrate this container has
    * not seen is a cache miss. Shuffled rather than scanned in order so that repeated runs against
    * one long-lived container spread over the range instead of walking it from the bottom.
+   *
+   * The response returned here **is** the response the caller asserts on. There is no second
+   * request to re-fetch the URL the search settled on, and there must not be: a `format=mp3` GET
+   * both answers "cold" and starts filling the cache entry, so a re-request races the transcoder
+   * and loses it perhaps a second later. The search's own response is the only observation of the
+   * live state that is not a race.
+   *
+   * ### `UNAVAILABLE`, and why a red here used to mean nothing
+   *
+   * A (track, bitrate) whose cache entry is in Navidrome's **in-memory index** but whose file is
+   * **missing from disk** is answered, forever, with
+   *
+   *     200 {"subsonic-response":{"status":"failed", ...
+   *          "message":"Internal Server Error: open /data/cache/transcoding/xx/yy/...:
+   *          no such file or directory"}}
+   *
+   * — `Content-Type: application/json`, a `Content-Length` of about 292, and no `Accept-Ranges`.
+   * Measured here: the state is *permanent*, not a transient race. Four consecutive retries of
+   * each of seven poisoned bitrates gave seven times four errors and no recoveries.
+   *
+   * That state is created by deleting the cache files out from under the running server —
+   * `docker exec ... rm -rf` over the contents of `/data/cache/transcoding`, which earlier work
+   * in this repository ran
+   * as a *repair* and which this project's own notes recommended. It is the opposite of a repair:
+   * it converts every entry the server has ever made into one that can never be read again. Only
+   * restarting the container clears the index, and the container here is shared and must not be
+   * restarted.
+   *
+   * The old predicate scored those responses as "not live, keep looking", so on a poisoned
+   * container the search walked all 63 bitrates and failed with a message blaming cache
+   * *exhaustion* — which is how "recreate the container" got recorded as the diagnosis for what is
+   * really "somebody flushed the cache". Distinguishing the outcome is what makes a red here
+   * evidence again: the message below reports the census, so the reader can tell a poisoned
+   * container from a genuinely exhausted one from a Navidrome that changed its behaviour.
    */
-  private fun coldTranscode(client: SubsonicClient, songId: String): ColdTranscode {
-    (1 until FIXTURE_BITRATE_KBPS).shuffled().forEach { kbps ->
+  private fun coldTranscode(client: SubsonicClient, songIds: List<String>): ColdTranscode {
+    val census = TranscodeOutcome.entries.associateWith { 0 }.toMutableMap()
+    val space = songIds.flatMap { id -> (1 until FIXTURE_BITRATE_KBPS).map { id to it } }.shuffled()
+    space.forEach { (songId, kbps) ->
       val url = client.streamUrl(songId, StreamFormat.Mp3(kbps))
       val (response, bytes) = fetch(url)
-      if (response.header("Accept-Ranges") == "none") return ColdTranscode(url, response, bytes)
+      val outcome = outcomeOf(response)
+      census[outcome] = census.getValue(outcome) + 1
+      if (outcome == TranscodeOutcome.LIVE) return ColdTranscode(songId, url, response, bytes)
     }
     return fail(
-      "no bitrate below $FIXTURE_BITRATE_KBPS kbps produced a live transcode of $songId. Either " +
-        "this container has already cached every one of them (recreate it: the transcoding cache " +
-        "lives in the container's writable layer), or Navidrome no longer streams a first-time " +
-        "transcode unseekably — in which case go and simplify the format policy, because the " +
-        "reason it prefers raw has changed.",
+      "no (track, bitrate) below $FIXTURE_BITRATE_KBPS kbps produced a live transcode. " +
+        "Of ${space.size} pairs tried across ${songIds.size} tracks: " +
+        "${census.getValue(TranscodeOutcome.CACHED)} were already cached, " +
+        "${census.getValue(TranscodeOutcome.UNAVAILABLE)} returned no audio at all.\n" +
+        "  * mostly UNAVAILABLE means the transcoding cache was deleted underneath the running " +
+        "server (`rm -rf /data/cache/transcoding/*`). That poisons every entry permanently and " +
+        "only recreating the container clears it. Do not flush the cache; it causes this.\n" +
+        "  * mostly CACHED means this container really has produced every bitrate below the " +
+        "fixture's own encoding, which takes many runs — recreate it.\n" +
+        "  * neither, on a fresh container, means Navidrome no longer streams a first-time " +
+        "transcode unseekably: go and simplify the format policy, because the reason it prefers " +
+        "raw has changed.",
     )
   }
 
@@ -675,7 +819,7 @@ class LiveNavidromeTest {
     val request = Request.Builder().url(url).apply {
       if (range != null) header("Range", range)
     }.build()
-    return OkHttpClient().newCall(request).execute().use { response ->
+    return http.newCall(request).execute().use { response ->
       // The body must be read before `use` closes the response. Returning the `Response`
       // afterwards is safe because every assertion above reads only its status line and headers.
       response to response.body.bytes()
@@ -692,7 +836,7 @@ class LiveNavidromeTest {
     val url = "$baseUrl/rest/$command".toHttpUrl().newBuilder().apply {
       (auth + params).forEach { (name, value) -> addQueryParameter(name, value) }
     }.build()
-    return OkHttpClient().newCall(Request.Builder().url(url).build()).execute()
+    return http.newCall(Request.Builder().url(url).build()).execute()
       .use { checkNotNull(it.body).string() }
   }
 
@@ -721,7 +865,7 @@ class LiveNavidromeTest {
       .apply { params.forEach { (name, value) -> addQueryParameter(name, value) } }
       .build()
 
-    val body = OkHttpClient().newCall(Request.Builder().url(url).build()).execute().use { response ->
+    val body = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
       assertThat(response.code).describedAs("HTTP status for %s", url.encodedPath).isEqualTo(200)
       checkNotNull(response.body) { "empty body from $url" }.string()
     }

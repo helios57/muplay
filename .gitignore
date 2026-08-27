@@ -14,3 +14,24 @@ local.properties
 # `git checkout --`, which cannot tell a probe from real work), so without this line an interrupted
 # build makes the probe list unrunnable until someone deletes a directory they did not create.
 .kotlin/
+
+# Upload-key material. NEVER tracked, in any form: not the keystore, not the properties file that
+# names it, not an encrypted or base64-encoded copy in a workflow. A leaked upload key means an
+# app that can be impersonated, and unlike a password it cannot be rotated for users who have
+# already installed -- Play App Signing can re-key an *upload* key, but only after Google support
+# has been convinced, and only for an account that still controls the app.
+#
+# CI reads the four values from repository secrets instead (MUPLAY_KEYSTORE_PATH,
+# MUPLAY_KEYSTORE_PASSWORD, MUPLAY_KEY_ALIAS, MUPLAY_KEY_PASSWORD -- see `releaseSigningConfig` in
+# build-logic). A developer puts them in `keystore.properties`, which is this list's first line.
+#
+# These patterns are a convenience, not the guarantee. `ConventionTest`'s
+# `no keystore material is tracked by git` is the guarantee: it asks git what is in the index,
+# so it also catches a file added with `git add -f` and a file this list forgot to name.
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.bks
+*.pepk
