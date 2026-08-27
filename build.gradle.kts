@@ -664,6 +664,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // moves no branch.
         "app.muplay.model.browse.BrowsePaging",
         "app.muplay.model.browse.BrowseExtras",
+        // Plan 5 Task 5. `BrowseSelection` **4/4** and `BrowseSelection$Companion` **1/1** LINE,
+        // from JVM data alone, and it carries **no BRANCH counter at all** -- so LINE is the only
+        // counter it has and a BRANCH rule over it would gate nothing.
+        //
+        // It is here rather than riding along in the branchless list above, and the difference is
+        // that these lines *can* fail: `BrowseSelectionTest` in this module constructs one and
+        // reads `EMPTY`, so withholding it takes both classes to 0. Measured: with that file
+        // withheld, `BrowseSelection` reads **0/4** and `$Companion` **0/1**, and both fire --
+        // "lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per
+        // class. Restored.
+        //
+        // Writing that test is what earned the entry. Before it, `warnUngatedClasses` reported
+        // this class at line 0/4 -- the only code that touched it lived in `:core:database`, whose
+        // execution data is not this module's, which is the same trap `SubsonicCredentials` and
+        // `RememberedRenderer` both fell into above. The answer there was a ride-along; the answer
+        // here is a real test, because `EMPTY` is a value a caller hands to a player and "it is
+        // empty and starts at zero" is a claim worth holding.
+        "app.muplay.model.browse.BrowseSelection",
+        "app.muplay.model.browse.BrowseSelection*",
       ),
     ),
   ),
