@@ -193,6 +193,12 @@ BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/Brow
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
 CHAPTER = "core/model/src/main/kotlin/app/muplay/model/Chapter.kt"
 BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
+# Plan 4 Task 3. The Android-free half of chapter reading: `ChapterReader` and `ChapterRepository`
+# are Media3/Room-shaped and unreachable from this JVM-only runner (their mutations are recorded by
+# hand in task-3-report.md, per the SCOPE note above), but the sorting, the end-time filling, the
+# de-duplication and the whole timeline are plain Kotlin and are gated here.
+CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
+BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -3075,6 +3081,118 @@ PROBES = [
      # The second id in that test is what catches this: with one id, "returned the id it was
      # given" and "returned the id this test happens to use" are the same observation.
      "a book with no stored settings plays at one times with no silence skipping", 1),
+    # ---- Plan 4 Task 3: chapters out of the file's own bytes ----------------------------------
+    # Every count below was MEASURED by applying the mutation alone against the committed tree and
+    # reading the result XML -- see task-3-report.md for the transcripts.
+    #
+    # These seven defects share a symptom and it is the one this whole feature is for: **the book
+    # plays its epilogue third**, or shows a chapter list that is plausible and wrong. None of them
+    # moves a branch, so no coverage counter can see any of them.
+    ("chapters/assembly-unsorted", CHAPTER_ASSEMBLY,
+     "val ordered = byStart.values.sortedBy { it.startMs }",
+     "val ordered = byStart.values.toList()",
+     # Media3 hands back one entry per (track format x atom) and promises nothing about order.
+     # `LinkedHashMap` then preserves ARRIVAL order, which is why the fixture arrives shuffled.
+     "chapters are ordered by start time, whatever order they arrived in", 2),
+    ("chapters/assembly-end-always-duration", CHAPTER_ASSEMBLY,
+     "val fallback = ordered.getOrNull(index + 1)?.startMs ?: contentDurationMs",
+     "val fallback = contentDurationMs",
+     # Every chapter that arrived with `C.TIME_UNSET` would end at the end of the FILE, so every
+     # chapter but the last would report itself hours long and overlap every one after it.
+     #
+     # 2, measured: `a duplicate that carries nothing the first one lacked leaves it alone` also
+     # reddens, because its two surviving chapters both end at the fallback. Submitted as 1 and
+     # reported MISSED on the first run -- that test was added after this count was written, which
+     # is exactly the stale-count case this table's `expected failures` note describes.
+     "a missing end time is filled from the next chapter's start", 2),
+    ("chapters/assembly-duration-overwrites-end", CHAPTER_ASSEMBLY,
+     "val end = (entry.endMs ?: fallback).coerceAtLeast(entry.startMs)",
+     "val end = fallback.coerceAtLeast(entry.startMs)",
+     # The other direction: throwing away what Media3 actually read. Invisible on the seeded
+     # corpus's *abutting* chapters, which is why the fixture that catches it has a gap.
+     # 3, measured: the same mutation also reddens `a duplicate contributes its end time to a twin
+     # that has none` (its 3000 ms end becomes the next chapter's 4000 ms start) and `an end time
+     # before its own start is clamped ...` (its 4000 ms end becomes the content duration).
+     "a populated end time is never overwritten by the duration", 3),
+    ("chapters/assembly-no-end-clamp", CHAPTER_ASSEMBLY,
+     "val end = (entry.endMs ?: fallback).coerceAtLeast(entry.startMs)",
+     "val end = (entry.endMs ?: fallback)",
+     # A negative `durationMs` reaches a progress bar and reaches `seekTo`.
+     "an end time before its own start is clamped rather than producing a negative duration", 1),
+    ("chapters/assembly-title-untrimmed", CHAPTER_ASSEMBLY,
+     "get() = title?.trim()?.takeIf { it.isNotEmpty() }",
+     "get() = title?.takeIf { it.isNotEmpty() }",
+     # A `chpl` atom padded to a fixed width is a real thing, and " " is not a title -- but it is
+     # not empty either, so it survives as one and de-duplication then prefers it over a real name.
+     "a blank title is the same fact as no title", 2),
+    ("chapters/assembly-duplicate-drops-title", CHAPTER_ASSEMBLY,
+     "        existing.normalisedTitle == null && entry.normalisedTitle != null -> entry\n",
+     "",
+     # A two-track M4B presents its chapter list twice, once titled and once not. Keeping whichever
+     # arrived first is a coin flip between the real names and none.
+     "duplicate entries for the same start time collapse to one, keeping the titled one", 1),
+    ("chapters/assembly-negative-start-kept", CHAPTER_ASSEMBLY,
+     "      if (entry.startMs < 0L) continue\n", "",
+     # Clamping or keeping a negative start puts a second, unseekable "chapter 1" in front of the
+     # real one.
+     "a chapter that starts before the file does is dropped rather than clamped", 1),
+    # ---- and the timeline over them -----------------------------------------------------------
+    ("timeline/book-offset-ignored", BOOK_TIMELINE,
+     "            bookStartMs = bookOffset + chapter.startMs,",
+     "            bookStartMs = chapter.startMs,",
+     # THE multi-file defect. A single-file book cannot see it at all -- its offset is always 0 --
+     # which is exactly why `BookTimelineTest` carries a two-disc book whose files also carry
+     # chapters. 2, measured: `the book position is the item's offset, not the chapter's` reads
+     # `bookStartMs` back through `bookPositionMs`.
+     "a multi-file book whose files also carry chapters is neither of the easy cases", 2),
+    ("timeline/book-position-ignores-chapter-start", BOOK_TIMELINE,
+     "    return itemStart.bookStartMs - itemStart.startInItemMs + positionInItemMs",
+     "    return itemStart.bookStartMs + positionInItemMs",
+     # `firstOrNull` finds the item's FIRST chapter, whose `startInItemMs` is 0 for every book in
+     # the seeded corpus -- so this is the identity there, and the first version of this probe was
+     # MISSED with every assertion in the file green. The fixture the named test now carries gives
+     # Disc Two's first chapter atom a 1000 ms start, which is what makes the subtraction
+     # observable at all. Read that test's comment before touching its numbers.
+     "the book position is the item's offset, not its first chapter's start", 1),
+    ("timeline/restart-threshold-strict", BOOK_TIMELINE,
+     "    if (intoChapter >= restartThresholdMs) return current",
+     "    if (intoChapter > restartThresholdMs) return current",
+     # 2, measured: `previous restarts the current chapter unless you are already near its start`
+     # probes 12000 ms into a chapter that starts at 9000, which is the threshold exactly.
+     "the default restart threshold is the declared one and not some other number", 2),
+    ("timeline/previous-uses-raw-position", BOOK_TIMELINE,
+     "    val intoChapter = positionInItemMs - current.startInItemMs",
+     "    val intoChapter = positionInItemMs",
+     # "Am I near the start of this chapter" measured from the start of the FILE. Every chapter
+     # after the first is then always "deep inside", so `previous` restarts instead of stepping
+     # back -- and chapter 1 of a single-file book cannot see it, because there the two agree.
+     # 4, measured: every `previous` test in the file except the empty-timeline one reads a
+     # position deeper into the FILE than the threshold, which is the whole defect.
+     "previous measures how far into the chapter you are, not how far into the file", 4),
+    ("timeline/chapters-unsorted", BOOK_TIMELINE,
+     "        for (chapter in chapters.sortedBy { it.startMs }) {",
+     "        for (chapter in chapters) {",
+     # The map also arrives out of Room and out of a caller's hands, neither of which is
+     # `ChapterAssembly`'s output by construction -- and SQLite returns rows in whatever order it
+     # likes without an ORDER BY.
+     "chapters inside one file are ordered by start time, whatever order they arrived in", 1),
+    ("timeline/chapter-at-first-match", BOOK_TIMELINE,
+     "    return inItem.lastOrNull { positionInItemMs >= it.startInItemMs } ?: inItem.first()",
+     "    return inItem.firstOrNull { positionInItemMs >= it.startInItemMs } ?: inItem.first()",
+     # `firstOrNull` answers "chapter 1" for every position in the book, because every position is
+     # at or after chapter 1's start. 2, measured: it also reddens `a position past the final
+     # chapter's end still answers the final chapter`.
+     "a position exactly on a boundary belongs to the chapter that starts there", 2),
+    ("timeline/untitled-numbered-per-file", BOOK_TIMELINE,
+     "String.format(Locale.ROOT, UNTITLED_FORMAT, result.size + 1)",
+     "String.format(Locale.ROOT, UNTITLED_FORMAT, 1)",
+     # Chapter 1 of disc two is not "Chapter 1". The fixture puts the second untitled chapter in
+     # the SECOND file for exactly this reason.
+     "an untitled chapter is numbered by its position in the book", 1),
+    ("timeline/chapter-duration-unclamped", BOOK_TIMELINE,
+     "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
+     "  val durationMs: Long get() = endInItemMs - startInItemMs",
+     "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
 ]
 
 
@@ -3200,6 +3318,11 @@ LATER_PROBE_FILES = [
     # comment requires: a mutated file no `git checkout` names is left in the tree when the run
     # ends, and the next agent's dirty-tree guard blames them for it.
     BOOK_FIXTURES,
+    # Plan 4 Task 3. Added in the same edit as the fourteen `chapters/` and `timeline/` probes
+    # above, as this list's own comment requires -- a mutated file no `git checkout` names is left
+    # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
+    CHAPTER_ASSEMBLY,
+    BOOK_TIMELINE,
 ]
 
 

@@ -73,9 +73,15 @@ navigation3-runtime    = { module = "androidx.navigation3:navigation3-runtime", 
 navigation3-ui         = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
 # Media3 1.11.0. Every coordinate below was resolved against
 # https://dl.google.com/dl/android/maven2/androidx/media3/<artifact>/maven-metadata.xml while this
-# plan was written; all publish 1.11.0 as <latest>. `media3-inspector` (chapters) is deliberately
-# absent -- it is Plan 4's, and an unused dependency is exactly what "dependency minimalism" bans.
+# plan was written; all publish 1.11.0 as <latest>.
 media3-exoplayer            = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+# Chapters, and the only place `MetadataRetriever` ships. NOT pulled in by `media3-exoplayer`:
+# spike S3 proved that with a `javac` probe -- `androidx.media3.exoplayer.MetadataRetriever` does
+# not exist in 1.11.0 at all (deprecated in 1.9, then removed), and
+# `androidx.media3.inspector.MetadataRetriever` is in this artifact alone. Plan 4 Task 3 is its
+# first consumer; until then the comment here said it was deliberately absent, which was true
+# right up to the commit that added it.
+media3-inspector            = { module = "androidx.media3:media3-inspector", version.ref = "media3" }
 media3-session              = { module = "androidx.media3:media3-session", version.ref = "media3" }
 media3-datasource-okhttp    = { module = "androidx.media3:media3-datasource-okhttp", version.ref = "media3" }
 media3-ui-compose           = { module = "androidx.media3:media3-ui-compose", version.ref = "media3" }

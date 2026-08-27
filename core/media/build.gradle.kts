@@ -33,6 +33,11 @@ dependencies {
   implementation(project(":core:cast"))
 
   implementation(libs.media3.exoplayer)
+  // Plan 4 Task 3. `MetadataRetriever` -- the only way this client can show chapters, because
+  // Navidrome exposes none and OpenSubsonic has no chapter schema. `implementation`, not `api`:
+  // `ChapterReader` returns `:core:model`'s `Chapter`, so no `media3-inspector` type appears in
+  // this module's public surface.
+  implementation(libs.media3.inspector)
   implementation(libs.media3.datasource.okhttp)
   implementation(libs.okhttp)
 
