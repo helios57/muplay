@@ -90,6 +90,24 @@ Kotlin compiles a use of it clean and `check` then fails much later at
 `lintDebug`. Opt in at the module level. `CacheDataSource`, `SimpleCache` and
 `MediaSessionService` are all annotated, so any task touching them meets this.
 
+### Which *declaration* a call resolves to is what decides it, not the method name
+
+Measured on `CastSessionManager` (Plan 6 Task 9), where three calls were flagged and two
+identical-looking ones beside them were not:
+
+    incoming.prepare()   // incoming: MuPlayer -> ForwardingPlayer, @UnstableApi  -> ERROR
+    local.prepare()      // local:    Player,   stable                            -> fine
+    remote.release()     // remote:   UpnpPlayer -> SimpleBasePlayer, @UnstableApi -> ERROR
+
+So "we already call `prepare()` all over this module without an opt-in" is not evidence that a new
+`prepare()` needs none. Read the receiver's static type.
+
+This file arrived on master carrying all three errors, **green in its own worktree** and red on the
+first `--no-build-cache check` after the merge — which is both this trap and the cross-worktree
+build-cache one in the same defect. Annotate with `androidx.annotation.OptIn`, on the declaration,
+with a comment naming which member is unstable; that is this module's house style and every other
+file in it follows it.
+
 ## `ExoPlayer.Builder` has no `setLoadErrorHandlingPolicy`
 
 The retry policy attaches to the `MediaSource.Factory`, not the player builder.
@@ -564,6 +582,24 @@ interactive work instead of competing with it. After both, load fell to 24.
 Run `./gradlew --stop` after changing either — a running daemon keeps its old
 settings and will not pick them up.
 
+**Swap was the risk that actually bit, and it is now fixed.** Measured 2026-08-27
+17:28 with seven worktrees building: the 8 GB `/swap.img` was **100% used**, RAM
+available was down to **4 GB**, and `buff/cache` had been squeezed to 3 GB. The
+single largest consumer is not a build at all — the emulator's
+`qemu-system-x86_64` held **35 GB resident**, which no Gradle setting can reach
+and which a restart is forbidden to reclaim.
+
+A 24 GB swapfile now lives on the hot-added raid5 disk at `/mnt/data/swapfile`,
+priority 10 so new pressure lands there rather than on the root disk, in
+`/etc/fstab` with `nofail`, added live with `fallocate`/`mkswap`/`swapon` and
+verified to come back from fstab alone (`swapoff` then `swapon -a`). It is a
+safety net, not a performance feature: swapping to a virtio disk is slow, and the
+point is that a memory spike degrades instead of OOM-killing somebody's lane.
+
+Check `free -h` alongside `df -h /` before blaming a flaky build, and remember
+what the numbers looked like when this was written — `available` under about 5 GB
+with every daemon still warming up is the state to act on.
+
 **Disk is the risk that is not yet fixed.** `/` was at **94% (26 GB free of
 393 GB)** during the same window, and under that load `du` and `docker system df`
 both exceeded a 100-second timeout, which is itself the symptom. A full disk on
@@ -845,3 +881,34 @@ failed with three tasks reporting nothing but
 naming `:feature:library:kspDebugKotlin` and two unnamed others. A plain retry was green both
 times, on the identical tree. It names no useful task and it is not a compilation error; retry
 before investigating.
+
+## This VM runs at 30-44% steal, so "24 cores" is a lie the load average tells
+
+Measured 2026-08-27 17:15 with seven worktrees building: `vmstat 2` reported
+**`st` between 30 and 44**, `id` between 33 and 46, and `uptime` a load average
+of **35 on 24 vCPUs** — all three at once.
+
+That combination is the signature, and it is worth learning to read: high idle
+*and* high load *and* high steal together mean runnable tasks are waiting on
+physical CPU the hypervisor is not handing over. Idle is high because this
+guest's vCPUs are not being scheduled, not because there is capacity. The
+effective machine is roughly **13-16 cores**, and `nproc` cannot see it.
+
+So `org.gradle.workers.max` is sized against the *effective* core count, not
+`nproc` — it is now **2** in `~/.gradle/gradle.properties`, with the reasoning
+beside it. Seven concurrent builds at 3 workers each oversubscribe a 14-core
+machine; at 2 they do not.
+
+Two things follow:
+
+- **Check `vmstat` before concluding a build is slow because of the build.** A
+  Gradle run that takes three times as long as it did yesterday, on the same
+  tree, is more likely to be the host than the code.
+- **Change the cap without `./gradlew --stop` while a fleet is live.** A running
+  daemon keeps its old value, so the new cap applies to the next daemon started
+  — which is what you want. Stopping daemons to make it take effect immediately
+  kills whatever every lane is running.
+
+Note also what is *not* the problem, because it was checked: `si`/`so` were both
+0 across every sample, so nothing was thrashing. Swap sat at 8.4 GB used and
+still, which is a machine that swapped once under earlier pressure and settled.
