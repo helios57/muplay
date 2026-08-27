@@ -187,6 +187,7 @@ BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurfa
 BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
 BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
+PLAY_FROM_SEARCH = "core/model/src/main/kotlin/app/muplay/model/browse/PlayFromSearch.kt"
 BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
@@ -1550,6 +1551,81 @@ PROBES = [
      '      remainingMs < MINUTE_MS -> "under a minute left"\n      hours == 0L -> "$minutes min left"',
      '      hours == 0L -> "$minutes min left"\n      remainingMs < MINUTE_MS -> "under a minute left"',
      "a negative remaining time is treated as none rather than rendered", 2),
+
+    # ---- Plan 5 Task 6: search, and what a spoken query plays --------------------------------
+    #
+    # The ordering claim first. "Books rank above music in a search, and that is not a tie-break"
+    # is an ORDER, and a test that asserts a result set's contents cannot see a wrong order -- the
+    # exact defect this repository has shipped before. These two probes are the two ways the order
+    # gets broken: the groups reordered, and one group hoisted to the front.
+    ("browse/search-books-not-first", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    artistChildren(albums) + bookNodes(books) + artistNodes(artists) + songNodes(songs)",
+     "search results are books, then albums, then artists, then tracks", 3),
+    ("browse/search-tracks-first", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    songNodes(songs) + bookNodes(books) + artistChildren(albums) + artistNodes(artists)",
+     "search results are books, then albums, then artists, then tracks", 2),
+    # A group silently dropped. `allMatch`/`contains` over the remaining rows is satisfied by this;
+    # only an exact ordered list is not.
+    ("browse/search-drops-the-artists", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    bookNodes(books) + artistChildren(albums) + songNodes(songs)",
+     "search results are books, then albums, then artists, then tracks", 1),
+    # NOT PROBED, and worth saying rather than leaving as a gap: "the search slot calls the albums
+    # *tab* builder" cannot be probed here. `albumsNodes(emptyList(), albums)` is `artistChildren`
+    # exactly -- the shuffle rows come from the libraries argument, and an empty one emits none --
+    # so the mutation is the identity and no test can go red on it. What the wrong builder would
+    # really cost is a "Shuffle Music" row at the top of a car's search results, and that is
+    # asserted where the libraries are real: `BrowseSearchBrowserTest.noShuffleRowIsEverASearchResult`
+    # on the device tier, which this runner cannot reach (see the header).
+
+    # ---- what a spoken query plays -------------------------------------------------------------
+    #
+    # Three tiers, each of which has to beat the next. Each probe below demotes exactly one of
+    # them, which is the only way to tell "exact match wins" from "the first playable wins" -- on a
+    # fixture where they agree, both are the same observation and only one is being tested.
+    ("browse/spoken-no-exact-tier", PLAY_FROM_SEARCH,
+     "    title == wanted -> EXACT",
+     "    title == wanted -> ANYTHING_PLAYABLE",
+     "an exact title match wins over an earlier partial match", 4),
+    ("browse/spoken-no-containment-tier", PLAY_FROM_SEARCH,
+     "    title.contains(wanted) -> CONTAINS",
+     "    title.contains(wanted) -> ANYTHING_PLAYABLE",
+     "a partial match wins over the first playable node", 3),
+    # The plan's mutation 3, and the one a reviewer is most likely to call a fix: "if nothing
+    # matched, return nothing". A car that answers a spoken request with silence has done nothing,
+    # and the app is what gets blamed.
+    ("browse/spoken-nothing-matches-plays-nothing", PLAY_FROM_SEARCH,
+     "    return playable.sortedBy { tierOf(normalise(it.title), wanted) }",
+     "    return playable.filter { tierOf(normalise(it.title), wanted) != ANYTHING_PLAYABLE }",
+     "a query that matches nothing still plays something", 2),
+    ("browse/spoken-blank-query-plays-nothing", PLAY_FROM_SEARCH,
+     "    if (query.isBlank()) return playable",
+     "    if (query.isBlank()) return emptyList()",
+     "an empty query plays the first playable node", 2),
+    # Containment read the other way round. On a symmetric fixture the two are the same function;
+    # `PlayFromSearchTest` carries a query that is a strict substring of one title and a title that
+    # is a strict substring of nothing, so they are not.
+    ("browse/spoken-containment-reversed", PLAY_FROM_SEARCH,
+     "    title.contains(wanted) -> CONTAINS",
+     "    wanted.contains(title) -> CONTAINS",
+     "containment is on the node's title and not on the query", 3),
+    # A browsable-only row handed to a caller that will try to play it.
+    ("browse/spoken-ranks-browsable-nodes", PLAY_FROM_SEARCH,
+     "    val playable = nodes.filter(BrowseNode::isPlayable)",
+     "    val playable = nodes",
+     "a browsable-only node is never picked", 3),
+    # `normalise` is what makes a punctuated, mis-spaced, lower-cased recogniser transcript reach
+    # the right book at all. Both halves of it, separately.
+    ("browse/normalise-drops-digits", PLAY_FROM_SEARCH,
+     "      .map { if (it.isLetterOrDigit()) it else ' ' }",
+     "      .map { if (it.isLetter()) it else ' ' }",
+     "normalise keeps digits and collapses every kind of whitespace", 1),
+    ("browse/normalise-keeps-empty-tokens", PLAY_FROM_SEARCH,
+     "      .split(\" \")\n      .filter(String::isNotEmpty)\n      .joinToString(\" \")",
+     "      .split(\" \")\n      .joinToString(\" \")",
+     "normalise is the exact transformation the tiers compare on", 3),
     # ---- Plan 3 Task 9: the player. -----------------------------------------------------------
     # Everything below is a value a user meets on the first tap, and every one of them is on the
     # JVM tier by construction: the state mapping is a pure top-level function, `PlayerViewModel`
@@ -3409,6 +3485,10 @@ LATER_PROBE_FILES = [
     # `browse/empty-selection-*` probes -- never after, per this list's own comment.
     BROWSE_SELECTION,
     BROWSE_TREE_REPOSITORY,
+    # Plan 5 Task 6, added in the same edit as the eleven `browse/search-*`, `browse/spoken-*` and
+    # `browse/normalise-*` probes -- never after, per this list's own comment. `BROWSE_TREE` is
+    # already above; only this file is new.
+    PLAY_FROM_SEARCH,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
