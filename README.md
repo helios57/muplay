@@ -3,9 +3,13 @@
 An Android music **and audiobook** player for [Navidrome](https://www.navidrome.org/)
 and other Subsonic/OpenSubsonic servers, with **Sonos and DLNA casting**.
 
-> **Status: under construction.** The foundation and Subsonic client are done and
-> tested — the app connects to a real server and lists its libraries. It does not
-> play audio yet; see [Roadmap](#roadmap).
+> **Status: feature-complete and gated; the store listing is the last mile.**
+> The app connects to a real Navidrome over HTTPS, mirrors its libraries, plays
+> music and audiobooks in the background with a media session, notification and
+> lock-screen controls, resumes every book at its own position, shuffles within
+> one library, streams to Sonos and generic DLNA renderers, and answers Android
+> Auto's browse and voice search. A minified, signed release bundle builds from a
+> tag. See [Roadmap](#roadmap) for what is still open.
 
 ## Why
 
@@ -38,15 +42,43 @@ implementation is tagged `java-prototype`.
 
 ## Roadmap
 
+Eight plans, in dependency order. Each plan is a document in
+[`docs/superpowers/plans/`](docs/superpowers/plans/); each of its tasks is a
+deliverable a reviewer can accept or reject on its own.
+
 | # | Plan | Status |
 |---|---|---|
 | 1 | Foundation + Subsonic client | **done** |
-| 2 | Library mirror, browse, library-scoped shuffle | in progress |
-| 3 | Playback core — background, notification, lock screen, cache | planned |
-| 4 | Audiobooks — per-book resume, M4B chapters, speed, sleep timer | planned |
-| 5 | Android Auto + Wear OS | planned |
-| 6 | Casting — Sonos and DLNA | planned |
-| 7 | Bindery and Lidarr requests | planned |
+| 2 | Library mirror, browse, library-scoped shuffle | **done** |
+| 3 | Playback core — background, notification, lock screen, cache, gapless | **done** |
+| 4 | Audiobooks — per-book resume, M4B chapters, speed, sleep timer | shelf UI and the plan's own gates remain |
+| 5 | Android Auto + Wear OS | Auto done; the watch module and its gates remain |
+| 6 | Casting — Sonos and DLNA | the picker UI and the plan's own gates remain |
+| 7 | Bindery and Lidarr requests | the request surface and the plan's own gates remain |
+| 8 | Release and Google Play | listing copy and form-factor declarations remain |
+
+Two things are **not** in any plan and are deliberately the account holder's:
+publishing to Play needs a Google Play developer account, and a brand-new
+personal account needs twelve testers running the app for fourteen continuous
+days before production access opens. Nothing in this repository can do either.
+
+## What is in the box
+
+| Module | What it owns |
+|---|---|
+| `:core:model` | domain types, no Android |
+| `:core:network` | the Subsonic/OpenSubsonic client, capability negotiation, the vendored spec and its fixture oracle |
+| `:core:database` | the Room mirror, progress, book settings, and the Keystore-sealed credential store |
+| `:core:media` | Media3, the playback service, the disk cache, gapless, the audiobook policies |
+| `:core:cast` | HTTP/1.1, SSDP, SOAP, DIDL-Lite and the range-serving proxy — written rather than depended on |
+| `:core:designsystem` | the Material 3 theme |
+| `:feature:setup` `:feature:library` `:feature:player` | the Compose surfaces |
+| `:integrations:core` `:integrations:lidarr` `:integrations:bindery` | optional request integrations, severable by construction |
+
+`:integrations:*` lives outside `core/` on purpose: `ConventionTest`'s *nothing
+outside integrations depends on an integration* is written as a path prefix, and
+that rule is what makes "Plan 7 can be deleted" a checked fact rather than a
+promise.
 
 ## Building
 
@@ -115,6 +147,29 @@ crash they avoid, and note that the script refuses to run without them.
   OpenAPI spec, so response-shape assertions have an external oracle.
 - Anything the spec gets wrong is corrected **in the spec**, not worked around in
   code.
+
+## Release
+
+`./gradlew :app:bundleRelease` produces a minified, signed `.aab`. The signing
+key is never committed; a test proves no keystore material is tracked, and
+`verifyReleaseSigned` refuses an unsigned artifact.
+
+The release gates run against **the artifact**, not the DSL that was supposed to
+produce it — minification is proven by comparing DEX type descriptors against
+`mapping.txt`, and the merged manifest is checked for what it must and must not
+contain. `verifyReleaseManifest`'s guarantee is precisely "no cleartext to a
+remote host": Android's own default network security config permits cleartext to
+`localhost` on this target level and no manifest can opt out of that, which is
+also what lets the on-device cast proxy work in a release build.
+
+Pushing a tag yields the uploadable bundle and its mapping file with no local
+step. See [`docs/PRIVACY.md`](docs/PRIVACY.md) and
+[`docs/PLAY-DATA-SAFETY.md`](docs/PLAY-DATA-SAFETY.md) — every claim in both is
+traceable to code, and a test names the traceability.
+
+**Book positions are local-only.** The Subsonic client declares no `scrobble`,
+`nowPlaying` or `savePlayQueue` endpoint; that absence is what makes the privacy
+claim checkable rather than promised.
 
 ## Licence
 
