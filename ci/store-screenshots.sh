@@ -121,19 +121,46 @@ echo "${0##*/}: assembling (no device needed, so no lock held)"
 PATH="$(dirname "$ADB"):$PATH" "$REPO_ROOT/ci/prepare-emulator.sh"
 
 # --- Run, inside the lock ------------------------------------------------------------------------
-GRADLE_ARGS=(
-  -p "$REPO_ROOT"
-  :app:connectedDebugAndroidTest
-  "-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS"
-)
+# `adb install` + `am instrument`, NOT `./gradlew :app:connectedDebugAndroidTest`.
+#
+# Measured: the Gradle task is green, writes all seven PNGs, and then **uninstalls the app**, which
+# is what AGP's connected-test task does when it finishes. The screenshots live in the app's private
+# `filesDir`, so they go with it -- `run-as: unknown package: app.muplay` at the pull step, on a run
+# whose own report said `Finished 1 tests` with nothing failed. There is no ordering fix: the task
+# owns both ends.
+#
+# Installing and instrumenting directly leaves the app in place for the pull. It costs the Gradle
+# test report, which nothing here reads, and it changes nothing about how CI runs this class --
+# `:app:connectedDebugAndroidTest` still executes it on every emulator job, where the assertions are
+# the point and the PNGs are discarded.
+APP_APK="$REPO_ROOT/app/build/outputs/apk/debug/app-debug.apk"
+TEST_APK="$REPO_ROOT/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+for apk in "$APP_APK" "$TEST_APK"; do
+  [ -f "$apk" ] || { echo "${0##*/}: $apk was not produced by the assemble above" >&2; exit 1; }
+done
+
+# Both read from the tree, like the applicationId above.
+RUNNER="$(sed -n 's/.*testInstrumentationRunner = "\([^"]*\)".*/\1/p' \
+  "$REPO_ROOT/build-logic/convention/src/main/kotlin/KotlinAndroid.kt" | head -1)"
+[ -n "$RUNNER" ] || { echo "${0##*/}: could not read testInstrumentationRunner from build-logic" >&2; exit 1; }
+TEST_APPLICATION_ID="$APPLICATION_ID.test"
+
+INSTRUMENT_ARGS=(-e class "$TEST_CLASS")
 if [ -n "$SERVER_URL" ]; then
-  GRADLE_ARGS+=("-Pandroid.testInstrumentationRunnerArguments.muplayServerUrl=$SERVER_URL")
-  GRADLE_ARGS+=("-Pandroid.testInstrumentationRunnerArguments.muplayUsername=$USERNAME")
-  GRADLE_ARGS+=("-Pandroid.testInstrumentationRunnerArguments.muplayPassword=$PASSWORD")
+  INSTRUMENT_ARGS+=(-e muplayServerUrl "$SERVER_URL" -e muplayUsername "$USERNAME" -e muplayPassword "$PASSWORD")
 fi
 
+INSTRUMENT_LOG="$(mktemp -t muplay-store-screenshots.XXXXXX)"
+trap 'rm -f "$INSTRUMENT_LOG"' EXIT
+
 set +e
-"$REPO_ROOT/ci/device-lock.sh" "$REPO_ROOT/gradlew" "${GRADLE_ARGS[@]}"
+"$REPO_ROOT/ci/device-lock.sh" bash -c '
+  set -e
+  adb="$1"; app="$2"; test="$3"; runner="$4"; testid="$5"; log="$6"; shift 6
+  "$adb" install -r -t "$app"
+  "$adb" install -r -t "$test"
+  "$adb" shell am instrument -w "$@" "$testid/$runner" 2>&1 | tee "$log"
+' _ "$ADB" "$APP_APK" "$TEST_APK" "$RUNNER" "$TEST_APPLICATION_ID" "$INSTRUMENT_LOG" "${INSTRUMENT_ARGS[@]}"
 run_status=$?
 set -e
 if [ "$run_status" -eq 75 ]; then
@@ -141,6 +168,15 @@ if [ "$run_status" -eq 75 ]; then
   exit 75
 fi
 [ "$run_status" -eq 0 ] || exit "$run_status"
+
+# `am instrument` exits 0 even when every test failed, so its exit status is not the result. The
+# runner prints `OK (n tests)` on success and `FAILURES!!!` otherwise; neither appearing means the
+# instrumentation did not start at all, which must also be a failure rather than a silent pass.
+if grep -q 'FAILURES!!!' "$INSTRUMENT_LOG" || ! grep -q '^OK (' "$INSTRUMENT_LOG"; then
+  echo "${0##*/}: the screenshot journey did not pass. Last lines:" >&2
+  tail -30 "$INSTRUMENT_LOG" >&2
+  exit 1
+fi
 
 # --- Pull -----------------------------------------------------------------------------------------
 # `run-as`, not `adb pull`: the files are inside the app's private data directory, which is where a

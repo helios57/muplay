@@ -245,7 +245,7 @@ audit that produced this list.
 | Chapter list / jump to chapter | `ChapterRepository` has no production caller. Android Auto lists a book's *files* ("Part 2 of 5"), not chapters. |
 | Exact-second book resume | The right file resumes; the position inside it is always 0, because `MediaModule` binds `NeverResume`. |
 | Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. |
-| Lidarr / Bindery requests | No `:feature:requests` module; `:app` depends on neither integration, so their code is not in the APK. |
+| Lidarr / Bindery requests | No requests module in `settings.gradle.kts` at all; `:app` depends on neither integration, so their code is not in the APK. |
 | Scrobbling / play counts sent back to the server | Never. `ProgressWriter` writes locally and the Subsonic write endpoints are deliberately not declared. |
 | Wear OS app | No module, no declaration. |
 | Material You / dynamic colour | Light and dark only, from a fixed palette. |

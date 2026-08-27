@@ -211,8 +211,13 @@ class StoreScreenshotsTest {
     capture(output, "07-what-is-playing-follows-you")
 
     // Leave the shared emulator quiet: the queue would otherwise keep playing into whatever runs
-    // next under the device lock.
-    composeRule.onAllNodesWithText(PAUSE_LABEL)[FIRST_MATCH].performClick()
+    // next under the device lock. Guarded rather than asserted -- the seeded music library is about
+    // twenty seconds of audio end to end, so a slow run can reach here after the queue has already
+    // finished and the bar shows Play. A cleanup step that fails the run *after* every capture is
+    // on disk would throw the whole thing away for nothing.
+    if (nodesWithText(PAUSE_LABEL).isNotEmpty()) {
+      composeRule.onAllNodesWithText(PAUSE_LABEL)[FIRST_MATCH].performClick()
+    }
 
     // Derived from what was written, never compared against a total typed here -- a hardcoded
     // count is the shape that has gone stale three times in this repository.

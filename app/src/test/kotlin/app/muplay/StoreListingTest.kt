@@ -319,6 +319,97 @@ class StoreListingTest {
       .isEmpty()
   }
 
+  /**
+   * The other half of the rule above, and the one that will actually fire.
+   *
+   * `the description does not claim a capability this build does not have` catches an over-claim.
+   * This catches the opposite drift, which is the likely one here: five lanes are concurrently
+   * building the very things the listing disclaims — a cast picker, speed and silence skipping, a
+   * `:wear` module, a requests surface, the resume-policy swap. The moment one of them lands, the
+   * "Not in this version" table becomes a lie by omission and **nothing else in this repository
+   * would notice**, because an under-claim reddens no gate and disappoints no reviewer.
+   *
+   * So each disclaimed capability gets a probe over the *production* sources, and the probe must
+   * still find nothing. When a lane wires one up, this goes red and whoever merges has to say so in
+   * the listing before `check` is green again.
+   *
+   * The probe list is written down rather than derived, and legitimately: it describes what the
+   * tree does **not** contain, and there is nothing to derive that from. It is held to the document
+   * from the other side — every probe must name a row of the disclaimer table, and every row of
+   * that table must be probed — so neither list can shrink alone.
+   */
+  @Test
+  fun `the capabilities the listing disclaims are still absent from the build`() {
+    val production = productionSources()
+    // Vacuity: a scan that found no files, or that reads them wrongly, would report every
+    // capability absent and pass forever. The positive control is a string that must be there.
+    assertThat(production).describedAs("production Kotlin sources").hasSizeGreaterThan(50)
+    assertThat(production.count { PRODUCTION_CONTROL.containsMatchIn(withoutComments(it.readText())) })
+      .describedAs("the positive control ${PRODUCTION_CONTROL.pattern} -- if this stops matching, every probe below is scanning nothing")
+      .isEqualTo(1)
+
+    val settings = File(repoRoot(), "settings.gradle.kts").readText()
+    val reachable = ABSENCE_PROBES.filter { (_, probe) ->
+      production.any { probe.containsMatchIn(withoutComments(it.readText())) }
+    }.map { it.first } + MODULE_PROBES.filter { (_, include) ->
+      settings.contains(include)
+    }.map { it.first } + PRESENCE_PROBES.filterNot { (_, path, token) ->
+      File(repoRoot(), path).let { it.isFile && it.readText().contains(token) }
+    }.map { it.first }
+
+    assertThat(reachable)
+      .describedAs(
+        "$LISTING_PATH says these are not in this build, and the tree now says otherwise. A lane " +
+          "has wired one up: take it out of the 'Not in this version' table, say what it does in " +
+          "the description, and take its word out of the banned list.",
+      )
+      .isEmpty()
+
+    // ...and the two lists are held to each other in both directions, so a probe cannot drift off
+    // the document and a disclaimer cannot arrive without one.
+    val disclaimed = tableRows(section(NOT_YET_HEADING)).map { it[NAME_CELL] }
+    assertThat(disclaimed).describedAs("rows of $NOT_YET_HEADING").isNotEmpty()
+    val probed = ABSENCE_PROBES.map { it.first } + MODULE_PROBES.map { it.first } +
+      PRESENCE_PROBES.map { it.first }
+    assertThat(probed.filterNot { name -> disclaimed.any { it.startsWith(name) } })
+      .describedAs("probes naming no row of $NOT_YET_HEADING")
+      .isEmpty()
+    assertThat(disclaimed.filterNot { row -> probed.any { row.startsWith(it) } })
+      .describedAs(
+        "rows of $NOT_YET_HEADING with no probe. Every disclaimed capability needs one, or the " +
+          "table is a promise nothing keeps.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * `text` with block comments and whole-line `line` comments removed.
+   *
+   * Measured, and the reason this exists at all: the playback-speed probe matched
+   * `BookSettings.kt`, whose KDoc explains that `ExoPlayer.setPlaybackSpeed(NaN)` throws, and the
+   * scrobbling probe matched `ProgressWriter.kt`, whose comment names the three Subsonic write
+   * endpoints precisely to record that they are deliberately never called. Both are prose saying
+   * the opposite of what the probe would have concluded. This repository has now been bitten by a
+   * check reading a comment three times.
+   *
+   * Non-greedy on the block form, on purpose: Kotlin block comments nest, so stopping at the first
+   * closing marker leaves the tail of an outer comment looking like code. That is the safe
+   * direction here -- an absence check that over-strips would hide a real call, and one that
+   * under-strips only reports a false wiring, loudly, with the file named.
+   *
+   * Only whole-line comments are stripped, so a URL in a string literal cannot swallow the rest of
+   * its own line.
+   */
+  private fun withoutComments(text: String): String =
+    text.replace(BLOCK_COMMENT, " ").replace(LINE_COMMENT, " ")
+
+  /** Every `src/main` Kotlin file in the project. */
+  private fun productionSources(): List<File> =
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" && it.path.contains("${File.separator}src${File.separator}main${File.separator}") }
+      .toList()
+
   private fun sourceManifests(): List<File> =
     repoRoot().walkTopDown()
       // Same skip list as `ConventionTest`, for the same reason: `.claude` holds git worktrees, so
@@ -371,6 +462,63 @@ class StoreListingTest {
       0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(),
       '\r'.code.toByte(), '\n'.code.toByte(), 0x1A, '\n'.code.toByte(),
     )
+
+    /**
+     * One probe per disclaimed capability, over `src/main` sources only. Each is a *call or type
+     * position*, never a bare name, so the class's own declaration and any comment that mentions it
+     * do not count as a wiring -- which matters, because `MuPlaybackService`'s own comment names
+     * `SleepTimerController.attach` as future work.
+     *
+     * Measured at the time of writing, against `641ff1c`: `.castTo(` has exactly one caller in the
+     * whole tree and it is `core/media/src/androidTest/.../HandoverTest.kt`; every other pattern
+     * here matches nothing anywhere outside its own declaration.
+     */
+    val ABSENCE_PROBES = listOf(
+      "Casting" to Regex("""\.castTo\("""),
+      "Sleep timer" to Regex("""SleepTimerController\("""),
+      "Shake to extend the sleep timer" to Regex(""": ShakeSensor\b"""),
+      "Playback speed" to Regex("""\.setPlaybackSpeed\("""),
+      "Silence skipping" to Regex("""\.setSkipSilenceEnabled\("""),
+      "Chapter list" to Regex(""": ChapterRepository\b"""),
+      "Downloads" to Regex("""\bDownloadManager\b"""),
+      // Also the privacy claim from the other side: the listing says MuPlay never reports back what
+      // you played, and `docs/PRIVACY.md` names these three endpoints as deliberately not called.
+      "Scrobbling" to Regex("""\b(scrobble|nowPlaying|savePlayQueue)\b"""),
+      "Material You" to Regex("""\bdynamic(Light|Dark)ColorScheme\b"""),
+    )
+
+    /**
+     * Capabilities whose arrival is a whole module, so `settings.gradle.kts` is the probe.
+     *
+     * `:requests`, not `:feature:requests`: the plan named the latter, and the lane actually
+     * building it is running `:integrations:requests:connectedDebugAndroidTest`. A probe pinned to
+     * the plan's guess at a module path would have watched a name nobody was going to use and
+     * reported absence forever.
+     */
+    val MODULE_PROBES = listOf(
+      "Lidarr / Bindery requests" to ":requests",
+      "Wear OS app" to ":wear",
+    )
+
+    /**
+     * The one disclaimer that is an absence of *behaviour* rather than of code, so it is probed by
+     * what must still be present: the graph's undecorated `ResumePolicy` is `NeverResume`, which is
+     * why a book's file resumes and its offset does not. The lane swapping that in deletes this
+     * string, and this rule then says so.
+     */
+    val PRESENCE_PROBES = listOf(
+      Triple(
+        "Exact-second book resume",
+        "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt",
+        "ResumePolicy = NeverResume",
+      ),
+    )
+
+    /** Must match exactly one production file. See the rule that uses it. */
+    val PRODUCTION_CONTROL = Regex("""class MuPlaybackService\b""")
+
+    val BLOCK_COMMENT = Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL)
+    val LINE_COMMENT = Regex("""^[ \t]*//.*$""", RegexOption.MULTILINE)
 
     val SEPARATOR_CELL = Regex(""":?-{2,}:?""")
     val BACKTICKED = Regex("""`([^`]+)`""")
