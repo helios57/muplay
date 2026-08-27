@@ -1,9 +1,11 @@
 package app.muplay.media
 
+import app.muplay.model.AlbumListType
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
+import app.muplay.network.SubsonicSource
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -34,6 +36,9 @@ object RealTrackBytes {
   const val NAVIDROME_URL = "http://localhost:4533"
   const val MUSIC_LIBRARY_ID = 1
 
+  /** `ci/configure-libraries.sh` wires library 1 as `Music` and library 2 as `Audiobooks`. */
+  const val AUDIOBOOK_LIBRARY_ID = 2
+
   private val http: OkHttpClient by lazy { OkHttpClient() }
 
   private val client: SubsonicClient by lazy {
@@ -43,6 +48,7 @@ object RealTrackBytes {
   }
 
   private var tracks: List<Song>? = null
+  private var books: List<Song>? = null
   private val bytesById = mutableMapOf<String, ByteArray>()
 
   /** The three seeded music tracks, in title order — "Track 1", "Track 2", "Track 3". */
@@ -73,6 +79,38 @@ object RealTrackBytes {
    * object private, which is what that merge was for.
    */
   fun rawStreamUrl(song: Song): String = client.streamUrl(song.id, StreamFormat.Raw)
+
+  /**
+   * Every song in the seeded **Audiobooks** library, album by album, in the order
+   * `getAlbumList2(ALPHABETICAL_BY_NAME)` returns the albums and `getAlbum` returns their tracks.
+   *
+   * Plan 4 Task 3. Here rather than in the two chapter suites for the same reason [musicTracks]
+   * is here: two ways to reach the same container is two things to keep pointing at it, and this
+   * costs one `getAlbumList2` plus one `getAlbum` per book **per process** rather than per test
+   * method.
+   *
+   * Deliberately not filtered to a fixed set of titles: the corpus is `ci/seed-fixtures.sh`'s and
+   * `ci/probe-chapters.sh --check` is what pins it. A hardcoded count here would be a second,
+   * unchecked copy of the oracle.
+   */
+  suspend fun bookSongs(): List<Song> =
+    books ?: client.getAlbumList2(
+      musicFolderId = AUDIOBOOK_LIBRARY_ID,
+      type = AlbumListType.ALPHABETICAL_BY_NAME,
+      size = SubsonicClient.MAX_ALBUM_LIST_PAGE,
+      offset = 0,
+    ).flatMap { client.getAlbum(it.id, AUDIOBOOK_LIBRARY_ID).songs }.also { books = it }
+
+  /**
+   * The one client, as the port production code injects.
+   *
+   * `ChapterRepository` builds its own stream URLs through a `SubsonicSourceProvider`, which is
+   * the thing under test — so the test has to hand it a real source rather than a URL. Returning
+   * **this** object's single client rather than letting a test construct one keeps the property
+   * the accessor's removal was for: exactly one credential holder, and one connection pool, per
+   * process. It is not a second place the credentials live.
+   */
+  fun source(): SubsonicSource = client
 
   /** Two genuinely different tracks' bytes — the pair [MediaCacheTest] needs for its control. */
   suspend fun twoDifferentTracks(): Pair<ByteArray, ByteArray> {
