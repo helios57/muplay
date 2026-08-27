@@ -1,6 +1,5 @@
 package app.muplay.media
 
-import app.muplay.model.AlbumListType
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
@@ -36,7 +35,10 @@ object RealTrackBytes {
   const val NAVIDROME_URL = "http://localhost:4533"
   const val MUSIC_LIBRARY_ID = 1
 
-  /** `ci/configure-libraries.sh` wires library 1 as `Music` and library 2 as `Audiobooks`. */
+  /**
+   * `ci/navidrome.compose.yml`'s second library, mounted at `/audiobooks`, and wired as
+   * `Audiobooks` by `ci/configure-libraries.sh`.
+   */
   const val AUDIOBOOK_LIBRARY_ID = 2
 
   private val http: OkHttpClient by lazy { OkHttpClient() }
@@ -56,6 +58,26 @@ object RealTrackBytes {
     tracks ?: client.getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
       .sortedBy { it.title }
       .also { tracks = it }
+
+  /**
+   * Every seeded audiobook **file**, longest first.
+   *
+   * The same shape and the same cache as [musicTracks], scoped to the other library. Added by Plan
+   * 5 Task 5, which needs a file long enough that a stored position several seconds in is inside
+   * it: the music fixtures are five seconds each, and a resume assertion on a five-second track is
+   * satisfied by playback simply reaching the position on its own.
+   *
+   * Plan 4 Task 3's chapter suites use this rather than a second listing of the same library. They
+   * arrived with one -- album-ordered, via `getAlbumList2` + `getAlbum` -- written before this
+   * helper existed on master, and the merge of the two put **both** behind this same `books` field:
+   * two different orderings, one cache, and whichever ran first silently decided what the other
+   * one saw. Nothing about that conflicted textually. It was deleted rather than given its own
+   * field because neither chapter suite needs an order at all: both look a file up by title.
+   */
+  suspend fun audiobookFiles(): List<Song> =
+    books ?: client.getRandomSongs(musicFolderId = AUDIOBOOK_LIBRARY_ID, size = SubsonicClient.MAX_RANDOM_SONGS)
+      .sortedByDescending { it.durationSeconds }
+      .also { books = it }
 
   /** One seeded mp3 — the single track `MuPlayDataSourceFactoryTest` plays. */
   suspend fun oneMp3Track(): ByteArray =
@@ -79,27 +101,6 @@ object RealTrackBytes {
    * object private, which is what that merge was for.
    */
   fun rawStreamUrl(song: Song): String = client.streamUrl(song.id, StreamFormat.Raw)
-
-  /**
-   * Every song in the seeded **Audiobooks** library, album by album, in the order
-   * `getAlbumList2(ALPHABETICAL_BY_NAME)` returns the albums and `getAlbum` returns their tracks.
-   *
-   * Plan 4 Task 3. Here rather than in the two chapter suites for the same reason [musicTracks]
-   * is here: two ways to reach the same container is two things to keep pointing at it, and this
-   * costs one `getAlbumList2` plus one `getAlbum` per book **per process** rather than per test
-   * method.
-   *
-   * Deliberately not filtered to a fixed set of titles: the corpus is `ci/seed-fixtures.sh`'s and
-   * `ci/probe-chapters.sh --check` is what pins it. A hardcoded count here would be a second,
-   * unchecked copy of the oracle.
-   */
-  suspend fun bookSongs(): List<Song> =
-    books ?: client.getAlbumList2(
-      musicFolderId = AUDIOBOOK_LIBRARY_ID,
-      type = AlbumListType.ALPHABETICAL_BY_NAME,
-      size = SubsonicClient.MAX_ALBUM_LIST_PAGE,
-      offset = 0,
-    ).flatMap { client.getAlbum(it.id, AUDIOBOOK_LIBRARY_ID).songs }.also { books = it }
 
   /**
    * The one client, as the port production code injects.

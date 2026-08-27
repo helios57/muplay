@@ -91,7 +91,7 @@ class ChapterRepositoryTest {
     // authenticated URLs production builds.
     val (provider, file) = fixedSubsonicSourceProvider(context, RealTrackBytes.source())
     credentialFile = file
-    songs = RealTrackBytes.bookSongs()
+    songs = RealTrackBytes.audiobookFiles()
     repository = ChapterRepository(db.chapterDao(), reader, provider, clock)
   }
 

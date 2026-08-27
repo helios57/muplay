@@ -3,11 +3,25 @@ package app.muplay.database
 import app.muplay.database.entity.MediaProgressEntity
 import app.muplay.model.Song
 
-/** Where a listener is in a whole book, as the three facts `BookSummary` cannot derive. */
+/** Where a listener is in a whole book, as the facts `BookSummary` cannot derive. */
 data class BookPosition(
   val positionMs: Long,
   val isFinished: Boolean,
   val lastPlayedAtEpochMs: Long,
+  /**
+   * The id of the **file** the most recent row was written against, or `null` for a book nothing
+   * has been written for.
+   *
+   * Added by Plan 5 Task 5, which needs the file and not the offset: tapping a book means *"carry
+   * on"*, and carrying on means starting the queue at the file the listener was in. It is derived
+   * here rather than beside [of] because "which row is the listener's" is one rule -- the shelf's
+   * percentage and the queue's start index are two readings of the same answer, and deriving it
+   * twice is how they come to disagree about a book with rows on two files.
+   *
+   * **It is a file, not a position.** Nothing here decides where to seek; see this object's own
+   * note, which Task 5 did not weaken.
+   */
+  val fileMediaId: String?,
 )
 
 /**
@@ -38,7 +52,8 @@ data class BookPosition(
 object BookProgress {
 
   /** A book nothing has been written for: never started, never finished, never played. */
-  val NONE: BookPosition = BookPosition(positionMs = 0L, isFinished = false, lastPlayedAtEpochMs = 0L)
+  val NONE: BookPosition =
+    BookPosition(positionMs = 0L, isFinished = false, lastPlayedAtEpochMs = 0L, fileMediaId = null)
 
   fun of(files: List<Song>, rows: Map<String, MediaProgressEntity>): BookPosition {
     var latest: MediaProgressEntity? = null
@@ -62,6 +77,7 @@ object BookProgress {
       positionMs = offsetMs + row.positionMs,
       isFinished = row.isFinished && latestIndex == files.lastIndex,
       lastPlayedAtEpochMs = row.lastPlayedAtEpochMs,
+      fileMediaId = files[latestIndex].id,
     )
   }
 }

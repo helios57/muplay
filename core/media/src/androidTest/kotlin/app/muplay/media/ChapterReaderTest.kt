@@ -88,7 +88,7 @@ class ChapterReaderTest {
       context,
       MuPlayDataSourceFactory(counting, MediaCache.create(context, cacheDir)),
     )
-    songs = RealTrackBytes.bookSongs()
+    songs = RealTrackBytes.audiobookFiles()
   }
 
   @After

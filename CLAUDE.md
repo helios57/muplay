@@ -652,3 +652,45 @@ list from the tree.
 To run them yourself: `./gradlew :build-logic:convention:test` from the root
 (the `:build-logic:` prefix addresses the included build), or
 `./gradlew -p build-logic test`.
+
+## A `tearDown` that throws replaces the real failure with its own
+
+`GaplessTest`'s `setUp` ends with `server = MockWebServer(); server.start()`. Any
+failure before that line — a `check()` on the fixture count, a network refusal —
+leaves `server` unset, and `@After tearDown()` then throws
+
+    kotlin.UninitializedPropertyAccessException: lateinit property server has not been initialized
+    at app.muplay.media.GaplessTest.tearDown(GaplessTest.kt:115)
+
+which is the **only** message the report carries. The real cause never appears.
+
+Measured 2026-08-27: a corpus change added a fourth music fixture, `setUp`'s
+`check(songs.size == TRACK_COUNT)` fired, and four tests reported nothing but the
+`tearDown` exception. One lane read those failures and concluded *"`:core:media`'s
+audio-sink and disk-cache suites are red on master too"*, which sent the next
+reader looking at host disk and emulator storage. Both were fine; the cause was a
+hardcoded `3`.
+
+Guard every `@After` that touches a `lateinit` set late in `@Before`:
+
+    if (::server.isInitialized) server.close()
+
+It is one line, and it is the difference between a report that names the defect
+and a report that names the cleanup.
+
+## A shared fixture corpus breaks every hardcoded count at once
+
+The container bind-mounts `<repo>/ci/fixtures/Music -> /music` from the **main**
+worktree, so a corpus change is visible to every lane the instant the file lands
+— not when that lane's branch merges. Adding one Opus fixture took the music
+library from 3 tracks to 4 and turned `:core:media`'s device tier red on master
+while the lane that added it was still working.
+
+So a count over the corpus must be **derived, not written down**.
+`LiveNavidromeTest` does this correctly —
+`SEEDED_TRACK_COUNT = BookFixtures.allTrackPaths().size` — and survived the change
+untouched. `GaplessTest`'s `const val TRACK_COUNT = 3` did not.
+
+Where a test genuinely needs one *kind* of track, filter rather than count:
+`RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
+and was unaffected.
