@@ -1,5 +1,7 @@
 package app.muplay.player
 
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
@@ -57,6 +59,22 @@ class PlayerScreenTest {
         onPrevious = { actions += "previous" },
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
+      )
+    }
+  }
+
+  /** [show], plus the two parameters `:app` supplies when casting is in the build. */
+  private fun showWithCast(uiState: PlayerUiState, castDeviceName: String?) {
+    composeRule.setContent {
+      PlayerScreen(
+        uiState = uiState,
+        onPlayPause = { actions += "playPause" },
+        onNext = { actions += "next" },
+        onPrevious = { actions += "previous" },
+        onScrubTo = { scrubbedTo += it },
+        onScrubFinished = { actions += "scrubFinished" },
+        castDeviceName = castDeviceName,
+        castButton = { TextButton(onClick = { actions += "cast" }) { Text(CAST_SLOT_LABEL) } },
       )
     }
   }
@@ -329,5 +347,70 @@ class PlayerScreenTest {
     // A guard on the guard: if the dump were empty or truncated the three assertions above would
     // pass over nothing at all, which is this project's recorded "assertion that cannot fail".
     assertThat(tree).contains(ARTWORK_DESCRIPTION)
+  }
+
+  // ---- Plan 6 Task 10: where the sound is coming from ------------------------------------------
+
+  /**
+   * A player that keeps showing a play button and says nothing about the speaker is one whose user
+   * reaches for the phone's own volume keys and hears nothing change.
+   *
+   * Two names, not one: a line that read "Playing on Kitchen" from a constant would pass a
+   * single-fixture assertion.
+   */
+  @Test
+  fun theScreenNamesTheSpeakerItIsPlayingOn() {
+    showWithCast(content(), castDeviceName = "Küche")
+
+    composeRule.onNodeWithText(PLAYING_ON_PREFIX + "Küche").assertIsDisplayed()
+    composeRule.onNodeWithText(PLAYING_ON_PREFIX + "Study Amp").assertDoesNotExist()
+  }
+
+  @Test
+  fun aSecondSpeakerGetsASecondLine() {
+    showWithCast(content(), castDeviceName = "Study Amp")
+
+    composeRule.onNodeWithText(PLAYING_ON_PREFIX + "Study Amp").assertIsDisplayed()
+  }
+
+  @Test
+  fun nothingSaysWhereItIsPlayingWhileTheSoundIsOnThePhone() {
+    // The other direction. A line that was always rendered would tell a user their phone is a
+    // speaker somewhere else.
+    showWithCast(content(), castDeviceName = null)
+
+    composeRule.onNodeWithText(PLAYING_ON_PREFIX, substring = true).assertDoesNotExist()
+  }
+
+  @Test
+  fun theCastSlotSitsInTheTransportRowAndIsTappable() {
+    showWithCast(content(), castDeviceName = null)
+
+    // Positional, not "it rendered": a slot dropped at the top of the screen is a control a user's
+    // thumb never finds. Same row as Play, to the right of Next.
+    assertThat(topOf(CAST_SLOT_LABEL)).isEqualTo(topOf(PLAY_LABEL))
+    assertThat(leftOf(CAST_SLOT_LABEL)).isGreaterThan(leftOf(NEXT_LABEL))
+
+    composeRule.onNodeWithText(CAST_SLOT_LABEL).performClick()
+    assertThat(actions).contains("cast")
+  }
+
+  @Test
+  fun aScreenWithNoCastingInTheBuildRendersTheTransportRowUnchanged() {
+    // The defaults. `:feature:player` must build and behave with no casting in the tree at all --
+    // this plan's definition of done requires that dropping casting stays two `git rm`s.
+    show(content())
+
+    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithText(CAST_SLOT_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(PLAYING_ON_PREFIX, substring = true).assertDoesNotExist()
+  }
+
+  private companion object {
+    /**
+     * Stands in for `:feature:castpicker`'s `CastButton`, which this module deliberately cannot see.
+     * The slot is a `@Composable () -> Unit`; what goes in it is `:app`'s business.
+     */
+    const val CAST_SLOT_LABEL = "Cast slot"
   }
 }

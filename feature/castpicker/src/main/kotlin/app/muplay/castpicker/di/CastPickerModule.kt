@@ -1,5 +1,6 @@
 package app.muplay.castpicker.di
 
+import androidx.media3.common.Player
 import app.muplay.cast.discovery.CastDevice
 import app.muplay.cast.discovery.DatagramSsdpTransport
 import app.muplay.cast.discovery.DescriptionFetcher
@@ -94,10 +95,25 @@ internal class SessionCastControl @Inject constructor(
 
   override suspend fun stopCasting() = manager.stopCasting()
 
+  /**
+   * The remote player as a **`Player`**, and the widening is load-bearing rather than tidy.
+   *
+   * Media3's `@UnstableApi` is an `androidx.annotation.RequiresOptIn`, invisible to the Kotlin
+   * compiler, and *which declaration a call resolves to* is what decides whether lint flags it. On
+   * an `UpnpPlayer` receiver, `deviceVolume` and `setDeviceVolume` resolve to `SimpleBasePlayer`'s
+   * overrides -- and `SimpleBasePlayer` is `@UnstableApi`, so both would fail `lintDebug` as
+   * `UnsafeOptInUsageError` long after they compiled clean. Typed as `Player` they resolve to
+   * `Player`'s own stable declarations, which is also the honest statement of what this class needs:
+   * a player, not that player.
+   */
+  private val remote: Player? get() = manager.castPlayer
+
   /** `null` when nothing is cast, which is what makes the slider absent rather than inert. */
-  override fun deviceVolumePercent(): Int? = manager.castPlayer?.deviceVolume
+  override fun deviceVolumePercent(): Int? = remote?.deviceVolume
 
   override fun setDeviceVolumePercent(percent: Int) {
-    manager.castPlayer?.setDeviceVolume(percent, 0)
+    // The two-argument form: the one-argument `setDeviceVolume(int)` is deprecated, and the flags
+    // argument is where `FLAG_SHOW_UI` would go if this ever wanted the system volume panel.
+    remote?.setDeviceVolume(percent, 0)
   }
 }

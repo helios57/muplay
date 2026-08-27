@@ -49,6 +49,12 @@ dependencies {
   // The player screen and the mini player `MuPlayApp` hosts, and the `PlayerViewModel` behind
   // both. `:app` is the only module that composes them.
   implementation(project(":feature:player"))
+  // Plan 6 Task 10. The cast button and the picker sheet `MuPlayApp` hosts, and the `CastViewModel`
+  // both share. `:app` is the only module that composes them -- in particular `:feature:player`
+  // does not: it takes the button as a `@Composable` slot and the connected speaker's name as a
+  // `String?`, so two feature modules never depend on each other and dropping casting stays
+  // `git rm -r core/cast feature/castpicker` plus this line.
+  implementation(project(":feature:castpicker"))
 
   // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing
   // else in the tree may name an :integrations:* project, and `ConventionTest`'s
