@@ -232,6 +232,9 @@ CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabi
 CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
 ROUTE_SUBNET = "core/cast/src/main/kotlin/app/muplay/cast/route/SubnetMatch.kt"
 ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
+SESSION_SESSION = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSession.kt"
+SESSION_PLAYBACK = "core/cast/src/main/kotlin/app/muplay/cast/session/CastPlayback.kt"
+SESSION_SOURCE = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSource.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -2490,6 +2493,115 @@ PROBES = [
      "    val phoneAddress = localAddress(rendererAddress)\n"
      '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")',
      "a renderer with no route from this phone is Unroutable before anything is published", 1),
+
+    # ---- Plan 6 Task 8: the session over the renderer, and the renderer that disappears -------
+    # Every count below was measured by applying the mutation to a committed tree and reading the
+    # result XML. `core/cast` is already on `revert()`'s checkout line, wholesale, so these three
+    # new files need no entry of their own -- which is exactly why that line names the directory.
+    #
+    # The first four are the disappearing-speaker branch, which is the whole reason Task 8 exists:
+    # spec section 6 says playback STOPPING when the speaker goes away is intended behaviour, and
+    # playback APPEARING TO CONTINUE is not.
+    ("session/lost-position-zeroed", SESSION_SESSION,
+     "CastSessionState.Lost(deviceName, positionMs, queue.getOrNull(index)?.mediaId),",
+     "CastSessionState.Lost(deviceName, 0L, queue.getOrNull(index)?.mediaId),",
+     # **The mutation that loses a listener's place in a book.** Everything else about the session
+     # still behaves: it is declared lost, an error is reported, the clock stops. Only the number
+     # Task 9 resumes from is wrong, and a suite that asserted "a Lost was emitted" would not care.
+     "a renderer that disappears mid-stream ends the session with the last known position", 1),
+    ("session/lost-clock-keeps-running", SESSION_SESSION,
+     '    failure = CastFailure(CastFailureKind.RENDERER_UNREACHABLE, "$deviceName stopped responding")\n'
+     "    playWhenReady = false\n    transport = TransportState.NO_MEDIA\n    publish()",
+     '    failure = CastFailure(CastFailureKind.RENDERER_UNREACHABLE, "$deviceName stopped responding")\n'
+     "    publish()",
+     # The other half, and the half a `Lost` state alone does not give you: the session reports the
+     # loss AND freezes the reported position. Without it the seek bar runs to the end of a track
+     # nobody can hear and a progress writer records a position that was never played.
+     "a renderer that disappears mid-stream stops the clock instead of playing on forever", 1),
+    ("session/lost-after-one-failure", SESSION_SESSION,
+     "const val LOST_AFTER_FAILURES: Int = 3", "const val LOST_AFTER_FAILURES: Int = 1",
+     # THIS PROBE REPORTED **MISSED** THE FIRST TIME IT WAS RUN, and the answer it recorded is a
+     # test-design one rather than a product one. The test withheld `LOST_AFTER_FAILURES - 1`
+     # answers from the fake, so at a threshold of 1 it withheld none, nothing failed, and the whole
+     # suite stayed green against the mutation the test existed to catch. A test parameterised by
+     # the constant under test moves with it and can never fail. It withholds a literal two now.
+     "two consecutive missed polls do not end the session, and a good poll resets the count", 1),
+    ("session/refusal-counts-as-silence", SESSION_SESSION,
+     "      transportFailures = 0\n    } catch (unreachable: SoapTransportException) {",
+     "      transportFailures += 1\n      if (transportFailures >= LOST_AFTER_FAILURES) lose()\n"
+     "    } catch (unreachable: SoapTransportException) {",
+     # Task 5 keeps `UpnpErrorException` and `SoapTransportException` apart so the poll can tell
+     # "the speaker said no" from "the speaker is gone". Collapsed, one 501 on some firmware tears
+     # down every session three seconds in.
+     "a upnp error from a poll is not mistaken for a dead speaker", 1),
+
+    # The end of a track, and the thing that only looks like it.
+    ("session/stopped-always-advances", SESSION_SESSION,
+     "if (previous == TransportState.PLAYING && transport == TransportState.STOPPED && reachedTheEnd) {",
+     "if (previous == TransportState.PLAYING && transport == TransportState.STOPPED) {",
+     # A renderer reports STOPPED for "finished" and for "somebody pressed stop on the speaker".
+     # Read the same way, a track is skipped every time a listener touches the hardware. Two
+     # failures, because `a track whose length this app does not know never declares itself
+     # finished` is the same branch reached through a zero duration.
+     "a stop that is not the end of the track does not skip to the next one", 2),
+    ("session/transport-error-swallowed", SESSION_SESSION,
+     "      if (info.hasError) {", "      if (info.hasError && queue.isEmpty()) {",
+     # `CurrentTransportStatus = ERROR_OCCURRED` arrives in a DIFFERENT out-argument from the state,
+     # usually beside an ordinary STOPPED. Swallowed, it is a track that never starts and never
+     # fails, with nothing reported anywhere.
+     "a renderer reporting ERROR_OCCURRED becomes a reported failure and not a silent stall", 1),
+
+    # Three defects this task found in itself, each fixed and each pinned here.
+    ("session/route-proved-before-play", SESSION_SESSION,
+     "    if (playWhenReady) {\n      if (!proveRoute(loaded)) return\n    } else {\n"
+     "      unprovedRoute = loaded\n    }",
+     "    if (!proveRoute(loaded)) return",
+     # `CastRouter.confirm` proves a route by waiting for the renderer to FETCH, and a renderer
+     # fetches after `Play`. `SimpleBasePlayer` sets the queue before it sets playWhenReady, so
+     # proving at load time sits out the whole proof timeout and then calls a good speaker
+     # unroutable. The count is 25 and not 1 on purpose: nothing can play at all under this
+     # mutation, so the count here is a measurement of the blast radius rather than a discrimination
+     # claim -- if it goes stale because `:core:cast` gained tests, re-measure it, do not delete it.
+     "a queue set while paused is not declared unroutable for never having been fetched", 25),
+    ("session/failed-session-still-accepts-commands", SESSION_SESSION,
+     "private fun refusing(): Boolean = released || failure != null",
+     "private fun refusing(): Boolean = released",
+     # Measured while writing the grouped-Sonos test: `SetAVTransportURI` failed with "this speaker
+     # is grouped with another and is following ...", the `play()` that followed failed with `701
+     # Transition not available` because nothing had been loaded, and the second message REPLACED
+     # the first. What a user would have been shown is the symptom of the symptom.
+     "a failed session ignores later commands rather than replacing the diagnosis with its symptoms", 1),
+    ("session/state-change-not-announced", SESSION_SESSION,
+     "    onPlaybackChanged()\n  }", "  }",
+     # Task 9 passes `SimpleBasePlayer::invalidateState` here and Media3 derives every listener
+     # callback from the diff between the snapshots it then reads. A change that does not announce
+     # itself is a callback that never fires -- for a book cast to a speaker, a position never
+     # recorded, discovered by a listener losing their place.
+     "every change to the snapshot is announced, and the announcements carry the changes", 1),
+    ("session/release-skips-revoke-when-gone", SESSION_SESSION,
+     "      } catch (unreachable: IOException) {", "      } catch (unreachable: NullPointerException) {",
+     # The commonest reason a session is released is that the speaker went away, so a `Stop` that
+     # throws must not be allowed to skip `CastRouter.revokeAll` -- a proxy still serving after its
+     # session has ended is a capability lying on the LAN with nobody watching it.
+     "a session released after the renderer has gone still revokes its tokens", 1),
+
+    # The seek bar between two polls, and the credential that must not be printed.
+    ("session/no-extrapolation", SESSION_PLAYBACK,
+     "positionMs + (nowMs - positionMeasuredAtMs).coerceAtLeast(0L)", "positionMs + 0L",
+     # Six failures: the position supplier is read by both the pure test and three session cases.
+     "the position extrapolates between polls", 6),
+    ("session/seek-always-advertised", SESSION_SESSION,
+     "canSeek = renderer.capabilities().preferredSeekMode != null", "canSeek = true",
+     # A device whose SCPD offers no time seek mode must show NO seek bar, rather than one that
+     # answers 710 to every drag. Task 9 withholds `COMMAND_SEEK_*` on this flag.
+     "a device that cannot seek by time does not report that it can, and one that can does", 1),
+    ("session/upstream-url-printed", SESSION_SOURCE,
+     "upstreamUrl=$REDACTED_UPSTREAM", "upstreamUrl=$upstreamUrl",
+     # `:core:model`'s `SubsonicCredentials` and `:integrations`' Lidarr key have the same probe for
+     # the same reason: a `data class` prints every field, and a `CastSource` lives in a list inside
+     # a live session -- the shape that reaches a log line by accident. A Navidrome stream URL's
+     # `t` and `s` are password equivalents.
+     "a source does not print its credential-bearing upstream url", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why

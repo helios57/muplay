@@ -3582,14 +3582,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // FALSIFICATION, measured by withholding whole test classes and re-running (the numbers, not the
     // conclusions -- and re-run them if you touch this floor rather than copying them forward):
     //
-    //   * withhold `CastPlaybackTest`      -> CastPlayback BRANCH 0/4 = 0.0000, both floors fire.
-    //     Nothing in production calls `positionAtMs`; the session publishes the two numbers it is
-    //     computed from and Task 9's player asks the question.
-    //   * withhold `CastItemsTest`         -> CastItems BRANCH 1/2 = 0.5000 (every source the
-    //     session suite queues is music, so the audiobook arm has exactly one caller) and CastSource
-    //     LINE 12/13 -- the `toString` line goes dark, which is the security control.
-    //   * withhold `CastSessionTest`       -> CastSession BRANCH 0/105, LINE 0/229. It is the only
-    //     execution data this class has.
+    //   * withhold `CastPlaybackTest` -> CastPlayback BRANCH **3/4 = 0.7500**, the BRANCH floor
+    //     fires. Predicted 0/4 before running it, and that was wrong in the way this project keeps
+    //     paying for: `CastSessionTest` is a second caller of `positionAtMs` (three of its cases
+    //     ask what the clock reads at a given instant), so the class is NOT solely covered by its
+    //     own test. The floor still fires, by one branch -- the duration clamp, which only the pure
+    //     test reaches.
+    //   * withhold `CastItemsTest` -> CastItems BRANCH **1/2 = 0.5000** (every source the session
+    //     suite queues is music, so the audiobook arm has exactly one caller) AND CastSource LINE
+    //     **10/13 = 0.7692**. Both floors fire. Predicted 12/13 for `CastSource`; measured 10/13,
+    //     because withholding that class takes the `Companion` initialiser and two more of the
+    //     `toString` lines with it, not only the one.
+    //   * withhold `CastSessionTest` -> CastSession BRANCH 0/105 and LINE 0/229, and **17 further
+    //     rules** violated in the same run (every lambda and every `CastSessionState` member). It is
+    //     the only execution data those classes have.
+    //   * withhold all three -> every class above at 0.0000.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
