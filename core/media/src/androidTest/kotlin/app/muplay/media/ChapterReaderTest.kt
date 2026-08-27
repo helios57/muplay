@@ -13,7 +13,9 @@ import app.muplay.testing.BookFixtures
 import app.muplay.testing.ExpectedBook
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.After
@@ -34,9 +36,18 @@ import org.junit.runner.RunWith
  *    --check` in both CI tiers.
  * 2. The **wrong** wiring is asserted to produce the **wrong** answer. Spike S3's central finding
  *    is that `MetadataRetriever.Builder(...).build()` without `setMediaSourceFactory` silently
- *    returns `C.TIME_UNSET` end times and drops `chap` chapters, with no exception and no log. A
- *    test that only asserted the right answer would pass on `chpl` files with that bug in place;
- *    this one turns the footgun into a permanent, executable record of itself.
+ *    returns `C.TIME_UNSET` end times and drops `chap` chapters, with no exception and no log.
+ *    `theBareRetrieverBuilderReturnsUnusableEndTimesAndThisIsWhyTheFactoryIsMandatory` builds the
+ *    broken retriever by hand and asserts it is broken, so the footgun is a permanent executable
+ *    record rather than a comment somebody can delete.
+ *
+ * **That second test is test-side, so it cannot detect the line being deleted from production
+ * code — and neither, measured, can the oracle tests.** Deleting `setMediaSourceFactory` from
+ * `ChapterReader` left all six of this class's original tests green on the emulator, because
+ * `ChapterAssembly` fills a missing end from the next chapter's start and every chapter in the
+ * seeded corpus abuts its neighbour. Two tests here exist because of that measurement and are the
+ * only two that fail on it: `theLastChaptersEndComesFromTheFileAndNotFromTheDurationTheCallerPassed`
+ * and `everyChapterProbeIsFetchedThroughTheInjectedDataSourceFactory`. See task-3-report.md.
  *
  * **Which fixture property makes the title assertions able to fail.** `Test Book`'s three chapter
  * atoms are literally titled `Chapter 1`/`Chapter 2`/`Chapter 3` — which is exactly the string
@@ -55,13 +66,27 @@ class ChapterReaderTest {
   private lateinit var reader: ChapterReader
   private lateinit var songs: List<Song>
 
+  /**
+   * Requests that reached **this app's** OkHttp client.
+   *
+   * Not decoration: it is one of the two assertions that can see `setMediaSourceFactory` being
+   * deleted. Without that line the retriever falls back to `DefaultDataSource.Factory`, which
+   * fetches over `HttpURLConnection` and never touches this client, this project's media cache or
+   * `RequestedUriDataSource` — the wrapper that keeps a credential-bearing redirect target out of
+   * `exoplayer_internal.db`.
+   */
+  private val requests = AtomicInteger()
+
   @Before
   fun setUp() = runBlocking {
     context = ApplicationProvider.getApplicationContext()
     cacheDir = File(context.cacheDir, "chapters-${System.nanoTime()}")
+    val counting = OkHttpClient.Builder()
+      .addInterceptor(Interceptor { chain -> requests.incrementAndGet(); chain.proceed(chain.request()) })
+      .build()
     reader = ChapterReader(
       context,
-      MuPlayDataSourceFactory(OkHttpClient(), MediaCache.create(context, cacheDir)),
+      MuPlayDataSourceFactory(counting, MediaCache.create(context, cacheDir)),
     )
     songs = RealTrackBytes.bookSongs()
   }
@@ -162,6 +187,45 @@ class ChapterReaderTest {
       .describedAs("every chapter runs for a positive time")
       .allSatisfy { assertThat(it).isPositive }
     assertThat(all.none { it.endMs == C.TIME_UNSET }).isTrue
+  }
+
+  @Test
+  fun theLastChaptersEndComesFromTheFileAndNotFromTheDurationTheCallerPassed() {
+    // **The assertion that proves the end times came out of the bytes.** Every other assertion in
+    // this class is satisfied by a reader that read no end times at all, and that is a measurement
+    // rather than a worry: with `setMediaSourceFactory` deleted from `ChapterReader`, all six of
+    // the original tests here stayed green on the emulator. The reason is the corpus. Every book
+    // in it has chapters that abut — 0/5000/10000/15000 — so "the end Media3 read" and "the next
+    // chapter's start" are the same number for every chapter but the last, and the last one's
+    // fallback is `contentDurationMs`, which for these whole-second fixtures is exactly the
+    // container's own answer too.
+    //
+    // Passing a duration that is deliberately wrong breaks the tie. If the ends came from the
+    // file, the last chapter still ends at 15000; if they came from the fallback chain, it ends
+    // at 999999 and this line says so.
+    val song = song("Test Book")
+    val chapters = runBlocking {
+      reader.read(song.id, RealTrackBytes.source().streamUrl(song.id, StreamFormat.Raw), 999_999L)
+    }
+
+    assertThat(chapters.map { it.endMs })
+      .describedAs("ends read from the file, against a caller-supplied duration that is nonsense")
+      .containsExactlyElementsOf(BookFixtures.TEST_BOOK.chapters.map { it.endMs })
+  }
+
+  @Test
+  fun everyChapterProbeIsFetchedThroughTheInjectedDataSourceFactory() {
+    // The second thing `setMediaSourceFactory` decides, and the one that has nothing to do with
+    // chapter times: which HTTP stack the probe uses. Deleting the line sends the fetch through
+    // `HttpURLConnection` instead — no media cache, no `RequestedUriDataSource`, no `User-Agent`,
+    // and none of this project's timeouts — with no signal anywhere.
+    val before = requests.get()
+
+    read("Tail Book")
+
+    assertThat(requests.get() - before)
+      .describedAs("requests that reached this app's own OkHttp client")
+      .isPositive
   }
 
   @Test
