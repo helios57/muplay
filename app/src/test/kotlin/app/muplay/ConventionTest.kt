@@ -1891,23 +1891,31 @@ class ConventionTest {
     assertThat(document).exists()
     val text = document.readText()
 
-    val start = text.indexOf(REVIEWER_TAPS_START)
-    val end = text.indexOf(REVIEWER_TAPS_END)
-    assertThat(start)
-      .describedAs("$REVIEWER_TAPS_START must delimit the App-access instruction block in ${document.name}")
-      .isNotNegative()
-    assertThat(end)
-      .describedAs("$REVIEWER_TAPS_END must close the block $REVIEWER_TAPS_START opens")
-      .isGreaterThan(start)
+    // Every marked region, not just the first: the recommended route and the fallback route each
+    // carry their own instruction block, and a rule that read only one of them would leave the
+    // other free to name a control that no longer exists.
+    val regions = Regex(
+      Regex.escape(REVIEWER_TAPS_START) + "(.*?)" + Regex.escape(REVIEWER_TAPS_END),
+      RegexOption.DOT_MATCHES_ALL,
+    ).findAll(text).map { withoutBlockComments(it.groupValues[1]) }.toList()
 
-    val instructions = withoutBlockComments(text.substring(start + REVIEWER_TAPS_START.length, end))
-    val controls = Regex("""\*\*([^*]+)\*\*""").findAll(instructions).map { it.groupValues[1] }.toSortedSet()
+    // Vacuity, and the loudest failure this rule can produce. A document that had lost its markers
+    // -- renamed, reformatted, rewritten by someone who did not know they were load-bearing --
+    // would otherwise satisfy every assertion below by having nothing to check, which is this
+    // project's most-recorded defect shape and the one it least wants in a gate over prose.
+    assertThat(regions)
+      .describedAs(
+        "no $REVIEWER_TAPS_START / $REVIEWER_TAPS_END block in " +
+          document.relativeTo(root).invariantSeparatorsPath + " -- those markers delimit the text " +
+          "that is filed in Play Console, and this rule cannot check anything without them",
+      )
+      .isNotEmpty()
 
-    // Vacuity, twice over. A block that had lost its markup, or a scan pointed at the wrong source
-    // tree, would otherwise satisfy every assertion below by having nothing to check -- and this
-    // rule's whole job is to notice a change nobody made deliberately.
+    val controls = regions
+      .flatMap { region -> Regex("""\*\*([^*]+)\*\*""").findAll(region).map { it.groupValues[1] } }
+      .toSortedSet()
     assertThat(controls)
-      .describedAs("controls named in bold between the reviewer-taps markers of ${document.name}")
+      .describedAs("controls named in bold inside the reviewer-taps blocks")
       .isNotEmpty()
 
     val shippedUi = File(root, "feature").walkTopDown()
@@ -1931,12 +1939,13 @@ class ConventionTest {
       )
       .isEmpty()
 
-    // The whole document this time, not just the instruction block: the fallback route and the
-    // recipe both quote URLs, and an http:// one is just as wrong there.
-    val cleartext = Regex("""http://[^\s`'"<>)\]]+""").findAll(text)
-      .map { it.value }
+    // The instruction blocks only, deliberately. The prose around them *quotes* a cleartext URL --
+    // the emulator's `10.0.2.2` alias, the address that was measured failing on a release build --
+    // and that measurement is the reason this half of the rule exists. Scanning the whole document
+    // would make the evidence for a rule fail the rule.
+    val cleartext = regions
+      .flatMap { region -> Regex("""http://[^\s`'"<>)\]]+""").findAll(region).map { it.value } }
       .filterNot { it.removePrefix("http://").substringBefore("/").substringBefore(":") == "localhost" }
-      .toList()
     assertThat(cleartext)
       .describedAs(
         "a release build cannot reach a cleartext remote host -- Android's default network " +

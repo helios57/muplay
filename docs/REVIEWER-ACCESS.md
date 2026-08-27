@@ -262,8 +262,13 @@ Same form, with:
 
 *Username:* `demo`  *Password:* `demo`
 
-and step 2 becomes `https://demo.navidrome.org`; step 5 lists **one** library, `Music Library`, so
-tag that single row **Tag as Music** and continue. Step 8 does not apply.
+<!-- reviewer-taps:start -->
+
+and step 2 becomes `https://demo.navidrome.org`; step 5 lists a single library, `Music Library`, so
+tap **Tag as Music** on that one row and then **Continue**. Step 8 does not apply, because the demo
+server has only the one library.
+
+<!-- reviewer-taps:end -->
 
 Before submitting with this route, re-check it is alive — the whole objection to option A is that it
 can stop being true without warning:
