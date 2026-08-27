@@ -10,9 +10,11 @@ import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionError
 import app.muplay.database.BrowseTreeRepository
+import app.muplay.media.AudiobookSnapshot
 import app.muplay.media.ControllerAccessPolicy
 import app.muplay.media.PlaybackQueue
 import app.muplay.media.QueueRepository
+import app.muplay.media.ResumptionQueue
 import app.muplay.model.browse.BrowseId
 import app.muplay.model.browse.BrowseNode
 import app.muplay.model.browse.BrowsePaging
@@ -78,6 +80,14 @@ class MuPlayLibraryCallback @Inject constructor(
   private val treeRepository: BrowseTreeRepository,
   private val surfaceResolver: SurfaceResolver,
   private val queueRepository: QueueRepository,
+  /** Plan 4 Task 6 -- what *"carry on"* names. See [onPlaybackResumption]. */
+  private val resumptionQueue: ResumptionQueue,
+  /**
+   * Plan 4 Task 6. Refreshed on the resumption path *before* the items are answered, because that
+   * path runs at process start: the collector has typically not emitted yet, and a cold snapshot
+   * resumes every book from zero.
+   */
+  private val audiobookSnapshot: AudiobookSnapshot,
 ) : MediaLibrarySession.Callback {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -240,6 +250,55 @@ class MuPlayLibraryCallback @Inject constructor(
       selection.startIndex,
       C.TIME_UNSET,
     )
+  }
+
+  /**
+   * *"Carry on"*, with nothing loaded: the most recently heard unfinished book.
+   *
+   * The system calls this after a reboot (Android 13+ draws a resumption control in the shade from
+   * it) and whenever a media button reaches a session whose player is empty. Media3 declares two
+   * overloads; the three-argument one's default body delegates to **this** one (verified in the
+   * 1.11.0 bytecode), so overriding this covers both, while overriding only the newer one would
+   * leave the older answering `immediateFailedFuture(UnsupportedOperationException())`.
+   *
+   * Three things happen here and each one is load-bearing:
+   *
+   * 1. **[ResumptionQueue] chooses the item.** Not the most recent *anything* -- pressing play
+   *    after a reboot and getting a random song is a worse answer than getting nothing.
+   * 2. **The snapshot is refreshed.** This is the coldest path in the application: the process has
+   *    just started, so `AudiobookSnapshot`'s collector has usually not emitted, and without this
+   *    the book comes back at zero. That is the very defect the plan exists to remove, arriving as
+   *    a race that only reproduces on a slow device.
+   * 3. **The position answered is `C.TIME_UNSET`.** `MuPlayer` discards it and asks the resume
+   *    policy, exactly as on every other play path. Passing a position here would be a second
+   *    opinion about where a book resumes, which is how two answers come to disagree.
+   *
+   * The future is completed off the session thread because both steps read Room and build
+   * authenticated URLs. **Failing the future is the API's way of saying "nothing to resume"** --
+   * Media3 leaves the resumption control alone rather than starting silence, and `LOG_TAG`-free
+   * failure is this module's standing rule (`ConventionTest`'s *nothing in the media module logs*).
+   */
+  override fun onPlaybackResumption(
+    mediaSession: MediaSession,
+    controller: MediaSession.ControllerInfo,
+  ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+    val settable = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+    scope.launch {
+      val queue = runCatching { resumptionQueue.mostRecent() }.getOrNull()
+      if (queue == null) {
+        settable.setException(UnsupportedOperationException(NOTHING_TO_RESUME))
+        return@launch
+      }
+      audiobookSnapshot.refresh()
+      settable.set(
+        MediaSession.MediaItemsWithStartPosition(
+          queueRepository.mediaItems(queue),
+          queue.startIndex,
+          C.TIME_UNSET,
+        ),
+      )
+    }
+    return settable
   }
 
   /**
@@ -437,5 +496,16 @@ class MuPlayLibraryCallback @Inject constructor(
       future.set(result)
     }
     return future
+  }
+
+  companion object {
+    /**
+     * Why the resumption future was failed.
+     *
+     * A constant rather than a literal so `PlaybackResumptionTest` can assert the *reason* rather
+     * than merely that something was thrown: "there is no unfinished book" and "the queue builder
+     * blew up" both arrive as a failed future, and only one of them is correct behaviour.
+     */
+    const val NOTHING_TO_RESUME = "no unfinished book to resume"
   }
 }

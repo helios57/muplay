@@ -3,12 +3,17 @@ package app.muplay.media.di
 import app.muplay.cast.didl.ServedMedia
 import app.muplay.cast.proxy.OkHttpProxyUpstream
 import app.muplay.cast.route.CastRoute
+import app.muplay.media.AudiobookItem
+import app.muplay.media.AudiobookResumePolicy
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.ResumeTarget
 import app.muplay.media.cast.OneShotResumePolicy
 import dagger.Provides
 import java.net.URI
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.isActive
@@ -79,16 +84,62 @@ class MediaModuleTest {
   }
 
   @Test
-  fun `the undecorated resume policy is the one that resumes nothing`() {
-    // Spec section 3's stated behaviour for music, and the binding Plan 4 replaces. Two
-    // observations, because the identity check alone would survive `NeverResume` itself being
-    // changed to resume, and the behavioural one alone would survive this module binding some
-    // other policy that also happens to answer zero today.
-    val policy = MediaModule.provideUndecoratedResumePolicy()
+  fun `the undecorated resume policy is the one that actually resumes a book`() {
+    // **The single most important binding in this application**, and until Plan 4 Task 6 it was
+    // `NeverResume` -- the policy that starts everything from zero. Restoring that line is the
+    // whole defect this project exists to fix, and it is silent: nothing throws, nothing logs, and
+    // every other test in this module stays green because they all construct the policy directly.
+    //
+    // It is gated **here**, on the JVM tier, and that is the reason `provideUndecoratedResumePolicy`
+    // takes an `AudiobookItemSource` rather than the `AudiobookSnapshot` the plan for that task
+    // specified. With the concrete snapshot this provider could only be reached behind an emulator,
+    // and that plan recorded the binding as a known ungated line for a later task to close.
+    //
+    // A two-entry source, so "it resumed" is not "it returned the only number there was".
+    val library = mapOf(
+      "book-a-1" to item("book-a-1", "book-a", positionMs = 12_345L),
+      "book-b-1" to item("book-b-1", "book-b", positionMs = 60_000L),
+    )
 
-    assertThat(policy).isSameAs(NeverResume)
-    assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startPositionMs).isZero
-    assertThat(policy.resolve(listOf("a", "b"), requestedIndex = 1).startIndex).isEqualTo(1)
+    val policy = MediaModule.provideUndecoratedResumePolicy({ library[it] }, FIXED_CLOCK)
+
+    // Behaviour first, and it is what a restored `NeverResume` fails on: two books, two positions.
+    assertThat(policy.resolve(listOf("book-a-1"), requestedIndex = 0).startPositionMs)
+      .isEqualTo(12_345L)
+    assertThat(policy.resolve(listOf("book-b-1"), requestedIndex = 0).startPositionMs)
+      .isEqualTo(60_000L)
+    // Music -- an id the source does not know -- still starts from zero, which is spec section 3
+    // and is the half a policy that resumed everything would break.
+    assertThat(policy.resolve(listOf("a-song"), requestedIndex = 0).startPositionMs).isZero
+    // The caller's index survives, because it is queue membership rather than progress.
+    assertThat(policy.resolve(listOf("a-song", "book-b-1"), requestedIndex = 1))
+      .isEqualTo(ResumeTarget(1, 60_000L))
+    // ...and the type, which the behavioural checks alone would not pin: a different policy that
+    // happened to answer the same three numbers today would satisfy every line above.
+    assertThat(policy).isInstanceOf(AudiobookResumePolicy::class.java)
+    // `NeverResume` is deliberately NOT deleted -- it is still the reference implementation of "no
+    // resume" and `ResumePolicyTest` is what keeps `resolve`'s signature honest. It is simply no
+    // longer what this module binds, and that is what this line says.
+    assertThat(policy).isNotSameAs(NeverResume)
+  }
+
+  @Test
+  fun `the bound policy reads the clock, so a book left for a week is rewound`() {
+    // The other half of the binding, and the one the test above cannot reach: it holds the clock at
+    // the row's own timestamp, so a provider that passed no clock at all -- or passed
+    // `Clock.systemUTC()` instead of the injected one -- agrees with it exactly. `DataModule`'s
+    // `Clock` is the only wall-clock read behind every `lastPlayedAtEpochMs` this app writes, and
+    // the smart rewind is the only thing that consumes it on the way back out.
+    val library = mapOf("book-a-1" to item("book-a-1", "book-a", positionMs = 60_000L))
+
+    val policy = MediaModule.provideUndecoratedResumePolicy(
+      { library[it] },
+      Clock.fixed(Instant.ofEpochMilli(FIXED_NOW_MS + 7L * 86_400_000L), ZoneOffset.UTC),
+    )
+
+    // Seven days away lands in `SmartRewind`'s top band: 20 s off a 60 s position.
+    assertThat(policy.resolve(listOf("book-a-1"), requestedIndex = 0).startPositionMs)
+      .isEqualTo(40_000L)
   }
 
   // ---- the cast handover's bindings -----------------------------------------------------------
@@ -100,7 +151,9 @@ class MediaModuleTest {
     // `ResumePolicy`. If those two are not the same object the outbound leg still works by accident
     // -- the remote player is built holding the decorator -- and the RETURN leg silently restarts
     // the track from zero, which reads as a resume bug in a different file.
-    val oneShot = MediaModule.provideOneShotResumePolicy(MediaModule.provideUndecoratedResumePolicy())
+    val oneShot = MediaModule.provideOneShotResumePolicy(
+      MediaModule.provideUndecoratedResumePolicy({ null }, FIXED_CLOCK),
+    )
 
     val bound: ResumePolicy = MediaModule.provideResumePolicy(oneShot)
 
@@ -255,5 +308,21 @@ class MediaModuleTest {
 
     /** Long enough that a 32-hex random token cannot contain it by chance. */
     const val TRACK_ID = "trackIdNobodyGuesses"
+
+    /** Fixed, so the resume assertions above are equalities rather than bands. */
+    const val FIXED_NOW_MS = 1_700_000_000_000L
+
+    val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochMilli(FIXED_NOW_MS), ZoneOffset.UTC)
   }
+
+  /** Stored **now**, so the away time is in `SmartRewind`'s no-rewind band and the position is exact. */
+  private fun item(mediaId: String, bookId: String, positionMs: Long) = AudiobookItem(
+    mediaId = mediaId,
+    bookId = bookId,
+    positionMs = positionMs,
+    lastPlayedAtEpochMs = FIXED_NOW_MS,
+    isFinished = false,
+    speed = 1.0f,
+    skipSilence = false,
+  )
 }

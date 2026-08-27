@@ -75,6 +75,16 @@ class MuPlaybackService : MediaLibraryService() {
   @Inject lateinit var mediaProgressDao: MediaProgressDao
 
   /**
+   * The in-memory `media_progress` view the resume policy answers from.
+   *
+   * Injected here for one reason: **somebody has to start its collector**, and a snapshot nobody
+   * started answers `null` for everything -- which resumes nothing and is indistinguishable from
+   * the defect this whole plan removes. It is a `@Singleton`, so this is the same object
+   * `MediaModule.provideUndecoratedResumePolicy` reads through `AudiobookItemSource`.
+   */
+  @Inject lateinit var audiobookSnapshot: AudiobookSnapshot
+
+  /**
    * The browse tree and the connection gate, in one object because Media3 takes one callback.
    *
    * Injected rather than constructed here: it reaches `BrowseTreeRepository`, which reaches Room
@@ -136,6 +146,11 @@ class MuPlaybackService : MediaLibraryService() {
     // position the session actually reports -- and so Plan 6 has exactly one writer to repoint.
     progressWriter =
       ProgressWriter(player, mediaProgressDao, clock, serviceScope).also { it.start() }
+
+    // Without this the snapshot is empty for the life of the process and every book starts at zero
+    // -- silently, and only on a device where nothing else warmed it. The collector's rebuild runs
+    // off this scope's main dispatcher; see `AudiobookSnapshot.start`.
+    audiobookSnapshot.start(serviceScope)
     // **One** writer, handed to the thing that moves it. A second writer built around the cast
     // player would race this one for the same `media_progress` row.
     castSessionManager.useProgressWriter(progressWriter!!)
@@ -262,6 +277,11 @@ class MuPlaybackService : MediaLibraryService() {
     progressWriter?.flushBlocking()
     progressWriter?.stop()
     progressWriter = null
+    // Before the scope is cancelled, for the same reason the flush is: cancelling the scope stops
+    // the collector anyway, and stopping it here is what lets a recreated service start a fresh one
+    // -- `start` is idempotent on a non-null job, so a snapshot never stopped would refuse to
+    // collect again for the rest of the process.
+    audiobookSnapshot.stop()
     serviceScope.cancel()
     session?.run {
       val active = player
