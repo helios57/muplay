@@ -50,6 +50,62 @@ interface LidarrSource {
   suspend fun qualityProfiles(): List<LidarrProfile>
 
   suspend fun metadataProfiles(): List<LidarrProfile>
+
+  /**
+   * Asks Lidarr to add [candidate], filed according to [targets].
+   *
+   * [searchNow] becomes `addOptions.searchForNewAlbum`. Note that the artist's own
+   * `searchForMissingAlbums` is always sent as `false`, because a `true` there makes the server
+   * silently cancel the album search — see [LidarrAddPayload].
+   *
+   * Returns an outcome rather than throwing on refusal, because two of the three outcomes are
+   * things a user can act on. A 401 still throws: losing authentication is not something the
+   * request screen can offer a next step for.
+   */
+  suspend fun submitAlbum(
+    candidate: LidarrAlbumCandidate,
+    targets: LidarrAddTargets,
+    searchNow: Boolean,
+  ): LidarrAddOutcome
+
+  /**
+   * The database id of an already-added album, by its MusicBrainz id, or `null` if it is not there.
+   *
+   * `null` covers three different situations on purpose — the album is not in the library, the
+   * server answered with rows that are **not** the album that was asked for, or the matching row
+   * carried no usable `id`. All three mean the same thing to a caller: there is no id to poll, and
+   * inventing one would send every later status check at somebody else's album.
+   */
+  suspend fun findAddedAlbumId(foreignAlbumId: String): Int?
+}
+
+/**
+ * What happened when Lidarr was asked to add an album.
+ *
+ * A sealed result rather than "success or exception", because [AlreadyAdded] is a **normal**
+ * outcome — a user asking twice, or asking for something a housemate already added — and Lidarr
+ * reports it as a 400 indistinguishable in status from a real configuration error. Forcing the
+ * caller to handle all three is the point.
+ */
+sealed interface LidarrAddOutcome {
+
+  /** Lidarr created the album. [albumId] is what every later status poll correlates on. */
+  data class Added(val albumId: Int) : LidarrAddOutcome
+
+  /**
+   * Lidarr already has it.
+   *
+   * A duplicate add is a **400** — measured, by posting the same body to a live `3.1.0.4875-ls40`
+   * twice — and it is separated from any other validation failure by two things, either of which is
+   * enough: `errorCode: "AlbumExistsValidator"` and the message
+   * `"This album has already been added."` See [LidarrValidationException.isAlreadyAdded], which
+   * reads both. If a Lidarr release changed *both* this becomes [Rejected] and the user sees the
+   * raw validation text — degraded, never wrong.
+   */
+  data object AlreadyAdded : LidarrAddOutcome
+
+  /** Lidarr refused. [failures] carry dotted PascalCase property names such as `Artist.QualityProfileId`. */
+  data class Rejected(val failures: List<LidarrValidationFailure>) : LidarrAddOutcome
 }
 
 /**

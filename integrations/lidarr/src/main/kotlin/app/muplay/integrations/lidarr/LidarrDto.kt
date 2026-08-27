@@ -48,14 +48,27 @@ internal data class SystemStatusBody(
  * against the pinned container with `POST /api/v1/album -d '{}'` and committed as
  * `fixtures/lidarr/validation-error-empty-album.json`: `propertyName`, `errorMessage`,
  * `severity`, `errorCode`, `formattedMessageArguments`, `formattedMessagePlaceholderValues`.
- * There is **no `attemptedValue`** and no `isWarning`. Only the first two are read here; the rest
- * are left to `ignoreUnknownKeys` because nothing in this app has a use for them and a field this
- * client parses is a field it then owns.
+ * There is no `isWarning`.
+ *
+ * **Task 4 recorded "there is no `attemptedValue`" from that fixture, and that generalised too
+ * far.** Measured at Task 6 against the same container: `attemptedValue` is present on every
+ * failure whose attempted value was not null — `"c35e782d-…"` on a duplicate add, `999` on an
+ * unknown quality profile, `0` on a zero metadata profile, `"/nope"` on a missing root folder. The
+ * empty-body fixture lacks it because the value it would have carried was null, and Lidarr omits
+ * null-valued fields. It is still not read here, and now for a reason that survives the correction:
+ * it echoes what this client sent, which this client already knows.
+ *
+ * `errorCode` **is** read, and it is the one field here that changed hands between tasks. Task 4
+ * left it to `ignoreUnknownKeys` on the grounds that nothing had a use for it; Task 6's
+ * [LidarrValidationException.isAlreadyAdded] does, because it is the only machine-readable way to
+ * recognise a duplicate add. The other three keys stay unparsed on Task 4's original argument: a
+ * field this client parses is a field it then owns.
  */
 @Serializable
 internal data class ValidationFailureBody(
   val propertyName: String? = null,
   val errorMessage: String? = null,
+  val errorCode: String? = null,
 )
 
 /** The body a 503 carries while Lidarr boots (`StartingUpMiddleware.cs`). */

@@ -81,6 +81,50 @@ class LidarrClient internal constructor(
     call { api.metadataProfiles() }.map { LidarrProfile(it.id, it.name.orEmpty()) }
 
   /**
+   * The add.
+   *
+   * A 400 is caught and turned into an outcome rather than propagating, because two of the three
+   * things Lidarr can say here are things a user can act on. Everything else — a 401, a 503, a
+   * transport failure — keeps propagating.
+   *
+   * **A success with no `id` is a loud failure, deliberately.** Returning `Added(albumId = 0)`
+   * would put a row in the request store that every later status poll looks up under an id no
+   * album has: the silent-wrong-answer class. The exception carries the status that actually came
+   * back rather than the `201` this endpoint is measured to return, so a proxy that rewrote the
+   * status is reported as what it did.
+   */
+  override suspend fun submitAlbum(
+    candidate: LidarrAlbumCandidate,
+    targets: LidarrAddTargets,
+    searchNow: Boolean,
+  ): LidarrAddOutcome =
+    try {
+      val response = proven { api.addAlbum(LidarrAddPayload.build(candidate, targets, searchNow)) }
+      // `RestController.Created` re-fetches the persisted resource, so the id here is the real
+      // database id -- not the synthetic counter `/api/v1/album/lookup` assigns.
+      LidarrAddOutcome.Added(
+        albumId = response.body()?.int("id") ?: throw LidarrHttpException(response.code()),
+      )
+    } catch (e: LidarrValidationException) {
+      if (e.isAlreadyAdded) LidarrAddOutcome.AlreadyAdded else LidarrAddOutcome.Rejected(e.failures)
+    }
+
+  /**
+   * The database id of an album already in the library, by its MusicBrainz id.
+   *
+   * **The identifier is matched back out of the answer rather than trusted.** `GET /api/v1/album`
+   * with no `foreignAlbumId` is a legal request that returns the *whole library* — measured, 200
+   * with every album — so a client whose parameter went missing would receive a perfectly valid
+   * response about the wrong records and hand the first one's id to every later status poll. That
+   * is the same defect this task's payload tests exist to refuse, on the read side, and it costs
+   * one comparison to make impossible.
+   */
+  override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? =
+    call { api.albumsByForeignId(foreignAlbumId) }
+      .firstOrNull { it.string("foreignAlbumId") == foreignAlbumId }
+      ?.int("id")
+
+  /**
    * A typed view over one lookup element, or `null` when the element cannot be used for an add.
    *
    * An element with no `foreignAlbumId`, or whose nested artist has no `foreignArtistId`, is
@@ -106,7 +150,7 @@ class LidarrClient internal constructor(
       remoteCoverUrl = obj.string("remoteCover"),
       artistName = artist.string("artistName").orEmpty(),
       foreignArtistId = foreignArtistId,
-      alreadyAdded = (obj["id"] as? JsonPrimitive)?.content?.toIntOrNull()?.let { it != 0 } ?: false,
+      alreadyAdded = obj.int("id")?.let { it != 0 } ?: false,
       raw = obj,
     )
   }
@@ -127,22 +171,44 @@ class LidarrClient internal constructor(
     (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
   /**
-   * Runs [request] and returns its body only once the response is proven successful.
+   * An integer field, or `null` when it is absent or is not one.
    *
-   * The status-code cascade is ordered by specificity, and the 503 case reads the **body** before
-   * deciding: a 503 from Lidarr booting and a 503 from a reverse proxy with no upstream are
-   * different facts, and collapsing them would send a user to check their firewall while their
-   * container finished starting.
+   * `content.toIntOrNull()` rather than `.int`, because `.int` throws on a quoted or non-numeric
+   * value and Lidarr's `JsonStringEnumConverter(..., allowIntegerValues = true)` means numbers and
+   * strings are interchangeable on the wire in both directions. `null` is the honest answer for
+   * every shape that is not an id, and every caller here treats it as "no id" rather than as zero.
+   */
+  private fun JsonObject.int(name: String): Int? =
+    (this[name] as? JsonPrimitive)?.content?.toIntOrNull()
+
+  /**
+   * Runs [request] and returns its body only once the response is proven successful.
    *
    * A successful response with no body at all is a [LidarrHttpException] carrying the status
    * rather than a `NullPointerException`: Retrofit produces a null body for a 204, and Tasks 5-7
    * add endpoints that could receive one.
    */
   internal suspend fun <T : Any> call(request: suspend () -> Response<T>): T {
+    val response = proven(request)
+    return response.body() ?: throw LidarrHttpException(response.code())
+  }
+
+  /**
+   * Runs [request] and returns the **response** once its status is proven successful.
+   *
+   * The status-code cascade is ordered by specificity, and the 503 case reads the **body** before
+   * deciding: a 503 from Lidarr booting and a 503 from a reverse proxy with no upstream are
+   * different facts, and collapsing them would send a user to check their firewall while their
+   * container finished starting.
+   *
+   * Separate from [call] because [submitAlbum] needs the status code as well as the body: a
+   * successful add with no `id` has to fail naming the status that really came back, and hardcoding
+   * the `201` this endpoint is measured to return would be a constant standing in for a value —
+   * the defect class this whole task exists to refuse.
+   */
+  private suspend fun <T : Any> proven(request: suspend () -> Response<T>): Response<T> {
     val response = request()
-    if (response.isSuccessful) {
-      return response.body() ?: throw LidarrHttpException(response.code())
-    }
+    if (response.isSuccessful) return response
     val raw = response.errorBody()?.string().orEmpty()
     throw when (response.code()) {
       401 -> LidarrUnauthorizedException()
@@ -171,7 +237,7 @@ class LidarrClient internal constructor(
   private fun parseValidationFailures(raw: String): List<LidarrValidationFailure> =
     runCatching { json.decodeFromString<List<ValidationFailureBody>>(raw) }
       .getOrDefault(emptyList())
-      .map { LidarrValidationFailure(it.propertyName, it.errorMessage) }
+      .map { LidarrValidationFailure(it.propertyName, it.errorMessage, it.errorCode) }
 
   internal companion object {
 

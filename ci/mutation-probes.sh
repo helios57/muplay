@@ -204,6 +204,7 @@ LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lid
 LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
 LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
 LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
+LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -2742,6 +2743,133 @@ PROBES = [
      "newItemMonitorOption = rootFolder.defaultNewItemMonitorOption,",
      "a blank monitor default becomes all rather than an empty string on the wire", 2),
 
+    # ---- Plan 7 Task 6: the add payload -- the crux, and the one spec section 8 called unverified -
+    #
+    # Same argument as the two families above: the coverage gate cannot see any of this. Every
+    # mutation below leaves `LidarrAddPayload`'s 1.00 BRANCH floor and `LidarrClient`'s 0.90 BRANCH
+    # floor exactly where they are -- each one substitutes a constant for a value, or drops a
+    # comparison, rather than removing an arm. That is the shape a lazy implementation actually
+    # ships, and it is the shape a ratio is structurally blind to.
+    #
+    # The defect this whole family exists to refuse, in one sentence: **adding the wrong album to
+    # somebody's library.** A live lookup for `kind of blue` returns seven records, four of them
+    # titled exactly that by four different artists. Nothing a user sees separates them; only
+    # `foreignAlbumId` does.
+    #
+    # 1 and 2. The two identifiers. A constant here adds one particular stranger's record forever,
+    #    with a 201, a monitored album and nothing wrong anywhere on the screen.
+    ("integrations/lidarr-add-foreignAlbumId", LIDARR_PAYLOAD,
+     'put("foreignAlbumId", candidate.foreignAlbumId)', 'put("foreignAlbumId", "mbid-a")',
+     "the body carries the identifier that was asked for, not a constant", 4),
+    ("integrations/lidarr-add-foreignArtistId", LIDARR_PAYLOAD,
+     'put("foreignArtistId", candidate.foreignArtistId)', 'put("foreignArtistId", "art-a")',
+     "the nested artist identifier is the one that was asked for", 6),
+
+    # 3. TRAP 1. `AddAlbumService`: if the artist asks for a missing-albums search, the server
+    #    silently sets `album.addOptions.searchForNewAlbum = false` -- a 201, a monitored album, and
+    #    no download, with nothing reported anywhere. Upstream issue Lidarr #5012.
+    #
+    #    Read `LidarrAddPayloadTest`'s own comment on that test before quoting this as measured
+    #    server behaviour: on the container Task 6 drove, no album-add search happened for EITHER
+    #    value of the flag, so that instance cannot demonstrate the interaction. The probe still
+    #    earns its place -- it pins what this client sends, which is the only half this repository
+    #    controls.
+    ("integrations/lidarr-searchForMissingAlbums", LIDARR_PAYLOAD,
+     'put("searchForMissingAlbums", false)', 'put("searchForMissingAlbums", true)',
+     "the artist never asks for a missing-albums search, which would cancel the album search", 4),
+
+    # 4. The caller's own search choice, pinned to a constant -- the "always search" version of the
+    #    same defect, which looks right in every manual test somebody runs with the box ticked.
+    ("integrations/lidarr-searchForNewAlbum", LIDARR_PAYLOAD,
+     'put("searchForNewAlbum", searchNow)', 'put("searchForNewAlbum", true)',
+     "searchForNewAlbum is whatever the caller asked for", 4),
+
+    # 5 and 6. The two profile ids. A constant files every add under one profile; a swap files each
+    #    under the other's -- and a swap is accepted with a 201, because on a default install every
+    #    id that exists in one table exists in the other (measured: quality 1..3, metadata 1..2).
+    ("integrations/lidarr-add-qualityProfileId", LIDARR_PAYLOAD,
+     'put("qualityProfileId", targets.qualityProfileId)', 'put("qualityProfileId", 2)',
+     "the three add targets are written onto the nested artist", 2),
+    ("integrations/lidarr-add-profile-swap", LIDARR_PAYLOAD,
+     'put("metadataProfileId", targets.metadataProfileId)',
+     'put("metadataProfileId", targets.qualityProfileId)',
+     "the quality and metadata profile ids are not swapped", 4),
+
+    # 7. The album's own monitored flag. An unmonitored album is never fetched whatever the search
+    #    flag says, and a lookup element arrives carrying `monitored: false` -- so this is not a
+    #    missing default, it is an overwrite that has to happen.
+    ("integrations/lidarr-add-monitored", LIDARR_PAYLOAD,
+     '      put("monitored", true)\n      put("artist", artist)',
+     '      put("monitored", false)\n      put("artist", artist)',
+     "both monitored flags are set, because an unmonitored album is never fetched", 2),
+
+    # 8 and 9. The two passthroughs -- the reason `LidarrAlbumCandidate.raw` exists at all. The
+    #    pinned Lidarr serves no `openapi.json`, so there is no published statement of what this
+    #    endpoint requires; the only complete one is what Lidarr sent. A payload rebuilt from the
+    #    typed fields drops the rest, including the `artist.id` that attaches a new album to an
+    #    existing artist instead of creating a second one.
+    ("integrations/lidarr-add-album-passthrough", LIDARR_PAYLOAD,
+     "candidate.raw.forEach { (key, value) -> put(key, value) }", "candidate.raw.let { }",
+     "every field the lookup sent that this client does not model survives", 2),
+    ("integrations/lidarr-add-artist-passthrough", LIDARR_PAYLOAD,
+     '(candidate.raw["artist"] as? JsonObject)?.forEach { (key, value) -> put(key, value) }',
+     '(candidate.raw["artist"] as? JsonObject)?.let { }',
+     "every field the lookup sent that this client does not model survives", 3),
+
+    # 10. The id the whole of Task 7 correlates on. A constant here points every later status poll
+    #     at one album forever, and the poll itself keeps working -- it just reports on the wrong
+    #     record, which is the silent-wrong-answer class this plan is built to refuse.
+    ("integrations/lidarr-add-album-id", LIDARR_CLIENT,
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(response.code()),',
+     "albumId = 42,",
+     "a 201 yields the album id from the response body", 2),
+
+    # 11. The same value from the other direction: a success with no id must fail naming the status
+    #     that came back, not the 201 an implementer would type. A proxy that rewrote the status, or
+    #     the 200 Lidarr's own generated spec once documented, would be reported as a 201 that never
+    #     happened.
+    ("integrations/lidarr-add-created-status", LIDARR_CLIENT,
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(response.code()),',
+     'albumId = response.body()?.int("id") ?: throw LidarrHttpException(201),',
+     "a created response with no id is a failure naming the status that came back", 1),
+
+    # 12. The read side of the identifier rule, and a live wrong path rather than a hypothetical
+    #     one: `GET /api/v1/album` with no `foreignAlbumId` is a legal request that returns the
+    #     WHOLE library, 200 (measured). A client that took the first row would hand every later
+    #     status poll somebody else's album id.
+    ("integrations/lidarr-found-album-must-match", LIDARR_CLIENT,
+     '.firstOrNull { it.string("foreignAlbumId") == foreignAlbumId }', ".firstOrNull()",
+     "an answer that is not the album that was asked for yields null, not its id", 1),
+
+    # 13 and 14. The two independent signals that identify a duplicate add, each removed alone.
+    #     A duplicate is a 400 with the same shape as a real misconfiguration, so getting this
+    #     wrong shows a user "Quality Profile does not exist" energy for an album they already own.
+    #     Both arms are here because a floor cannot tell you either one is load-bearing -- and one
+    #     of them, the `errorCode`, is a field Task 4 read in a fixture and deliberately left
+    #     unmodelled on the grounds that nothing needed it.
+    ("integrations/lidarr-alreadyAdded-errorCode", LIDARR_EXC,
+     "it.errorCode == ALBUM_EXISTS_VALIDATOR ||", 'it.errorCode == "NoSuchValidator" ||',
+     "either the validator code or the message alone identifies an already-added album", 1),
+    ("integrations/lidarr-alreadyAdded-message", LIDARR_EXC,
+     'it.errorMessage?.contains("has already been added", ignoreCase = true) == true',
+     'it.errorMessage?.contains("a phrase lidarr never sends", ignoreCase = true) == true',
+     # 2, measured: Task 4's own `an already-added validation failure is recognised by its message`
+     # in `LidarrHandshakeTest` reddens too, which is the second caller that keeps this arm honest.
+     "either the validator code or the message alone identifies an already-added album", 2),
+
+    # 15. The endpoint itself. `api/v1/artist` is the neighbouring controller and the copy-paste a
+    #     reviewer's eye slides over, the way `qualityprofile`/`metadataprofile` was at Task 5.
+    #
+    #     Measured, and the measurement is the good news: posting this exact body there answers
+    #     **400**, not a 201 -- `GreaterThanValidator` on a top-level `QualityProfileId` of 0,
+    #     because an album payload's profile ids live on its *nested* artist. So this mutation fails
+    #     loudly at the server rather than silently adding the wrong kind of thing. The probe stays
+    #     because a loud failure at the server is still a broken add for the user, and because the
+    #     next such swap need not be lucky.
+    ("integrations/lidarr-add-endpoint", LIDARR_API,
+     '@POST("api/v1/album")', '@POST("api/v1/artist")',
+     "the add is a POST to api v1 album with a json content type", 2),
+
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
     # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
@@ -3027,6 +3155,11 @@ LATER_PROBE_FILES = [
     # probes, per this list's own comment.
     LIDARR_API,
     LIDARR_TARGETS,
+    # Plan 7 Task 6, added in the same edit as the fifteen `integrations/lidarr-add-*` and
+    # `integrations/lidarr-alreadyAdded-*` probes, per this list's own comment. Only
+    # `LIDARR_PAYLOAD` is new -- the other three files this family mutates are already above, which
+    # is exactly the state that makes forgetting this line easy and its consequence a stray.
+    LIDARR_PAYLOAD,
     # Plan 7 Task 3, added in the same edit as the three `integrations/request-*` probes, per this
     # list's own comment.
     REQUEST_STATUS,
