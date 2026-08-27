@@ -617,3 +617,38 @@ loopback IPv4 and therefore cannot see it.
 Note also that `URI.getHost()` **keeps the brackets** for an IPv6 literal, and
 `InetAddress.getByName` accepts them, so a host string round-trips; it is only
 string interpolation that breaks.
+## Kotlin block comments **nest**, so a glob in a KDoc can eat the rest of the file
+
+`/*` inside a `/** ... */` opens a nested comment. Writing a perfectly ordinary
+path in prose is enough:
+
+    /** ... it parses `META-INF/*.SF`, checks the signature ... */
+
+That `/*` opens a comment the closing `*/` then only half-closes, and the
+compiler reports **`Syntax error: Unclosed comment`** at the *last line of the
+file* — plus, in the same run, seventeen `Unresolved reference` errors in a
+**different** file that happened to use the swallowed declarations. Nothing in
+that output names the glob. `*/` in prose (`*/src/debug/kotlin/**`) closes the
+KDoc early and produces the same shape from the other direction.
+
+Both were hit in one compile while writing Plan 8's release gates. Grep for
+`/\*` and `\*/src` inside comments before believing a nonsensical
+`Unresolved reference` list.
+
+## `build-logic` is an included build, so root `check` never runs its tests
+
+`settings.gradle.kts` has `pluginManagement { includeBuild("build-logic") }`.
+`./gradlew check` at the root builds and tests the eleven project modules and
+stops — it does not reach `build-logic`.
+
+Measured 2026-08-27: no workflow file mentioned `build-logic` in any `run:` line,
+so **thirteen tests had never executed in CI** — including
+`VerifyMergedManifestTaskTest`, whose own header records that it is the only
+thing in this repository that goes red when the merged-manifest gate stops
+checking. `pr.yml` now runs `./gradlew :build-logic:convention:test` and
+`ConventionTest`'s `build-logic's own tests are run by CI` derives the module
+list from the tree.
+
+To run them yourself: `./gradlew :build-logic:convention:test` from the root
+(the `:build-logic:` prefix addresses the included build), or
+`./gradlew -p build-logic test`.

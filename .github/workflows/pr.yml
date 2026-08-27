@@ -43,6 +43,24 @@ jobs:
         # without anyone remembering to add a line here.
         run: ./gradlew verifyNoMockFrameworks
 
+      - name: Convention plugin behaviour
+        # `build-logic` is an **included build**, so `./gradlew check` at the root does not touch it
+        # -- and until this step existed, nothing in CI ran a single one of its tests. That is the
+        # shape this repository has now found four times: a working suite that no gate executes
+        # (`:feature:player`'s 24 instrumented tests, `:integrations:core`'s 17, and this).
+        #
+        # What is in there is not incidental. `VerifyMergedManifestTaskTest` is the only thing that
+        # goes red when the merged-manifest gate stops checking (measured: delete its `missing`
+        # block *and* a real permission and every other gate in this repository stays green);
+        # `VerifyReleaseVersionTaskTest` is the only thing that watches the version gate say no; and
+        # Plan 8 Task 7's three release tasks are verified nowhere else at all, because the defects
+        # they catch -- a mapping that describes a different build, a debug entry point R8 renamed,
+        # a 64-bit library aligned to 4 KB -- cannot be arranged by flipping a build flag.
+        #
+        # Held against the tree by `ConventionTest`'s `build-logic's own tests are run by CI`, so a
+        # second build-logic module with a test source set cannot be forgotten here.
+        run: ./gradlew :build-logic:convention:test
+
       - name: Android Lint
         run: ./gradlew lint
 
@@ -93,6 +111,52 @@ jobs:
           name: static-analysis-reports
           path: |
             **/build/reports/tests/**
+            **/build/reports/lint-results*
+
+  # The release variant's own gates, on every PR — not only on the tag that ships.
+  #
+  # This is Plan 8's whole defect class stated as a job. `check` compiles the release variant and
+  # verifies its merged manifest, and until Task 7 that was the entire release-side coverage: nothing
+  # looked at the artifact. `releaseCheck` runs `verifyReleaseArtifact` over the `.aab` that
+  # `bundleRelease` just produced — proving from the zip that R8 renamed this application's classes,
+  # that no type only a `src/debug` source set declares reached the release program, that the
+  # manifest inside the upload permits no cleartext and is not debuggable, and that every 64-bit
+  # native library tolerates a 16 KB memory page — plus `verifyReleaseManifest` and
+  # `verifyReleaseVersion`, which `check` already runs.
+  #
+  # **Its own job, with its own timeout, deliberately.** `bundleRelease` from cold measured 4 m 33 s
+  # on a 24-core host: putting it in `static-analysis` would blow that job's 10-minute budget, and
+  # the first thing a gate that flakes on its own time limit gets is disabled. Two gates the release
+  # workflow runs are *not* here — `verifyReleaseSigned` needs the upload key and `verifyReleaseTag`
+  # needs the tag, and neither exists on a PR. See `RELEASE_CHECK_EXCLUSIONS` in ReleaseGates.kt and
+  # `ConventionTest`'s `every release gate is run by releaseCheck or by the release workflow`, which
+  # is what stops an excluded gate from quietly running nowhere.
+  #
+  # Unsigned, and that is correct: no key material reaches a pull-request build, including one from
+  # a fork. `releaseSigningConfig` produces no signing config when the environment is empty, so this
+  # job builds and verifies an unsigned bundle. The signature is a property of the release pipeline,
+  # and `.github/workflows/release.yml` is where it is proven.
+  release-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Release gates
+        run: ./gradlew :app:releaseCheck
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-gate-reports
+          path: |
+            app/build/reports/release/**
             **/build/reports/lint-results*
 
   # Every JVM test across every module (`./gradlew test` — the lifecycle task every module,
