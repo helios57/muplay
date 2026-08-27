@@ -113,6 +113,24 @@ class ChapterAssemblyTest {
   }
 
   @Test
+  fun `a duplicate that carries nothing the first one lacked leaves it alone`() {
+    // The third arm of de-duplication, and the one the two tests above cannot reach: both twins
+    // untitled and both without an end. A file whose two tracks each carry bare `chpl` offsets is
+    // exactly this. Measured: without this case `ChapterAssembly` sits at 23/26 BRANCH, because
+    // each of the two `&&` conditions above is only ever observed with its left half true.
+    val raw = listOf(
+      RawChapter(0, null, null),
+      RawChapter(0, null, null),
+      RawChapter(4_000, 9_000, "Two"),
+    )
+
+    val chapters = ChapterAssembly.assemble(raw, contentDurationMs = 9_000)
+
+    assertThat(chapters.map { it.title }).containsExactly(null, "Two")
+    assertThat(chapters.map { it.endMs }).containsExactly(4_000L, 9_000L)
+  }
+
+  @Test
   fun `an untitled chapter keeps a null title, and a titled one keeps its own`() {
     // Two observations in one list. A formatter applied to everything would rename "Prologue".
     val raw = listOf(RawChapter(0, 4_000, "Prologue"), RawChapter(4_000, 9_000, null))
