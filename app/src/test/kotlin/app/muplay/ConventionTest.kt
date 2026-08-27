@@ -659,6 +659,9 @@ class ConventionTest {
       ?.groupValues
       ?.get(1)
 
+  /** This file, read as text by the lint-replacement rule below. */
+  private val CONVENTION_TEST_PATH = "app/src/test/kotlin/app/muplay/ConventionTest.kt"
+
   /** The convention plugin that owns both merged-manifest declaration lists. */
   private fun applicationPlugin(): File = File(
     repoRoot(),
@@ -800,6 +803,62 @@ class ConventionTest {
           "them, so the only way `check` passes is a dependency supplying them -- or it does not " +
           "pass at all. Comments are stripped before this check: a comment quoting the " +
           "declaration it explains is not the declaration.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * A disabled lint check has to say what took over from it, and the replacement has to be there.
+   *
+   * `app/lint.xml` is the only lint configuration in this repository, and it turns off both of
+   * Android Lint's Android Auto checks. That file argues, at length and from measurements, that
+   * neither can evaluate this project's layout at all -- `AndroidAutoDetector` reads the
+   * application module's own manifest sources, and MuPlay's playback service is deliberately
+   * declared in `:core:media`'s. Measured: adding the play-from-search action to that service left
+   * `MissingIntentFilterForMediaSearch` reported, unchanged.
+   *
+   * That argument is exactly the kind that is true when it is written and quietly false a year
+   * later, and "we replaced it with something better" is exactly the kind of claim that outlives
+   * the replacement. So each disabled id is paired here with the thing that took over, and the
+   * pairing is checked: `MissingMediaBrowserServiceIntentFilter` is replaced by a *declaration*
+   * that `AUTOMOTIVE_DECLARATIONS` must still require, and `MissingIntentFilterForMediaSearch` by a
+   * *rule in this very file* that must still exist. An id disabled with no entry here fails, and so
+   * does an entry whose replacement has gone.
+   */
+  @Test
+  fun `no Android Auto lint check is disabled without a named replacement`() {
+    val lintConfig = File(repoRoot(), "app/lint.xml")
+    assertThat(lintConfig).describedAs("the only lint configuration in this repository").exists()
+
+    // What took over from each disabled check, and where to look for the evidence that it did.
+    // `Declaration` -> a required entry in AUTOMOTIVE_DECLARATIONS, so the merged-manifest gate
+    // proves on every `check` what lint could not see. `Rule` -> a test in this class.
+    val replacements = mapOf(
+      "MissingMediaBrowserServiceIntentFilter" to
+        """android:name="android.media.browse.MediaBrowserService"""",
+      "MissingIntentFilterForMediaSearch" to
+        "a declared play-from-search filter must have a handler and a gate entry",
+    )
+
+    val disabled = Regex("""<issue\s+id="([^"]*)"\s+severity="ignore"""")
+      .findAll(withoutBlockComments(lintConfig.readText()))
+      .map { it.groupValues[1] }
+      .toList()
+
+    // Vacuity, and the direction that matters most: a lint.xml this pattern stopped matching would
+    // otherwise satisfy every assertion below by appearing to disable nothing.
+    assertThat(disabled)
+      .describedAs("ids disabled in ${lintConfig.path}")
+      .containsExactlyInAnyOrderElementsOf(replacements.keys)
+
+    val evidence = declarationList(applicationPlugin(), "AUTOMOTIVE_DECLARATIONS").orEmpty() +
+      "\n" + kotlinCode(File(repoRoot(), CONVENTION_TEST_PATH).readText())
+
+    assertThat(replacements.filterValues { it !in evidence }.keys)
+      .describedAs(
+        "${lintConfig.path} disables these lint checks and names a replacement that is no longer " +
+          "there, so the check is off and nothing took its place. Either restore the replacement " +
+          "or stop disabling the check.",
       )
       .isEmpty()
   }
