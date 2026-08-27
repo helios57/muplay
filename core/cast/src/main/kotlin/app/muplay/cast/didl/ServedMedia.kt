@@ -128,5 +128,30 @@ data class ServedMedia(val mimeType: String, val fileExtension: String) {
      * unknown, not as MP3, or the disagreement it exists to report would be silently agreed away.
      */
     fun forExtension(extension: String?): ServedMedia? = RAW_TYPES[extension?.lowercase()]
+
+    /**
+     * **The MIME leg, read backwards**: what this app must serve, and under what extension, for a
+     * body it has already decided is [mimeType] -- or `null` for a MIME nothing here recognises.
+     *
+     * The inverse of [of]'s *result* rather than of its arguments, and it exists because a
+     * `MediaItem` carries the served MIME (`MediaItems.of` puts `ServedMedia.of(suffix, format)
+     * .mimeType` on it) and nothing else: by the time a queue reaches the cast layer the `Song`'s
+     * suffix and the `StreamFormat` it was fetched with are both gone. Re-deriving them there
+     * would be a second decision about one fact, free to drift from the URL the item already
+     * carries -- the exact failure [of]'s own note describes in the other direction.
+     *
+     * **Answering with the first entry whose MIME matches is correct rather than arbitrary**,
+     * because [RAW_TYPES] round-trips: every value satisfies
+     * `RAW_TYPES[v.fileExtension]!!.mimeType == v.mimeType`, so whichever entry is picked, a
+     * renderer that sniffs `.$fileExtension` off the URL reaches the same MIME the `protocolInfo`
+     * and the `Content-Type` declare. `audio/mp4` has three entries (`m4a`, `m4b`, `mp4`) and all
+     * three are the same container; the three-way invariant holds for any of them.
+     *
+     * `null` rather than [FALLBACK_MIME] for the same reason [forExtension] answers `null`: this
+     * is a question about a value that *came from somewhere*, and "I do not recognise it" is a
+     * different answer from "MP3". The caller decides what an unrecognised MIME deserves.
+     */
+    fun forMimeType(mimeType: String?): ServedMedia? =
+      RAW_TYPES.values.firstOrNull { it.mimeType.equals(mimeType, ignoreCase = true) }
   }
 }

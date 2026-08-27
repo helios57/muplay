@@ -1,21 +1,60 @@
 package app.muplay.media.di
 
+import app.muplay.cast.http.CastHttpClient
+import app.muplay.cast.proxy.MediaProxyServer
+import app.muplay.cast.proxy.OkHttpProxyUpstream
+import app.muplay.cast.proxy.ProxyRegistry
+import app.muplay.cast.proxy.ProxyUpstream
+import app.muplay.cast.route.CastRouter
+import app.muplay.cast.soap.SoapClient
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.TranscodeOffsetSupport
 import app.muplay.media.TranscodeSeekSupport
 import app.muplay.media.browse.DefaultSurfaceResolver
 import app.muplay.media.browse.SurfaceResolver
+import app.muplay.media.cast.OneShotResumePolicy
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import java.time.Clock
 import java.util.concurrent.TimeUnit
+import javax.inject.Qualifier
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.Call
 import okhttp3.OkHttpClient
+
+/**
+ * The policy the cast decorator wraps.
+ *
+ * Whatever the resume plan binds as *the* `ResumePolicy` keeps its body and its provenance and
+ * gains this annotation; nothing else about it changes. It exists so that exactly one **un**qualified
+ * `ResumePolicy` is left in the graph and it is the decorator -- see [MediaModule]'s own block
+ * comment for what the alternative costs.
+ */
+// `RUNTIME`, where [MediaHttpClient] next door is `BINARY`, and the difference is deliberate: the
+// defect this qualifier guards against is SILENT (the wrong `ResumePolicy` left unqualified, the
+// decorator armed and never consulted, the return leg resuming from zero), so `MediaModuleTest`
+// asserts the shape of the binding by reflection -- and a `BINARY` annotation is invisible to
+// reflection. `javax.inject`'s own specification asks qualifiers to be retained at runtime for
+// exactly this kind of reason.
+@Qualifier
+@Retention(AnnotationRetention.RUNTIME)
+annotation class UndecoratedResumePolicy
+
+/**
+ * The scope every command to a speaker runs on. Never the main thread; see the provider.
+ *
+ * Qualified rather than binding a bare `CoroutineScope`, because an unqualified one is the kind of
+ * binding a later module injects by accident and then cancels.
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class CastCommands
 
 /**
  * The media layer's object graph.
@@ -60,31 +99,129 @@ object MediaModule {
       // different facts, and only one of them survives a refactor.
       .build()
 
-  /**
-   * The project's first injected clock. Global constraint: *"Inject a `Clock`; no direct wall-clock
-   * reads outside the injection point."* This is that injection point, and [ProgressWriter] --
-   * through `MuPlaybackService` -- is its only consumer today.
-   *
-   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
-   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
-   * library plus a Room type converter would be bought for nothing. It also names no Android type,
-   * which is what keeps this whole module JVM-testable -- see this object's own doc.
-   */
-  @Provides
-  @Singleton
-  fun provideClock(): Clock = Clock.systemUTC()
+  // `provideClock` moved to `:core:database`'s `DataModule` (Plan 4 Task 4), where its reasoning
+  // and its test now live: `AudiobookRepository` is the first class down there to take a `Clock`,
+  // and a binding declared above its consumer breaks that module's Hilt tests while making this
+  // module a build-time requirement of one that does not depend on it. Do not re-add it -- two
+  // unqualified `Clock` bindings is a Hilt duplicate-binding failure, and `DataModule`'s is
+  // visible here because `:core:media` depends on `:core:database`.
+
+  // ---- the cast handover's bindings -----------------------------------------------------------
+  //
+  // Plan 6 Task 9. One contiguous block, and the first three entries are the whole feature: a
+  // decorator that nothing injects is a decorator that does nothing, and it fails SILENTLY.
+  //
+  // `CastSessionManager` injects `OneShotResumePolicy` by concrete type and arms it; the local
+  // player gets its policy from `MuPlayerFactory`'s injected, UNQUALIFIED `ResumePolicy`. Unless
+  // those two are the same object the outbound leg still works by accident -- the remote player is
+  // built holding the decorator -- while the **return** leg arms the decorator and then asks the
+  // undecorated policy, which answers the ordinary resume and restarts the track from zero. Coming
+  // back from a speaker having lost the listener's place is exactly the defect this task exists to
+  // fix, and it would ship green.
+  //
+  // So the existing provider is RE-ANNOTATED rather than duplicated. Adding a second unqualified
+  // `@Provides ResumePolicy` is a Hilt duplicate-binding failure, and that is the *good* outcome;
+  // the bad one is two bindings where the wrong one wins.
 
   /**
    * Plan 3 resumes nothing -- spec section 3's stated behaviour for music: *"Only books get resume
    * treatment. Music restarts from 0."* [NeverResume] is that behaviour and not a placeholder.
    *
-   * Plan 4 replaces **this binding** with a policy that answers from an in-memory snapshot of
-   * `media_progress`, and changes nothing else: `MuPlayer` already consults whatever is bound here
-   * on every one of its six `setMediaItem(s)` overloads.
+   * Plan 4 replaces **this** provider's body with a policy that answers from an in-memory snapshot
+   * of `media_progress` and changes nothing else. It keeps this qualifier: the rule is not "use
+   * this annotation", it is *"exactly one unqualified `ResumePolicy` exists and it is the
+   * decorator"*. Re-annotating is not decorating [NeverResume] by name -- the delegate is read out
+   * of the graph, so replacing the body below wraps the new policy with no edit anywhere else.
    */
   @Provides
   @Singleton
-  fun provideResumePolicy(): ResumePolicy = NeverResume
+  @UndecoratedResumePolicy
+  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume
+
+  /**
+   * `@Singleton` because [app.muplay.media.cast.CastSessionManager] arms *this instance* and the
+   * local player must be asking *this instance*. An unscoped binding hands out two decorators over
+   * one delegate, and the return leg then resumes from zero -- see the block comment above.
+   */
+  @Provides
+  @Singleton
+  fun provideOneShotResumePolicy(
+    @UndecoratedResumePolicy delegate: ResumePolicy,
+  ): OneShotResumePolicy = OneShotResumePolicy(delegate)
+
+  /** The only unqualified `ResumePolicy` in the graph -- so `MuPlayerFactory` gets the decorator. */
+  @Provides
+  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot
+
+  /**
+   * The tokens a renderer fetches media with, and nothing else holds them.
+   *
+   * Shared between the proxy that answers them and the router that mints them, which is why it is a
+   * binding rather than a field on either.
+   */
+  @Provides
+  @Singleton
+  fun provideProxyRegistry(): ProxyRegistry = ProxyRegistry()
+
+  /**
+   * Navidrome, for the proxy's upstream fetch, on the media layer's own client.
+   *
+   * Deliberately the streaming client and not `:core:network`'s: this reads a media body that is
+   * legitimately open for the length of a track, and a call timeout here is a guaranteed mid-song
+   * failure for a speaker exactly as it is for the phone.
+   */
+  @Provides
+  @Singleton
+  fun provideProxyUpstream(@MediaHttpClient client: Call.Factory): ProxyUpstream =
+    OkHttpProxyUpstream(client as OkHttpClient)
+
+  /**
+   * **Binds a listening socket as soon as it is created**, which is why nothing injects it
+   * directly: `CastSessionManager` takes a `Provider<CastRouter>` so the first cast is the first
+   * socket. It is started here rather than at the first cast so that "created" and "serving" cannot
+   * come apart -- a proxy that exists and is not accepting is a route that fails its own proof.
+   */
+  @Provides
+  @Singleton
+  fun provideMediaProxyServer(upstream: ProxyUpstream, registry: ProxyRegistry): MediaProxyServer =
+    MediaProxyServer(upstream, registry).also { it.start() }
+
+  /**
+   * `allowRendererDirect = false`: handing a renderer the Navidrome stream URL hands it the user's
+   * Subsonic credentials, and the plan makes that a setting the user turns on knowing what it
+   * costs. Until that setting exists the answer is no.
+   *
+   * The `sameSubnetFastPath` is left at its default of *never*, so **every** route is proved by
+   * waiting for the renderer to fetch. Wiring the fast path needs the renderer's prefix length from
+   * `ConnectivityManager`, and skipping the proof on a guess is the one change here that can make a
+   * cast start and play nothing. Slower and right.
+   */
+  @Provides
+  @Singleton
+  fun provideCastRouter(proxy: MediaProxyServer, registry: ProxyRegistry): CastRouter =
+    CastRouter(proxy, registry, allowRendererDirect = false)
+
+  @Provides
+  @Singleton
+  fun provideCastHttpClient(): CastHttpClient = CastHttpClient()
+
+  @Provides
+  @Singleton
+  fun provideSoapClient(http: CastHttpClient): SoapClient = SoapClient(http)
+
+  /**
+   * Where a speaker is talked to.
+   *
+   * **Never the main thread**: every command is a blocking socket exchange and the poll runs
+   * forever. `SupervisorJob` so that one session's failure does not cancel the scope the next one
+   * would need, and `Dispatchers.IO` because that is what this work is -- `CastSession` already
+   * hops to it for the route proof, and running the rest on `Default` would occupy a CPU-sized pool
+   * with waiting.
+   */
+  @Provides
+  @Singleton
+  @CastCommands
+  fun provideCastCommandScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   private const val CONNECT_TIMEOUT_SECONDS = 15L
   private const val READ_TIMEOUT_SECONDS = 30L

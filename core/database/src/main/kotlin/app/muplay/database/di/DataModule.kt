@@ -5,14 +5,15 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
+import app.muplay.database.AudiobookRepository
 import app.muplay.database.Bookshelf
 import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
 import app.muplay.database.MIGRATION_6_7
-import app.muplay.database.MirrorBookshelf
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.SubsonicSourceProvider
 import app.muplay.database.SyncEngine
+import app.muplay.database.dao.AudiobookDao
 import app.muplay.database.dao.BookSettingsDao
 import app.muplay.database.dao.BrowseDao
 import app.muplay.database.dao.ChapterDao
@@ -29,6 +30,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.io.File
+import java.time.Clock
 import javax.inject.Singleton
 
 /**
@@ -89,6 +91,34 @@ object DataModule {
 
   @Provides
   fun provideChapterDao(database: MuPlayDatabase): ChapterDao = database.chapterDao()
+
+  @Provides
+  fun provideAudiobookDao(database: MuPlayDatabase): AudiobookDao = database.audiobookDao()
+
+  /**
+   * Global constraint: *"Inject a `Clock`; no direct wall-clock reads outside the injection
+   * point."* This is that injection point.
+   *
+   * Declared **here**, in the lowest module that consumes it, rather than in `:core:media` where
+   * Plan 3 Task 8 first needed it. `:core:media` depends on this module, so this binding is visible
+   * to `ProgressWriter` and to every later consumer up there, while the reverse placement leaves
+   * `AudiobookRepository` -- the first class in this module to take a `Clock` -- depending on a
+   * binding declared above it. That resolves in `:app`, where one `SingletonComponent` is assembled
+   * from every `@InstallIn` module on the classpath, so it looks like a non-problem; it is not one
+   * below `:app`, where a `@HiltAndroidTest` in this module has no `MediaModule` on its classpath at
+   * all. Moved by Plan 4 Task 4; `MediaModule` carries a note where it used to be.
+   *
+   * `java.time.Clock`, not `kotlinx-datetime`: `java.time` is native at `minSdk 26`,
+   * `MediaProgressEntity.lastPlayedAtEpochMs` is already an epoch-millis `Long`, and a datetime
+   * library plus a Room type converter would be bought for nothing.
+   *
+   * Unqualified, and there must stay exactly one of those: `IntegrationsDataModule` provides a
+   * second `Clock` behind `@IntegrationsClock` because it is genuinely a different clock, and a
+   * second *unqualified* one is a Hilt duplicate-binding failure.
+   */
+  @Provides
+  @Singleton
+  fun provideClock(): Clock = Clock.systemUTC()
 
   @Provides
   @Singleton
@@ -160,11 +190,14 @@ object DataModule {
   interface Bindings {
 
     /**
-     * Plan 5 Task 4's temporary bookshelf. **This is the one line Plan 4 Task 4 repoints** when its
-     * `AudiobookRepository` lands -- see [Bookshelf]'s own provenance note.
+     * Repointed by Plan 4 Task 4, which is the whole of the change Plan 5 Task 4 designed this seam
+     * for: `MirrorBookshelf` and its `BookProgress` are deleted, [AudiobookRepository] answers the
+     * same four questions from the same tables, and no browse decision moved. `@Singleton` here
+     * matches the implementation's own scope rather than adding one, so the bookshelf the tree reads
+     * and the repository a screen injects are one object and one cache.
      */
     @Binds
     @Singleton
-    fun bindBookshelf(impl: MirrorBookshelf): Bookshelf
+    fun bindBookshelf(impl: AudiobookRepository): Bookshelf
   }
 }

@@ -166,6 +166,83 @@ class MuPlayLibraryCallback @Inject constructor(
   }
 
   /**
+   * Acknowledges a query and tells the browser how many results there are.
+   *
+   * Media3's contract is two calls -- this one, then [onGetSearchResult] for each page -- and this
+   * implementation deliberately keeps **no cache** between them. The search runs against the local
+   * mirror, so recomputing is a Room query; caching would be a map keyed by controller and query,
+   * with an eviction policy and a staleness question every time Plan 2's `SyncEngine` reconciles.
+   * See `BrowseTreeRepository.search`'s own note.
+   *
+   * `notifySearchResultChanged` happens **before** the future completes, and that ordering is the
+   * one thing in this method that can be wrong without failing loudly: a browser that asks for page
+   * 0 the instant its future resolves would otherwise race the notification and see nothing.
+   *
+   * A search box in a car is drawn by the host whether or not the app answers, so there is no way
+   * to say "not supported" to it -- which is why an app with a browse tree and no search reads as
+   * broken rather than as limited. A failed search is reported as **zero results**, not as an
+   * error: the box is already on screen and "0" is what it is able to render.
+   */
+  override fun onSearch(
+    session: MediaLibrarySession,
+    browser: MediaSession.ControllerInfo,
+    query: String,
+    params: LibraryParams?,
+  ): ListenableFuture<LibraryResult<Void>> {
+    val settable = SettableFuture.create<LibraryResult<Void>>()
+    scope.launch {
+      val count = runCatching { treeRepository.search(query).size }.getOrDefault(0)
+      session.notifySearchResultChanged(browser, query, count, params)
+      settable.set(LibraryResult.ofVoid(params))
+    }
+    return settable
+  }
+
+  /**
+   * One page of the result list, ordered and paged exactly the way [onGetChildren] orders and pages
+   * a folder -- because a car renders both with the same content styles and the same row budget.
+   *
+   * Recomputed rather than read from whatever [onSearch] counted; see that method for why.
+   */
+  override fun onGetSearchResult(
+    session: MediaLibrarySession,
+    browser: MediaSession.ControllerInfo,
+    query: String,
+    page: Int,
+    pageSize: Int,
+    params: LibraryParams?,
+  ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = future {
+    val nodes = treeRepository.search(query)
+    // Paged before the artwork URLs are resolved, and clamped -- see `onGetChildren` and
+    // `BrowsePaging` for what an over-long result does to this process.
+    val items = BrowsePaging.page(nodes, page, pageSize).map { node ->
+      BrowseItems.of(node, treeRepository.artworkUri(node.artworkId))
+    }
+    LibraryResult.ofItemList(ImmutableList.copyOf(items), params)
+  }
+
+  /**
+   * The queue a **spoken** query should start, or `null` when there is nothing to play.
+   *
+   * Public because two callers reach the same decision by different routes, and a second copy of it
+   * would be a second answer: [onSetMediaItems] serves the Assistant when this app is already
+   * connected, and `MuPlaybackService.onStartCommand` serves it cold, from an
+   * `ACTION_MEDIA_PLAY_FROM_SEARCH` intent. Both end here.
+   *
+   * The start position is `C.TIME_UNSET`, like every other queue this class answers with: `MuPlayer`
+   * discards it and asks the resume policy, so *"play my book"* said out loud resumes for the same
+   * reason tapping it in a car does.
+   */
+  suspend fun spokenQueue(query: String): MediaSession.MediaItemsWithStartPosition? {
+    val selection = treeRepository.searchSelection(query) ?: return null
+    return MediaSession.MediaItemsWithStartPosition(
+      items(selection),
+      selection.startIndex,
+      C.TIME_UNSET,
+    )
+  }
+
+  /**
    * Turns whatever a controller asked to play into items this player can actually stream.
    *
    * Two kinds of caller, and the difference is one field:
@@ -229,6 +306,15 @@ class MuPlayLibraryCallback @Inject constructor(
       )
     }
     return future(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, C.TIME_UNSET)) {
+      // The Assistant, with this app already connected: Media3 turns a legacy `playFromSearch` into
+      // `onSetMediaItems` carrying a query on the item's request metadata and no usable media id at
+      // all. Checked *before* the browse-id expansion, because that id is a placeholder.
+      val spoken = mediaItems.singleOrNull()?.requestMetadata?.searchQuery
+      if (spoken != null) {
+        return@future spokenQueue(spoken)
+          ?: MediaSession.MediaItemsWithStartPosition(emptyList(), 0, C.TIME_UNSET)
+      }
+
       val selection = mediaItems.singleOrNull()
         ?.takeIf { it.localConfiguration == null }
         ?.let { BrowseId.decode(it.mediaId) }

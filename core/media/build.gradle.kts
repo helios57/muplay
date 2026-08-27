@@ -86,6 +86,14 @@ dependencies {
   // test in this module has ever imported it.
   androidTestImplementation(libs.coroutines.test)
 
+  // Plan 6 Task 9. `HandoverTest` drives a cast handover against `:core:cast`'s **fake renderer** --
+  // a real UPnP renderer over a real socket, strict in the ways a Sonos is strict -- because the
+  // question it asks is "what did the speaker actually receive", and that does not survive being
+  // asked of a stand-in. The fake had to move to a `testFixtures` source set over there to be
+  // reachable from here; the alternative was a second copy of a thousand-line protocol fake, i.e.
+  // two renderers to keep strict.
+  androidTestImplementation(testFixtures(project(":core:cast")))
+
   androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.ext)
   androidTestImplementation(libs.androidx.test.runner)

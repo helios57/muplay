@@ -1,12 +1,15 @@
 package app.muplay.media
 
 import android.app.PendingIntent
+import android.app.SearchManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaLibraryService
@@ -14,6 +17,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.media.browse.MuPlayLibraryCallback
+import app.muplay.media.cast.CastSessionManager
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.Clock
 import java.util.concurrent.Executor
@@ -22,6 +26,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 
 /**
  * The service that owns playback.
@@ -83,6 +89,21 @@ class MuPlaybackService : MediaLibraryService() {
    */
   @Inject lateinit var clock: Clock
 
+  /**
+   * Which `Player` this session drives. **The seam the whole cast feature hangs from.**
+   *
+   * `MediaSession.setPlayer` is Media3's supported way to change what a session drives, and it is
+   * what Google's own Cast integration does: the notification, the media buttons, the lock screen
+   * and every `MediaController` follow without any of them being told.
+   */
+  @Inject lateinit var outputSwitch: PlaybackOutputSwitch
+
+  /**
+   * Injected here and nowhere else in this class, for one reason: it holds the single
+   * [ProgressWriter] that has to follow the switch, and this is where that writer is built.
+   */
+  @Inject lateinit var castSessionManager: CastSessionManager
+
   private var session: MediaLibrarySession? = null
 
   /**
@@ -115,6 +136,9 @@ class MuPlaybackService : MediaLibraryService() {
     // position the session actually reports -- and so Plan 6 has exactly one writer to repoint.
     progressWriter =
       ProgressWriter(player, mediaProgressDao, clock, serviceScope).also { it.start() }
+    // **One** writer, handed to the thing that moves it. A second writer built around the cast
+    // player would race this one for the same `media_progress` row.
+    castSessionManager.useProgressWriter(progressWriter!!)
 
     // Media3 posts its own notification through this provider; what this call changes is its
     // *identity*. Without it the notification lands on Media3's default channel under Media3's
@@ -142,10 +166,74 @@ class MuPlaybackService : MediaLibraryService() {
         ),
       )
       .build()
+
+    // Populated *after* the session exists, so the collector's first emission has something to
+    // install onto. `MutableStateFlow` replays its current value to a late collector, which is why
+    // this ordering is safe rather than lucky.
+    outputSwitch.installLocal(player)
+    // The session follows the switch. Everything player-bound that is broken by being left behind
+    // is re-pointed here -- which today is the session itself. The `ProgressWriter` is deliberately
+    // NOT on this list: it has to be attached *before* `setMediaItems` on the incoming player, and
+    // this collector is a coroutine that would not have resumed by then, so `CastSessionManager`
+    // moves it synchronously inside the handover. When the audiobook plan lands,
+    // `SleepTimerController.attach(player, serviceScope)` goes here -- it binds to one player and
+    // its fade drives that player's `volume`, so left behind it counts down against a paused,
+    // silent phone while the speaker plays all night, and nothing throws and nothing logs.
+    serviceScope.launch {
+      outputSwitch.activePlayer.filterNotNull().collect { active ->
+        session?.let { if (it.player !== active) it.player = active }
+      }
+    }
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
     session
+
+  /**
+   * Handles the Assistant's cold-start play intent, then hands the intent on to Media3 unchanged.
+   *
+   * *"Hey Google, play Second Book on MuPlay"* reaches a media app two different ways. With the app
+   * already connected it arrives as a legacy `playFromSearch`, which Media3 turns into
+   * `onSetMediaItems` with a query on the item's request metadata; with nothing connected it
+   * arrives **here**, as a plain `Intent` at the exported service. Both funnel into
+   * [MuPlayLibraryCallback.spokenQueue], so there is one answer to "which one thing does that
+   * play" rather than two that drift.
+   *
+   * **`super.onStartCommand` still runs for every intent, including this one.**
+   * `MediaSessionService` uses it for media-button routing and for its own foreground bookkeeping,
+   * and short-circuiting it for one action is how a service ends up alive but deaf to a headset.
+   *
+   * The action is matched through the platform constant rather than a literal; the manifest carries
+   * the literal, and `ConventionTest`'s *a declared play-from-search filter must have a handler and
+   * a gate entry* is what stops the filter, this branch and the merged-manifest requirement from
+   * landing without one another.
+   */
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    if (intent?.action == MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) {
+      playFromSearch(intent.getStringExtra(SearchManager.QUERY).orEmpty())
+    }
+    return super.onStartCommand(intent, flags, startId)
+  }
+
+  /**
+   * Starts whatever [query] should start, on the session's **current** player.
+   *
+   * `session?.player` is read at the moment it is used and never cached, for the reason
+   * [MuPlayLibraryCallback]'s own header gives: Plan 6 swaps the session's player when audio moves
+   * to a speaker.
+   *
+   * `C.TIME_UNSET`, like everywhere else: `MuPlayer` discards it and asks the resume policy, so a
+   * book asked for out loud resumes where it was left.
+   */
+  private fun playFromSearch(query: String) {
+    serviceScope.launch {
+      val queue = libraryCallback.spokenQueue(query) ?: return@launch
+      val player = session?.player ?: return@launch
+      player.setMediaItems(queue.mediaItems, queue.startIndex, C.TIME_UNSET)
+      player.prepare()
+      player.play()
+    }
+  }
 
   /**
    * Stops the service when the user swipes the app away **and nothing is playing**.
@@ -176,8 +264,13 @@ class MuPlaybackService : MediaLibraryService() {
     progressWriter = null
     serviceScope.cancel()
     session?.run {
-      player.release()
+      val active = player
       release()
+      active.release()
+      // The local player is **paused, not released** while casting, so the session's own player is
+      // not necessarily it. Releasing only what the session held would leak a real `ExoPlayer` on a
+      // real path: swiping the app away mid-cast.
+      outputSwitch.localPlayer()?.takeIf { it !== active }?.release()
     }
     session = null
     super.onDestroy()

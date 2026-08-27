@@ -102,7 +102,12 @@ private fun soapArgumentsOf(bodyText: String): List<Pair<String, String>>? {
   val document = runCatching {
     DocumentBuilderFactory.newInstance().apply {
       isNamespaceAware = false
-      isXIncludeAware = false
+      // `runCatching`: Android's `DocumentBuilderFactory` does not override `setXIncludeAware` and
+      // the base class implements it by throwing. Unwrapped, `RecordedSoap.arguments` reports
+      // `null` for every request this fake ever received, on the device tier, silently -- because
+      // the whole parse is already inside a `runCatching { }.getOrNull()`. Same trap as the three
+      // production call sites in this module; see `DeviceDescription.hardenedFactory`.
+      runCatching { isXIncludeAware = false }
       isExpandEntityReferences = false
       listOf(
         "http://apache.org/xml/features/disallow-doctype-decl" to true,
@@ -232,7 +237,14 @@ class FakeRenderer(
     val transportStateOverride: String? = null,
   )
 
-  private val server = ServerSocket(0, BACKLOG, InetAddress.getLoopbackAddress())
+  // `getByName("127.0.0.1")`, **not** `getLoopbackAddress()`, and the difference is only visible off
+  // the JVM. Every URL this fake advertises hardcodes `127.0.0.1` (see [descriptionUrl] below), and
+  // on Android `InetAddress.getLoopbackAddress()` answers the **IPv6** loopback `::1` -- so the fake
+  // bound `[::1]:port`, told its client `http://127.0.0.1:port`, and every instrumented test failed
+  // in `setUp` with `ECONNREFUSED` naming a port that really was listening. Measured on `muplay37`
+  // while wiring `:core:media`'s `HandoverTest`; the JVM tier cannot see it because there
+  // `getLoopbackAddress()` is `127.0.0.1`.
+  private val server = ServerSocket(0, BACKLOG, InetAddress.getByName(LOOPBACK_V4))
   private val soap = CopyOnWriteArrayList<RecordedSoap>()
   private val media = CopyOnWriteArrayList<RecordedMedia>()
   private val documents = CopyOnWriteArrayList<String>()
@@ -752,6 +764,8 @@ class FakeRenderer(
   }
 
   private companion object {
+    /** The address every URL this fake advertises names. See the `server` field for why it is fixed. */
+    const val LOOPBACK_V4 = "127.0.0.1"
     const val BACKLOG = 8
     const val MAX_VOLUME = 100
   }

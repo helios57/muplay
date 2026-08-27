@@ -140,6 +140,37 @@ class ServedMediaTest {
   }
 
   @Test
+  fun `forMimeType answers what must be served for a body already decided to be that MIME`() {
+    // The leg the cast layer reads back off a `MediaItem`: by the time a queue reaches it, the
+    // song's suffix and the `StreamFormat` it was fetched with are both gone and the MIME is all
+    // there is.
+    assertThat(ServedMedia.forMimeType("audio/mpeg")?.fileExtension).isEqualTo("mp3")
+    assertThat(ServedMedia.forMimeType("audio/flac")?.fileExtension).isEqualTo("flac")
+    // Case-insensitive, because a `Content-Type` is not case-normalised anywhere on the wire.
+    assertThat(ServedMedia.forMimeType("AUDIO/MPEG")?.fileExtension).isEqualTo("mp3")
+    // ...and it does not guess, for the same reason `forExtension` does not: the caller decides
+    // what an unrecognised MIME deserves, and "I do not know" is a different answer from "MP3".
+    assertThat(ServedMedia.forMimeType("audio/opus")).isNull()
+    assertThat(ServedMedia.forMimeType(null)).isNull()
+  }
+
+  @Test
+  fun `every answer forMimeType gives round-trips through its own extension`() {
+    // The property that makes "the first entry whose MIME matches" correct rather than arbitrary.
+    // `audio/mp4` has three entries -- `m4a`, `m4b`, `mp4` -- and whichever is picked, a renderer
+    // sniffing `.$fileExtension` off the URL has to reach the MIME the `protocolInfo` declares.
+    val offenders = ServedMedia.rawTypes.values.map { it.mimeType }.distinct().filter { mime ->
+      val answer = ServedMedia.forMimeType(mime)
+      answer == null || ServedMedia.forExtension(answer.fileExtension)?.mimeType != mime
+    }
+
+    assertThat(offenders).isEmpty()
+    // The sweep ran over something.
+    assertThat(ServedMedia.rawTypes.values.map { it.mimeType }.distinct())
+      .hasSizeGreaterThanOrEqualTo(6)
+  }
+
+  @Test
   fun `opus never reaches a renderer, by construction`() {
     // Not an assertion about a check, an assertion about the type system: `StreamFormat.forSuffix`
     // makes `opus` unrepresentable as a raw stream, so there is no path from an Opus file to an

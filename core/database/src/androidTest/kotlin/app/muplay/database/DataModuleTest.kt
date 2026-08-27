@@ -9,6 +9,7 @@ import app.muplay.database.entity.BookSettingsEntity
 import app.muplay.database.entity.ChapterEntity
 import app.muplay.database.entity.LibraryEntity
 import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.database.entity.SongEntity
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.RememberedRenderer
@@ -304,6 +305,65 @@ class DataModuleTest {
     assertThat(dao.findScan("m-1")!!.chapterCount).isEqualTo(2)
   }
 
+  /**
+   * Plan 4 Task 4 added `provideAudiobookDao`, and the same rule as the two tests above applies: a
+   * provider nothing calls measures 0/1 LINE.
+   *
+   * It also proves the one thing an in-memory `AudiobookRepositoryTest` cannot -- that the
+   * role-scoped `IN (SELECT ... FROM libraries WHERE role = :role)` sub-select runs against the
+   * **shipped** on-disk database, whose `libraries.role` column arrived through `MIGRATION_6_7`'s
+   * ancestry rather than through `createAllTables`. Two libraries and two albums, so "scoped to the
+   * audiobook library" and "every album there is" are different answers.
+   */
+  @Test
+  fun theProvidedAudiobookDaoWorks() = runTest {
+    val dao = DataModule.provideAudiobookDao(database)
+    val libraryDao = DataModule.provideLibraryDao(database)
+    val browseDao = DataModule.provideBrowseDao(database)
+    libraryDao.mergeFromServer(
+      listOf(
+        LibraryEntity(41, "Music", LibraryRole.UNASSIGNED),
+        LibraryEntity(42, "Audiobooks", LibraryRole.UNASSIGNED),
+      ),
+    )
+    libraryDao.setRole(41, LibraryRole.MUSIC)
+    libraryDao.setRole(42, LibraryRole.AUDIOBOOKS)
+    browseDao.replaceLibraryContents(
+      libraryId = 41,
+      artists = emptyList(),
+      albums = listOf(album("dm-record", 41, "A Record")),
+      songs = listOf(song("dm-track", "dm-record", 41, "A Track")),
+    )
+    browseDao.replaceLibraryContents(
+      libraryId = 42,
+      artists = emptyList(),
+      albums = listOf(album("dm-book", 42, "A Book")),
+      songs = listOf(song("dm-part", "dm-book", 42, "A Part")),
+    )
+
+    assertThat(dao.observeBookAlbums(LibraryRole.AUDIOBOOKS).first().map { it.id })
+      .containsExactly("dm-book")
+    assertThat(dao.observeItems(LibraryRole.AUDIOBOOKS).first().map { it.mediaId })
+      .containsExactly("dm-part")
+    assertThat(dao.observeSongsInRole(LibraryRole.AUDIOBOOKS).first().map { it.id })
+      .containsExactly("dm-part")
+    assertThat(dao.files("dm-book", LibraryRole.AUDIOBOOKS).map { it.id }).containsExactly("dm-part")
+    assertThat(dao.findBookAlbum("dm-book", LibraryRole.AUDIOBOOKS)?.name).isEqualTo("A Book")
+    // The music album, through the same call. Without the role guard this answers a book.
+    assertThat(dao.findBookAlbum("dm-record", LibraryRole.AUDIOBOOKS)).isNull()
+  }
+
+  private fun album(id: String, libraryId: Int, name: String) = AlbumEntity(
+    id = id, libraryId = libraryId, artistId = null, name = name, artistName = "Anne Author",
+    coverArtId = null, songCount = 1, durationSeconds = 4, sortName = name.lowercase(),
+  )
+
+  private fun song(id: String, albumId: String, libraryId: Int, title: String) = SongEntity(
+    id = id, libraryId = libraryId, albumId = albumId, artistId = null, title = title,
+    albumName = albumId, artistName = "Anne Author", trackNumber = 1, discNumber = 1,
+    durationSeconds = 4, suffix = "mp3", coverArtId = null, sortTitle = title.lowercase(),
+  )
+
   private companion object {
     /**
      * The two DataStores the shipped app uses, built **once** for this whole class.
@@ -324,5 +384,6 @@ class DataModuleTest {
 
     /** Distinctive enough that finding it in a file is evidence rather than a coincidence. */
     private const val MARKER_UDN = "uuid:RINCON-cast-store-marker"
+
   }
 }

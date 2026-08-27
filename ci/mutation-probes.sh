@@ -187,7 +187,10 @@ BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurfa
 BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
 BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
+PLAY_FROM_SEARCH = "core/model/src/main/kotlin/app/muplay/model/browse/PlayFromSearch.kt"
 BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
+BOOK_SUMMARIES = "core/database/src/main/kotlin/app/muplay/database/BookSummaries.kt"
+DATA_MODULE = "core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
@@ -202,6 +205,12 @@ BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
 # Plan 4 Task 5. A pure function over two Longs, on purpose, so the whole of it is reachable from
 # this JVM-only runner -- there is nothing about the smart-rewind table that needs a device.
 SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
+# Plan 4 Task 8. The two Android-free halves of the sleep timer. `SleepTimerController` needs a real
+# `Player` and `ShakeSensor` needs a real `SensorManager`, so both are out of this runner's reach and
+# their mutations are recorded by hand in task-8-report.md, per the SCOPE note above -- but the fade
+# ramp and the shake decision are plain arithmetic and are gated here.
+SLEEP_FADE = "core/media/src/main/kotlin/app/muplay/media/SleepTimerFade.kt"
+SHAKE_DETECTOR = "core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -255,11 +264,17 @@ ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
 SESSION_SESSION = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSession.kt"
 SESSION_PLAYBACK = "core/cast/src/main/kotlin/app/muplay/cast/session/CastPlayback.kt"
 SESSION_SOURCE = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSource.kt"
+HANDOVER_POLICY = "core/media/src/main/kotlin/app/muplay/media/cast/OneShotResumePolicy.kt"
+SERVED_MEDIA = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
 # `FakeRendererStrictnessTest`, not one of its assertions.
-SOAP_FAKE = "core/cast/src/test/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
+# MOVED in Plan 6 Task 9, from `src/test` to `src/testFixtures`: `:core:media`'s instrumented
+# `HandoverTest` drives a handover against this same fake, and a `testFixtures` source set is
+# how one module's test helper reaches another's. `revert()` checks out `core/cast` wholesale,
+# so the move needed no change there -- only here, where the path is written out.
+SOAP_FAKE = "core/cast/src/testFixtures/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -837,20 +852,32 @@ PROBES = [
     # frozen clock stamps every row with one instant and `recentlyPlayed`'s ORDER BY becomes
     # arbitrary, and a resume policy that answers a position undoes spec section 3's guarantee at
     # the only point in the graph where it is chosen.
-    ("progress/clock-frozen", MEDIA_MODULE,
+    # Plan 4 Task 4 moved `provideClock` (and its test) down into `:core:database`'s `DataModule`:
+    # `AudiobookRepository` is the first class there to take a `Clock`, and a binding declared above
+    # its consumer leaves that module's Hilt tests without one. The probe followed the binding --
+    # its preflight caught the move by refusing to run at all ("0 matches in MediaModule.kt"), which
+    # is that guard doing exactly its job. The witness stayed on the **JVM** tier for the reason
+    # this file's header gives: `run_suite()` names JVM test tasks, so a test that only runs on a
+    # device reports MISSED with zero failures.
+    ("progress/clock-frozen", DATA_MODULE,
      "  fun provideClock(): Clock = Clock.systemUTC()",
      "  fun provideClock(): Clock =\n    Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC)",
      # A `Clock.fixed` left behind by a test edit compiles, injects, and writes a row every five
      # seconds with `lastPlayedAtEpochMs = 0`. Nothing else in the build would notice.
      "the injected clock is a real clock and not a frozen one", 1),
     ("progress/policy-resumes", MEDIA_MODULE,
-     "  fun provideResumePolicy(): ResumePolicy = NeverResume",
-     "  fun provideResumePolicy(): ResumePolicy =\n"
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume",
+     "  fun provideUndecoratedResumePolicy(): ResumePolicy =\n"
      "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
      # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
      # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
      # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
-     "the bound resume policy is the one that resumes nothing", 1),
+     #
+     # RENAMED in Plan 6 Task 9, which re-annotated this provider `@UndecoratedResumePolicy` so that
+     # the one UNQUALIFIED `ResumePolicy` in the graph is the cast decorator. The probe went STALE
+     # -- "0 matches ... (need exactly 1)" -- and the family refused to run, which is the guard
+     # working: a probe whose search text has drifted is a probe that would silently mutate nothing.
+     "the undecorated resume policy is the one that resumes nothing", 1),
     # ---- Plan 3 Task 1, review round 2 (N-1, N-2): two values with no discriminating observation
     # Both are the shape this whole file exists for, and neither was caught by any of the seven
     # task-1 probes above -- which is the point: a probe list records the questions someone
@@ -1561,6 +1588,81 @@ PROBES = [
      '      remainingMs < MINUTE_MS -> "under a minute left"\n      hours == 0L -> "$minutes min left"',
      '      hours == 0L -> "$minutes min left"\n      remainingMs < MINUTE_MS -> "under a minute left"',
      "a negative remaining time is treated as none rather than rendered", 2),
+
+    # ---- Plan 5 Task 6: search, and what a spoken query plays --------------------------------
+    #
+    # The ordering claim first. "Books rank above music in a search, and that is not a tie-break"
+    # is an ORDER, and a test that asserts a result set's contents cannot see a wrong order -- the
+    # exact defect this repository has shipped before. These two probes are the two ways the order
+    # gets broken: the groups reordered, and one group hoisted to the front.
+    ("browse/search-books-not-first", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    artistChildren(albums) + bookNodes(books) + artistNodes(artists) + songNodes(songs)",
+     "search results are books, then albums, then artists, then tracks", 3),
+    ("browse/search-tracks-first", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    songNodes(songs) + bookNodes(books) + artistChildren(albums) + artistNodes(artists)",
+     "search results are books, then albums, then artists, then tracks", 2),
+    # A group silently dropped. `allMatch`/`contains` over the remaining rows is satisfied by this;
+    # only an exact ordered list is not.
+    ("browse/search-drops-the-artists", BROWSE_TREE,
+     "    bookNodes(books) + artistChildren(albums) + artistNodes(artists) + songNodes(songs)",
+     "    bookNodes(books) + artistChildren(albums) + songNodes(songs)",
+     "search results are books, then albums, then artists, then tracks", 1),
+    # NOT PROBED, and worth saying rather than leaving as a gap: "the search slot calls the albums
+    # *tab* builder" cannot be probed here. `albumsNodes(emptyList(), albums)` is `artistChildren`
+    # exactly -- the shuffle rows come from the libraries argument, and an empty one emits none --
+    # so the mutation is the identity and no test can go red on it. What the wrong builder would
+    # really cost is a "Shuffle Music" row at the top of a car's search results, and that is
+    # asserted where the libraries are real: `BrowseSearchBrowserTest.noShuffleRowIsEverASearchResult`
+    # on the device tier, which this runner cannot reach (see the header).
+
+    # ---- what a spoken query plays -------------------------------------------------------------
+    #
+    # Three tiers, each of which has to beat the next. Each probe below demotes exactly one of
+    # them, which is the only way to tell "exact match wins" from "the first playable wins" -- on a
+    # fixture where they agree, both are the same observation and only one is being tested.
+    ("browse/spoken-no-exact-tier", PLAY_FROM_SEARCH,
+     "    title == wanted -> EXACT",
+     "    title == wanted -> ANYTHING_PLAYABLE",
+     "an exact title match wins over an earlier partial match", 4),
+    ("browse/spoken-no-containment-tier", PLAY_FROM_SEARCH,
+     "    title.contains(wanted) -> CONTAINS",
+     "    title.contains(wanted) -> ANYTHING_PLAYABLE",
+     "a partial match wins over the first playable node", 3),
+    # The plan's mutation 3, and the one a reviewer is most likely to call a fix: "if nothing
+    # matched, return nothing". A car that answers a spoken request with silence has done nothing,
+    # and the app is what gets blamed.
+    ("browse/spoken-nothing-matches-plays-nothing", PLAY_FROM_SEARCH,
+     "    return playable.sortedBy { tierOf(normalise(it.title), wanted) }",
+     "    return playable.filter { tierOf(normalise(it.title), wanted) != ANYTHING_PLAYABLE }",
+     "a query that matches nothing still plays something", 2),
+    ("browse/spoken-blank-query-plays-nothing", PLAY_FROM_SEARCH,
+     "    if (query.isBlank()) return playable",
+     "    if (query.isBlank()) return emptyList()",
+     "an empty query plays the first playable node", 2),
+    # Containment read the other way round. On a symmetric fixture the two are the same function;
+    # `PlayFromSearchTest` carries a query that is a strict substring of one title and a title that
+    # is a strict substring of nothing, so they are not.
+    ("browse/spoken-containment-reversed", PLAY_FROM_SEARCH,
+     "    title.contains(wanted) -> CONTAINS",
+     "    wanted.contains(title) -> CONTAINS",
+     "containment is on the node's title and not on the query", 3),
+    # A browsable-only row handed to a caller that will try to play it.
+    ("browse/spoken-ranks-browsable-nodes", PLAY_FROM_SEARCH,
+     "    val playable = nodes.filter(BrowseNode::isPlayable)",
+     "    val playable = nodes",
+     "a browsable-only node is never picked", 3),
+    # `normalise` is what makes a punctuated, mis-spaced, lower-cased recogniser transcript reach
+    # the right book at all. Both halves of it, separately.
+    ("browse/normalise-drops-digits", PLAY_FROM_SEARCH,
+     "      .map { if (it.isLetterOrDigit()) it else ' ' }",
+     "      .map { if (it.isLetter()) it else ' ' }",
+     "normalise keeps digits and collapses every kind of whitespace", 1),
+    ("browse/normalise-keeps-empty-tokens", PLAY_FROM_SEARCH,
+     "      .split(\" \")\n      .filter(String::isNotEmpty)\n      .joinToString(\" \")",
+     "      .split(\" \")\n      .joinToString(\" \")",
+     "normalise is the exact transformation the tiers compare on", 3),
     # ---- Plan 3 Task 9: the player. -----------------------------------------------------------
     # Everything below is a value a user meets on the first tap, and every one of them is on the
     # JVM tier by construction: the state mapping is a pure top-level function, `PlayerViewModel`
@@ -2623,6 +2725,65 @@ PROBES = [
      # `t` and `s` are password equivalents.
      "a source does not print its credential-bearing upstream url", 1),
 
+    # ---- Plan 6 Task 9: the handover -----------------------------------------------------------
+    # Every count below was measured by applying the mutation to a committed tree and reading the
+    # result XML, one at a time, with the file's bytes snapshotted in memory and written back.
+    #
+    # WHAT IS NOT HERE, AND WHY. The handover's headline behaviour -- casting mid-song lands on the
+    # same second -- lives on the DEVICE tier, in `:core:media`'s `HandoverTest` and
+    # `UpnpPlayerTest`, and this runner cannot see an androidTest source at all: it reports MISSED
+    # with zero failures, because an androidTest file is not an input to the JVM test task and the
+    # cache key therefore does not move (this file's own header records the same limit from Plan 3
+    # Task 7b). Six device-tier mutations were applied by hand instead and their transcripts are in
+    # task-9-report.md, which is the same treatment `LiveNavidromeTest`'s probes get.
+    #
+    # What IS here is everything the fast tier can hold: the one-shot decorator, which takes media
+    # ids and an index and touches no Android type, and the two Hilt bindings whose failure mode is
+    # silent.
+    ("handover/target-never-spent", HANDOVER_POLICY,
+     "val pending = armed.getAndSet(null)", "val pending = armed.get()",
+     # A target that survived one `resolve` would make the next shuffle, the next album and the next
+     # book all start where the last handover was. Three failures, because "the target is spent" is
+     # asserted from three directions: after it is used, after it misses its queue, and after an
+     # empty queue clears it.
+     "an armed target wins over the delegate, once", 3),
+    ("handover/missing-id-applied", HANDOVER_POLICY,
+     "    if (index < 0) return delegate.resolve(mediaIds, requestedIndex)",
+     "    if (index < -1) return delegate.resolve(mediaIds, requestedIndex)",
+     # A handover whose queue changed between arming and setting. Applying the target anyway starts
+     # an unrelated track partway in -- the silent-wrong-answer class, and the exact failure this
+     # architecture exists to prevent for books.
+     "an armed target for a media id that is not in the new queue is discarded", 2),
+    ("handover/armed-index-used", HANDOVER_POLICY,
+     "return ResumeTarget(startIndex = index, startPositionMs = pending.target.startPositionMs)",
+     "return ResumeTarget(startIndex = pending.target.startIndex, "
+     "startPositionMs = pending.target.startPositionMs)",
+     # The media id is the identity; the index is not. A handover can re-fetch an album or
+     # regenerate a shuffle, and the armed index then names a different track.
+     "the armed index is corrected to where the media id actually is in the new queue", 1),
+    ("handover/decorator-not-singleton", MEDIA_MODULE,
+     "  @Provides\n  @Singleton\n  fun provideOneShotResumePolicy(",
+     "  @Provides\n  fun provideOneShotResumePolicy(",
+     # ONE MISSING ANNOTATION. Dagger hands `CastSessionManager` and `MuPlayerFactory` a decorator
+     # each, over the same delegate; every outbound cast still works, and the return leg arms one
+     # object and asks the other. No assertion about a position anywhere else in this project moves.
+     "the decorator is a singleton, because two decorators over one delegate lose the return leg", 1),
+    ("handover/undecorated-binding-wins", MEDIA_MODULE,
+     "  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot",
+     "  fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = NeverResume",
+     # The other half of the same silence: a graph with exactly one unqualified `ResumePolicy` --
+     # which is what Hilt requires and what makes this compile -- and it is the WRONG one.
+     "the unqualified resume policy the player factory receives IS the cast decorator", 1),
+    ("handover/mime-guessed", SERVED_MEDIA,
+     "      RAW_TYPES.values.firstOrNull { it.mimeType.equals(mimeType, ignoreCase = true) }",
+     "      RAW_TYPES.values.firstOrNull { it.mimeType.equals(mimeType, ignoreCase = true) }\n"
+     "        ?: ServedMedia(FALLBACK_MIME, FALLBACK_EXTENSION)",
+     # `forExtension` has the same probe for the same reason: this answers a question about what a
+     # *peer* will believe, and "I do not know" is a different answer from "MP3". Guessing here
+     # makes `audio/opus` -- the one format spec section 4 forbids outright -- agree with every MP3
+     # stream this client serves.
+     "forMimeType answers what must be served for a body already decided to be that MIME", 1),
+
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
     # they belong here rather than behind a coverage floor.
@@ -3637,6 +3798,62 @@ PROBES = [
      "  val durationMs: Long get() = (endInItemMs - startInItemMs).coerceAtLeast(0L)",
      "  val durationMs: Long get() = endInItemMs - startInItemMs",
      "a chapter whose atoms run backwards has a zero duration rather than a negative one", 1),
+
+    # ---- Plan 4 Task 4: the shelf's arithmetic and its order ---------------------------------
+    #
+    # Every failure count below is MEASURED by running this family, not predicted -- several of
+    # these mutations redden more than the one test they are named for, because the fixtures
+    # deliberately vary one input at a time against a shared rule.
+    ("shelf/current-file-furthest", BOOK_SUMMARIES,
+     "      if (row != null && (incumbent == null || row.lastPlayedAtEpochMs >= incumbent.lastPlayedAtEpochMs)) {",
+     "      if (row != null) {",
+     # "the last file with a row" rather than "the most recently written row". A listener who
+     # jumped back to chapter 1 gets dragged forward to wherever they had been furthest, which is
+     # the defect you only notice by losing your place.
+     "an older row on a later file does not win", 2),
+    ("shelf/current-file-tie-earlier", BOOK_SUMMARIES,
+     "row.lastPlayedAtEpochMs >= incumbent.lastPlayedAtEpochMs",
+     "row.lastPlayedAtEpochMs > incumbent.lastPlayedAtEpochMs",
+     # `>` is what `maxByOrNull` does: the FIRST maximal element. A batch write really does produce
+     # two rows in one millisecond, and this pins such a listener to part one for good.
+     "two rows written in the same millisecond resolve to the later file", 1),
+    ("shelf/position-no-offset", BOOK_SUMMARIES,
+     "    val offsetMs = ordered.take(currentIndex.coerceAtLeast(0))\n      .sumOf { it.durationSeconds * 1_000L }",
+     "    val offsetMs = 0L",
+     # The whole-book position collapses to the position inside the current file. Every
+     # single-file assertion in this class stays green, which is why the fixtures are multi-file.
+     "a book's position is the files before the current one plus the position inside it", 3),
+    ("shelf/order-by-time-alone", BOOK_SUMMARIES,
+     "    compareBy<BookSummary> { group(it) }\n      .thenByDescending { if (group(it) == GROUP_UNSTARTED) 0L else it.lastPlayedAtEpochMs }",
+     "    compareBy<BookSummary> { 0 }\n      .thenByDescending { it.lastPlayedAtEpochMs }",
+     # The three groups collapse into one. A finished book heard a minute ago goes to the top of
+     # the shelf, which is the most annoying shelf available.
+     # 2, measured: it also reddens `a finished book drops below an unstarted one even though it
+     # was heard more recently`. The three tie-break tests stay green, because collapsing the
+     # groups leaves their inputs -- all in one group already -- ordered the same way.
+     "the shelf is continue-listening first, then unstarted alphabetically, then finished", 2),
+    ("shelf/play-order-untagged-first", BOOK_SUMMARIES,
+     "      { it.trackNumber ?: Int.MAX_VALUE },",
+     "      { it.trackNumber ?: 0 },",
+     # The book opens on its own afterword.
+     "a file with no track number sorts after every numbered one, by title", 1),
+    ("shelf/play-order-untagged-disc-zero", BOOK_SUMMARIES,
+     "      { it.discNumber ?: 1 },",
+     "      { it.discNumber ?: 0 },",
+     # The other `?:` in the same comparator, and the opposite default for the opposite reason: a
+     # single-disc rip leaves the column null on every file.
+     "a file with no disc number plays with disc one, not before it", 1),
+    ("shelf/finished-on-any-file", BOOK_SUMMARIES,
+     "      isFinished = ordered.isNotEmpty() && progress[ordered.last().id]?.isFinished == true,",
+     "      isFinished = ordered.any { progress[it.id]?.isFinished == true },",
+     # A book comes off the Continue shelf the first time a chapter runs out on its own.
+     "a book is finished when its last file is finished, and not before", 1),
+    ("shelf/author-from-nowhere", BOOK_SUMMARIES,
+     "      author = album.artistName.orEmpty(),",
+     '      author = "",',
+     # A constant field assignment removes no branch, so coverage cannot see this one at all --
+     # which is the defect class this whole plan is written against.
+     "the album row supplies the identity a file cannot", 1),
     # ---- Plan 4 Task 5: the smart-rewind band table, its four boundaries, and the clamp --------
     # Every count below was MEASURED by applying the mutation alone against the committed tree and
     # reading the result XML -- see task-5-report.md for the transcripts.
@@ -3792,6 +4009,49 @@ PROBES = [
      '    if (timeOffsetSeconds <= 0) mediaId else "$mediaId$OFFSET_KEY_SEPARATOR$timeOffsetSeconds"',
      "    mediaId",
      "an offset stream is cached under its own key, and the top of the track under the plain id", 1),
+    # ---- Plan 4 Task 8: the sleep timer's arithmetic ----------------------------------------
+    ("sleep/fade-zero-divisor", SLEEP_FADE,
+     "    fadeMs <= 0L -> if (remainingMs <= 0L) 0f else 1f\n",
+     "",
+     # A caller that turns the fade off reaches `x / 0f`, which is Infinity or NaN. Both are handed
+     # straight to `player.volume`, which throws for one and is undefined for the other.
+     "a fade length of zero does not divide by zero", 1),
+    ("sleep/fade-negative-volume", SLEEP_FADE,
+     "    remainingMs <= 0L -> 0f\n",
+     "",
+     # The tick lands past the deadline routinely, so this is the ordinary last observation of every
+     # timer, not an edge. `Player.setVolume` throws on a negative.
+     "a negative remaining time is silence, not a negative volume", 2),
+    ("sleep/fade-length-ignored", SLEEP_FADE,
+     "    else -> remainingMs.toFloat() / fadeMs",
+     "    else -> remainingMs.toFloat() / DEFAULT_FADE_MS",
+     # Every other assertion in that file passes 20 000, which is the default -- so a `fadeMs` that
+     # is declared and then ignored is invisible to all of them.
+     "the fade length is a parameter and it moves the answer", 1),
+    ("sleep/shake-peak-gap", SHAKE_DETECTOR,
+     "    if (peaks.isNotEmpty() && timestampMs - peaks.last() < minPeakGapMs) return false\n",
+     "",
+     # A 100 Hz accelerometer produces several above-threshold samples per physical jolt, so without
+     # the gap one sharp knock is three peaks and every knock is a shake.
+     "two samples from the same jolt do not count twice", 2),
+    ("sleep/shake-reset-on-fire", SHAKE_DETECTOR,
+     "    if (peaks.size < requiredPeaks) return false\n    reset()\n    return true",
+     "    if (peaks.size < requiredPeaks) return false\n    return true",
+     # Without it the buffer keeps the peaks that just fired, so the next single jolt fires again and
+     # the phone is hair-trigger for the life of the process.
+     "a second shake is detected after the first", 1),
+    ("sleep/shake-window", SHAKE_DETECTOR,
+     "    while (peaks.size > 1 && timestampMs - peaks.first() > windowMs) peaks.removeFirst()",
+     "    while (peaks.size > 1 && timestampMs - peaks.first() > windowMs * 10) peaks.removeFirst()",
+     # Picking the phone up, putting it down and picking it up again over three seconds is not a
+     # shake. Without a window it is.
+     "three jolts spread beyond the window are not", 2),
+    ("sleep/shake-z-axis-only", SHAKE_DETECTOR,
+     "    val magnitudeG = sqrt(x * x + y * y + z * z) / GRAVITY",
+     "    val magnitudeG = sqrt(z * z) / GRAVITY",
+     # Reading only z looks correct, because a resting phone's gravity is on z -- and every other
+     # test in that file jolts z.
+     "the magnitude uses all three axes", 1),
 ]
 
 
@@ -3915,6 +4175,10 @@ LATER_PROBE_FILES = [
     # `browse/empty-selection-*` probes -- never after, per this list's own comment.
     BROWSE_SELECTION,
     BROWSE_TREE_REPOSITORY,
+    # Plan 5 Task 6, added in the same edit as the eleven `browse/search-*`, `browse/spoken-*` and
+    # `browse/normalise-*` probes -- never after, per this list's own comment. `BROWSE_TREE` is
+    # already above; only this file is new.
+    PLAY_FROM_SEARCH,
     # Plan 3 Task 9. Omitting these three is not a hypothetical: the first run of the player
     # probes left every mutation in the tree, so failures accumulated probe over probe (6, then 7,
     # 8, 11, ... 18) and all eleven reported MISSED against counts that were never measurable.
@@ -3941,6 +4205,12 @@ LATER_PROBE_FILES = [
     # in the tree when the run ends, and the next agent's dirty-tree guard blames them for it.
     CHAPTER_ASSEMBLY,
     BOOK_TIMELINE,
+    # Plan 4 Task 4. Added in the same edit as the eight `shelf/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    BOOK_SUMMARIES,
+    # Plan 4 Task 4, in the same edit that repointed `progress/clock-frozen` at this file.
+    DATA_MODULE,
     # Plan 4 Task 5. Added in the same edit as the ten `rewind/` probes above, as this list's own
     # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
     # ends, and the next agent's dirty-tree guard blames them for it.
@@ -3953,6 +4223,17 @@ LATER_PROBE_FILES = [
     # and abort probe 2 with "PROBE TEXT NOT FOUND ... 0 matches".
     LIDARR_STATUS,
     LIDARR_SOURCE,
+    # Plan 4 Task 8. Added in the same edit as the seven `sleep/` probes above, as this list's own
+    # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it.
+    SLEEP_FADE,
+    SHAKE_DETECTOR,
+    # Plan 6 Task 9, added in the same edit as the six `handover/` probes above, per this
+    # list's own comment. `MEDIA_MODULE` and `core/cast` are already on `revert()`'s checkout
+    # line -- only the decorator's own file is new, which is exactly the state that makes
+    # forgetting this line easy and its consequence a stray mutation the next agent is blamed
+    # for.
+    HANDOVER_POLICY,
 ]
 
 

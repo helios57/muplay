@@ -10,9 +10,17 @@ package app.muplay.model
  * written and nothing of it had landed on `master` — `grep -rn BookSummary` over the whole
  * repository found nothing at all — and the browse tree cannot be written without it. It is
  * therefore declared here, once, to that plan's own declaration, rather than as a second summary
- * type under a different name that would later have to be unpicked. When Plan 4 Task 4 lands, this
- * file and `BookSummaryTest` are its to reconcile: the constructor is the contract, and the
- * semantics that Plan 5's tests actually depend on are only the three below.
+ * type under a different name that would later have to be unpicked.
+ *
+ * **Plan 4 Task 4 has landed and reconciled it by keeping this declaration unchanged.** That plan's
+ * own text described `author` and `lastPlayedAtEpochMs` as nullable and `progressFraction` as a
+ * `Float`; the shapes below are the ones every existing caller compiles against — `BrowseTree`
+ * sorts a car's Continue shelf on `lastPlayedAtEpochMs` and cannot take a `Long?` into
+ * `compareByDescending` — and `0`-means-never carries the same information the null did. Changing
+ * three field types to match a document, across a live browse tree, would have been a rename
+ * dressed up as a reconciliation. What Plan 4 Task 4 did instead was delete the *second derivation*
+ * (`MirrorBookshelf`, `BookProgress`) and leave one, `app.muplay.database.BookSummaries`. That is
+ * the duplication that was actually costing something.
  *
  * [durationMs] and [positionMs] are the *whole book*, not one file: a multi-file M4B is one
  * listening position to a user, and splitting it per file is what makes "resume" wrong after a
@@ -62,3 +70,21 @@ data class BookSummary(
    */
   val hasStarted: Boolean get() = positionMs > 0L
 }
+
+/**
+ * Where a book carries on: which **file**, and how far into it.
+ *
+ * Not a resume position. The smart rewind (Plan 4 Task 5) has not been applied and `ResumePolicy`
+ * (Plan 4 Task 6) is the only thing allowed to decide the second playback starts at; this type
+ * answers the question the policy is never asked, which is **which item**. `Bookshelf.resumeFileId`
+ * is this type's [mediaId] and nothing else, and that narrowing is deliberate: a browse tree that
+ * could see [positionMs] would eventually seek with it.
+ *
+ * [lastPlayedAtEpochMs] is a real timestamp here rather than the `0`-means-never that
+ * [BookSummary] carries, because a `ResumePoint` only exists when a row exists.
+ */
+data class ResumePoint(
+  val mediaId: String,
+  val positionMs: Long,
+  val lastPlayedAtEpochMs: Long,
+)
