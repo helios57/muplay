@@ -24,17 +24,22 @@ import org.junit.runner.RunWith
 /**
  * Parse once, then serve from Room.
  *
- * Two independent signals, because one of them is confounded and the other is not:
+ * Two signals, and **only one of them discriminates** — which was measured, not assumed:
  *
- * * **HTTP requests that did not happen** — the same shape as Plan 3 Task 3's media-cache proof.
- *   Counting requests rather than timing anything matters: a cache that "felt fast" because the
- *   media cache had the bytes would still be re-parsing, and the parse is the expensive part.
- * * **The `chapter_scans` row's `scannedAtEpochMs`, under a clock that is moved between reads.**
- *   This is the signal the media cache cannot fake. `ChapterReader` fetches through a
- *   `CacheDataSource` over a real `SimpleCache`, so a *second* parse of the same file can be
- *   served entirely from disk and cost zero HTTP requests even with the chapter cache removed. A
- *   re-parse rewrites the scan row; a served-from-Room read does not touch it. See
- *   `task-3-report.md` for which of the two actually fired against the mutation.
+ * * **The `chapter_scans` row's `scannedAtEpochMs`, under a clock the test moves between reads.**
+ *   This is the assertion that catches a re-parse. A read served from Room touches no row; a
+ *   re-parse rewrites the scan row with the clock's new reading.
+ * * **HTTP requests that did not happen** — the plan's signal, the same shape as Plan 3 Task 3's
+ *   media-cache proof. It is kept because "the first read really went to the network" is worth
+ *   asserting, and it is **not** what proves the second read was cached.
+ *
+ * The measurement, on the emulator: delete the `findScan` short-circuit from
+ * `ChapterRepository.chaptersFor` — so every call re-parses — and withhold the scan-row assertion
+ * from `aSecondReadOfTheSameBookIsServedFromRoomWithoutReParsing`, and that test is **green**.
+ * `ChapterReader` fetches through a `CacheDataSource` over a real `SimpleCache`, so the second
+ * parse reads the same `moov` bytes off disk and issues no request at all. Counting requests
+ * cannot tell "served from Room" from "re-parsed from the byte cache". With the scan assertion
+ * in place the same mutation fails both cached-read tests. See `task-3-report.md`.
  */
 @RunWith(AndroidJUnit4::class)
 class ChapterRepositoryTest {
@@ -111,11 +116,13 @@ class ChapterRepositoryTest {
     val second = repository.chaptersFor(song("Second Book"))
 
     assertThat(afterFirst).describedAs("the first read must actually go to the network").isPositive
-    // The signal the byte cache cannot fake: a re-parse would rewrite the scan row with the clock's
-    // new reading.
+    // THE assertion. A re-parse rewrites the scan row with the clock's new reading; a read served
+    // from Room does not touch it. Withhold this line and the mutation that removes the
+    // short-circuit passes -- measured, see the class header.
     assertThat(scannedAt("Second Book"))
       .describedAs("the scan row must still be the first read's, not a second parse's")
       .isEqualTo(FIRST_READ_AT)
+    // Carried as a measurement, not as the discriminator: the media cache satisfies it either way.
     assertThat(requests.get() - afterFirst).describedAs("further HTTP requests").isZero
     // ...and it is the same answer, not an empty one. A cache that returned nothing would also
     // make zero requests and touch no scan row.
