@@ -491,6 +491,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.model.ServerCapabilities",
+        // Plan 3 Task 12: `ServerCapabilities$Companion`, which holds one `const val` (the
+        // `transcodeOffset` extension name) and carries no counter of either kind. It rides along
+        // exactly as `BrowseSurface*` does below, so `warnUngatedClasses` has nothing to say about
+        // it and it can never move this ratio.
+        "app.muplay.model.ServerCapabilities*",
         "app.muplay.model.SearchResults",
         "app.muplay.model.ServerInfo",
         "app.muplay.model.MusicLibrary",
@@ -1610,11 +1615,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
     ),
     // ---- Plan 3 Task 8b: the seam that applies the decision, and the writer -------------------
-    // `MuPlayer` 11/11 = 1.0000 LINE, instrumented. LINE and not BRANCH because the class has
-    // **zero BRANCH counters**: six overrides and one funnel, not a conditional among them, which
-    // is the point of it -- a seam with a branch in it is a seam with a way past it. A BRANCH rule
-    // here would be the vacuous shape this table's own doc describes and `warnVacuousFloors` would
-    // say so on every run, exactly as it did for `NeverResume` one entry above.
+    // `MuPlayer` **83/83 = 1.0000 LINE**, instrumented.
+    //
+    // It was 11/11, and this comment said LINE rather than BRANCH "because the class has zero
+    // BRANCH counters: six overrides and one funnel, not a conditional among them". **That stopped
+    // being true in Plan 3 Task 12**, which gave the seam the transcoded-seek decision: it now
+    // carries 28 branch counters and a BRANCH floor of its own, immediately below. The sentence is
+    // corrected rather than deleted because the reasoning it recorded is still why this rule is
+    // here -- LINE is what notices an untested line being *added* to a class most of whose lines
+    // are unconditional forwarding.
     //
     // Eleven lines is small, and every one of them is load-bearing in the way this project keeps
     // finding: an overload that is not overridden does not fail to compile, does not fail at
@@ -1632,7 +1641,123 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.MuPlayer",
+        // Plan 3 Task 12's anonymous `Player.Listener`, 2/2 -- the one this class installs on the
+        // **wrapped** player so it can announce a command set the wrapped player does not know it
+        // has. Two lines, and if neither ran the announcement never happens and every seek from a
+        // `MediaController` is dropped in silence. `*1`, not `$1`: a literal `$` in a pattern never
+        // matches (this table's own doc, gotcha 3).
+        "app.muplay.media.MuPlayer*1",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // Plan 3 Task 12. `MuPlayer` **27/28 = 0.9643 BRANCH**, instrumented -- the counters this class
+    // did not have until it gained the transcoded-seek decision. They are the three-armed `when`
+    // over `SeekMethod` in `seekCurrentTo`, the current-vs-other-index split in
+    // `seekTo(index, position)`, the "nothing is loaded" arm, `withOffsetBase`'s `C.TIME_UNSET`
+    // check, the `command in SEEK_COMMANDS` test and the grant/withdraw/passthrough `when` behind
+    // both command overrides. Every one of them is a way for a seek to go somewhere other than
+    // where it was asked, which is exactly the defect class this task exists to remove, so BRANCH
+    // is the counter that gates it and LINE could not: covering either arm of the `when` satisfies
+    // a LINE rule and the other arm is the silent wrong answer.
+    //
+    // The **one** missed branch is `seekMethodForCurrentItem`'s
+    // `currentMediaItem?.let { .. } ?: SeekMethod.InPlace`. Kotlin emits *four* arms there and only
+    // three are reachable: `methodFor` returns a non-null `SeekMethod`, so the elvis after the
+    // `let` can never fire from the non-null path. It stays in the denominator honestly rather than
+    // being excused, and 0.90 leaves room for that one dead arm and no more -- one genuinely
+    // uncovered branch takes this to 26/28 = 0.9286 and a second to 25/28 = 0.8929, which fails.
+    //
+    // Falsified by raising the minimum to 0.97: "Rule violated for class app.muplay.media.MuPlayer:
+    // branches covered ratio is 0.96, but expected minimum is 0.97", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.MuPlayer"),
+      requiresInstrumentedData = true,
+    ),
+    // ---- Plan 3 Task 12: transcoded seek ------------------------------------------------------
+    // `TranscodeSeek` **6/6 = 1.0000 BRANCH from JVM data alone** (`TranscodeSeekTest`, eight
+    // tests, no emulator), which is the entire reason this decision is a pure object with no
+    // Android import rather than a `when` inside `MuPlayer`. The six are: is the item a transcode,
+    // does the server advertise `transcodeOffset`, the `coerceAtLeast(0)` clamp, and
+    // `cacheKeyFor`'s `<= 0` test.
+    //
+    // `requiresInstrumentedData = false` is a claim about where the coverage comes from, and it is
+    // the same claim `StreamRetryPolicy` and `ReplayGainPolicy` make one screen up: the branch that
+    // decides whether a seek re-issues, seeks in place or is withdrawn is gated by the fast tier.
+    //
+    // Falsified, and the falsification had to be chosen carefully. Raising the minimum is not
+    // available at 1.0000 (JaCoCo validates it before comparing), and withholding `TranscodeSeekTest`
+    // is **not enough on its own**: `TranscodeOffsetSupport.methodFor` calls this object, so the
+    // device tier is a second caller and the merged report would stay green -- the exact
+    // stale-falsification shape `CLAUDE.md` records. What fires is withholding that test and
+    // running `jacocoJvmCoverageVerification`, i.e. the task this `requiresInstrumentedData = false`
+    // is a claim about: "Rule violated for class app.muplay.media.TranscodeSeek: branches covered
+    // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TranscodeSeek"),
+    ),
+    // `TranscodeOffsetSupport` **17/18 = 0.9444 BRANCH**, instrumented -- the capability gate and
+    // the adapter that rebuilds an item's URI at an offset. Its branches are the ones that decide
+    // whether a seek is offered at all (`negotiated?.supportsOffset == true`), whether an item can
+    // be re-issued (no extras / no format stamp / nothing negotiated) and whether a negotiation
+    // succeeded. Every one is a silent failure: the wrong answer withdraws the seek bar, or offers
+    // a seek the server cannot honour.
+    //
+    // Instrumented because a `MediaItem`'s extras are an Android `Bundle` and the negotiation is a
+    // real round trip to `ci-navidrome-1`; `TranscodeSeekPlaybackTest` drives both directions of
+    // the gate, including a transport failure through a hand-written delegating `SubsonicSource`.
+    //
+    // The **one** missed branch is `reissue`'s `negotiated?.source ?: return mediaItem`, four arms
+    // of which only three are reachable -- `Negotiated.source` is non-null, so the elvis can never
+    // fire from a non-null `negotiated`. Same shape as `MuPlayer`'s one dead arm above, and left in
+    // the denominator for the same reason.
+    //
+    // Falsified by raising the minimum to 0.95: "branches covered ratio is 0.94, but expected
+    // minimum is 0.95", BUILD FAILED.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.TranscodeOffsetSupport"),
+      requiresInstrumentedData = true,
+    ),
+    // The LINE half of the same family, all at 1.0000, instrumented: `TranscodeOffsetSupport`
+    // 24/24, its `refresh` body 5/5, its private `Negotiated` record 1/1,
+    // `TranscodeSeekSupport$None` 3/3, `SeekMethod$ReissueWithOffset` 1/1 and `MuPlayerKt` 4/4.
+    //
+    // Not redundant with the BRANCH rule above, for the reason `:core:model`'s `BrowseId` entry
+    // gives: most of these classes carry **no BRANCH counter at all**. `None` is three
+    // unconditional overrides and is the *default* every player in this module's own suites gets --
+    // a `None` that answered anything but `InPlace` would silently change what nine other
+    // instrumented tests measure. `MuPlayerKt` is the file-private `SEEK_COMMANDS` array, i.e. the
+    // exact set of commands a transcode grants or withdraws.
+    //
+    // `refresh$2` -- the `withContext(Dispatchers.IO)` body -- rides on LINE and deliberately not on
+    // BRANCH: it measures 9/12, and the three missing arms are the coroutine state machine's
+    // suspension points rather than anything anyone wrote. `refresh$1` and the two `$Companion`s
+    // carry no counters of either kind, so `warnUngatedClasses` skips them.
+    //
+    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
+    // have: "lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per
+    // class.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.TranscodeOffsetSupport",
+        "app.muplay.media.TranscodeOffsetSupport*",
+        "app.muplay.media.TranscodeSeekSupport*",
+        "app.muplay.media.SeekMethod*",
+        "app.muplay.media.MuPlayerKt",
+      ),
       requiresInstrumentedData = true,
     ),
     // `ProgressWriter` 16/16 and its `write` body 12/12 = 1.0000 BRANCH, instrumented.
@@ -2164,6 +2289,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ContentTypeSwitcher",
         "app.muplay.media.PlaybackLauncher",
         "app.muplay.media.PlaybackLauncher*play*2",
+        // Plan 3 Task 12: the `coroutineScope { async { refreshIfUnknown() } .. }` block, 5/5, and
+        // the `async` body itself, 1/1. LINE and deliberately not BRANCH -- `*play*items*1`
+        // measures 6/8 branches and the two missing arms are the `coroutineScope`/`async` state
+        // machine's own suspension points, not a decision anyone wrote. The decision that *is*
+        // there -- negotiate only when the answer is unknown -- lives in `TranscodeOffsetSupport`
+        // and is gated on BRANCH there.
+        "app.muplay.media.PlaybackLauncher*play*items*",
       ),
       requiresInstrumentedData = true,
     ),

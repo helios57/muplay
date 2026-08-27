@@ -92,6 +92,47 @@ object MediaItems {
   const val KEY_REPLAY_GAIN_PEAK = "app.muplay.replayGainPeak"
 
   /**
+   * The `format` wire value the item's URI was built with -- `"raw"` or `"mp3"`.
+   *
+   * Stamped so that **how this item may be seeked** is answerable from the item alone. A raw stream
+   * seeks with a byte `Range`; a transcode has no `Content-Length` to range over and has to be
+   * re-issued with `timeOffset` (spec section 4, and `TranscodeSeek`). Nothing else on a `MediaItem`
+   * can tell them apart: the MIME type says `audio/mpeg` for a transcoded Opus *and* for a plain
+   * mp3 streamed raw, which is exactly the pair that must not be confused.
+   *
+   * A `String`, not a [StreamFormat], because a `Bundle` cannot hold a sealed interface -- which is
+   * why `StreamFormat.Mp3.WIRE_VALUE` exists as a constant rather than as a literal in two files.
+   *
+   * **Absent** on an item this app did not build. `TranscodeSeek` treats that as "seek in place",
+   * which is what every player did before this key existed.
+   */
+  const val KEY_STREAM_FORMAT = "app.muplay.streamFormat"
+
+  /**
+   * The bitrate cap on the item's URI, present only when [KEY_STREAM_FORMAT] is `"mp3"`.
+   *
+   * Carried rather than re-derived, for the reason `format` is a parameter of [of] rather than
+   * something recomputed from `song.suffix`: re-issuing the URI at an offset has to ask for the
+   * *same* transcode, and a second decision about the bitrate is free to drift from the first the
+   * moment either rule changes. It is also part of Navidrome's transcoding-cache key, so a
+   * re-issue at a different cap is a different entry and a different encode mid-track.
+   */
+  const val KEY_STREAM_MAX_BITRATE_KBPS = "app.muplay.streamMaxBitRateKbps"
+
+  /**
+   * How far into the real track this item's stream begins, in milliseconds. Absent, and therefore
+   * zero, on every item that was not re-issued at an offset.
+   *
+   * **On the item rather than in a field on `MuPlayer`**, which is a deliberate difference from the
+   * design this task started with. A player-held base has to be reset on every item transition and
+   * by every `setMediaItem(s)` overload, and a base that is one transition stale reports a position
+   * from the previous track -- the same "one more place to keep in step with the queue" this
+   * object's ReplayGain keys are written to avoid. Read off the current item there is nothing to
+   * reset and nothing to forget.
+   */
+  const val KEY_TIME_OFFSET_MS = "app.muplay.timeOffsetMs"
+
+  /**
    * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
    *   inferable from anything the server sends -- see this object's own note above for why the
    *   library id plus the user's own `LibraryRole` is the only mechanism there is.
@@ -155,7 +196,7 @@ object MediaItems {
           // `song.replayGain` and so **not** a sixth parameter: unlike `isAudiobook` and `format`,
           // which no `Song` can answer, this one is already on the song. One authority, no second
           // place for it to drift to.
-          .setExtras(replayGainExtras(song))
+          .setExtras(extrasFor(song, format))
           .build(),
       )
       .build()
@@ -168,8 +209,36 @@ object MediaItems {
    * album gain as the fallback -- is made here, once, so that everything downstream of the queue
    * handles one number instead of re-deriving the choice per consumer.
    */
-  private fun replayGainExtras(song: Song): Bundle = Bundle().apply {
+  private fun extrasFor(song: Song, format: StreamFormat): Bundle = Bundle().apply {
     ReplayGainPolicy.gainDbFor(song.replayGain)?.let { putFloat(KEY_REPLAY_GAIN_DB, it) }
     song.replayGain?.peakAmplitude?.let { putFloat(KEY_REPLAY_GAIN_PEAK, it) }
+    putString(KEY_STREAM_FORMAT, format.wireValue)
+    if (format is StreamFormat.Mp3) putInt(KEY_STREAM_MAX_BITRATE_KBPS, format.maxBitRateKbps)
   }
+
+  /**
+   * The [StreamFormat] [item]'s URI was built with, or `null` for an item this object did not build.
+   *
+   * The inverse of the two stamps above, and the only reader of them: reconstructing the format in
+   * two places is how the re-issued URI and the original stop agreeing. A `"mp3"` stamp with no
+   * bitrate beside it is not a format anyone can ask a server for, so it reads as `null` rather than
+   * as a guess -- an item in that state was not built here.
+   */
+  fun streamFormatOf(item: MediaItem): StreamFormat? {
+    val extras = item.mediaMetadata.extras ?: return null
+    return when (extras.getString(KEY_STREAM_FORMAT)) {
+      StreamFormat.Raw.wireValue -> StreamFormat.Raw
+      StreamFormat.Mp3.WIRE_VALUE ->
+        extras.takeIf { it.containsKey(KEY_STREAM_MAX_BITRATE_KBPS) }
+          ?.let { StreamFormat.Mp3(it.getInt(KEY_STREAM_MAX_BITRATE_KBPS)) }
+      else -> null
+    }
+  }
+
+  /**
+   * How far into the real track [item]'s stream begins, in milliseconds -- `0` unless it was
+   * re-issued at an offset. See [KEY_TIME_OFFSET_MS].
+   */
+  fun timeOffsetMsOf(item: MediaItem): Long =
+    item.mediaMetadata.extras?.getLong(KEY_TIME_OFFSET_MS, 0L) ?: 0L
 }

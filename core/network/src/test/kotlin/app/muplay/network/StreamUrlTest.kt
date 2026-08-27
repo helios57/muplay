@@ -28,8 +28,11 @@ class StreamUrlTest {
     songId: String = "track-1",
     format: StreamFormat = StreamFormat.Raw,
     baseUrl: String = credentials.baseUrl,
+    timeOffsetSeconds: Int? = null,
   ): HttpUrl =
-    SubsonicClient(credentials.copy(baseUrl = baseUrl)).streamUrl(songId, format).toHttpUrl()
+    SubsonicClient(credentials.copy(baseUrl = baseUrl))
+      .streamUrl(songId, format, timeOffsetSeconds)
+      .toHttpUrl()
 
   @Test
   fun `the path is rest slash stream with no dot-view suffix`() {
@@ -86,6 +89,55 @@ class StreamUrlTest {
   @Test
   fun `a request that asks for no offset sends no timeOffset`() {
     assertThat(url().queryParameter("timeOffset")).isNull()
+    // The transcode arm of the same control, added by Task 12: it is the arm that now *can* carry
+    // the parameter, so it is the arm where "only when asked" has to be observed.
+    assertThat(url(format = StreamFormat.Mp3(192)).queryParameter("timeOffset")).isNull()
+  }
+
+  @Test
+  fun `a transcode asked for an offset carries it, in seconds`() {
+    // Two observations: `timeOffset` hardcoded to "5" passes exactly one of them.
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 5).queryParameter("timeOffset"))
+      .isEqualTo("5")
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 137).queryParameter("timeOffset"))
+      .isEqualTo("137")
+  }
+
+  /**
+   * `format=raw` disables transcoding, and `timeOffset` only means anything to the transcoder. On a
+   * raw request it is a parameter the server ignores and a reader misreads -- the same reasoning
+   * that keeps `maxBitRate` off a raw request.
+   */
+  @Test
+  fun `a raw request never carries a time offset even when one is asked for`() {
+    assertThat(url(format = StreamFormat.Raw, timeOffsetSeconds = 5).queryParameter("timeOffset"))
+      .isNull()
+    assertThat(url(format = StreamFormat.Raw, timeOffsetSeconds = 0).queryParameter("timeOffset"))
+      .isNull()
+  }
+
+  @Test
+  fun `a zero offset is sent, because it is a real request and not an absent one`() {
+    // `timeOffset=0` and no `timeOffset` produce the same audio -- measured against the container,
+    // 300369 bytes either way -- so this looks like a nicety. It is not: `0` is what "re-issue from
+    // the top" means, and mapping it to `null` would make the re-issue path silently untestable at
+    // its own boundary and would leave the seek-to-zero case reaching a *different* URL from every
+    // other seek.
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = 0).queryParameter("timeOffset"))
+      .isEqualTo("0")
+  }
+
+  /**
+   * A negative offset is clamped here as well as in `TranscodeSeek`, and neither is the other's
+   * guard: `Player.seekTo(-1)` is a legal call on a Media3 player, and `streamUrl` is a public
+   * method of the port that anything may call.
+   */
+  @Test
+  fun `a negative offset is clamped to zero rather than sent`() {
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = -1).queryParameter("timeOffset"))
+      .isEqualTo("0")
+    assertThat(url(format = StreamFormat.Mp3(192), timeOffsetSeconds = -3600).queryParameter("timeOffset"))
+      .isEqualTo("0")
   }
 
   @Test
