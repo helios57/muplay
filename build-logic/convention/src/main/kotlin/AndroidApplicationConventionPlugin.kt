@@ -210,15 +210,22 @@ private val BASE_DECLARATIONS = listOf(
  * manifest edit. Neither proves the resource *says* anything -- that is
  * `verifyAutomotiveDescriptor`'s job, and the reason it exists.
  *
- * `android.media.action.MEDIA_PLAY_FROM_SEARCH` is deliberately **not** here. Its handler lives in
- * `MuPlaybackService.onStartCommand` (Plan 5 Task 6), and requiring the filter before the handler
- * exists would mean shipping a manifest that claims to answer an Assistant intent nothing answers.
- * `ConventionTest`'s `a declared play-from-search filter must have a handler and a gate entry` is
- * what makes that pair land together instead.
+ * `android.media.action.MEDIA_PLAY_FROM_SEARCH` **is** here as of Plan 5 Task 6, and it was
+ * deliberately absent before that. The rule was that requiring the filter before its handler
+ * existed would mean shipping a manifest claiming to answer an Assistant intent nothing answers;
+ * the handler is now `MuPlaybackService.onStartCommand`, so the claim is true and this entry is
+ * what stops a later manifest edit from deleting the filter silently. `ConventionTest`'s
+ * `a declared play-from-search filter must have a handler and a gate entry` holds all three -- the
+ * filter, the handler and this line -- to a single answer, in either direction.
+ *
+ * It is also the only replacement `app/lint.xml` has for `MissingIntentFilterForMediaSearch`, which
+ * is disabled there because `AndroidAutoDetector` reads `:app`'s own manifest sources and this
+ * service is declared in `:core:media`'s -- measured, and recorded in that file.
  */
 private val AUTOMOTIVE_DECLARATIONS = listOf(
   """android:name="androidx.media3.session.MediaLibraryService"""",
   """android:name="android.media.browse.MediaBrowserService"""",
   """android:name="com.google.android.gms.car.application"""",
   """android:resource="@xml/automotive_app_desc"""",
+  """android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH"""",
 )

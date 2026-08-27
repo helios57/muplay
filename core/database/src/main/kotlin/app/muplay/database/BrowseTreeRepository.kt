@@ -4,12 +4,14 @@ import app.muplay.model.Album
 import app.muplay.model.Artist
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.SearchResults
 import app.muplay.model.Song
 import app.muplay.model.browse.BrowseId
 import app.muplay.model.browse.BrowseNode
 import app.muplay.model.browse.BrowseSelection
 import app.muplay.model.browse.BrowseSurface
 import app.muplay.model.browse.BrowseTree
+import app.muplay.model.browse.PlayFromSearch
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
@@ -193,6 +195,81 @@ class BrowseTreeRepository @Inject constructor(
       .takeIf { it.isNotEmpty() }
 
   /**
+   * What a search box in a car should show: books first, then albums, then artists, then tracks.
+   *
+   * Plan 2's `search` answers against the **local mirror**, so this costs a Room query per library
+   * and no network -- which is why nothing is cached between `onSearch` and `onGetSearchResult`.
+   * A cache would be a map keyed by (controller, query) with an eviction policy, a staleness
+   * question every time `SyncEngine` reconciles mid-drive, and a second code path that can disagree
+   * with the first about how many results there are.
+   *
+   * **The books/music split is by library role, not by any property of the row.** Spec section 4 is
+   * explicit that Navidrome never reports that something is an audiobook, so an album in a library
+   * the user tagged Audiobooks *is* a book and one anywhere else is not. And it is **structural**
+   * here, exactly as it is in [children]: `BrowseRepository.search` takes a `libraryId` and has no
+   * unscoped form, so the audiobook libraries are asked for books and the music libraries are asked
+   * for music. There is no filter to delete that would widen either.
+   *
+   * The matched book *albums* are turned back into [BookSummary] rows through the shelf rather than
+   * rendered as albums, so a book found by search carries the completion pip it carries on the
+   * Books tab. A row the shelf does not know is dropped, which is the same answer [children] gives.
+   */
+  suspend fun search(query: String): List<BrowseNode> {
+    val bookAlbumIds = librariesWithRole(LibraryRole.AUDIOBOOKS)
+      .flatMap { browseRepository.search(it.id, query, SEARCH_LIMIT).albums }
+      .map(Album::id)
+      .toSet()
+    val books = bookshelf.books().filter { it.bookId in bookAlbumIds }
+
+    val music = librariesWithRole(LibraryRole.MUSIC)
+      .map { browseRepository.search(it.id, query, SEARCH_LIMIT) }
+
+    return BrowseTree.searchNodes(
+      books = books,
+      albums = music.flatMap(SearchResults::albums),
+      artists = music.flatMap(SearchResults::artists),
+      songs = music.flatMap(SearchResults::songs),
+    )
+  }
+
+  /**
+   * The one thing a **spoken** query should start, already expanded into a queue.
+   *
+   * Two things happen here that [search] does not do, and both exist because a driver said this out
+   * loud rather than typing it:
+   *
+   *  * **`PlayFromSearch` decides, not the mirror.** A `LIKE` match is a set; a spoken request is
+   *    one answer, and "exact title" has to beat "contains the words" or *"play Tail Book"* starts
+   *    whichever book the shelf happens to list first.
+   *  * **What the matched rows cannot answer, the whole shelf does.** `LIKE '%Tail, Book!%'`
+   *    matches nothing, and that punctuation is exactly what a speech recogniser hands over -- so
+   *    without the second pass, `PlayFromSearch.normalise` would be unreachable in production and a
+   *    request that missed by a comma would answer with silence. The same pass covers the other way
+   *    a first answer fails: a book row whose files a sync has not reached yet is playable as a row
+   *    and expands to nothing.
+   *
+   * Books and music albums, not songs, in the fallback: it is the "what could I play" set, and a
+   * library's whole song list is not one.
+   *
+   * `null` only when there is nothing expandable in the library at all.
+   */
+  suspend fun searchSelection(query: String): BrowseSelection? =
+    firstThatExpands(PlayFromSearch.rank(query, search(query)))
+      ?: firstThatExpands(PlayFromSearch.rank(query, everythingPlayable()))
+
+  /** The best-ranked candidate that really becomes a queue, or `null` if none of them does. */
+  private suspend fun firstThatExpands(candidates: List<BrowseNode>): BrowseSelection? =
+    candidates.firstNotNullOfOrNull { expand(it.id) }
+
+  /** Every book and every music album, in the order a search result list would put them. */
+  private suspend fun everythingPlayable(): List<BrowseNode> = BrowseTree.searchNodes(
+    books = bookshelf.books(),
+    albums = musicAlbums(),
+    artists = emptyList(),
+    songs = emptyList(),
+  )
+
+  /**
    * A `coverArt` id turned into a URL, or `null` when nothing is configured.
    *
    * `runCatching`, because `SubsonicSourceProvider.current()` throws `NotConfiguredException` when
@@ -248,5 +325,17 @@ class BrowseTreeRepository @Inject constructor(
      * source set that can see both.
      */
     const val ARTWORK_SIZE_PX: Int = 512
+
+    /**
+     * How many rows of each kind, per library, one search asks the mirror for.
+     *
+     * A cap and not a page: `BrowsePaging` does the paging, and a car host asks for whatever page
+     * size it wants. What this bounds is the Room read and the list `PlayFromSearch` walks -- a
+     * one-letter query against a real library would otherwise materialise every row in it on a
+     * background thread a driver is waiting on. The same number `LibraryViewModel.SEARCH_LIMIT`
+     * uses for the phone's own search box; they are deliberately independent constants, because
+     * that one bounds a list a thumb scrolls and this one bounds a list a car renders four rows of.
+     */
+    const val SEARCH_LIMIT: Int = 50
   }
 }
