@@ -6,6 +6,7 @@ import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -402,7 +403,28 @@ class SleepTimerControllerTest {
     harness.await("playback to pause once the queue has moved on", timeoutMs = FIRE_TIMEOUT_MS) {
       !harness.player.isPlaying
     }
-    assertThat(harness.onMain { harness.player.currentMediaItem?.mediaId })
+    val (state, position, mediaId) = harness.onMain {
+      Triple(
+        harness.player.playbackState,
+        harness.player.currentPosition,
+        harness.player.currentMediaItem?.mediaId,
+      )
+    }
+
+    // **These three are what make the wait above non-vacuous, and that is measured rather than
+    // argued.** Part One and Part Two together run ten seconds, so "playback stopped" is satisfied
+    // by the queue simply *ending* -- and it was: with the media-id guard removed, this test stayed
+    // green while `anEndOfChapterTimerOnAnEmptyQueueFiresRatherThanHanging` went red. A timer that
+    // kept counting into the next file reaches `STATE_ENDED` at Part Two's own end, six seconds in;
+    // the guard pauses on the first tick after the transition, still `STATE_READY`, a fraction of a
+    // second in.
+    assertThat(state)
+      .describedAs("STATE_READY (%d), not STATE_ENDED (%d)", Player.STATE_READY, Player.STATE_ENDED)
+      .isEqualTo(Player.STATE_READY)
+    assertThat(position)
+      .describedAs("how far into Part Two the timer let playback get")
+      .isLessThan(PART_TRANSITION_MS)
+    assertThat(mediaId)
       .describedAs("the queue really did transition, so this is the guard and not an early fire")
       .isEqualTo(parts[1].id)
     assertThat(harness.onMain { harness.player.volume }).isEqualTo(FULL_VOLUME)
@@ -589,6 +611,13 @@ class SleepTimerControllerTest {
     const val PLAYBACK_TIMEOUT_MS = 30_000L
     const val RESUME_MS = 1_000L
     const val FULL_VOLUME = 1.0f
+
+    /**
+     * How far into the second file the multi-file timer may let playback get before it pauses.
+     * The tick is 250 ms and Part Two runs six seconds, so this separates "paused at the
+     * transition" from "played the whole next file".
+     */
+    const val PART_TRANSITION_MS = 2_000L
 
     /** How far ahead of the playhead the speed test puts its stop position. */
     const val AHEAD_MS = 8_000L
