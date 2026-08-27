@@ -1,13 +1,11 @@
 package app.muplay.wear
 
-import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaBrowser
-import androidx.media3.session.SessionToken
 import app.muplay.media.MuPlaybackService
 import app.muplay.model.browse.BrowseSurfaces
 import com.google.common.util.concurrent.ListenableFuture
@@ -93,16 +91,29 @@ class WearBrowser @Inject constructor(@ApplicationContext private val context: C
     mainHandler.post {
       val future = pending ?: return@post
       pending = null
-      // A connection still in flight is cancelled; a resolved one is released. `isDone` is the only
-      // way to tell without blocking, and `get()` on a done future cannot block.
-      if (future.isDone) runCatching { future.get().release() } else future.cancel(true)
+      // No `if (isDone)` branch, deliberately, and it is not a shortcut. `cancel` on an already
+      // completed future is a documented no-op returning `false`, and Media3 releases the
+      // controller when a build future is cancelled -- so this one pair of lines covers both the
+      // in-flight and the resolved case. On a cancelled future `get()` throws, which is what
+      // `runCatching` is here for; on a resolved one it returns the browser and releases it.
+      //
+      // The branch that would tell them apart is one no test can drive on purpose (it needs a
+      // release timed inside a connection), and an untestable branch in a five-line function is a
+      // permanently uncovered line pretending to be a decision.
+      future.cancel(true)
+      runCatching { future.get().release() }
     }
   }
 
   private fun connectAsync(): ListenableFuture<MediaBrowser> {
-    val token = SessionToken(context, ComponentName(context, MuPlaybackService::class.java))
+    // `MuPlaybackService.sessionToken`, not a hand-built `SessionToken(context, ComponentName(..))`:
+    // the service owns the name of its own component, and the phone app's browsers already reach it
+    // through that helper. A second construction of the same token here is a second place a rename
+    // has to be remembered.
     val hints = Bundle().apply { putString(BrowseSurfaces.HINT_KEY, BrowseSurfaces.HINT_WATCH) }
-    return MediaBrowser.Builder(context, token).setConnectionHints(hints).buildAsync()
+    return MediaBrowser.Builder(context, MuPlaybackService.sessionToken(context))
+      .setConnectionHints(hints)
+      .buildAsync()
   }
 
   /** Runs [block] on the main thread and returns its result to the calling coroutine. */

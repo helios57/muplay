@@ -3518,6 +3518,47 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
   ),
+  // `:wear` (Plan 5 Task 8). **THE ONE ENTRY IN THIS TABLE WHOSE RATIO IS NOT MEASURED**, and that
+  // is stated first because every other comment here is a measurement and a reader is entitled to
+  // assume this one is too.
+  //
+  // WHY IT COULD NOT BE MEASURED. The only thing that executes a line of this module is
+  // `WearSessionJourneyTest`, which runs on a **Wear OS** emulator. The host this task was executed
+  // on has one AVD (`muplay37`, an API 37 phone) shared by every agent working in this repository,
+  // and no Wear system image installed. Creating and booting a second emulator there would put two
+  // devices in front of every other lane's `connectedDebugAndroidTest`, which is the shared-device
+  // corruption CLAUDE.md already records twice. So the first execution of this module's suite --
+  // and the first measurement of this floor -- is the "Wear journey" step in
+  // `.github/workflows/e2e.yml`, added by the same task.
+  //
+  // WHY 0.90 AND NOT SOMETHING LOWER. An unmeasured floor has to err in the direction that fails
+  // loudly. Too high and the wear step goes red on its first CI run, naming this entry; too low and
+  // it is a floor that cannot fail, which this repository ranks as the worse defect and has already
+  // shipped once. 0.90 is the project minimum, so it is also the number that needs no justification
+  // of its own.
+  //
+  // WHY ONLY `WearBrowser`. It is the only class in the module with logic today.
+  // `MuPlayWearApplication` is an annotation on an empty class; `WearActivity` and `WearAppKt` are
+  // Task 9's placeholder UI, never composed by this task's suite, and would measure 0 -- a BUNDLE
+  // rule here would fail for a reason unrelated to anything being wrong. Task 9 adds the UI, a UI
+  // journey and the floors that go with them; Task 11 re-measures all of it. Until then
+  // `warnUngatedClasses` naming those two classes on every run is the honest state of affairs.
+  //
+  // TASK 9/11: replace this comment with the real ratio out of
+  // `wear/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml`, and re-run the
+  // falsification. Do not carry these paragraphs forward -- they describe a host, not a property.
+  ":wear" to listOf(
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.wear.WearBrowser"),
+      // Every line of this module runs on a watch or not at all: there is no JVM tier here, and
+      // `:wear` has no `src/test` source set. Marked `true` so Tier 1 and `check` skip it rather
+      // than enforcing a floor against an empty report.
+      requiresInstrumentedData = true,
+    ),
+  ),
   // `:core:cast` (Plan 6 Task 1, raised by its security review). A pure-JVM module with no Compose
   // and no Android, so BOTH floors here are BRANCH and both are enforceable in Tier 1 --
   // `requiresInstrumentedData` appears nowhere in this entry, deliberately. The include list grows
