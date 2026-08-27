@@ -741,3 +741,56 @@ test in `VerifyMergedManifestTaskTest`.
 
 This is the same defect as `verifyReleaseNoDestructiveMigration` reading comments, running the other
 way: there prose caused a false *failure*, here it caused a false *pass*.
+
+## Sibling lanes share one scratchpad directory, and `falsify.py` is not a unique name
+
+The per-session scratchpad (`/tmp/claude-*/<session-id>/scratchpad`) is shared by **every lane the
+fleet runs in that session**, not one per lane. Two lanes writing a harness to the obvious name
+collide silently.
+
+Measured: this lane's `cat > .../scratchpad/falsify.py` overwrote another lane's file of the same
+name, and its `falsify.log` truncated theirs mid-run, destroying a floor falsification they had
+spent minutes measuring. Worse, `pgrep -af falsify.py` then showed **two** running processes, which
+read as "I somehow launched twice" — and killing the stranger killed *their* harness between
+mutation and revert, leaving a stray `@Disabled` in **their** worktree for their dirty-tree guard
+to blame on whoever came next.
+
+So: **prefix every scratchpad file with your lane name** (`p6t8-falsify.py`), and before killing a
+process you did not expect, check *which worktree* it is running against — the `cd` in its command
+line says so.
+
+Two more things that harness taught, both cheap:
+
+- **A `nohup … &` inside a foreground harness call does not outlive the call.** The probe run
+  launched that way was killed with the call and left a stray mutation. Launch the long command as
+  the background command itself (`run_in_background`), not as a `nohup` inside a short one.
+- **Install a SIGTERM/SIGINT handler that restores the snapshot**, not just a `finally`. A default
+  SIGTERM terminates without running `finally`, which is exactly how a killed harness leaves a
+  stray.
+
+## Two concurrent `ci/mutation-probes.sh` runs trip each other's missing-results guard
+
+Nothing serialises probe runs the way `ci/device-lock.sh` serialises the emulator, and two lanes
+running the script at once share one Gradle daemon and one build cache. Measured here:
+`./ci/mutation-probes.sh session/` aborted with
+
+    run_suite(): no test results were written for ['core/cast', 'integrations/lidarr', 'feature/player']
+
+while another lane was running `./ci/mutation-probes.sh chapters/` in its own worktree. The
+script's own Gradle line, run by hand on the identical tree, was BUILD SUCCESSFUL, and re-running
+the family alone was 13/13. `run_suite()` deletes each module's result directory to force a re-run,
+and the other run's cache entries then satisfy those tasks FROM-CACHE without repopulating them.
+
+Check `pgrep -af mutation-probes` before blaming your own tree, and re-run rather than debug.
+
+## A bare `Metaspace` failure from `./gradlew check` is the shared daemon, not your code
+
+Twice in one afternoon, with several lanes building at once, `./gradlew --no-build-cache check`
+failed with three tasks reporting nothing but
+
+    * What went wrong:
+    Metaspace
+
+naming `:feature:library:kspDebugKotlin` and two unnamed others. A plain retry was green both
+times, on the identical tree. It names no useful task and it is not a compilation error; retry
+before investigating.
