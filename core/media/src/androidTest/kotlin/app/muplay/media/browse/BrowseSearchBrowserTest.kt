@@ -405,10 +405,21 @@ class BrowseSearchBrowserTest {
     return result as T
   }
 
-  /** Records what `notifySearchResultChanged` told this browser, in order. */
+  /**
+   * Records what `notifySearchResultChanged` told this browser, in order.
+   *
+   * [queries] and [counts] hand back **copies**, and that is not tidiness. The notification arrives
+   * on the application's main thread while the test thread is asserting, so asserting on the live
+   * lists produces the least legible failure AssertJ has: `["a"] to contain exactly ["a"] but could
+   * not find ["a"]`, because the list grew between AssertJ reading it and describing it. Measured,
+   * on exactly the mutation this recorder exists to catch -- the notification moved after the
+   * future resolves. A snapshot fails as `[] to contain exactly ["a"]`, which says what happened.
+   */
   private class SearchRecorder : MediaBrowser.Listener {
-    val queries = mutableListOf<String>()
-    val counts = mutableListOf<Int>()
+    private val seen = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Int>>()
+
+    val queries: List<String> get() = seen.map { it.first }
+    val counts: List<Int> get() = seen.map { it.second }
 
     override fun onSearchResultChanged(
       browser: MediaBrowser,
@@ -416,8 +427,7 @@ class BrowseSearchBrowserTest {
       itemCount: Int,
       params: LibraryParams?,
     ) {
-      queries += query
-      counts += itemCount
+      seen += query to itemCount
     }
   }
 
