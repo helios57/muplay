@@ -4421,6 +4421,187 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
     ),
   ),
+  // `:integrations:bindery`, Task 8 -- the second service, and the first evidence that this
+  // plan's abstraction is severable rather than merely claimed to be.
+  //
+  // **`"CLASS"` rules, not the one `"BUNDLE"` BRANCH rule the plan proposed at 0.90, and that is a
+  // measurement rather than a preference.** The plan's placeholder rested on the same argument
+  // Task 4's did -- plain Kotlin over Retrofit, so Tier-1 enforceable like `:core:network` -- and
+  // it fails for the same reason: `BinderySourceProvider`'s only collaborator is
+  // `IntegrationCredentialStore`, DataStore over the Android Keystore, which has no JVM tier at
+  // all. Measured, that class is **0/4 BRANCH and 0/6 LINE without instrumented data**, so a
+  // BUNDLE rule would have had to be marked `requiresInstrumentedData` and would have dragged
+  // every branch in the client into the 45-minute tier to accommodate one class that needs a
+  // device. The `"CLASS"` form puts each class in the tier that can actually see it.
+  ":integrations:bindery" to listOf(
+    // 1. The **fast tier's** BRANCH rule: the three classes with author-written branches.
+    //
+    // MEASURED from `integrations/bindery/build/reports/jacoco/jacocoTestReport/jacocoTestReport
+    // .xml` after a plain `:integrations:bindery:testDebugUnitTest`, no emulator involved:
+    //
+    //   `BinderyClient`        106/108 = 0.9815
+    //   `BinderyStatusMapper`    5/5   = 1.0000
+    //   `BinderyServer`          6/6   = 1.0000
+    //
+    // **The two missing `BinderyClient` branches are Kotlin-unreachable**, both on the single
+    // expression `response.errorBody()?.string().orEmpty()`: Retrofit supplies an error body for
+    // every unsuccessful response and `ResponseBody.string()` is non-null, so neither null arm can
+    // be taken. Same artifact, same reason, as `LidarrClient`'s four and
+    // `IntegrationCredentialStore`'s eighteenth. So **0.9815 is the honest ceiling** and a 1.00
+    // here would fail the build on the Kotlin compiler rather than on this project's code.
+    //
+    // The floor is 0.90 rather than 0.98: Task 9 adds callers to this same class, and a floor two
+    // branches under a ceiling fires on the first Kotlin-unreachable arm one of them introduces.
+    // 0.90 over 108 branches still refuses ten uncovered ones.
+    //
+    // Eleven branches in this rule were closed by tests written *because* the measurement was
+    // taken: a `204` on the add (the one success Retrofit hands back with a null body), a book row
+    // with a blank `foreignBookId`, a row with `title`/`status`/`mediaType` omitted, a search
+    // element whose nested `author` carries blank strings, a non-blank `asin` (**no** element of
+    // the real 40-result fixture carries one, so without a synthetic row a client that always
+    // returned null for it would have been indistinguishable from one that read it), and a JSON
+    // failure body with no `error` key at all. Every one is a shape a real Bindery or a real proxy
+    // can produce and none had an observation.
+    //
+    // FALSIFIED, and it took two tests to move -- the second-caller effect this table has been
+    // bitten by three times, met again. Withholding `BinderySearchTest`'s
+    // `every candidate field is read from its own element` alone leaves this class at **106/108
+    // and green**, because `a blank optional field is read as nothing and a present one as itself`
+    // walks the same arms from the other side. Withholding **both** gives **95/108 = 0.8796** and
+    // `jacocoJvmCoverageVerification` fails with "branches covered ratio is 0.87, but expected
+    // minimum is 0.90". Transcript in task-8-report.md.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.bindery.BinderyClient",
+        "app.muplay.integrations.bindery.BinderyStatusMapper",
+        "app.muplay.integrations.bindery.BinderyServer",
+      ),
+    ),
+    // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
+    // Measured, all at 1.0000: `BinderyClient` 61/61, its companion 10/10 (the `Json` config and
+    // `buildApi`), `BinderyAuthInterceptor` 7/7 -- the class that decides where the API key goes --
+    // `BinderyStatusMapper` 7/7, `BinderyServer` 2/2, `BinderyBook` 6/6, `BinderyBookCandidate`
+    // 8/8, `BinderyBookPage` 5/5, `BinderyMediaType` 4/4, the three `Bindery*Exception` members at
+    // 2/2 each, `DefaultBinderySourceFactory` 1/1 and `di.BinderyModule` 1/1.
+    //
+    // Those last two are here for the reason `:integrations:lidarr`'s pair is: its equivalents were
+    // measured at **0/1 each** on their first run -- the production factory and its Hilt binding
+    // exercised by nothing at all while every test in the module passed. `BinderyWiringTest` is
+    // what covers them here, and this rule is what stops that quietly going away.
+    //
+    // **READ THIS BEFORE TRUSTING WHAT `BinderyAuthInterceptor` 7/7 LOOKS LIKE IT SAYS.** It is
+    // measured, and it is not evidence about the API key. Falsified here: withholding **all six**
+    // of `BinderyAuthTest`'s tests -- every assertion in this repository about where a Bindery key
+    // goes -- leaves that class at **7/7 and both coverage gates GREEN**, because every other wire
+    // test in the module sends real requests through the same interceptor and its lines run on any
+    // request at all. The class has no branches, so no BRANCH rule can gate it either.
+    // `ci/mutation-probes.sh`'s `integrations/bindery-*` family is what says anything about the
+    // key's placement, and nothing here does.
+    //
+    // `BinderyClient*` also matches the coroutine state machines `health$1`/`call$1`/`proven$1`
+    // and so on, which carry no LINE counter at all (JaCoCo's isNaN pass, which is not the same
+    // thing as excluded), and the three `$body$1`/`$response$1` lambdas at 1/1 or 8/8.
+    // `Bindery*Exception` also matches the sealed interface `BinderyException`, which carries no
+    // counters and rides along so `warnUngatedClasses` has nothing to say about it.
+    //
+    // FALSIFIED: withholding all six `BinderyBooksTest` tests that build a page drops
+    // `BinderyBookPage` to **0/5** and `BinderyBook` to 0/6, and the gate fails with
+    // "Rule violated for class app.muplay.integrations.bindery.BinderyBookPage: lines covered
+    // ratio is 0.00, but expected minimum is 0.90". Transcript in task-8-report.md.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.bindery.BinderyClient*",
+        "app.muplay.integrations.bindery.BinderyAuthInterceptor",
+        "app.muplay.integrations.bindery.BinderyStatusMapper",
+        "app.muplay.integrations.bindery.BinderyServer",
+        "app.muplay.integrations.bindery.BinderyBook",
+        "app.muplay.integrations.bindery.BinderyBookCandidate",
+        "app.muplay.integrations.bindery.BinderyBookPage",
+        "app.muplay.integrations.bindery.BinderyMediaType",
+        "app.muplay.integrations.bindery.Bindery*Exception",
+        "app.muplay.integrations.bindery.DefaultBinderySourceFactory",
+        "app.muplay.integrations.bindery.di.BinderyModule",
+      ),
+    ),
+    // 3 and 4. `BinderySourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
+    // emulator's execution data, and **0/4 and 0/6 without it**. That is a measurement, taken by
+    // reading the JVM tier's own report, not a judgement: the provider's one collaborator is
+    // `IntegrationCredentialStore`, which is DataStore over the Android Keystore and has no JVM
+    // tier at all, and this project ships no mock framework to stand in for it.
+    //
+    // Its own rules rather than a ride-along, because "returns `null` when nothing is configured"
+    // is the single most important behaviour in this module: it is the state a real user with no
+    // Bindery is in permanently, and the plan's severability contract names a not-configured path
+    // that every test configures around as this plan's most likely defect.
+    //
+    // **These floors are only enforced by the emulator job, so `:integrations:bindery` has to be
+    // on that job's command line** in `.github/workflows/e2e.yml`. `ConventionTest`'s
+    // `every module with instrumented tests is run by the emulator job` is what checks that -- and
+    // note the failure mode it exists for: a module missing from that line has its instrumented
+    // tests skipped *and* its `requiresInstrumentedData` floors skipped, by the same omission, so
+    // the gate and the thing it gates fail together and silently.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.bindery.BinderySourceProvider"),
+      requiresInstrumentedData = true,
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.bindery.BinderySourceProvider*"),
+      requiresInstrumentedData = true,
+    ),
+    // 5. The five wire DTOs, gated **low rather than not at all** -- the identical trade
+    // `:integrations:core` makes for `IntegrationCredentialStore*`'s coroutine machinery and
+    // `:integrations:lidarr` makes for its own six, and made here for the identical reason:
+    // leaving them ungated would print `warnUngatedClasses` lines on every run forever, which is
+    // how a warning mechanism dies.
+    //
+    // MEASURED: `HealthBody` and `ErrorBody` **1/2 = 0.5000** each, `BookBody` 5/8 = 0.6250,
+    // `BookPageBody` 5/7 = 0.7143, `AddBookBody` 7/8 = 0.8750, and each one's `$$serializer`
+    // companion at 1/1. The uncovered lines are a `data class`'s generated
+    // `equals`/`hashCode`/`copy`/`componentN`, which nothing calls because these types exist only
+    // to be serialised through.
+    //
+    // **So the measured minimum here is 0.5000, and this floor is 0.40 -- deliberately below it.**
+    // That is a decision, recorded rather than an oversight, and it is the same number
+    // `:integrations:lidarr`'s equivalent rule carries: Task 9 adds DTOs to this module, a wider
+    // `data class` has proportionally more generated lines nothing calls, and a floor sitting
+    // exactly on the current minimum fires on the first one. What 0.40 still refuses is a DTO that
+    // nothing deserialises at all, which measures 0.
+    //
+    // FALSIFIED, and the falsification is the reason this entry is worth having: withholding
+    // `BinderyHandshakeTest`'s five tests drops `HealthBody` to **0/2 = 0.0000** and
+    // `jacocoJvmCoverageVerification` fails with "Rule violated for class
+    // app.muplay.integrations.bindery.HealthBody: lines covered ratio is 0.00, but expected
+    // minimum is 0.40". Note what that says and does not: the floor fires when a DTO stops being
+    // deserialised at all, and says nothing about whether any of its fields is read correctly.
+    // Transcript in task-8-report.md.
+    //
+    // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
+    // pass); LINE is the only counter that can hold them to anything.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.40"),
+      includes = listOf(
+        "app.muplay.integrations.bindery.HealthBody*",
+        "app.muplay.integrations.bindery.ErrorBody*",
+        "app.muplay.integrations.bindery.BookBody*",
+        "app.muplay.integrations.bindery.BookPageBody*",
+        "app.muplay.integrations.bindery.AddBookBody*",
+      ),
+    ),
+  ),
 )
 
 /**

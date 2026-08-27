@@ -211,6 +211,11 @@ LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr
 LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
 LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
 LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
+BINDERY_INT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyAuthInterceptor.kt"
+BINDERY_CLIENT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyClient.kt"
+BINDERY_API = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyApi.kt"
+BINDERY_EXC = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyException.kt"
+BINDERY_STATUS = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -2988,6 +2993,124 @@ PROBES = [
      '@POST("api/v1/album")', '@POST("api/v1/artist")',
      "the add is a POST to api v1 album with a json content type", 2),
 
+    # ---- Plan 7 Task 8: Bindery, the second service --------------------------------------------
+    # THIS FAMILY EXISTS BECAUSE THE COVERAGE GATE CANNOT SEE MOST OF IT, measured rather than
+    # assumed. `BinderyAuthInterceptor` has no branches at all and its seven lines run on any
+    # request whatsoever, so its 7/7 LINE floor stays green under every key-placement mutation
+    # below; withholding all six of `BinderyAuthTest`'s tests -- every assertion in this repository
+    # about where a Bindery API key goes -- also leaves that floor at 7/7 and both coverage gates
+    # GREEN. A green `./gradlew check` is no evidence at all about the key's placement.
+    #
+    # The counts below were MEASURED on this family's first full run, not predicted.
+
+    # 1. The key itself. A constant here authenticates against nothing and fails loudly in the
+    #    field, but it is the shape that ships: a hardcoded value satisfies "the header is present"
+    #    and this project has already shipped exactly that defect as `authParams() = emptyMap()`.
+    ("integrations/bindery-api-key-header", BINDERY_INT,
+     '.header("X-Api-Key", apiKey)', '.header("X-Api-Key", "constant")',
+     "every request carries the key in the X-Api-Key header, at two values", 0),
+
+    # 2. The key on the URL. Bindery really does accept `?apikey=` on a GET (measured: 200), so this
+    #    is a live wrong path -- and it is WORSE than Lidarr's, because Bindery *refuses* a
+    #    query-string key on a mutation (measured: 401). A client that drifted this way would search
+    #    and list fine and fail only at the add. Adding the query parameter while LEAVING the header
+    #    in place is deliberate: every response assertion in the module still passes, because the
+    #    request still authenticates.
+    ("integrations/bindery-api-key-on-url", BINDERY_INT,
+     '.header("X-Api-Key", apiKey)',
+     '.url(chain.request().url.newBuilder().addQueryParameter("apikey", apiKey).build()).header("X-Api-Key", apiKey)',
+     "no request this client makes carries the key on its url", 0),
+
+    # 3. Content negotiation, pinned in one place so an endpoint a later task adds cannot forget it.
+    ("integrations/bindery-accept-json", BINDERY_INT,
+     '.header("Accept", "application/json")', '.header("Accept", "*/*")',
+     "every request declares that it accepts json", 0),
+
+    # 4. THE TRAP. `mediaType` defaults to `ebook` SERVER-SIDE -- measured, a POST omitting it
+    #    answers 201 with `"mediaType":"ebook"` on the created book -- so a dropped or constant
+    #    field silently acquires an EPUB that Navidrome will never scan. The request then sits at
+    #    Imported forever and never becomes Arrived, with nothing anywhere saying why.
+    ("integrations/bindery-mediaType", BINDERY_CLIENT,
+     "mediaType = mediaType.wireValue,", 'mediaType = "ebook",',
+     "the media type is always sent, and is audiobook by default", 0),
+
+    # 5. The identifier the whole request row is keyed on. Same probe, same reason, as Lidarr's
+    #    `-add-foreignAlbumId`: a constant produces a 201, a happy request row, and the wrong book.
+    ("integrations/bindery-foreignBookId", BINDERY_CLIENT,
+     "foreignBookId = candidate.foreignBookId,", 'foreignBookId = "book-1",',
+     "the body carries the book identifier that was asked for, not a constant", 0),
+
+    # 6. The search term. `api.searchBook("dune")` still returns results, still parses, and still
+    #    fills a screen -- with somebody else's book.
+    ("integrations/bindery-search-term", BINDERY_CLIENT,
+     "api.searchBook(term)", 'api.searchBook("dune")',
+     "the search parameter is term, and never q", 0),
+
+    # 7. The search parameter's NAME, which is the one Bindery's own documentation gets wrong. The
+    #    docs say `q`; the handler reads `term`, and `q` answers 400 with a body byte-identical to
+    #    the one a request with no parameter at all gets. A client written from the documentation
+    #    cannot search, and cannot tell why.
+    ("integrations/bindery-search-param-name", BINDERY_API,
+     '@Query("term") term: String', '@Query("q") term: String',
+     "the search parameter is term, and never q", 0),
+
+    # 8. `searchOnAdd`, hardcoded true. Every add still succeeds; the user's "just record it, do not
+    #    go and fetch it" choice is silently discarded.
+    ("integrations/bindery-searchOnAdd", BINDERY_CLIENT,
+     "searchOnAdd = searchOnAdd,", "searchOnAdd = true,",
+     "searchOnAdd carries whichever value it was given", 0),
+
+    # 9. The author fields, read from the wrong place -- and this is not a hypothetical mutation,
+    #    it is the shape THE PLAN EXPECTED. `authorName` and `foreignAuthorId` are nested under an
+    #    `author` object; reading them top-level yields null on every element of a real search, and
+    #    an add with neither answers 422.
+    ("integrations/bindery-author-nested", BINDERY_CLIENT,
+     'authorName = author?.string("authorName")?.takeIf { it.isNotBlank() },',
+     'authorName = obj.string("authorName")?.takeIf { it.isNotBlank() },',
+     "every candidate field is read from its own element", 0),
+
+    # 10. Paging. Constants here read page one forever, which looks exactly like a library that has
+    #     stopped changing.
+    ("integrations/bindery-books-paging", BINDERY_CLIENT,
+     "api.books(status, limit, offset)", "api.books(status, 100, 0)",
+     "the status, limit and offset are each sent as given, at two values", 0),
+
+    # 11. `downloaded` collapsed onto `Imported`. The file is fetched but has not been moved into
+    #     the library folder, so Navidrome cannot have scanned it -- and `Imported` is what Task 9
+    #     treats as "start looking for it in the mirror". This mutation starts a search that can
+    #     never succeed and looks, to a user, like the arrival detection is broken.
+    ("integrations/bindery-status-downloaded", BINDERY_STATUS,
+     '"downloaded" -> RequestStatus.Downloading(percentComplete = null)',
+     '"downloaded" -> RequestStatus.Imported',
+     "downloaded is progress, not arrival", 0),
+
+    # 12. An unrecognised status turned into a verdict. Bindery has no failure status at all, so
+    #     `Failed` here would be a claim the server never made -- reported to a user about a book
+    #     that is merely still being looked for.
+    ("integrations/bindery-status-unknown", BINDERY_STATUS,
+     "else -> RequestStatus.Requested",
+     'else -> RequestStatus.Failed("unknown bindery status")',
+     "a status this client does not know makes the least possible claim", 0),
+
+    # 13. A created book with no usable id. `0` is not a hypothetical value: it is what EVERY
+    #     Bindery search result carries, so it is precisely the number a wrong parse produces, and a
+    #     `BinderyBook(id = 0)` puts a row in the request store that every later poll looks up under
+    #     an id no book has.
+    ("integrations/bindery-zero-id-accepted", BINDERY_CLIENT,
+     "val id = body.id?.takeIf { it != 0 } ?: return null",
+     "val id = body.id ?: 0",
+     "a created response with no usable id fails loudly rather than returning zero", 0),
+
+    # 14. The containment boundary this module found by running a test rather than by reasoning:
+    #     `BinderyMessageException` carries Bindery's own sentence, and writing it as
+    #     `Exception(binderyMessage)` -- the obvious way, and the way `LidarrValidationException`
+    #     writes its own -- puts whatever the server said into `toString()`, which is the one thing
+    #     a crash reporter uploads. The test enqueues a refusal whose body quotes the API key back.
+    ("integrations/bindery-server-text-in-exception", BINDERY_EXC,
+     'Exception("Bindery refused this request (HTTP $status)"), BinderyException',
+     "Exception(binderyMessage), BinderyException",
+     "no failure this client raises names the api key", 0),
+
     # ---- Plan 3 Task 11: ReplayGain, at the three layers the JVM tier can reach ----------------
     # The fourth layer -- the samples -- is instrumented and therefore out of this runner's reach
     # for the reason the header gives; `GainAudioProcessor`, `ReplayGainController`, `MediaItems`
@@ -3509,6 +3632,14 @@ JVM_TEST_RESULT_DIRS = {
     # on the emulator and recorded in task-4-report.md, the same way `LiveNavidromeTest`'s
     # test-side probes already are.
     "integrations/lidarr": "testDebugUnitTest",
+    # `:integrations:bindery` joined in Plan 7 Task 8. An Android library, so `testDebugUnitTest`.
+    # Its JVM tier reaches every class in the module except one, for the same reason
+    # `:integrations:lidarr`'s does: `BinderySourceProvider`'s single collaborator is
+    # `IntegrationCredentialStore`, which is DataStore over the Android Keystore, so the provider is
+    # instrumented-only and no probe here can see it. The severability behaviour it owns -- "not
+    # configured yields null", and "only Lidarr configured yields null" -- is proved by
+    # `BinderySourceProviderTest` on the emulator and recorded in task-8-report.md.
+    "integrations/bindery": "testDebugUnitTest",
     # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
     # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
     # top-level function in its own file, and `PlayerViewModel` is constructed over a
@@ -3576,6 +3707,7 @@ def run_suite():
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
                     ":integrations:core:test", ":integrations:lidarr:test",
+                    ":integrations:bindery:test",
                     ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
