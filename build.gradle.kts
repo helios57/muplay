@@ -664,6 +664,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // moves no branch.
         "app.muplay.model.browse.BrowsePaging",
         "app.muplay.model.browse.BrowseExtras",
+        // Plan 5 Task 5. `BrowseSelection` **4/4** and `BrowseSelection$Companion` **1/1** LINE,
+        // from JVM data alone, and it carries **no BRANCH counter at all** -- so LINE is the only
+        // counter it has and a BRANCH rule over it would gate nothing.
+        //
+        // It is here rather than riding along in the branchless list above, and the difference is
+        // that these lines *can* fail: `BrowseSelectionTest` in this module constructs one and
+        // reads `EMPTY`, so withholding it takes both classes to 0. Measured: with that file
+        // withheld, `BrowseSelection` reads **0/4** and `$Companion` **0/1**, and both fire --
+        // "lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per
+        // class. Restored.
+        //
+        // Writing that test is what earned the entry. Before it, `warnUngatedClasses` reported
+        // this class at line 0/4 -- the only code that touched it lived in `:core:database`, whose
+        // execution data is not this module's, which is the same trap `SubsonicCredentials` and
+        // `RememberedRenderer` both fell into above. The answer there was a ride-along; the answer
+        // here is a real test, because `EMPTY` is a value a caller hands to a player and "it is
+        // empty and starts at zero" is a claim worth holding.
+        "app.muplay.model.browse.BrowseSelection",
+        "app.muplay.model.browse.BrowseSelection*",
       ),
     ),
     // ---- Plan 4 Task 2: the audiobook value types --------------------------------------------
@@ -1295,6 +1314,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf(
         "app.muplay.database.BrowseTreeRepository",
+        // Plan 5 Task 5 put `startIndexOf` on the companion, which gave it a LINE counter and so
+        // took it out of the standing `$Companion` exception above -- that exception is for
+        // companions carrying **zero** counters, which `warnUngatedClasses` skips because no rule
+        // could gate them. This one measured `line 1/1` and warned on every `check` until it was
+        // named here.
+        //
+        // The trailing `*`, not an escaped `$`: `wildcardToRegex` turns this into
+        // `\QBrowseTreeRepository\E.*`, which is how `BrowseSelection*` and `BrowseSurface*`
+        // already reach their companions. An entry written as `BrowseTreeRepository$Companion`
+        // matches nothing and leaves the warning in place -- measured, because I wrote it that way
+        // first and the warning did not move.
+        "app.muplay.database.BrowseTreeRepository*",
         "app.muplay.database.MirrorBookshelf",
         "app.muplay.database.BookProgress",
         "app.muplay.database.BookPosition",
@@ -3947,8 +3978,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   //
   // **`"CLASS"` rules, not the one `"BUNDLE"` rule the plan proposed, and that is a
   // measurement rather than a preference.** (Five at Task 4; a sixth at Task 5, for
-  // `LidarrAddTargets`. The count is left out of this sentence on purpose -- a written-down total
-  // beside a list that grows is the drift this repository has paid for three times.) The plan's
+  // `LidarrAddTargets`; a seventh at Task 6, for `LidarrAddPayload`. The count is left out of this
+  // sentence on purpose -- a written-down total beside a list that grows is the drift this
+  // repository has paid for three times.) The plan's
   // placeholder was
   // `CoverageFloor(counter = "BRANCH", minimum = 0.90)` on the argument that this module is plain
   // Kotlin over Retrofit and therefore Tier-1 enforceable like `:core:network`. Measured, the
@@ -3960,26 +3992,42 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":integrations:lidarr" to listOf(
     // 1. The **fast tier's** BRANCH rule: the two classes with author-written branches.
     //
-    // **RE-MEASURED AT TASK 5, which more than doubled this class.** Task 4 recorded
-    // `LidarrClient` at 42/44 = 0.9545; the lookup, the two profile endpoints and the root-folder
-    // mapper take it to:
+    // **RE-MEASURED AT TASK 6.** Task 4 recorded `LidarrClient` at 42/44 = 0.9545; Task 5's lookup,
+    // profile endpoints and root-folder mapper took it to 109/112 = 0.9732; Task 6's add, its
+    // `findAddedAlbumId` and the `proven`/`call` split take it to:
     //
-    //   `LidarrClient`               109/112 = 0.9732
-    //   `LidarrValidationException`    4/4   = 1.0000
+    //   `LidarrClient`               118/122 = 0.9672
+    //   `LidarrValidationException`    8/8   = 1.0000
     //
-    // The three missing `LidarrClient` branches are all Kotlin's unreachable null arms: two on
+    // The four missing `LidarrClient` branches are all Kotlin's unreachable null arms: two on
     // `response.errorBody()?.string().orEmpty()` (Retrofit supplies an error body for every
-    // unsuccessful response, and `ResponseBody.string()` is non-null) and one on
-    // `(obj["id"] as? JsonPrimitive)?.content?...` (`JsonPrimitive.content` is a non-null
-    // `String`, so the `?.` after it can never take its null arm). Same artifact, same reason, as
+    // unsuccessful response, and `ResponseBody.string()` is non-null) and two on
+    // `(this[name] as? JsonPrimitive)?.content?.toIntOrNull()` in the private `int` helper
+    // (`JsonPrimitive.content` is a non-null `String`, so the `?.` after it can never take its null
+    // arm -- once per call site, and Task 6 added the second). Same artifact, same reason, as
     // `IntegrationCredentialStore`'s eighteenth branch and `MediaRequestRepository`'s twelfth in
-    // `:integrations:core` -- so **0.9732 is the honest ceiling** and a 1.00 here would fail the
+    // `:integrations:core` -- so **0.9672 is the honest ceiling** and a 1.00 here would fail the
     // build on the Kotlin compiler rather than on this project's code.
     //
     // The floor stays at 0.90 rather than rising to meet the new ratio, and that is a decision
-    // rather than an oversight: Tasks 6 and 7 add a POST and a queue reader to this same class, so
-    // a floor two branches under a ceiling would fire on the first Kotlin-unreachable arm either
-    // of them introduces. 0.90 over 112 branches still refuses eleven uncovered ones.
+    // rather than an oversight: Task 7 adds a queue reader to this same class, so a floor two
+    // branches under a ceiling would fire on the first Kotlin-unreachable arm it introduces. 0.90
+    // over 122 branches still refuses twelve uncovered ones.
+    //
+    // `LidarrValidationException`'s own 8/8 doubled at Task 6 with `isAlreadyAdded`'s second arm --
+    // the structural `errorCode == "AlbumExistsValidator"` beside the message match.
+    //
+    // FALSIFIED, and it took two tests to move: withholding `LidarrSubmitTest`'s
+    // `either the validator code or the message alone identifies an already-added album` alone
+    // leaves this class at **8/8 and green**, because Task 4's
+    // `an already-added validation failure is recognised by its message` in `LidarrHandshakeTest`
+    // is a second caller through the same arms. Withholding **both** gives **6/8 = 0.7500** and the
+    // gate fails with "branches covered ratio is 0.75, but expected minimum is 0.90". The
+    // second-caller effect this table has already been bitten by twice, met a third time.
+    //
+    // And note what even 8/8 does not say: that *both* arms of `isAlreadyAdded` are load-bearing.
+    // Only `ci/mutation-probes.sh`'s `integrations/lidarr-alreadyAdded-errorCode` and
+    // `-alreadyAdded-message` say that, by removing each alone.
     //
     // Three branches in this rule were closed at Task 4 by tests written *because* the measurement
     // was taken: `ping`'s null-body arm, `isStartingUp`'s absent-`errorMessage` arm and
@@ -3990,14 +4038,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `JsonStringEnumConverter(..., allowIntegerValues = true)`), and a quoted or nested `id`.
     // Every one is a shape a real Lidarr can produce and none had an observation.
     //
-    // FALSIFIED AT TASK 5, not copied forward from Task 4's record. Withholding all twenty of
-    // `LidarrLookupTest`'s tests drops this class to **42/112 = 0.3750**; withholding just the
-    // two that assert the whole candidate field set -- `every candidate field is read from its
-    // own element` and `the real lookup body from a pinned lidarr maps as this client claims` --
-    // drops it to **99/112 = 0.8839**, and `jacocoJvmCoverageVerification` fails with
-    // "branches covered ratio is 0.88, but expected minimum is 0.90". Withholding only the first
-    // of those two leaves it at 107/112 = 0.9554 and green, so the floor gates the pair rather
-    // than either one. Transcripts in task-5-report.md.
+    // FALSIFIED AT TASK 5, and **RE-RUN AT TASK 6 rather than copied forward** -- which is the
+    // whole point of re-running one: the class grew by ten branches in between, so the recorded
+    // number was guaranteed to be stale even though the conclusion survived. Withholding the two
+    // `LidarrLookupTest` tests that assert the whole candidate field set -- `every candidate field
+    // is read from its own element` and `the real lookup body from a pinned lidarr maps as this
+    // client claims` -- dropped this class to 99/112 = 0.8839 at Task 5 and to **108/122 = 0.8852**
+    // now; `jacocoJvmCoverageVerification` still fails, with "branches covered ratio is 0.88, but
+    // expected minimum is 0.90". Task 5 also measured that withholding only the first of the two
+    // leaves it green, so the floor gates the pair rather than either one; that half was not
+    // re-run at Task 6 and is Task 5's measurement, not this one's. Transcripts in
+    // task-5-report.md and task-6-report.md.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -4012,7 +4063,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `buildApi`), `LidarrAuthInterceptor` 7/7 -- the class that decides where the API key goes,
     // and the reason this rule is in the *fast* tier rather than an instrumented one -- and
     // `LidarrServer` 7/7, the four `Lidarr*Exception` members at 2/2 or 3/3,
-    // `LidarrValidationFailure` 1/1, `DefaultLidarrSourceFactory` 1/1 and `di.LidarrModule` 1/1.
+    // `LidarrValidationFailure` 4/4 (1/1 until Task 6 added `errorCode` and spread the declaration
+    // over four lines -- and note it read **4/5 = 0.80 and FAILED this floor** while that parameter
+    // carried a `= null` no caller omitted; see the class's own comment),
+    // `DefaultLidarrSourceFactory` 1/1 and `di.LidarrModule` 1/1.
     //
     // Those last two are here because they were measured at **0/1 each** on the first run: the
     // production factory and its Hilt binding were exercised by nothing at all while every test in
@@ -4074,6 +4128,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.LidarrProfile",
         // Task 5's decision class. 6/6 on the type, 10/10 on the companion that holds `resolve`.
         "app.muplay.integrations.lidarr.LidarrAddTargets*",
+        // Task 6's payload builder, measured **28/28**, and its outcome type: `Added` 1/1,
+        // `Rejected` 1/1. `LidarrAddOutcome` itself and its `AlreadyAdded` object carry no counters
+        // at all and ride along so `warnUngatedClasses` has nothing to say about them -- the same
+        // NaN pass `LidarrException` uses two entries up.
+        //
+        // FALSIFIED at Task 6, and the result is worth the sentence: withholding all nineteen of
+        // `LidarrAddPayloadTest`'s tests leaves this LINE ratio at **28/28**, because
+        // `LidarrSubmitTest` posts a built payload over a real socket and every line of the builder
+        // runs on any add at all. Only withholding **both** classes empties it (**0/28**). So this
+        // entry says "some test builds a payload", never "the payload is right": that is
+        // `LidarrAddPayloadTest`'s two-values-per-field assertions and `ci/mutation-probes.sh`'s
+        // `integrations/lidarr-add-*` family, and nothing here.
+        //
+        // Note what *did* fire on that first withholding, because reading "28/28" as "the gate is
+        // green" would be the mistake: rule 7's BRANCH floor went to 0.50 and failed the build.
+        // The LINE rule is the one that cannot see it.
+        "app.muplay.integrations.lidarr.LidarrAddPayload",
+        "app.muplay.integrations.lidarr.LidarrAddOutcome*",
       ),
     ),
     // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
@@ -4114,11 +4186,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // here for the identical reason: leaving them ungated would print `warnUngatedClasses` lines
     // on every run forever, which is how a warning mechanism dies.
     //
-    // Measured: `ValidationFailureBody` **2/5 = 0.4000**, `SystemStatusBody` 5/8 = 0.6250,
+    // Measured at Task 4: `ValidationFailureBody` **2/5 = 0.4000**, `SystemStatusBody` 5/8 = 0.6250,
     // `PingBody` and `StartingUpBody` 1/2 = 0.5000 each, and each one's `$$serializer` companion
     // at 1/1. The uncovered lines are a `data class`'s generated `equals`/`hashCode`/`copy`/
     // `componentN`, which nothing calls because these types exist only to be deserialised into.
-    // **0.40 is a number this run produced**, not a round one chosen to fit.
+    // 0.40 was a number that run produced, not a round one chosen to fit.
+    //
+    // **RE-MEASURED AT TASK 6, and 0.40 is no longer any class's own ratio.** Adding `errorCode`
+    // moved `ValidationFailureBody` to **3/6 = 0.5000** -- the third read line is covered, the three
+    // generated ones are still not -- so the lowest measured class here is now 0.5000, shared by
+    // four of the six. The floor stays at 0.40 rather than rising to meet that, and this sentence
+    // is the record of the decision rather than of an oversight: Task 7 adds queue DTOs to this
+    // same list, a wider `data class` has proportionally more generated lines nothing calls, and a
+    // floor sitting exactly on the current minimum would fire on the first one. What 0.40 still
+    // refuses is a DTO that nothing deserialises at all, which measures 0.
     //
     // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
     // pass); LINE is the only counter that can hold them to anything.
@@ -4168,6 +4249,44 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf("app.muplay.integrations.lidarr.LidarrAddTargets*"),
+    ),
+    // 7. Task 6's `LidarrAddPayload`, at **1.00 BRANCH** for the same argument as rule 6 and with
+    // the same honesty about what 1.00 is worth: `build` is a pure function over three arguments
+    // with no I/O, so every arm is reachable from a JVM test and nothing Kotlin generates is
+    // unreachable inside it.
+    //
+    // Measured **4/4 = 1.0000**. All four are the one `(candidate.raw["artist"] as? JsonObject)?.`:
+    // the `as?` cast's two arms and the safe call's two. Both null arms are live rather than
+    // defensive padding -- `LidarrAddPayload` is public, a caller can hand it a candidate built by
+    // hand, and a body with no `artist` object is a 400 (`NotNullValidator` on `Artist`, measured
+    // against the live instance).
+    //
+    // FALSIFIED, not assumed: withholding the two tests that reach those arms --
+    // `a candidate whose raw element has no artist object still produces a valid nested artist` and
+    // `a raw element whose artist is not an object still produces a valid nested artist` -- drops
+    // this to **2/4 = 0.50** and `jacocoJvmCoverageVerification` fails with
+    // "Rule violated for class app.muplay.integrations.lidarr.LidarrAddPayload:
+    // branches covered ratio is 0.50, but expected minimum is 1.00".
+    //
+    // Withholding either one **alone** leaves it at 4/4 and green, and the reason is worth writing
+    // down rather than leaving as "the floor gates the pair": the two tests are coverage-redundant
+    // with each other. An absent `artist` key and an `artist` that is a string both take the same
+    // two arms -- the `as?` cast failing, and the safe call then seeing null. They are not
+    // redundant as *assertions* (an implementation using `raw["artist"]!!.jsonObject` throws a
+    // different exception for each), but no ratio can tell you that, which is this table's
+    // recurring lesson.
+    //
+    // Withholding **every** `LidarrAddPayloadTest` test gives the same 2/4, for the same reason
+    // read from the other side: `LidarrSubmitTest` reaches the other two arms on any add at all.
+    // Withholding both classes gives 0/4.
+    //
+    // The LINE side rides on rule 2 at 28/28, where its own comment records that the LINE ratio is
+    // NOT falsifiable by withholding this class's tests at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
     ),
   ),
 )

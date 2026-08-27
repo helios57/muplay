@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What Android Auto reads to decide what kind of app this is. `media` is the only entry a media app
+  needs; `template` is for apps built on the Car App Library, which spec section 7 rules out
+  explicitly ("Android Auto needs no UI work").
+
+  Checked by `verifyAutomotiveDescriptor` (build-logic), because the merged manifest can only prove
+  that this file is *referenced* - it carries `android:resource="@xml/automotive_app_desc"`, a
+  resource reference, never the resource. A descriptor that existed but was empty would satisfy
+  every manifest check there is and still leave the app invisible in a car.
+-->
+<automotiveApp>
+  <uses name="media" />
+</automotiveApp>

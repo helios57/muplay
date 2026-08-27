@@ -44,8 +44,35 @@
            read off the bytecode. An earlier version of this comment said Media3 gated through
            onConnect while nothing in this module overrode it, which is the worst of both. See
            ControllerAccessPolicy for what a connected controller can read. -->
+      <!-- PLAN 5 TASK 7 - one contiguous block, added to this file by the Android Auto lane.
+           Three actions, three different discoverers, and only the first is what Plan 3 needed:
+
+             - androidx.media3.session.MediaSessionService -> Media3 MediaControllers (this app's
+               UI, and Plan 5 Task 8's :wear app).
+             - androidx.media3.session.MediaLibraryService -> Media3 MediaBrowsers asking for the
+               browse tree half of the session.
+             - android.media.browse.MediaBrowserService -> ANDROID AUTO, Wear OS's bridged media
+               surface, and every legacy MediaBrowserCompat client. Auto enumerates media apps by
+               THIS action and by no other; an app declaring only Media3's own actions installs,
+               runs, passes every test in this repository and never appears in a car. There is no
+               error, no log line and no crash - it is simply not in the list. That is why
+               verifyDebugManifest/verifyReleaseManifest require it by name.
+
+           None of the three needs a line of code here. Measured off media3-session-1.11.0's own
+           bytecode rather than from the docs: MediaLibraryService.onBind returns getServiceBinder()
+           for "androidx.media3.session.MediaLibraryService" and otherwise delegates to
+           MediaSessionService.onBind, which switches on exactly two strings:
+           "androidx.media3.session.MediaSessionService" (-> getServiceBinder) and
+           "android.media.browse.MediaBrowserService" (-> createLegacyControllerInfo, onGetSession,
+           then the legacy browser binder) - and returns null for anything else. So the third
+           action is bridged by the base class, and declaring it is the entire change.
+
+           exported="true" is what makes any of that possible; Media3 gates the command surface
+           behind MediaSession.Callback.onConnect (see ControllerAccessPolicy). -->
       <intent-filter>
         <action android:name="androidx.media3.session.MediaSessionService" />
+        <action android:name="androidx.media3.session.MediaLibraryService" />
+        <action android:name="android.media.browse.MediaBrowserService" />
       </intent-filter>
     </service>
   </application>

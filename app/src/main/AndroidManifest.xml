@@ -10,6 +10,18 @@
       android:icon="@mipmap/ic_launcher"
       android:roundIcon="@mipmap/ic_launcher_round"
       android:theme="@style/Theme.MuPlay">
+    <!-- Android Auto's entry point into the app's declaration. Auto reads this resource to
+         classify the app; without it, the service's browse actions are declared and nothing in a
+         car ever looks at them.
+
+         Two checks, because neither can do the other's job. The presence of this line in the
+         merged manifest is checked by `verifyDebugManifest`/`verifyReleaseManifest`; the
+         *content* of the resource it points at is checked by `verifyAutomotiveDescriptor`, since
+         a merged manifest carries the reference and never the resource. -->
+    <meta-data
+        android:name="com.google.android.gms.car.application"
+        android:resource="@xml/automotive_app_desc" />
+
     <activity
         android:name=".MainActivity"
         android:exported="true">

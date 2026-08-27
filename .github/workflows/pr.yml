@@ -64,7 +64,7 @@ jobs:
       - name: Android Lint
         run: ./gradlew lint
 
-      - name: Merged manifest
+      - name: Manifest and Android Auto declaration
         # `usesCleartextTraffic` exists in this repository only in `app/src/debug/
         # AndroidManifest.xml`, for the Tier 2 journey's plain-HTTP container. This proves it does
         # not reach the *merged* release manifest — the artifact that actually ships, and the one
@@ -77,7 +77,18 @@ jobs:
         # variant, because a missing FOREGROUND_SERVICE_MEDIA_PLAYBACK is wrong in debug too. It
         # fails no build, no install and no foreground test; it throws SecurityException from
         # `startForeground` the first time the app is backgrounded with audio playing.
-        run: ./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest
+        #
+        # Plus the Android Auto declaration, since Plan 5 Task 7. Two tasks, because one cannot do
+        # the other's job: `verify<Variant>Manifest` proves the merged manifest carries the browse
+        # actions and `android:resource="@xml/automotive_app_desc"`, and it structurally cannot
+        # prove the resource behind that reference says anything -- the manifest carries the
+        # reference, never the resource. `verifyAutomotiveDescriptor` reads the resource. The
+        # specific defect all three exist for is invisible at runtime on a phone and fatal in a
+        # car: Android Auto enumerates media apps by `android.media.browse.MediaBrowserService`
+        # and by no other action, so an app declaring only Media3's own actions installs, runs,
+        # passes every test in this repository, and never appears in a head unit -- no error, no
+        # log line, no crash. See AUTOMOTIVE_DECLARATIONS in AndroidApplicationConventionPlugin.
+        run: ./gradlew :app:verifyReleaseManifest :app:verifyDebugManifest :app:verifyAutomotiveDescriptor
 
       # `check` compiles neither androidTest nor the release variant, so a source
       # set can break -- or a security control in it can stop compiling -- with

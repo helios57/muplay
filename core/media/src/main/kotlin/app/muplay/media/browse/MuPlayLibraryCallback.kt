@@ -1,6 +1,7 @@
 package app.muplay.media.browse
 
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.LibraryResult
@@ -10,9 +11,12 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionError
 import app.muplay.database.BrowseTreeRepository
 import app.muplay.media.ControllerAccessPolicy
+import app.muplay.media.PlaybackQueue
+import app.muplay.media.QueueRepository
 import app.muplay.model.browse.BrowseId
 import app.muplay.model.browse.BrowseNode
 import app.muplay.model.browse.BrowsePaging
+import app.muplay.model.browse.BrowseSelection
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -49,11 +53,14 @@ import kotlinx.coroutines.launch
  * simultaneously -- so a field holding "the surface" would give whichever connected second the
  * other one's tree.
  *
- * **`session.player` is read at the moment it is needed and never held.** Plan 6 (casting) swaps
- * the session's player when audio moves to a speaker, and a cached reference would leave the browse
- * tree driving a player nothing is listening to. Nothing in this class reads it *yet* -- Task 5's
- * `onAddMediaItems`/`onSetMediaItems` are the first that will -- and this is the property that has
- * to survive them.
+ * **`session.player` is never read, and Task 5 did not change that.** Plan 6 (casting) swaps the
+ * session's player when audio moves to a speaker, and a cached reference would leave the browse
+ * tree driving a player nothing is listening to. Task 4 expected [onAddMediaItems] and
+ * [onSetMediaItems] to be the first readers; they are not, and that is better than the property
+ * this note was written to protect. Both of them *answer* Media3 with items and an index and let
+ * `MediaSessionImpl` apply them to whatever player the session holds at that moment, so there is no
+ * reference to go stale -- and no `seekTo` either, which is what keeps spec section 3's
+ * "no code path can set a position" true of this file.
  *
  * **`onSubscribe`/`notifyChildrenChanged` are deliberately not implemented.** A subscribing browser
  * is told when a folder's contents change; ours change when Plan 2's `SyncEngine` reconciles, which
@@ -70,6 +77,7 @@ import kotlinx.coroutines.launch
 class MuPlayLibraryCallback @Inject constructor(
   private val treeRepository: BrowseTreeRepository,
   private val surfaceResolver: SurfaceResolver,
+  private val queueRepository: QueueRepository,
 ) : MediaLibrarySession.Callback {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -157,6 +165,132 @@ class MuPlayLibraryCallback @Inject constructor(
     }
   }
 
+  /**
+   * Turns whatever a controller asked to play into items this player can actually stream.
+   *
+   * Two kinds of caller, and the difference is one field:
+   *
+   * - **This app's own UI** hands over items Plan 3 already built, complete with an authenticated
+   *   `format=raw` URL in their `localConfiguration`. Those pass through **unchanged** -- rebuilding
+   *   them would discard the very fields the caller computed, and re-expanding a track id would
+   *   turn "play this shuffle" into "play the album the first shuffled track came from".
+   * - **A car, a watch, the Assistant or the system's resumption row** hands over a bare `mediaId`
+   *   and nothing else, because a browse row never had a `localConfiguration` to begin with. Those
+   *   are expanded through the tree.
+   *
+   * **`localConfiguration` is the discriminator, and it does survive the controller hop --
+   * measured, because the plan said the opposite.** `MediaControllerImplBase` bundles every item it
+   * sends with `MediaItem.toBundleIncludeLocalConfiguration` (1.11.0 bytecode), which is why
+   * Media3's own default `onAddMediaItems` returns the items unchanged when each carries one and
+   * fails with `UnsupportedOperationException` when any does not -- exactly this split, and the
+   * behaviour `PlaybackLauncher` has been relying on since Plan 3. So the field is a fact about the
+   * *caller*, not an artefact of the wire.
+   */
+  override fun onAddMediaItems(
+    mediaSession: MediaSession,
+    controller: MediaSession.ControllerInfo,
+    mediaItems: List<MediaItem>,
+  ): ListenableFuture<List<MediaItem>> =
+    if (mediaItems.all { it.localConfiguration != null }) {
+      // **Synchronously, and that is a correctness requirement rather than an optimisation.**
+      // See the note below `onSetMediaItems`'s note.
+      immediate(mediaItems)
+    } else {
+      future(emptyList()) { resolve(mediaItems) }
+    }
+
+  /**
+   * The same resolution, plus the **index** -- which is this plan's to choose and the resume
+   * policy's not to.
+   *
+   * The returned start position is always `C.TIME_UNSET`. Plan 3's `MuPlayer` discards whatever
+   * arrives here and asks `ResumePolicy` for the real one, which is the guarantee that *no code
+   * path can set a wrong position*. This callback is a code path; it does not get one. Passing
+   * `startPositionMs` through instead would be invisible to every test in this repository -- Media3
+   * sends `0` for a fresh `setMediaItem` and `MuPlayer` discards it either way -- and that is the
+   * seam working, not a hole in it.
+   *
+   * **A browse row is a single item with no `localConfiguration`.** Anything else -- a queue the
+   * app built, several items at once -- keeps the index the caller asked for, because that caller
+   * already knows its own queue. `PlaybackLauncher.play` is the one that does, and
+   * `PlaybackJourneyTest` is what fails if this branch ever stops distinguishing them.
+   */
+  override fun onSetMediaItems(
+    mediaSession: MediaSession,
+    controller: MediaSession.ControllerInfo,
+    mediaItems: List<MediaItem>,
+    startIndex: Int,
+    startPositionMs: Long,
+  ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+    if (mediaItems.all { it.localConfiguration != null }) {
+      // See the note below `onSetMediaItems`. Nothing here needs a repository, so nothing here may suspend.
+      return immediate(
+        MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, C.TIME_UNSET),
+      )
+    }
+    return future(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, C.TIME_UNSET)) {
+      val selection = mediaItems.singleOrNull()
+        ?.takeIf { it.localConfiguration == null }
+        ?.let { BrowseId.decode(it.mediaId) }
+        ?.let { treeRepository.expand(it) }
+
+      if (selection == null) {
+        MediaSession.MediaItemsWithStartPosition(resolve(mediaItems), startIndex, C.TIME_UNSET)
+      } else {
+        MediaSession.MediaItemsWithStartPosition(items(selection), selection.startIndex, C.TIME_UNSET)
+      }
+    }
+  }
+
+  /**
+   * Why the passthrough answers **synchronously**, measured rather than reasoned.
+   *
+   * `PlaybackLauncher.play` sends three commands back to back -- `setMediaItems`, `prepare`,
+   * `play` -- and Media3 does **not** hold the second and third behind a pending future from the
+   * first. `MediaSessionStub` completes the queue change through `handleMediaItemsWhenReady`, so a
+   * future resolved on another dispatcher lands *after* `prepare()` and `play()` have already been
+   * applied to an empty player. Media3's own default `onAddMediaItems` returns
+   * `Futures.immediateFuture(...)` for exactly this reason, and matching it is what keeps the
+   * ordering the rest of this app was built on.
+   *
+   * The cost of getting it wrong is silent: no exception, no player error, no log. The player sits
+   * in `STATE_BUFFERING` with `isPlaying == false` for ever. Measured on `muplay37`: with the
+   * unconditional `scope.launch` this method first had, **11 of `MuPlaybackServiceTest`'s 15 tests
+   * failed** with `position never reached 1000ms; state=2 isPlaying=false error=null`, and all 15
+   * passed with these two overrides removed entirely. No test in this plan would have caught it --
+   * the browse path is asynchronous by necessity and works, because a car sends its own `prepare`
+   * and `play` and the late queue is then prepared under a `playWhenReady` that is already true.
+   *
+   * So: **a request that needs no repository must not suspend.** An item that already carries its
+   * own `localConfiguration` needs nothing looked up, which is the same field that decides whether
+   * it is expanded at all.
+   */
+
+
+  /**
+   * Every item, either passed through or expanded.
+   *
+   * `flatMap`, so one tapped row becomes a whole queue -- and so an id that names nothing playable
+   * contributes **nothing** rather than a hole in the list. Media3 refuses a `MediaItem` with no
+   * URI outright (`IllegalArgumentException` from the player), so "skip it" is the only answer that
+   * leaves the rest of the request working.
+   */
+  private suspend fun resolve(mediaItems: List<MediaItem>): List<MediaItem> =
+    mediaItems.flatMap { item ->
+      // The one field that separates the two kinds of caller. Present means "already playable".
+      if (item.localConfiguration != null) {
+        listOf(item)
+      } else {
+        BrowseId.decode(item.mediaId)
+          ?.let { treeRepository.expand(it) }
+          ?.let { items(it) }
+          .orEmpty()
+      }
+    }
+
+  private suspend fun items(selection: BrowseSelection): List<MediaItem> =
+    queueRepository.mediaItems(PlaybackQueue.of(selection.songs, selection.startIndex))
+
   /** Called from `MuPlaybackService.onDestroy`. */
   fun release() {
     scope.cancel()
@@ -164,6 +298,30 @@ class MuPlayLibraryCallback @Inject constructor(
 
   private fun <T> immediate(value: T): ListenableFuture<T> =
     SettableFuture.create<T>().apply { set(value) }
+
+  /**
+   * Runs [block] off the session thread and answers Media3 with its result, or with [onFailure].
+   *
+   * The playback twin of [future] below, and it needs its own because the two answer different
+   * shapes: a browse call has `LibraryResult.ofError` to say "that went wrong", and a playback call
+   * has no error channel at all -- `onAddMediaItems` returns a bare list. An exception on the
+   * future would reach Media3 as an `ExecutionException` it logs and swallows, so the failure
+   * arrives as *nothing played, no reason given* either way; answering with an empty queue at least
+   * leaves the session in a state a controller can retry from.
+   *
+   * **The throwable is not logged, and that is this module's standing rule rather than an
+   * omission** -- `ConventionTest`'s *nothing in the media module logs*, which the plan's own
+   * sketch of this method would have broken. Every `MediaItem` in scope here is one `toString()`
+   * away from an authenticated Subsonic URL, and a queue that will not build is exactly the moment
+   * somebody reaches for a log line.
+   */
+  private fun <T : Any> future(onFailure: T, block: suspend () -> T): ListenableFuture<T> {
+    val settable = SettableFuture.create<T>()
+    scope.launch {
+      settable.set(runCatching { block() }.getOrElse { onFailure })
+    }
+    return settable
+  }
 
   /**
    * Runs [block] off the session thread and answers Media3 with its result.
