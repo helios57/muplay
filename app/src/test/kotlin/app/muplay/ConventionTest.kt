@@ -777,7 +777,24 @@ class ConventionTest {
     assertThat(manifests).describedAs("AndroidManifest.xml files in this repository").isNotEmpty()
     val manifestText = manifests.joinToString("\n") { withoutBlockComments(it.readText()) }
 
-    assertThat(required.filterNot(manifestText::contains))
+    // Derived from the list itself, not from the four spelled out above: **every** entry the gate
+    // requires has to be written in a manifest this repository owns, including one added later by
+    // a task nobody has written yet. The named list above is the other direction -- that these
+    // four cannot be dropped -- and neither direction implies the other.
+    // Line-wise rather than one regex: an entry is a raw string whose own content ends in `"`, so
+    // the delimiters and the last character of the value run together as four quotes, and a
+    // non-greedy `\"\"\"(.*?)\"\"\"` silently eats the value's closing quote. Measured, not reasoned
+    // about -- it did, and `containsAll` below is what said so.
+    val quote = "\"\"\""
+    val declared = checkNotNull(automotive).lines()
+      .map(String::trim)
+      .filter { it.startsWith(quote) }
+      .map { it.removePrefix(quote).substringBeforeLast(quote) }
+    assertThat(declared)
+      .describedAs("entries parsed out of AUTOMOTIVE_DECLARATIONS")
+      .containsAll(required)
+
+    assertThat(declared.filterNot(manifestText::contains))
       .describedAs(
         "the merged-manifest gate requires these and no manifest in this repository declares " +
           "them, so the only way `check` passes is a dependency supplying them -- or it does not " +
