@@ -2288,11 +2288,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // the LINE row to obey the letter of the plan would have retired a live gate to make room for a
     // new one. Recorded rather than done silently.
     //
-    // Falsified with `PlaybackStateTest` moved aside: *"Rule violated for class
-    // app.muplay.media.PlaybackState: branches covered ratio is 0.00, but expected minimum is
-    // 0.90"*, BUILD FAILED. Nothing else in either tier reads `isAudiobook` yet -- Task 9's book
-    // player is its first production consumer -- so the whole 4/4 comes from that one class, and
-    // this floor will need re-measuring, not re-trusting, when it does.
+    // Falsified by withholding `PlaybackStateTest` (the file moved aside, not `@Disabled`, and
+    // restored by a trap rather than by `git checkout` -- see CLAUDE.md on the revert that destroys
+    // uncommitted work): *"Rule violated for class app.muplay.media.PlaybackState: branches covered
+    // ratio is 0.00, but expected minimum is 0.90"*, BUILD FAILED. **0.00, so that one class is the
+    // only reader of `isAudiobook` in either tier today.** Task 9's book player is its first
+    // production consumer, and when it lands this falsification is void -- re-run it, do not carry
+    // it forward. The row two entries down is what happens when nobody does.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -2322,9 +2324,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // tasks ran concurrently; when Task 6 lands its `AudiobookSnapshot`, this row is where its
     // item type is already gated.
     //
-    // Falsified with `BookPlaybackSettingsTest` moved aside: *"Rule violated for class
-    // app.muplay.media.BookPlaybackSettings.Companion: branches covered ratio is 0.00, but expected
-    // minimum is 0.90"*, BUILD FAILED.
+    // FALSIFIED, and the number is not the one this comment was first written with -- which is the
+    // reason it is spelled out rather than summarised. Withholding `BookPlaybackSettingsTest` alone
+    // gives *"Rule violated for class app.muplay.media.BookPlaybackSettings.Companion: branches
+    // covered ratio is **0.50**, but expected minimum is 0.90"*, BUILD FAILED -- not the 0.00 that
+    // was predicted, because `MediaModuleTest`'s *"until the audiobook snapshot lands, nothing is a
+    // book"* asserts `of(source.itemFor(..)) == MUSIC` and so drives the `null` arm from another
+    // file in another package. One withheld class still fires the floor; **one withheld test would
+    // not**. That is CLAUDE.md's "a recorded falsification goes stale when a second caller appears",
+    // caught on the first run rather than by the next reader.
+    //
+    // The same run fired `AudiobookItem` at *"lines covered ratio is 0.00"* and `PlaybackState` at
+    // 0.00 on both counters, so every rule added by this task was shown to fail, in one run.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
