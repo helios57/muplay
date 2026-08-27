@@ -68,8 +68,25 @@ class LidarrSourceProviderTest {
       seen += credentials
       return object : LidarrSource {
         override suspend fun ping(): Boolean = true
+
         override suspend fun status(): LidarrServer =
           LidarrServer("Lidarr", "Lidarr", "0", "", "none")
+
+        // Task 5's four. This class answers "which credentials reached the factory", never "what
+        // did the server say", so each of these throws rather than returning an empty list: a
+        // silent `emptyList()` is exactly the shape that lets a later test in this file assert
+        // something about a lookup and be satisfied by a fake that never looked anything up.
+        override suspend fun lookupAlbums(term: String): List<LidarrAlbumCandidate> =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        override suspend fun rootFolders(): List<LidarrRootFolder> =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        override suspend fun qualityProfiles(): List<LidarrProfile> =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
+
+        override suspend fun metadataProfiles(): List<LidarrProfile> =
+          throw UnsupportedOperationException("this fake answers nothing about the wire")
       }
     }
   }
