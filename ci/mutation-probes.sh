@@ -3676,7 +3676,10 @@ PROBES = [
      "    compareBy<BookSummary> { 0 }\n      .thenByDescending { it.lastPlayedAtEpochMs }",
      # The three groups collapse into one. A finished book heard a minute ago goes to the top of
      # the shelf, which is the most annoying shelf available.
-     "the shelf is continue-listening first, then unstarted alphabetically, then finished", 3),
+     # 2, measured: it also reddens `a finished book drops below an unstarted one even though it
+     # was heard more recently`. The three tie-break tests stay green, because collapsing the
+     # groups leaves their inputs -- all in one group already -- ordered the same way.
+     "the shelf is continue-listening first, then unstarted alphabetically, then finished", 2),
     ("shelf/play-order-untagged-first", BOOK_SUMMARIES,
      "      { it.trackNumber ?: Int.MAX_VALUE },",
      "      { it.trackNumber ?: 0 },",
