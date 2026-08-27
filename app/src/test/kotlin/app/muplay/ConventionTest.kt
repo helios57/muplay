@@ -502,6 +502,7 @@ class ConventionTest {
           "so they exist and never execute in CI",
       )
       .isEmpty()
+  }
 
   /**
    * The wear AVD is declared twice - in `.github/workflows/e2e.yml`'s job `env:` and in
