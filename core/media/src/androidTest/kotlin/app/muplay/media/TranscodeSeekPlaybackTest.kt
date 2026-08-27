@@ -684,6 +684,19 @@ class TranscodeSeekPlaybackTest {
     assertThat(onMain { seam.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) }).isTrue
     assertThat(onMain { seam.availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) })
       .isTrue
+
+    // The pair that makes the line above evidence rather than a coincidence. A **second seam over
+    // the very same wrapped player**, differing only in what the server said, answers the opposite.
+    // Without it the assertion above is satisfied whenever `super` happens to say yes -- which on a
+    // container that has produced this transcode before it does, because the cached response
+    // carries a length and is seekable. Same `transcodeExo`, same timeline, same everything:
+    // whatever `super`'s answer is, these two cannot both be it.
+    val withheldSeam = onMain {
+      MuPlayer(transcodeExo, NeverResume, withheldSupport()).also { players += it }
+    }
+    assertThat(onMain { withheldSeam.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) })
+      .describedAs("the same player, the same item, a server that does not advertise the extension")
+      .isFalse
   }
 
   /**
@@ -923,6 +936,14 @@ class TranscodeSeekPlaybackTest {
    */
   /** The queue item at [index], for reading back what a re-issue wrote onto it. */
   private fun Player.currentMediaItemAt(index: Int): MediaItem = getMediaItemAt(index)
+
+  /** A negotiated support whose server reports no extensions -- see [WithoutExtensions]. */
+  private fun withheldSupport(): TranscodeOffsetSupport {
+    val (provider, file) =
+      fixedSubsonicSourceProvider(context, WithoutExtensions(client), RealTrackBytes.NAVIDROME_URL)
+    dataStoreFiles += file
+    return TranscodeOffsetSupport(provider).also { runBlocking { it.refresh() } }
+  }
 
   /** A negotiated `TranscodeOffsetSupport` against the real container, over its own DataStore file. */
   private fun negotiatedSupport(): TranscodeOffsetSupport {

@@ -268,18 +268,25 @@ class MuPlayer(
 
   // ---- announcing a command set the wrapped player does not know it has ----------------------
   //
-  // MEASURED, and the whole feature was unreachable from the app without it.
+  // MEASURED, and the whole feature was unreachable from the app without it. Two mechanisms, and
+  // the second is the one that actually bit:
   //
-  // `MediaControllerImplBase.seekTo(long)` starts with `if (!isPlayerCommandAvailable(
-  // COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) return;` -- read off the 1.11.0 bytecode -- and the set it
-  // checks is the one the **session pushed to it**, not one it re-reads from the player. The
-  // session pushes on `Player.Listener.onAvailableCommandsChanged`, passing the *argument* through
-  // (`MediaSessionImpl$PlayerListener`, same bytecode), and `ForwardingPlayer.ForwardingListener`
-  // forwards the WRAPPED player's commands verbatim. An `ExoPlayer` playing a live transcode never
-  // fires that callback with the seek command in it, because the stream is not seekable to it -- so
-  // overriding [getAvailableCommands] alone changed the answer for anything that asked this object
-  // directly, and changed nothing at all for the seek bar. Measured on the device: the bar moved,
-  // the readout stayed at 0:01, and no seek ever reached this class.
+  //  1. `MediaControllerImplBase.seekTo(long)` starts with `if (!isPlayerCommandAvailable(
+  //     COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) return;` -- read off the 1.11.0 bytecode -- and the
+  //     set it checks is the one the **session pushed to it**, not one it re-reads. The session
+  //     pushes on `Player.Listener.onAvailableCommandsChanged`, passing the *argument* through
+  //     (`MediaSessionImpl$PlayerListener`, same bytecode), and
+  //     `ForwardingPlayer.ForwardingListener` forwards the WRAPPED player's commands verbatim. A
+  //     transcode this server is producing live is not seekable to `Mp3Extractor`, so `ExoPlayer`
+  //     never fires that callback with the seek command in it.
+  //  2. That same callback is what makes `MediaSessionImpl` **rebuild and republish its
+  //     `PlayerInfo`** -- and therefore re-read *this* object's `getCurrentPosition`. Without an
+  //     announcement the session keeps the position it last published, because the discontinuity
+  //     `replaceMediaItem` produces carries the wrapped player's own zero.
+  //
+  // Both were measured by hand: with the body of `scheduleCommandAnnouncement` removed,
+  // `TranscodeSeekSessionTest` times out with `canSeek=true position=593 duration=30024` -- the
+  // command granted, the seek accepted, and the session still reporting where it was before it.
   //
   // So this class announces its own answer. Three details are load-bearing:
   //

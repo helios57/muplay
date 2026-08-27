@@ -180,31 +180,27 @@ class TranscodeSeekJourneyTest {
   private fun seekBarTo(fraction: Float): Float {
     composeRule.waitForIdle()
     val bar = composeRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
-    val before = bar.fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo].current
     bar.performTouchInput {
       down(center)
       moveTo(Offset(width * fraction, center.y))
       up()
     }
     composeRule.waitForIdle()
-    val after = bar.fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo].current
-
-    // The thumb moved, which separates "the gesture never reached the slider" from "the slider
-    // moved and the player did not". Without it, both arrive as the same timeout on the readout and
-    // a reader cannot tell a broken test from a broken feature.
-    check(after > before) {
-      "the seek bar's own value did not move ($before -> $after); the gesture never reached it"
-    }
-    lastSeekBarValue = after
-    return after
+    lastSeekBarValue = bar.fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo].current
+    return lastSeekBarValue
   }
 
   /**
-   * What the seek bar's own value was after the last drag, in milliseconds.
+   * The seek bar's value once the drag has been committed, in milliseconds.
    *
-   * Kept so [awaitElapsedAtLeast]'s failure message can say what the UI asked for. "The readout
-   * never moved" is consistent with a gesture that reached the wrong value and with a seek that was
-   * dropped downstream, and those want different fixes.
+   * Recorded for [awaitElapsedAtLeast]'s failure message and **not asserted**, because of what it
+   * actually is: `PlayerViewModel.commitScrub` clears the scrub position as soon as the finger
+   * lifts, so the bar snaps back to the *player's* position and this reads that, not the value the
+   * drag reached. Measured under the `gate/refresh-is-a-no-op` mutation: a drag to eight tenths of a
+   * thirty-second track read back as `1248.0ms`, which is where the clock was, not where the finger
+   * went. A `check(after > before)` was written here first and claimed to separate "the gesture
+   * never reached the slider" from "the slider moved and the player did not"; it cannot, and it
+   * passed under that mutation. What gates the seek is the readout assertion in the test body.
    */
   private var lastSeekBarValue: Float = -1f
 
