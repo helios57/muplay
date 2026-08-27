@@ -186,6 +186,11 @@ BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
 BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
 BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
 BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
+# Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
+# the DAOs and the migration behind them need a device and are recorded by hand in
+# task-2-report.md, per this file's own INSTRUMENTED TIER note above.
+CHAPTER = "core/model/src/main/kotlin/app/muplay/model/Chapter.kt"
+BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -2432,6 +2437,46 @@ PROBES = [
      # already alphabetical, so `Second Book` -- Prologue / The Long Middle / A Turn / Epilogue --
      # is the only fixture in the corpus that catches this at all.
      "Second Book's chapters are unequal in length and in order", 1),
+    # ---- Plan 4 Task 2: the audiobook value types ---------------------------------------------
+    ("audiobook/chapter-contains-upper-bound", CHAPTER,
+     "positionMs >= startMs && positionMs < endMs",
+     "positionMs >= startMs && positionMs <= endMs",
+     # Half-open is what makes "which chapter am I in" one answer. Closed at the top and the
+     # instant a chapter ends belongs to two chapters at once, so the answer depends on which end
+     # of the list the caller searched from. Only an assertion that names the boundary exactly
+     # sees this -- a fixture probed at 61_999/100_000/181_501 would not.
+     "containment is half-open, so a position on a boundary is in the later chapter", 3),
+    ("audiobook/chapter-contains-lower-bound", CHAPTER,
+     "positionMs >= startMs && positionMs < endMs",
+     "positionMs > startMs && positionMs < endMs",
+     "containment is half-open, so a position on a boundary is in the later chapter", 2),
+    ("audiobook/chapter-duration-clamp", CHAPTER,
+     "val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0L)",
+     "val durationMs: Long get() = endMs - startMs",
+     # A tagger really does write these backwards, and the unclamped answer is a negative length
+     # that every consumer renders.
+     "a chapter whose atoms are out of order is zero long rather than negative", 1),
+    ("audiobook/chapter-duration-offset", CHAPTER,
+     "val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0L)",
+     "val durationMs: Long get() = endMs",
+     # The fixture starts at 62_000 rather than 0 for exactly this reason: against chapter 0 of
+     # any book these two programs are the same function.
+     "a chapter's duration is the gap between its two atoms", 1),
+    ("audiobook/speed-nan", BOOK_SETTINGS,
+     "speed.isNaN() -> DEFAULT_SPEED", "speed.isNaN() -> speed",
+     # `Float.NaN.coerceIn(0.5f, 3.0f)` is NaN, and `setPlaybackSpeed(NaN)` throws from a listener
+     # callback -- playback dies with no message. Note the assertion this names checks
+     # `isNaN()` explicitly: a `containsExactly` row would compare NaN to NaN and pass.
+     "not a number becomes the default rather than surviving the clamp", 1),
+    ("audiobook/speed-clamp", BOOK_SETTINGS,
+     "else -> speed.coerceIn(MIN_SPEED, MAX_SPEED)", "else -> speed",
+     "the speed clamp holds both ends and passes everything between them through", 1),
+    ("audiobook/default-book-id", BOOK_SETTINGS,
+     "BookSettings(bookId = bookId, speed = DEFAULT_SPEED, skipSilence = false)",
+     'BookSettings(bookId = "book-42", speed = DEFAULT_SPEED, skipSilence = false)',
+     # The second id in that test is what catches this: with one id, "returned the id it was
+     # given" and "returned the id this test happens to use" are the same observation.
+     "a book with no stored settings plays at one times with no silence skipping", 1),
 ]
 
 
