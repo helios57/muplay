@@ -217,6 +217,15 @@ Select **"All or some functionality is restricted"** and add one instruction set
 
 *Any other instructions:*
 
+<!-- reviewer-taps:start -->
+<!--
+  Everything in bold between these two markers is a control the reviewer is told to type into
+  or tap, and `ConventionTest`'s `every control the reviewer instructions name is a label the app
+  renders` holds each one against the shipped Compose sources. Renaming a button without editing
+  this block fails the build -- which is the point: these instructions are filed with Google, and
+  a rename would falsify them silently, months later, in somebody else's review queue.
+-->
+
 > MuPlay is a client for a music server that the user runs themselves (Navidrome or any
 > Subsonic-compatible server). It has no accounts and no backend of its own, so a demonstration
 > server has been prepared for review.
@@ -240,6 +249,8 @@ Select **"All or some functionality is restricted"** and add one instruction set
 >
 > The app talks to no server other than the one entered here. This demonstration account is
 > read-only in effect: MuPlay calls only read endpoints and never writes to the server.
+
+<!-- reviewer-taps:end -->
 
 Substitute the real host. Keep the credential in the form's own fields, not in the free-text box.
 

@@ -32,7 +32,38 @@ sealed interface SetupUiState {
     val serverInfo: ServerInfo,
     val libraries: List<MusicLibrary>,
     val canContinue: Boolean,
-  ) : SetupUiState
+  ) : SetupUiState {
+
+    /**
+     * What to say above the (possibly empty) list of libraries.
+     *
+     * The empty case is not hypothetical and it is not a server fault: measured against
+     * `deluan/navidrome:0.63.2`, a **freshly created non-admin user is granted no libraries at
+     * all**, and `getMusicFolders` then answers `status: ok` with an empty set. So a perfectly
+     * good sign-in reaches this state with no rows and [canContinue] false forever -- the user
+     * sees "Connected to navidrome ...", a heading asking them to tag libraries that are not
+     * there, and a dead Continue button.
+     *
+     * That is the single most likely way the Play reviewer route in `docs/REVIEWER-ACCESS.md`
+     * fails, and an app that dead-ends a reviewer with no explanation is the rejection that
+     * document exists to prevent. The fix is one sentence naming the actual remedy, which is on
+     * the server, not in the app.
+     *
+     * A property here rather than an `if` inside `SetupScreen`: this module's `SetupScreenKt`
+     * floor is a LINE floor reachable only from the emulator (see the coverage table), so a
+     * branch written in the composable would be a branch no JVM test can reach. Here it is
+     * ordinary Kotlin, covered by `SetupUiStateTest`, and the composable gains one line that runs
+     * on every render.
+     */
+    val prompt: String
+      get() =
+        if (libraries.isEmpty()) {
+          "This account can see no libraries. Give it access to at least one on the server, " +
+            "then press Connect again."
+        } else {
+          "What is each library for?"
+        }
+  }
 
   /** Setup is complete; the host navigates away. */
   data object Ready : SetupUiState

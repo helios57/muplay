@@ -136,7 +136,9 @@ private fun SetupScreen(
         // The server cannot tell us what a library holds -- Navidrome reports every file as
         // `type: "music"` -- so the user decides, once, here. No name is inspected: "Hörbücher"
         // is not "Audiobooks", and a wrong guess silently poisons shuffle scope.
-        Text(text = "What is each library for?", style = MaterialTheme.typography.titleMedium)
+        // The empty-library case says something instead of asking about libraries that are not
+        // there -- see SetupUiState.Tagging.prompt for what a server actually returns then.
+        Text(text = uiState.prompt, style = MaterialTheme.typography.titleMedium)
         // Labelled "Tag as Music"/"Tag as Audiobooks", not the bare "Music"/"Audiobooks" a first
         // draft used: every row also renders the library's own name, so a bare-word chip label is
         // indistinguishable, to both a screen reader and a black-box UI test, from the name of a
