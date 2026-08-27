@@ -3272,6 +3272,127 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.control.UpnpRenderer*loadCapabilities*2",
       ),
     ),
+    // Plan 6 Task 7, `app.muplay.cast.route`. Measured from
+    // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
+    // no emulator and no Navidrome container anywhere.
+    //
+    // Per class, and which class goes on which of the two rules is a MEASUREMENT: a CLASS-element
+    // rule over a class carrying no counter of the rule's kind is a `0/0` COVEREDRATIO, which is
+    // `NaN`, which JaCoCo reports as no violation at any minimum.
+    //
+    //   `SubnetMatch`          BRANCH 14/14 -- the family-size mismatch, a prefix of zero, a
+    //                          prefix longer than the address (exact equality, and the one arm
+    //                          `/32` does not reach because 32 is not GREATER than 32), the
+    //                          whole-byte loop failing and completing, and the partial-byte mask
+    //                          agreeing and disagreeing.
+    //   `CastRouter`           BRANCH 18/18 -- `candidate`'s three refusals and its success;
+    //                          `confirm`'s not-a-`Proxied` arm, its fast-path arm, the proof
+    //                          succeeding and failing, and `allowRendererDirect` both ways.
+    //   `CastRouter$Companion` BRANCH  2/2  -- `urlHost`'s IPv6 and IPv4 arms. Small, and it is
+    //                          the difference between a URL a renderer can fetch and
+    //                          `http://fd00:0:0:0:0:0:0:1:PORT/...`, whose `URI.getHost()` is
+    //                          measurably **null**.
+    //
+    // FALSIFIED per class by withholding tests and RUNNING the result -- never by raising a
+    // minimum above a measured 1.0000, which JaCoCo cannot even evaluate (it validates the minimum
+    // is inside 0.0..1.0 before it reads a ratio, so that can only ever throw). Every number below
+    // was read off `jacocoJvmCoverageVerification`'s own output on a withheld run, and the
+    // near-misses are recorded because two of them are the interesting part:
+    //
+    //   * `SubnetMatch`: withholding `SubnetMatchTest`'s `a prefix that is not a whole number of
+    //     bytes is handled` **alone leaves it at 13/14 = 0.9286 and this floor GREEN** -- the
+    //     partial-byte mask's disagreeing arm has a second driver in `the prefix length is used,
+    //     and changing only it changes the answer`, whose `/23` case is a partial byte too.
+    //     Withholding both reaches **11/14 = 0.7857** and the rule fires: *"Rule violated for
+    //     class app.muplay.cast.route.SubnetMatch: branches covered ratio is 0.78, but expected
+    //     minimum is 0.90"*.
+    //   * `CastRouter`: the search for a firing set took three attempts and both failures are
+    //     recorded rather than re-derived. Withholding `a renderer that cannot reach the phone
+    //     falls back to renderer-direct when that is allowed` **alone leaves it at 18/18 =
+    //     1.0000** -- the `allowRendererDirect = true` arm has three other drivers. Withholding
+    //     that plus `confirming a route revokes the proxy token when it falls back` and `a
+    //     renderer-direct url states no format on its path, and a strict renderer refuses it`
+    //     reaches **17/18 = 0.9444 and is STILL GREEN**. Adding the fourth, `confirm returns a
+    //     route it did not mint unchanged, and does not wait for one`, reaches **16/18 = 0.8889**
+    //     and the rule fires at 0.88. (Withholding the six tests that produce an `Unroutable`
+    //     instead takes it to 12/18 = 0.6667, which also fires.)
+    //   * `CastRouter$Companion`: withholding `an ipv6 phone address is bracketed and unscoped, so
+    //     the url a renderer is handed parses` -- the only test that reaches `urlHost`'s IPv6 arm
+    //     -- gives **1/2 = 0.5000** and the rule fires naming `CastRouter.Companion`. One test,
+    //     one branch, and it is the difference between a URL a renderer can fetch and one whose
+    //     `URI.getHost()` is null.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.route.SubnetMatch",
+        "app.muplay.cast.route.CastRouter",
+        "app.muplay.cast.route.CastRouter*Companion",
+      ),
+    ),
+    // The three route members and the reason enum, on LINE -- the same shape and the same argument
+    // as `XmlText`, `ServedMedia` and `RendererFollowsAnotherException` above: a `data class` body
+    // JaCoCo's Kotlin filters have already stripped the generated members from carries no BRANCH
+    // counter at all, so a BRANCH rule over one is the silent `NaN` pass.
+    //
+    //   `CastRoute$Proxied`         LINE 5/5. Four properties and the constructor.
+    //   `CastRoute$RendererDirect`  LINE 1/1 -- **not a ride-along**. Its one line is the
+    //                               construction of the fallback, reached only when a renderer
+    //                               really failed to fetch AND the user has turned the setting on.
+    //   `CastRoute$Unroutable`      LINE 1/1 -- likewise, and this is the outcome the spec does
+    //                               not have. Gating it means gating the fact that something in
+    //                               this repository still makes a cast fail out loud.
+    //   `UnroutableReason`          LINE 2/2 -- and NOT a ride-along either, which was measured
+    //                               rather than assumed. JaCoCo's Kotlin filters remove an enum's
+    //                               `values`/`valueOf`, so what is left is the two constants'
+    //                               initialiser, and nothing loads this class until something
+    //                               actually decides a cast cannot happen. Withholding the six
+    //                               tests that produce an `Unroutable` takes it to 0/2.
+    //
+    // `CastRoute` itself -- the sealed interface -- carries **no counter of either kind** and is
+    // deliberately absent from both rules rather than listed as a ride-along, exactly as the proxy
+    // package's `RangeRequest`/`ProxyUpstream` are: `warnUngatedClasses` skips a zero-counter
+    // class by construction, so listing it would add a name that gates nothing and silences
+    // nothing.
+    //
+    // FALSIFIED per class, and the one that could NOT be falsified is named rather than left
+    // looking like the others:
+    //
+    //   * `CastRoute$RendererDirect`: withholding the FOUR tests that produce one -- `a renderer
+    //     that cannot reach the phone falls back to renderer-direct when that is allowed`,
+    //     `confirming a route revokes the proxy token when it falls back`, `a renderer-direct url
+    //     states no format on its path, and a strict renderer refuses it`, and `confirm returns a
+    //     route it did not mint unchanged, and does not wait for one` (which constructs one
+    //     directly) -- gives **0/1 = 0.0000**: *"Rule violated for class
+    //     app.muplay.cast.route.CastRoute.RendererDirect: lines covered ratio is 0.00, but
+    //     expected minimum is 0.90"*. Three of the four is not enough; the fourth was found by
+    //     running it, not by reading the file.
+    //   * `CastRoute$Unroutable` **and** `UnroutableReason`: withholding the six tests that
+    //     produce an `Unroutable` (`a renderer that cannot reach the phone is Unroutable when
+    //     direct is not allowed`, `a renderer with no route from this phone is Unroutable before
+    //     anything is published`, `a control url with no host and one that cannot be resolved are
+    //     both unroutable, and say which`, `the proof waits for this renderer's own token and not
+    //     for any request at all`, `the fast path is not taken when the renderer is on another
+    //     subnet`, `confirm returns a route it did not mint unchanged, and does not wait for one`)
+    //     takes **both** to 0.0000 and the rule fires twice. So `UnroutableReason` is NOT the
+    //     inert ride-along it looks like: its lines are the enum's initialiser, and nothing loads
+    //     the class until something actually decides a cast cannot happen.
+    //   * `CastRoute$Proxied` is the honest ride-along, and the measurement is recorded rather
+    //     than hidden: every scenario above left it at **5/5**, because every candidate this suite
+    //     mints is one. It asserts only that something still produces a proxied route. What holds
+    //     the *contents* of that route is the BRANCH rule above and the `route/*` mutation probes.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.route.CastRoute*Proxied",
+        "app.muplay.cast.route.CastRoute*RendererDirect",
+        "app.muplay.cast.route.CastRoute*Unroutable",
+        "app.muplay.cast.route.UnroutableReason",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH

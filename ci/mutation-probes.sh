@@ -223,6 +223,8 @@ PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer
 CONTROL_STATE = "core/cast/src/main/kotlin/app/muplay/cast/control/TransportState.kt"
 CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabilities.kt"
 CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
+ROUTE_SUBNET = "core/cast/src/main/kotlin/app/muplay/cast/route/SubnetMatch.kt"
+ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -2402,6 +2404,85 @@ PROBES = [
      "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList()",
      "      val modes = ALLOWED_VALUE.findAll(block.groupValues[1]).map { it.groupValues[1] }.toList().sorted()",
      "the declared seek modes are read, in the order the device declared them", 1),
+
+    # ---- Plan 6 Task 7: the routing decision, and the silence that is the answer --------------
+    #
+    # The defect this family exists against is the one the task's own deliverable names: *"the
+    # renderer either fetched from the phone or the app says out loud that it could not"*. Every
+    # mutation below leaves a cast looking exactly as successful as a working one -- `Play` returns
+    # 200, the UI says "Playing on Kitchen" -- and produces silence. No coverage floor can see any
+    # of them: each one leaves every branch in the file executing, in both directions.
+    #
+    # Every count was MEASURED against `:core:cast:test`, one mutation at a time, before it was
+    # written down.
+
+    # THE PROBE THIS TASK EXISTS FOR, and the one that restores the silent failure. `confirm` that
+    # always says yes is a router that never proves anything: the renderer is handed a URL it
+    # cannot reach, the session reports success, and nothing ever comes out of the speaker.
+    ("route/proof-always-succeeds", ROUTE_ROUTER,
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route",
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs) || true) return route",
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 5),
+
+    # The other direction, so the branch is a discrimination and not a constant: a `confirm` that
+    # always says no fails every cast that would have worked.
+    ("route/proof-always-fails", ROUTE_ROUTER,
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route",
+     "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs) && false) return route",
+     "a renderer that fetches confirms the proxied route", 5),
+
+    # The two fallbacks swapped. Each test still sees a route object of *some* kind, the enum is
+    # still populated, and the user is told the opposite of what happened -- or, worse, handed
+    # their Subsonic credentials to a speaker they never agreed to give them to.
+    ("route/fallback-branches-swapped", ROUTE_ROUTER,
+     "    return if (allowRendererDirect) {",
+     "    return if (!allowRendererDirect) {",
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 4),
+
+    # The proof waits on THIS route's token. Keyed on a constant instead, a stale request from the
+    # previous track confirms the current one -- which is the silent failure again, arriving one
+    # track later and looking like a random skip.
+    ("route/proof-matches-any-token", PROXY_SERVER,
+     "    fetchLatches.computeIfAbsent(token) { CountDownLatch(1) }",
+     '    fetchLatches.computeIfAbsent("any") { CountDownLatch(1) }',
+     "the proof waits for this renderer's own token and not for any request at all", 2),
+
+    # The partial byte. A /22 or a /26 is ordinary on a real network, and a byte-wise-only
+    # comparison answers "same subnet" for addresses that are not -- which takes the fast path,
+    # which skips the proof, for exactly the devices the proof was needed for.
+    ("route/partial-byte-prefix-ignored", ROUTE_SUBNET,
+     "    if (remainingBits == 0) return true",
+     "    if (remainingBits >= 0) return true",
+     "a prefix that is not a whole number of bytes is handled", 2),
+
+    # The fast path asked about one address twice. `sameSubnet(x, x)` is true for every device on
+    # earth, so the proof is switched off globally while the parameter, the branch and the coverage
+    # all still look exactly like a working optimisation.
+    ("route/fast-path-compares-one-address-twice", ROUTE_ROUTER,
+     "      proofRequired = !sameSubnetFastPath(phoneAddress, rendererAddress),",
+     "      proofRequired = !sameSubnetFastPath(rendererAddress, rendererAddress),",
+     "the fast path is asked about this phone's address and the renderer's, in that order", 1),
+
+    # An IPv6 phone address without its brackets. `http://fd00:0:0:0:0:0:0:1:PORT/media/x.mp3` has
+    # a null host -- measured -- so the renderer fetches nothing and the cast plays silence. Every
+    # test on an IPv4 test bed stays green.
+    ("route/ipv6-host-not-bracketed", ROUTE_ROUTER,
+     '      return if (address is Inet6Address) "[$literal]" else literal',
+     "      return literal",
+     "an ipv6 phone address is bracketed and unscoped, so the url a renderer is handed parses", 1),
+
+    # Publishing before the route is known mints a capability for a device that cannot fetch it --
+    # a token left on the LAN with no owner, serving Navidrome-authenticated audio, for a cast that
+    # never started. The returned route is identical either way.
+    ("route/publishes-before-it-knows-there-is-a-route", ROUTE_ROUTER,
+     "    val phoneAddress = localAddress(rendererAddress)\n"
+     '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")\n'
+     "\n"
+     "    val media = registry.publish(upstreamUrl, served)",
+     "    val media = registry.publish(upstreamUrl, served)\n"
+     "    val phoneAddress = localAddress(rendererAddress)\n"
+     '      ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")',
+     "a renderer with no route from this phone is Unroutable before anything is published", 1),
 
     # ---- Plan 7 Task 2: the two security controls a green suite cannot see --------------------
     # Both mutations leave BRANCH and LINE coverage exactly where they were, which is precisely why
