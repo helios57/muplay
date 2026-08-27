@@ -3768,6 +3768,14 @@ LATER_PROBE_FILES = [
     # comment requires -- a mutated file no `git checkout` names is left in the tree when the run
     # ends, and the next agent's dirty-tree guard blames them for it.
     SMART_REWIND,
+    # Plan 7 Task 7, added in the same edit as the twenty-four `integrations/lidarr-{status,percent,
+    # progress,queue,album}-*` probes and `integrations/lidarr-key-into-another-header`, per this
+    # list's own comment. `LIDARR_INT` and `LIDARR_CLIENT` are already above; these two are new,
+    # and they are exactly the pair that makes forgetting this line easy -- most of the family
+    # mutates files already listed, so the first stray would come from probe 1 (`LIDARR_STATUS`)
+    # and abort probe 2 with "PROBE TEXT NOT FOUND ... 0 matches".
+    LIDARR_STATUS,
+    LIDARR_SOURCE,
 ]
 
 
