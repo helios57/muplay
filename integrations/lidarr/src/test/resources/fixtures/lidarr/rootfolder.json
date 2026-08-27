@@ -1,0 +1,15 @@
+[
+    {
+        "name": "Music",
+        "path": "/music",
+        "defaultMetadataProfileId": 1,
+        "defaultQualityProfileId": 1,
+        "defaultMonitorOption": "all",
+        "defaultNewItemMonitorOption": "all",
+        "defaultTags": [],
+        "accessible": true,
+        "freeSpace": 70933176320,
+        "totalSpace": 421606354944,
+        "id": 1
+    }
+]
