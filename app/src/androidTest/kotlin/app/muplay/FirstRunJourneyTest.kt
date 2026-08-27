@@ -51,8 +51,22 @@ import org.junit.runner.RunWith
  *    with any assertion. `ci/prepare-emulator.sh` fails fast if it is missing; see its header for
  *    the crash signature and the evidence.
  *
- * Cleartext HTTP is allowed only because this is the debug build — see
- * `app/src/debug/AndroidManifest.xml`.
+ * **Cleartext HTTP works here for two separate reasons, and only one of them is the debug build.**
+ * `app/src/debug/AndroidManifest.xml` sets `android:usesCleartextTraffic="true"`, which no release
+ * build carries — `verifyReleaseManifest` proves that on every `check` and `verifyReleaseArtifact`
+ * proves it again about the `.aab` itself. But the platform's *default* network security config for
+ * `targetSdk >= 28` already permits cleartext to `localhost`, through a `domain-config` no app on
+ * this target level can opt out of from its manifest. Measured in Plan 8 Task 2 on the minified,
+ * release-signed APK, same install, minutes apart: `http://10.0.2.2:4533` answered "Could not reach
+ * the server" and `http://localhost:4533` connected, synced the library and played audio. Same
+ * host, same Navidrome, same `adb reverse` forward.
+ *
+ * So the honest guarantee is "no cleartext to a **remote** host", not "no cleartext" — and the
+ * earlier version of this comment, which said cleartext was allowed *only* because of the debug
+ * manifest, was wrong in a way that matters: it is what makes a release APK drivable against the CI
+ * container at all, and it is why Plan 6's on-device cast proxy will work from a release build with
+ * no manifest change at all. Read `verifyReleaseManifest`'s name accordingly; it is still exactly
+ * the right gate.
  *
  * `createAndroidComposeRule` comes from the `...junit4.v2` package, not `...junit4`: the
  * identically-named factory in the latter is `@Deprecated` as of the Compose BOM this project

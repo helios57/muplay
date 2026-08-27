@@ -1241,4 +1241,213 @@ class ConventionTest {
       .describedAs("a tracked project file must NOT be ignored, or this helper proves nothing")
       .isFalse()
   }
+
+  // ------------------------------------------------------------------------------------------
+  // Plan 8 Tasks 7 and 9: the release gates, and the pipeline that runs them. One contiguous
+  // block, appended after Task 3's, so it cannot tangle with the rules above.
+  // ------------------------------------------------------------------------------------------
+
+  /** The workflow a tag push runs. Named once, for both rules below. */
+  private fun releaseWorkflow(): File = File(repoRoot(), ".github/workflows/release.yml")
+
+  /** The exact declaration `RELEASE_CHECK_EXCLUSIONS` is written as, named once. */
+  private val RELEASE_CHECK_EXCLUSIONS_DECLARATION = "internal val RELEASE_CHECK_EXCLUSIONS = listOf("
+
+  /**
+   * Every `./gradlew ...` command line in [workflow], comments removed and line continuations
+   * joined, split into tokens.
+   *
+   * Comments removed *first*, and that is the whole reason this is a function rather than a
+   * `contains` over the file. `.github/workflows/release.yml` explains what each gate does, by
+   * name, in a comment beside the step that runs them — so a `contains("verifyReleaseSigned")`
+   * over the raw text passes just as happily when the task has been deleted from the command line
+   * and only the comment describing it remains. That is the same trap `kotlinCode` exists for on
+   * the Kotlin side, and it has produced a false pass in this repository before.
+   */
+  private fun gradleTaskTokens(workflow: String): List<String> {
+    val lines = workflow.lines().filterNot { it.trimStart().startsWith("#") }
+    val commands = mutableListOf<String>()
+    var index = 0
+    while (index < lines.size) {
+      if (lines[index].contains("gradlew")) {
+        val command = StringBuilder()
+        while (index < lines.size) {
+          val line = lines[index]
+          command.append(line.trim().removeSuffix("\\")).append(' ')
+          if (!line.trimEnd().endsWith("\\")) break
+          index++
+        }
+        commands += command.toString()
+      }
+      index++
+    }
+    return commands.flatMap { it.trim().split(Regex("""\s+""")) }.filter { it.isNotEmpty() }
+  }
+
+  /**
+   * A release gate that `releaseCheck` does not run must be run by the release workflow, or by
+   * nothing at all.
+   *
+   * `releaseCheck` collects its gates by matching `verifyRelease*` (see `ReleaseGates.kt`), so a
+   * new one is picked up the moment it is registered and there is no list to keep in sync — which
+   * is this repository's standing answer to "a list written by hand in one file, describing
+   * something discoverable from the tree, drifts and nothing notices". Two gates are deliberately
+   * *excluded*, because each needs something a developer's checkout has not got:
+   * `verifyReleaseSigned` needs the upload key and `verifyReleaseTag` needs the tag being released.
+   *
+   * Both are hard errors when what they need is absent rather than quiet skips, so excluding one is
+   * the same act as promising the pipeline runs it. This is that promise, checked. Adding a name to
+   * `RELEASE_CHECK_EXCLUSIONS` and forgetting the workflow line leaves a gate that runs nowhere —
+   * indistinguishable, from every green build, from a gate that passes.
+   *
+   * The gate list is derived from `tasks.register` calls in `build-logic`, so it covers every
+   * literally-named one. It does **not** cover `verifyReleaseManifest`, whose name is built from
+   * the variant (`verify${'$'}{variant}Manifest`) and so appears in no string literal; that task is
+   * inside `releaseCheck`'s prefix match, is wired into `check` besides, and has its own step in
+   * `pr.yml`. Stated rather than papered over: a derivation with a known blind spot is worth having
+   * as long as nobody reads it as complete.
+   */
+  @Test
+  fun `every release gate is run by releaseCheck or by the release workflow`() {
+    val root = repoRoot()
+    val workflowFile = releaseWorkflow()
+    assertThat(workflowFile).exists()
+    val tokens = gradleTaskTokens(workflowFile.readText())
+
+    // Vacuity, first: a workflow whose Gradle lines this test could not find would satisfy every
+    // assertion below by containing nothing to contradict them.
+    assertThat(tokens).describedAs("tokens of ${workflowFile.path}'s gradlew command lines").isNotEmpty()
+
+    val registration = Regex("""tasks\.register(?:<\w+>)?\("(verifyRelease\w*)"\)""")
+    val gates = buildLogicFiles()
+      .flatMap { file -> registration.findAll(kotlinCode(file.readText())).map { it.groupValues[1] } }
+      .toSortedSet()
+    // Named, not merely counted, for the same reason the emulator-job rule names two modules: a
+    // regex that silently stopped matching would leave every check below trivially true.
+    assertThat(gates)
+      .describedAs("verifyRelease* tasks registered in build-logic")
+      .contains("verifyReleaseVersion", "verifyReleaseArtifact", "verifyReleaseSigned", "verifyReleaseTag")
+
+    val exclusionsSource = File(root, "build-logic/convention/src/main/kotlin/ReleaseGates.kt")
+    val exclusions = Regex(""""([^"]+)"""")
+      .findAll(
+        kotlinCode(exclusionsSource.readText())
+          .substringAfter(RELEASE_CHECK_EXCLUSIONS_DECLARATION, "")
+          .substringBefore(")"),
+      )
+      .map { it.groupValues[1] }
+      .toList()
+    assertThat(exclusions)
+      .describedAs("$RELEASE_CHECK_EXCLUSIONS_DECLARATION in ${exclusionsSource.name}")
+      .isNotEmpty()
+    assertThat(gates)
+      .describedAs("an exclusion naming no registered task leaves a dead line in the workflow")
+      .containsAll(exclusions)
+
+    fun invoked(task: String) = tokens.any { it == task || it.endsWith(":$task") }
+
+    assertThat(exclusions.filterNot(::invoked))
+      .describedAs(
+        "these gates are excluded from releaseCheck, so ${workflowFile.path} is the only thing " +
+          "that can run them -- and it does not. Either run them there or stop excluding them.",
+      )
+      .isEmpty()
+    // And the aggregate itself, without which the excluded gates would be the only ones running.
+    assertThat(listOf("releaseCheck", "bundleRelease").filterNot(::invoked))
+      .describedAs("${workflowFile.path} must build the bundle and run releaseCheck over it")
+      .isEmpty()
+  }
+
+  /**
+   * The upload key reaches CI from repository secrets, and from nothing else.
+   *
+   * Plan 8's first global constraint, and the one that is not recoverable by rotating anything:
+   * *"not encrypted, not base64-encoded in a workflow file"*. Anyone holding this key can sign an
+   * artifact Play accepts as an update to MuPlay, and installed users receive it as MuPlay.
+   *
+   * `no keystore material is tracked by git` above asks git's index what would be published. This
+   * asks the workflow files what would be *written* — which is the other half, because a workflow
+   * that materialises the keystore inside `github.workspace` puts key material one careless
+   * `git add -A` (or one `upload-artifact` glob) away from the index that rule guards.
+   *
+   * Four things, and the first is derived rather than listed: the environment variable names come
+   * out of `ReleaseBuild.kt`'s own constants, so a rename there fails this test instead of quietly
+   * leaving the workflow setting variables nothing reads.
+   */
+  @Test
+  fun `the release workflow reads key material only from secrets`() {
+    val root = repoRoot()
+    val workflowFile = releaseWorkflow()
+    assertThat(workflowFile).exists()
+    // Comments stripped, as everywhere else here: this workflow's own prose names the variables.
+    val body = workflowFile.readText().lines().filterNot { it.trimStart().startsWith("#") }
+
+    val releaseBuild = File(root, "build-logic/convention/src/main/kotlin/ReleaseBuild.kt")
+    val signingEnvironment = Regex("""const val \w+ = "(MUPLAY_\w+)"""")
+      .findAll(kotlinCode(releaseBuild.readText()))
+      .map { it.groupValues[1] }
+      .toList()
+    assertThat(signingEnvironment)
+      .describedAs("the signing environment variables declared in ${releaseBuild.name}")
+      .containsExactlyInAnyOrder(
+        "MUPLAY_KEYSTORE_PATH",
+        "MUPLAY_KEYSTORE_PASSWORD",
+        "MUPLAY_KEY_ALIAS",
+        "MUPLAY_KEY_PASSWORD",
+      )
+
+    val assignment = Regex("""^\s*(MUPLAY_\w+):\s*(\S.*?)\s*$""")
+    val assignments = body.mapNotNull { assignment.find(it) }
+      .associate { it.groupValues[1] to it.groupValues[2] }
+    assertThat(assignments.keys)
+      .describedAs(
+        "${workflowFile.path} must set every variable releaseSigningConfig reads; a release job " +
+          "that sets three of the four is the half-configured case build-logic turns into a hard " +
+          "error, and a job that sets none of them silently produces an UNSIGNED bundle",
+      )
+      .containsAll(signingEnvironment)
+
+    // `MUPLAY_KEYSTORE_PATH` is the one that is not material: it names a file. Every other one is
+    // the material itself and may only ever come from a secret.
+    assertThat(
+      signingEnvironment
+        .filter { it != "MUPLAY_KEYSTORE_PATH" }
+        .filterNot { assignments.getValue(it).startsWith("\${{ secrets.") },
+    )
+      .describedAs("a password or alias written as a literal in a workflow file is a leaked key")
+      .isEmpty()
+
+    // ...and the file it names is outside the checkout, so no `git add` and no artifact glob can
+    // ever reach it. Every line naming a keystore file has to say so.
+    val keystoreFile = Regex("""[\w.-]+\.(?:jks|keystore|p12|pfx|bks|pepk)\b""")
+    val keystoreLines = body.filter { keystoreFile.containsMatchIn(it) }
+    assertThat(keystoreLines)
+      .describedAs("${workflowFile.path} must name the keystore file somewhere, or this reads nothing")
+      .isNotEmpty()
+    assertThat(keystoreLines.filterNot { it.contains("RUNNER_TEMP") || it.contains("runner.temp") })
+      .describedAs(
+        "the upload key must exist only outside github.workspace (RUNNER_TEMP). Inside it, a " +
+          "`git add -A`, an `upload-artifact` glob or a `git status` in a later step all reach it.",
+      )
+      .isEmpty()
+
+    // No workflow may carry key material inline, in any file. A PEM block is what that looks like.
+    val workflows = File(root, ".github/workflows").listFiles().orEmpty().filter { it.extension == "yml" }
+    assertThat(workflows).describedAs("workflow files").isNotEmpty()
+    assertThat(workflows.filter { it.readText().contains("-----BEGIN") }.map { it.name })
+      .describedAs("a PEM block in a workflow file is key material committed to this repository")
+      .isEmpty()
+
+    // The obvious way a secret reaches a log, and only the obvious way: `echo "$KEY_PASSWORD"`.
+    // Shell being shell, this cannot be exhaustive -- an indirect expansion or a `set -x` defeats
+    // it -- and it is here because the obvious way is the one that actually gets typed.
+    val secretVariables = signingEnvironment.map { it.removePrefix("MUPLAY_") } + signingEnvironment
+    assertThat(
+      body.filter { line ->
+        line.contains("echo") && secretVariables.any { line.contains("\$$it") || line.contains("\${$it") }
+      },
+    )
+      .describedAs("nothing may echo a signing secret; GitHub's log masking is not a second chance")
+      .isEmpty()
+  }
 }
