@@ -2422,7 +2422,7 @@ PROBES = [
     ("route/proof-always-succeeds", ROUTE_ROUTER,
      "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route",
      "    if (proxy.awaitRequest(route.media.token, proofTimeoutMs) || true) return route",
-     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 5),
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 6),
 
     # The other direction, so the branch is a discrimination and not a constant: a `confirm` that
     # always says no fails every cast that would have worked.
@@ -2437,7 +2437,7 @@ PROBES = [
     ("route/fallback-branches-swapped", ROUTE_ROUTER,
      "    return if (allowRendererDirect) {",
      "    return if (!allowRendererDirect) {",
-     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 4),
+     "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 5),
 
     # The proof waits on THIS route's token. Keyed on a constant instead, a stale request from the
     # previous track confirms the current one -- which is the silent failure again, arriving one
