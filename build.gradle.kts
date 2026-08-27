@@ -3509,6 +3509,103 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.cast.route.UnroutableReason",
       ),
     ),
+    // ---- Plan 6 Task 8: the session over the renderer, and the renderer that disappears --------
+    //
+    // MEASURED, per class, from `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a
+    // plain `--no-build-cache :core:cast:test :core:cast:jacocoTestReport`, at this commit:
+    //
+    //   CastSession            BRANCH 100/105 = 0.9524   LINE 228/229 = 0.9956
+    //   CastPlayback           BRANCH   4/4   = 1.0000   LINE  29/29  = 1.0000
+    //   CastItems              BRANCH   2/2   = 1.0000   LINE  11/11  = 1.0000
+    //   CastSession$seekTo$2$1             BRANCH 2/2    CastSession$setPlayWhenReady$2$1 BRANCH 4/4
+    //
+    // `CastSession`'s five uncovered branches are each unreachable, and each for a different reason
+    // that is written at the line rather than only here:
+    //
+    //   * `load`'s `is CastRoute.RendererDirect -> candidate.url` (1). `CastRouter.candidate` mints
+    //     a `Proxied` route or an `Unroutable` one and never a direct one -- that is only ever
+    //     `confirm`'s fallback -- but `CastRoute` is a three-member sealed type and a `when` over it
+    //     owes a third arm. Both *reachable* arms are driven.
+    //   * `proveRoute`'s `is CastRoute.Proxied -> Unit` (1) is the last instanceof in an exhaustive
+    //     sealed `when`; its false side is a compiler artifact with no source to reach it. All three
+    //     arms of that `when` are driven -- proxied, the renderer-direct fallback, and unroutable.
+    //   * `reportFailure`'s `else` (3, counting the `is UpnpErrorException` false side that leads to
+    //     it). Every `IOException` this class can meet is one of the four named arms, because
+    //     `SoapClient.invoke` wraps even a `NonLocalAddressException` into a `SoapTransportException`
+    //     before it escapes -- verified by reading `SoapClient`, not assumed. It is kept because
+    //     deleting it would not remove the branch but move it: an unexpected `IOException` would
+    //     escape into the poll's coroutine and stop the session polling with nothing reported.
+    //
+    // FALSIFIED by withholding tests rather than by raising the minimum, and the margins are the
+    // point -- see the comment on the LINE floor below for the numbers, which were measured for
+    // both floors in one pass.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.session.CastSession",
+        "app.muplay.cast.session.CastPlayback",
+        "app.muplay.cast.session.CastItems",
+        // The two command lambdas that carry author-written branches. Named through `*` because a
+        // literal `$` in a pattern never matches (this table's own doc, gotcha 3).
+        "app.muplay.cast.session.CastSession*seekTo*",
+        "app.muplay.cast.session.CastSession*setPlayWhenReady*",
+      ),
+    ),
+    // The rest of `app.muplay.cast.session`, on LINE -- and the two exclusions from the BRANCH floor
+    // above are the reason this rule exists rather than one wider include list.
+    //
+    // `CastSession$startPolling$1` measures BRANCH **9/13 = 0.6923** and `CastSession$proveRoute$-
+    // confirmed$1` measures **1/2**, and neither number is about a test. They are the `switch(label)`
+    // state machines Kotlin compiles a suspending lambda into: `startPolling`'s body has three
+    // suspension points (`delay`, `Mutex.lock`, `poll`) and a resume path that takes only some of
+    // them leaves arms JaCoCo counts and no source can select. Putting them under the BRANCH floor
+    // would have meant lowering it to accommodate the compiler, which is the thing this table is
+    // not for. Their LINE coverage is 5/5 and 1/1, and the *decisions* inside them -- the poll
+    // interval, the released check, the three arms of `confirm`'s answer -- are gated on
+    // `CastSession` itself, where they are written.
+    //
+    // MEASURED: CastSession LINE 228/229 = 0.9956, CastSource 13/13, CastSession$startPolling$1
+    // 5/5, and eleven declaration-only ride-alongs at 1/1 or 4/4 (`CastFailure`, `CastFailureKind`,
+    // `CastPlaybackState`, `CastPlayback$Companion`, `CastSession$LoadedItem`, the four
+    // `CastSessionState` members that carry a line, and the four command lambdas that are one line
+    // each). `CastSession$Companion`, `CastSessionState`, `CastSessionState$Idle`,
+    // `CastSource$Companion` and the seven zero-line continuation classes carry no counters at all
+    // and ride along only so `warnUngatedClasses` has nothing to say.
+    //
+    // `CastSource`'s 13 lines are not plumbing: 12 of them are the field mapping and the thirteenth
+    // is the `toString` override that keeps a Navidrome stream URL -- which carries the user's
+    // Subsonic credentials -- out of anything that prints a queue. `a source does not print its
+    // credential-bearing upstream url` is what holds it.
+    //
+    // FALSIFICATION, measured by withholding whole test classes and re-running (the numbers, not the
+    // conclusions -- and re-run them if you touch this floor rather than copying them forward):
+    //
+    //   * withhold `CastPlaybackTest`      -> CastPlayback BRANCH 0/4 = 0.0000, both floors fire.
+    //     Nothing in production calls `positionAtMs`; the session publishes the two numbers it is
+    //     computed from and Task 9's player asks the question.
+    //   * withhold `CastItemsTest`         -> CastItems BRANCH 1/2 = 0.5000 (every source the
+    //     session suite queues is music, so the audiobook arm has exactly one caller) and CastSource
+    //     LINE 12/13 -- the `toString` line goes dark, which is the security control.
+    //   * withhold `CastSessionTest`       -> CastSession BRANCH 0/105, LINE 0/229. It is the only
+    //     execution data this class has.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.cast.session.CastSession",
+        "app.muplay.cast.session.CastSession*",
+        "app.muplay.cast.session.CastSource",
+        "app.muplay.cast.session.CastSource*",
+        "app.muplay.cast.session.CastItems",
+        "app.muplay.cast.session.CastPlayback",
+        "app.muplay.cast.session.CastPlayback*",
+        "app.muplay.cast.session.CastFailure",
+        "app.muplay.cast.session.CastFailureKind",
+      ),
+    ),
   ),
   // `:integrations:core`. `IntegrationBaseUrl`'s parse cascade is pure Kotlin over OkHttp's URL
   // parser with no Android dependency at all -- which is why it is a Tier-1-enforceable BRANCH

@@ -19,6 +19,7 @@ import java.net.URI
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.concurrent.thread
 import org.w3c.dom.Element
@@ -208,6 +209,27 @@ class FakeRenderer(
      * deriving it would make every `Play` assertion in the suite race a socket timeout.
      */
     val transportStatus: String = "OK",
+    // ---- Task 8 additions ---------------------------------------------------------------------
+    /**
+     * Whether `GetPositionInfo` answers a real `RelTime` and `TrackDuration`.
+     *
+     * `false` models a renderer that answers `NOT_IMPLEMENTED` for both, which several do -- and
+     * which is the reason `UpnpTime.parseClock` returns `null` rather than `0`. A client that read
+     * that `null` as zero would reset the seek bar to the start of the track once a second, and
+     * would hand a progress writer a position of 0 for a book that was 40 minutes in. Without this
+     * knob the arm that keeps the last known value is unreachable from any test.
+     */
+    val reportsPosition: Boolean = true,
+    /**
+     * What `CurrentTransportState` answers, when that is to be something other than the truth.
+     *
+     * `null` -- the default -- means it reports this fake's real transport state. Setting it models
+     * firmware answering a value the `AVTransport:1` template does not define, which is why
+     * `TransportState` keeps its `UNKNOWN` member distinct from `STOPPED` instead of folding
+     * them together: read as `STOPPED`, an unparseable state skips a track. Nothing else in this
+     * fake can produce one.
+     */
+    val transportStateOverride: String? = null,
   )
 
   private val server = ServerSocket(0, BACKLOG, InetAddress.getLoopbackAddress())
@@ -221,6 +243,13 @@ class FakeRenderer(
 
   /** Set by [disappear]. The socket stays bound; every connection is hung up on. */
   @Volatile private var vanished: Boolean = false
+
+  /** How many more requests [disappearFor] still owes a hang-up. */
+  private val hangUpsRemaining = AtomicInteger(0)
+
+  /** How many more control requests [faultNextControlRequests] still owes a fault, and which. */
+  private val faultsRemaining = AtomicInteger(0)
+  @Volatile private var faultCode: Int = UpnpError.ACTION_FAILED
 
   @Volatile private var currentUri: String? = null
   @Volatile private var currentMetadata: String = ""
@@ -283,6 +312,41 @@ class FakeRenderer(
     vanished = true
   }
 
+  /**
+   * Hangs up on the next [count] requests **and then answers normally again** -- a Wi-Fi blip
+   * rather than a speaker losing power.
+   *
+   * Counted in requests rather than measured in time, and that is the point. A client that declares
+   * a renderer dead after N consecutive failures has a threshold, and both sides of a threshold
+   * have to be observable: "N-1 failures and the session survives" is the assertion that stops the
+   * threshold being 1 by accident. Timing that with sleeps races the client's own poll phase --
+   * whether the Nth failure lands inside the window is decided by where in its `delay` the poll
+   * loop happened to be -- so the fake counts instead, and the test is exact.
+   *
+   * One failing poll consumes exactly one hang-up: `GetTransportInfo` is the first request of a
+   * poll cycle and the client never reaches `GetPositionInfo` after it throws.
+   */
+  fun disappearFor(count: Int) {
+    hangUpsRemaining.set(count)
+  }
+
+  /**
+   * Answers the next [count] control requests with UPnP error [errorCode], then behaves again.
+   *
+   * A renderer that answers *and refuses* is a different thing from one that has gone, and a client
+   * that folds the two together declares a speaker dead over a `501` it should have shrugged off.
+   * Nothing else in this fake can produce a fault on `GetTransportInfo` -- every action either
+   * succeeds or is rejected for a reason a well-formed request never triggers -- so without this
+   * knob that arm of a client's poll is unreachable from any test, which is a strictness this fake
+   * would be claiming and not providing. Same argument as [Strictness.declaredSeekModes].
+   *
+   * `501 Action Failed` by default: the generic refusal firmware really emits transiently.
+   */
+  fun faultNextControlRequests(count: Int, errorCode: Int = UpnpError.ACTION_FAILED) {
+    faultCode = errorCode
+    faultsRemaining.set(count)
+  }
+
   fun awaitMediaRequest(timeoutMs: Long): RecordedMedia? =
     if (firstMedia.await(timeoutMs, TimeUnit.MILLISECONDS)) media.firstOrNull() else null
 
@@ -298,7 +362,10 @@ class FakeRenderer(
   // ---- the server --------------------------------------------------------------------------
 
   private fun serve(connection: Socket) {
-    if (vanished) return
+    // `vanished` is permanent; `hangUpsRemaining` is a bounded blip. Either way the socket stays
+    // bound and the connection is dropped without a status line, which is what a client sees
+    // from a speaker that has lost power or a network that has dropped a packet run.
+    if (vanished || hangUpsRemaining.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) return
     val input = RecordingInputStream(connection.getInputStream())
     val head = HttpWire.readRequestHead(input)
     // Exactly the bytes of the head, terminating blank line included, taken off the socket before
@@ -345,6 +412,10 @@ class FakeRenderer(
   private fun control(headBytes: ByteArray, body: ByteArray, avTransport: Boolean): ByteArray {
     val recorded = RecordedSoap(headBytes, body)
     soap += recorded
+
+    // Recorded first, then refused: a test asserting on what a client sent must still see the
+    // request that got a fault back.
+    if (faultsRemaining.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) return fault(faultCode)
 
     val raw = recorded.rawSoapAction
       ?: return fault(UpnpError.INVALID_ACTION)
@@ -466,7 +537,7 @@ class FakeRenderer(
         responseEnvelope(
           "GetTransportInfo",
           listOf(
-            "CurrentTransportState" to transportState,
+            "CurrentTransportState" to (identity.transportStateOverride ?: transportState),
             "CurrentTransportStatus" to identity.transportStatus,
             "CurrentSpeed" to "1",
           ),
@@ -479,10 +550,10 @@ class FakeRenderer(
           "GetPositionInfo",
           listOf(
             "Track" to "1",
-            "TrackDuration" to UpnpTime.formatClock(durationMs),
+            "TrackDuration" to if (identity.reportsPosition) UpnpTime.formatClock(durationMs) else UpnpTime.NOT_IMPLEMENTED,
             "TrackMetaData" to currentMetadata,
             "TrackURI" to (identity.followingCoordinator ?: currentUri.orEmpty()),
-            "RelTime" to UpnpTime.formatClock(positionMs),
+            "RelTime" to if (identity.reportsPosition) UpnpTime.formatClock(positionMs) else UpnpTime.NOT_IMPLEMENTED,
             "AbsTime" to UpnpTime.NOT_IMPLEMENTED,
             "RelCount" to "2147483647",
             "AbsCount" to "2147483647",
