@@ -105,7 +105,7 @@ jobs:
       # would say so. That is the fourth hand-written list in this repository to
       # drift with nothing noticing.
       - name: Compile the gates check does not
-        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :integrations:bindery:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:lidarr:compileDebugAndroidTestKotlin
+        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :integrations:bindery:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:lidarr:compileDebugAndroidTestKotlin :integrations:requests:compileDebugAndroidTestKotlin
 
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a

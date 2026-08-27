@@ -31,4 +31,29 @@ dependencies {
   implementation(libs.coroutines.core)
 
   testImplementation(libs.coroutines.test)
+
+  // The device tier exists for **one** class, `di.RequestsModule`, and it exists because there is
+  // no JVM seam for it at all: every one of its four `@Provides` takes a concrete class that
+  // transitively needs the Android Keystore (`SubsonicSourceProvider` -> `CredentialStore`, and
+  // `IntegrationCredentialStore` directly). Measured before it was written -- all four providers
+  // and their three SAM lambdas at **LINE 0/1 or 0/4**, exercised by nothing, while all 60 JVM
+  // tests in this module passed. That is the same "obviously fine, exercised by nothing" shape
+  // `:integrations:lidarr` and `:integrations:bindery` each found in their own wiring, and it is
+  // the layer where a port could be bound to a collaborator that answers a different question.
+  //
+  // Room and DataStore are here rather than transitively: `muplay.android.room` puts
+  // `room-runtime` on `:core:database`'s `implementation`, so `Room.inMemoryDatabaseBuilder` is
+  // not on this module's classpath without asking. `room-testing` is deliberately NOT added --
+  // nothing here migrates a database.
+  androidTestImplementation(libs.androidx.test.core)
+  androidTestImplementation(libs.androidx.test.ext)
+  androidTestImplementation(libs.androidx.test.runner)
+  androidTestImplementation(libs.coroutines.test)
+  androidTestImplementation(libs.room.runtime)
+  androidTestImplementation(libs.datastore.preferences)
+  // AssertJ is added explicitly because `configureJUnit5` only puts it on `testImplementation`,
+  // not `androidTestImplementation`. Byte Buddy -- which assertj-core drags in at compile scope
+  // and AGP cannot dex -- is stripped from every androidTest configuration project-wide by
+  // `excludeByteBuddyFromInstrumentedTests` in build-logic, so nothing is needed here for it.
+  androidTestImplementation(libs.assertj)
 }

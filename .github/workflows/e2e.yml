@@ -259,7 +259,7 @@ jobs:
           # exactly the same position, found by that rule, and is now named here too.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
