@@ -25,6 +25,10 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
         configureKotlinAndroid(this)
         defaultConfig.targetSdk = 36
         configureReleaseBuild(this)
+        // After `configureReleaseBuild`, and outside it: the gates below read the *artifact*
+        // `configureReleaseBuild` causes to be produced, through the Variant API rather than
+        // through the DSL. See ReleaseGates.kt.
+        configureReleaseGates(this)
       }
 
       configureMergedManifestVerification()
