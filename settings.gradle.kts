@@ -28,6 +28,15 @@ include(":core:cast")
 include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
+// Plan 6 Task 12. The settings **slot**: a screen that renders whatever `SettingsSection`
+// implementations the Hilt graph contains and names none of them. It depends on no other feature
+// and on no `:core:` module, which is what makes `git rm -r core/cast feature/castpicker` a
+// complete removal of casting -- see `SettingsSection`'s own documentation and `ConventionTest`'s
+// `the settings slot never learns what is in it`.
+include(":feature:settings")
+// Plan 6 Task 12. Casting's own UI, and today that is exactly one thing: the renderer-direct
+// switch, contributed into the slot above. The arrow runs this way and never back.
+include(":feature:castpicker")
 
 // Plan 7's own top-level source directory. Kept out of `core/` deliberately: `ConventionTest`'s
 // `nothing outside integrations depends on an integration` makes "Plan 7 can be dropped" a checked
