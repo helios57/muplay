@@ -169,25 +169,33 @@ class SleepTimerControllerTest {
   @Test
   fun extendingPushesTheDeadlineOut() {
     val harness = startBook()
-    val subject = timer(harness)
+    // A two-second fade, not the default one: with a 1 s fade the tick grid puts the reading below
+    // at exactly `remaining == fadeMs`, where `volumeFor` answers 1.0 -- so the restore assertion
+    // would be satisfied whether or not the restore happened. Measured at **0.978** on the run that
+    // found it.
+    val subject = timer(harness, fadeMs = 2_000L)
 
     harness.onMain { subject.start(SleepTimerRequest.Duration(COUNTDOWN_MS)) }
     Thread.sleep(COUNTDOWN_MS - 800L)
-    // The volume is read **inside the same main-thread turn as the extend**, and that is what makes
-    // it discriminate: `extend` restarts the ticker with `launch`, whose first tick is dispatched
-    // rather than immediate, so a separate `onMain` read happens after that tick has already
-    // written the volume for the new deadline. Measured -- with the restore deleted from `begin`,
-    // the two-turn version of this assertion stayed green.
-    val volumeInTheSameTurn = harness.onMain {
+    // Both readings happen **inside the same main-thread turn as the extend**, and that is what
+    // makes the second one discriminate: `extend` restarts the ticker with `launch`, whose first
+    // tick is dispatched rather than immediate, so a separate `onMain` read lands after that tick
+    // has already written the volume for the new deadline. Measured -- with the restore deleted
+    // from `begin`, the two-turn version of this assertion stayed green.
+    val (faded, restored) = harness.onMain {
+      val faded = harness.player.volume
       subject.extend(byMs = 6_000L)
-      harness.player.volume
+      faded to harness.player.volume
     }
     Thread.sleep(2_000L)
 
     // Past the original deadline, still playing. And the volume came back, because the extend
-    // happened during the fade.
-    assertThat(volumeInTheSameTurn)
-      .describedAs("the volume the listener would hear between the shake and the next tick")
+    // happened during the fade -- which the first reading is what proves.
+    assertThat(faded)
+      .describedAs("mid-fade when the extend arrived, or the restore has nothing to restore")
+      .isLessThan(FULL_VOLUME)
+    assertThat(restored)
+      .describedAs("the volume the listener hears between the extend and the next tick")
       .isEqualTo(FULL_VOLUME)
     assertThat(harness.onMain { harness.player.isPlaying }).isTrue
     assertThat(harness.onMain { harness.player.volume }).isEqualTo(FULL_VOLUME)
@@ -233,15 +241,17 @@ class SleepTimerControllerTest {
     // The primary use of the affordance, and the one every other shake test here misses: the
     // listener is still awake, hears the fade start, and shakes the phone *before* the timer fires.
     val harness = startBook()
-    val subject = timer(harness)
+    // Two seconds of fade, for the reason `extendingPushesTheDeadlineOut` records.
+    val subject = timer(harness, fadeMs = 2_000L)
 
     harness.onMain { subject.start(SleepTimerRequest.Duration(COUNTDOWN_MS)) }
     Thread.sleep(COUNTDOWN_MS - 800L)
     val remainingBeforeTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
     // Same turn as the shake, for the reason `extendingPushesTheDeadlineOut` records.
-    val volumeInTheSameTurn = harness.onMain {
+    val (faded, restored) = harness.onMain {
+      val faded = harness.player.volume
       subject.onShake()
-      harness.player.volume
+      faded to harness.player.volume
     }
     val remainingAfterTheShake = (subject.state.value as SleepTimerState.Running).remainingMs
 
@@ -250,8 +260,11 @@ class SleepTimerControllerTest {
     assertThat(remainingAfterTheShake - remainingBeforeTheShake)
       .describedAs("one shake buys EXTENSION_MS more, from %d ms remaining", remainingBeforeTheShake)
       .isBetween(SleepTimerController.EXTENSION_MS - 500L, SleepTimerController.EXTENSION_MS + 500L)
-    assertThat(volumeInTheSameTurn)
-      .describedAs("the volume the listener would hear between the shake and the next tick")
+    assertThat(faded)
+      .describedAs("mid-fade when the shake arrived, or the restore has nothing to restore")
+      .isLessThan(FULL_VOLUME)
+    assertThat(restored)
+      .describedAs("the volume the listener hears between the shake and the next tick")
       .isEqualTo(FULL_VOLUME)
     Thread.sleep(1_500L)
     assertThat(harness.onMain { harness.player.isPlaying })
