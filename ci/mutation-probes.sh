@@ -211,6 +211,12 @@ SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
 # ramp and the shake decision are plain arithmetic and are gated here.
 SLEEP_FADE = "core/media/src/main/kotlin/app/muplay/media/SleepTimerFade.kt"
 SHAKE_DETECTOR = "core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt"
+# Plan 4 Task 7. The Android-free half of per-book speed: `BookSpeedController` itself needs a real
+# `ExoPlayer` and is out of this runner's reach (its mutations are recorded by hand in
+# task-7-report.md, per the SCOPE note above), but `BookPlaybackSettings.of` -- the decision that
+# "a song after a book is not played at the book's speed" -- is a plain function over a plain value
+# and lives in the same file.
+BOOK_SPEED = "core/media/src/main/kotlin/app/muplay/media/BookSpeedController.kt"
 BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
 STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
 CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
@@ -1362,9 +1368,14 @@ PROBES = [
     # either way. (Realigned rather than left stale: the note at the foot of this file records two
     # occasions when a rewritten line silently took a whole probe family out of service.)
     ("media/second-player-construction", PLAYBACK_SERVICE,
-     "    val player: MuPlayer = playerFactory.create()",
-     "    val player: MuPlayer =\n"
-     "      MuPlayer(androidx.media3.exoplayer.ExoPlayer.Builder(this).build(), NeverResume)",
+     "    val exoPlayer = playerFactory.createExoPlayer()",
+     "    val exoPlayer = androidx.media3.exoplayer.ExoPlayer.Builder(this).build()",
+     # Repointed by Plan 4 Task 7, which split this line in two (`createExoPlayer()` then `wrap()`,
+     # because `BookSpeedController` needs the raw player and the session needs the seam) and so
+     # moved the text this probe searched for. `ci/probe-preflight.py` reported it in 50 ms --
+     # exactly the run it was added for -- rather than aborting a full sweep an hour in. The
+     # mutation is now the shipped defect in its simplest form: the service building its own player
+     # instead of asking the one factory that attaches the 429 retry policy.
      # The named test is `production code constructs an ExoPlayer in exactly one place`, and it was
      # recorded here under an older name until Task 8b re-ran this probe: `PlayerConstructionTest`
      # split into a production half and a test-sources half during Task 3's fix round and this line
@@ -4052,6 +4063,89 @@ PROBES = [
      # Reading only z looks correct, because a resting phone's gravity is on z -- and every other
      # test in that file jolts z.
      "the magnitude uses all three axes", 1),
+
+    # ---- Plan 4 Task 7: the speed that must NOT follow you into music ------------------------
+    #
+    # `PlaybackParameters` are a property of the **player**, not of the item, so a song played
+    # after a book at 1.4x plays at 1.4x and nothing anywhere reports it. Everything about that
+    # trap that a JVM test can see is `BookPlaybackSettings.of`; the applying half is a real
+    # `ExoPlayer` and its six mutations are in task-7-report.md.
+    ("speed/music-inherits-the-book", BOOK_SPEED,
+     "      null -> MUSIC",
+     "      null -> BookPlaybackSettings(1.0f, skipSilence = true)",
+     # The trap, in the smaller of its two forms: music keeps the book's silence skipping. Named
+     # against the test that asserts the whole value rather than one field of it.
+     "anything that is not an audiobook plays at normal speed with no silence skipping", 2),
+    ("speed/music-constant-is-not-normal-speed", BOOK_SPEED,
+     "    val MUSIC = BookPlaybackSettings(BookSettings.DEFAULT_SPEED, skipSilence = false)",
+     "    val MUSIC = BookPlaybackSettings(BookSettings.MAX_SPEED, skipSilence = false)",
+     # The trap in its larger form, from the other side: the reset exists and resets to the wrong
+     # number. Every "a book plays at its own speed" assertion is green against it.
+     "anything that is not an audiobook plays at normal speed with no silence skipping", 1),
+    ("speed/music-skips-silence", BOOK_SPEED,
+     "    val MUSIC = BookPlaybackSettings(BookSettings.DEFAULT_SPEED, skipSilence = false)",
+     "    val MUSIC = BookPlaybackSettings(BookSettings.DEFAULT_SPEED, skipSilence = true)",
+     "anything that is not an audiobook plays at normal speed with no silence skipping", 1),
+    ("speed/book-speed-is-a-constant", BOOK_SPEED,
+     "      else -> BookPlaybackSettings(BookSettings.clampSpeed(item.speed), item.skipSilence)",
+     "      else -> BookPlaybackSettings(BookSettings.DEFAULT_SPEED, item.skipSilence)",
+     # Every book plays at 1.0x. The speed control appears to work -- the write-back still stores
+     # what was asked for -- and the audio never changes.
+     "an audiobook item plays at its book's speed", 3),
+    ("speed/skip-silence-hardcoded-off", BOOK_SPEED,
+     "      else -> BookPlaybackSettings(BookSettings.clampSpeed(item.speed), item.skipSilence)",
+     "      else -> BookPlaybackSettings(BookSettings.clampSpeed(item.speed), false)",
+     "silence skipping follows the book too", 3),
+    ("speed/clamp-copies-the-music-value", BOOK_SPEED,
+     "      else -> BookPlaybackSettings(BookSettings.clampSpeed(item.speed), item.skipSilence)",
+     "      else -> MUSIC.copy(speed = BookSettings.clampSpeed(item.speed))",
+     # The spelling that reads best and is wrong in one field: `MUSIC.copy(speed = ..)` carries
+     # `skipSilence = false` with it, so a book with a corrupt speed column silently loses the
+     # listener's silence-skipping choice as well.
+     "an impossible speed does not also turn silence skipping off", 3),
+    ("speed/no-clamp-on-the-way-out", BOOK_SPEED,
+     "      else -> BookPlaybackSettings(BookSettings.clampSpeed(item.speed), item.skipSilence)",
+     "      else -> BookPlaybackSettings(item.speed, item.skipSilence)",
+     # `AudiobookRepository` clamps on the way in, which is what makes this look redundant. A `NaN`
+     # from a corrupted `REAL` column never passes a setter, and `setPlaybackSpeed(NaN)` throws from
+     # inside a listener callback -- playback dies with no message anything can act on.
+     "an impossible stored speed never reaches the player", 2),
+
+    # `PlaybackState.isAudiobook` -- this class's first author branch, and the reason its floor
+    # moved from LINE to BRANCH in the same task. A LINE rule cannot see any of these three.
+    ("state/isaudiobook-always-true", PLAYBACK_STATE,
+     "    get() = mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER ||\n"
+     "      mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK",
+     "    get() = true",
+     "music and the unknown type are not books", 2),
+    ("state/isaudiobook-chapter-only", PLAYBACK_STATE,
+     "    get() = mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER ||\n"
+     "      mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK",
+     "    get() = mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER",
+     # The arm a suite that only ever plays chapters cannot see: a whole-book browse item carries
+     # `MEDIA_TYPE_AUDIO_BOOK` and would render with music controls.
+     "both audiobook media types are recognised as a book", 1),
+    ("state/nothing-playing-claims-music", PLAYBACK_STATE,
+     "      mediaType = MediaMetadata.MEDIA_TYPE_MIXED,",
+     "      mediaType = MediaMetadata.MEDIA_TYPE_MUSIC,",
+     # Four downstream screens render this value before anything is loaded. Claiming a type nothing
+     # declared makes `isAudiobook` false for the wrong reason -- right today, wrong the moment the
+     # default is read as an answer.
+     "nothing playing claims to be neither a book nor a song, and plays at normal speed", 1),
+    ("state/nothing-playing-speed-zero", PLAYBACK_STATE,
+     "      speed = 1.0f,",
+     "      speed = 0.0f,",
+     "nothing playing claims to be neither a book nor a song, and plays at normal speed", 1),
+
+    # The stand-in binding Plan 4 Task 6 replaces. Answering an item for every media id is not an
+    # abstract mistake: it plays **music** at a book's speed with silence skipping on, which is the
+    # exact defect this task exists to remove, arriving through the object graph instead of through
+    # the player.
+    ("speed/module-source-answers-a-book", MEDIA_MODULE,
+     "  fun provideAudiobookItemSource(): AudiobookItemSource = AudiobookItemSource { null }",
+     "  fun provideAudiobookItemSource(): AudiobookItemSource =\n"
+     "    AudiobookItemSource { id -> app.muplay.media.AudiobookItem(id, id, 0L, 0L, false, 2.0f, true) }",
+     "until the audiobook snapshot lands, nothing is a book -- which is not the same as disabled", 1),
 ]
 
 
@@ -4228,6 +4322,13 @@ LATER_PROBE_FILES = [
     # ends, and the next agent's dirty-tree guard blames them for it.
     SLEEP_FADE,
     SHAKE_DETECTOR,
+    # Plan 4 Task 7. Added in the same edit as the eleven `speed/` and `state/` probes above, as
+    # this list's own comment requires -- a mutated file no `git checkout` names is left in the tree
+    # when the run ends, and the next agent's dirty-tree guard blames them for it. `PLAYBACK_STATE`
+    # and `MEDIA_MODULE` are already named (the first here, the second on `revert()`'s own line),
+    # which is exactly the state that makes forgetting this line easy: most of the family mutates
+    # files that are already covered.
+    BOOK_SPEED,
     # Plan 6 Task 9, added in the same edit as the six `handover/` probes above, per this
     # list's own comment. `MEDIA_MODULE` and `core/cast` are already on `revert()`'s checkout
     # line -- only the decorator's own file is new, which is exactly the state that makes

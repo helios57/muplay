@@ -10,6 +10,7 @@ import android.os.Looper
 import android.service.notification.StatusBarNotification
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.test.core.app.ApplicationProvider
@@ -264,6 +265,48 @@ class MuPlaybackServiceTest {
     // Two items, positioned at the first: the only arrangement in which these two disagree.
     assertThat(state.hasNext).isTrue
     assertThat(state.hasPrevious).isFalse
+  }
+
+  /**
+   * The two fields Plan 4 Task 7 added, each observed at a value nothing else in the state could
+   * have supplied -- the rule the test above is built on, applied to the two newcomers.
+   *
+   * `mediaType` is checked against `MEDIA_TYPE_MUSIC` while
+   * [app.muplay.media.PlaybackState.NOTHING_PLAYING] carries `MEDIA_TYPE_MIXED`, so a connection
+   * that published nothing at all cannot satisfy it -- which "is not an audiobook" alone would.
+   *
+   * `speed` is the more interesting half, and it is why this test exists rather than one more line
+   * in the test above. The listener's speed control reaches the player through a `MediaController`
+   * -- and, later, through a car and a watch -- so the value has to survive a real IPC round trip
+   * in **both** directions: the command out, and the `EVENT_PLAYBACK_PARAMETERS_CHANGED` back.
+   * `PlaybackConnection` refreshes on every `onEvents` and so needs no event list of its own; this
+   * is what says so. Two readings, before and after, because 1.0 is also the value of a state that
+   * was never populated.
+   */
+  @Test
+  fun theMediaTypeAndTheChosenSpeedReachTheUiSideOfTheConnection() {
+    setQueueAndPlay(songs.take(1))
+    awaitPositionAtLeast(500L)
+
+    assertThat(connection.state.value.mediaType).isEqualTo(MediaMetadata.MEDIA_TYPE_MUSIC)
+    assertThat(connection.state.value.isAudiobook)
+      .describedAs("a song is not an audiobook").isFalse
+
+    val before = connection.state.value.speed
+    onMain { controller.setPlaybackSpeed(FASTER) }
+    try {
+      awaitState("the chosen speed to reach the state") { connection.state.value.speed == FASTER }
+      assertThat(listOf(before, connection.state.value.speed)).containsExactly(1.0f, FASTER)
+    } finally {
+      // Playback parameters are a property of the **player**, and this suite shares one service
+      // across every test in it. Left at 1.5x, every later position assertion here would be
+      // measuring a player running half again as fast -- which is the very leak
+      // `BookSpeedController` exists to close, arriving inside the test suite instead of inside the
+      // app. The controller resets it at the next item transition anyway; this makes the reset
+      // this test's own responsibility rather than the next test's luck.
+      onMain { controller.setPlaybackSpeed(1.0f) }
+      awaitState("the speed to be back to normal") { connection.state.value.speed == 1.0f }
+    }
   }
 
   /**
@@ -756,6 +799,12 @@ class MuPlaybackServiceTest {
     const val PASSWORD = "testpass"
     const val MUSIC_LIBRARY_ID = 1
     const val TIMEOUT_MS = 30_000L
+
+    /**
+     * The speed the listener chooses. Not 1.0, and not a value any other field of the state
+     * carries, so a connection publishing a default cannot satisfy the assertion that reads it.
+     */
+    const val FASTER = 1.5f
     const val POLL_MS = 50L
 
     /**
