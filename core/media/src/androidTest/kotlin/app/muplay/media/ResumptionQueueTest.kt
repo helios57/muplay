@@ -163,8 +163,17 @@ class ResumptionQueueTest {
     // to disagree, and `PlaybackQueue`'s declared fields are what stop a second one appearing here.
     seed()
 
-    assertThat(PlaybackQueue::class.java.declaredFields.filterNot { it.isSynthetic }.map { it.name })
-      .containsExactlyInAnyOrder("songs", "startIndex")
+    // The reflection half of this used to live here too, with a `filterNot { it.isSynthetic }`.
+    // That filter is wrong -- a Kotlin `companion object` compiles to a non-synthetic
+    // `public static final PlaybackQueue$Companion Companion` field, so it reported
+    // `["Companion", "songs", "startIndex"]` and failed against a *correct* PlaybackQueue.
+    //
+    // It is gone rather than fixed: `PlaybackQueueTest.the queue carries no playback position of
+    // its own` already makes exactly this assertion on the JVM tier, with the filter that names
+    // `Companion` alone -- deliberately not a blanket `isStatic`, because a companion's property
+    // backing fields are statics on the containing class and `companion object { var positionMs }`
+    // is the worst form of the defect. Read that test's KDoc before reinstating anything here.
+    // A device is not needed to reflect over a data class, and duplicating it here bought nothing.
     assertThat(subject()).isNotNull
   }
 }

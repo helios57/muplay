@@ -207,14 +207,21 @@ class AudiobookSnapshotTest {
   @Test
   fun aSpeedNoPlayerCouldAcceptIsClampedOnTheWayOut(): Unit = runBlocking {
     // A hand-edited database, a future bug, or arithmetic on a corrupt `REAL` column.
-    // `ExoPlayer.setPlaybackSpeed(NaN)` throws from inside a listener callback, which surfaces as
-    // playback dying with no message a listener could act on. Two rows, two directions.
-    graph.database.bookSettingsDao().upsert(BookSettingsEntity("bk-multi", Float.NaN, false))
+    //
+    // **One row, not two.** This test also inserted `BookSettingsEntity("bk-multi", Float.NaN, ..)`
+    // and died on the insert, not the assertion:
+    //
+    //     SQLiteConstraintException: NOT NULL constraint failed: book_settings.speed (code 1299)
+    //
+    // SQLite has no NaN. A `REAL` bound to NaN is stored as **NULL**, so a NOT NULL column rejects
+    // it and the corrupt-column premise cannot be created through Room at all. The clamp is real
+    // and still gated, on the tier where NaN exists: `BookSettingsTest.clampSpeed(Float.NaN)` and
+    // `BookPlaybackSettingsTest`'s NaN case, both JVM. What only a device can show is the path
+    // *through Room*, which is the out-of-range row below.
     graph.database.bookSettingsDao().upsert(BookSettingsEntity("bk-beta", 40f, false))
 
     snapshot.refresh()
 
-    assertThat(snapshot.itemFor("bk-multi-p1")!!.speed).isEqualTo(1.0f)
     assertThat(snapshot.itemFor("bk-beta-p1")!!.speed).isEqualTo(3.0f)
   }
 
