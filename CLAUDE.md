@@ -990,3 +990,35 @@ KDoc *names* the duplicate it was written against, so a raw-text scan reports
 `ConventionTest.kt` as the offender. It strips comments first — the same fix
 `VerifyMergedManifestTask`'s required half makes, and the same self-matching failure as
 the `pgrep` that matched its own command line.
+
+## `scope.cancel()` on a `@Singleton` kills it for the life of the process
+
+`MuPlayLibraryCallback` is a `@Singleton` — one instance per *process*, injected into
+every `MuPlaybackService` the process creates — and its `release()`, called from
+`onDestroy`, called `scope.cancel()`. A cancelled `CoroutineScope` is cancelled
+permanently: every later `launch` on it returns an already-cancelled `Job` and the
+body never runs. The browse callback of the **next** service was therefore silently
+inert, its `SettableFuture`s were never set, and Media3 answered browsers by timing
+out:
+
+    TimeoutException: Waited 40 seconds ... SequencedFutureManager$SequencedFuture[PENDING]
+
+For a user that is Android Auto, Wear OS or the Assistant browsing and searching
+forever after the system has reclaimed the service once — no crash, nothing in the
+log. `cancelChildren()` is the fix: it drops the work the dying session owned, which
+is all `release()` ever needed to do.
+
+**What makes this worth a section is how it hides.** Every affected test passes when
+run alone. `VoiceSearchJourneyTest` was 8/8 by itself and 2/8 after any other `:app`
+class, because that class's teardown destroys a service. So:
+
+- a lane that runs one class while iterating sees nothing;
+- `--no-build-cache check` sees nothing, in either direction;
+- the failure surfaces only in a full-suite device run, and then as six timeouts in
+  a class that has no defect in it.
+
+**Run one class to iterate, the module's whole suite before believing it.** That is
+already the rule for `connectedDebugAndroidTest` in this file; this is what it costs
+when the whole suite is the only thing that can see the bug. And when a device
+failure names a timeout rather than an assertion, suspect process-scoped state
+left behind by an earlier class before suspecting the class that reported it.
