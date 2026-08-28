@@ -11,6 +11,7 @@ import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
 import app.muplay.database.MIGRATION_6_7
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.RendererStore
 import app.muplay.database.SubsonicSourceProvider
 import app.muplay.database.SyncEngine
 import app.muplay.database.dao.AudiobookDao
@@ -20,6 +21,7 @@ import app.muplay.database.dao.ChapterDao
 import app.muplay.database.dao.LibraryDao
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.dao.SyncWatermarkDao
+import app.muplay.model.RememberedRenderers
 import app.muplay.network.DefaultSubsonicSourceFactory
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSourceFactory
@@ -199,5 +201,23 @@ object DataModule {
     @Binds
     @Singleton
     fun bindBookshelf(impl: AudiobookRepository): Bookshelf
+
+    /**
+     * Plan 6 Task 10. `RendererStore` has existed since Task 2 and, until the picker, **nothing
+     * could inject it** -- it implements [RememberedRenderers] and no binding said so, so the
+     * interface had an implementation and no way to reach it. That is the same shape as a coverage
+     * floor nothing enforces: present, plausible, and doing nothing.
+     *
+     * `@Singleton` matches the implementation's own scope rather than adding one. It matters here:
+     * `RendererDirectory` rewrites the whole remembered list on every discovery pass, and two
+     * instances would be two writers over one DataStore key, the loser writing whatever it read
+     * before the winner did.
+     *
+     * The interface lives in `:core:model`, not here, which is what keeps `:feature:castpicker`
+     * able to name it without depending on `:core:database` -- see [RememberedRenderers]' own KDoc.
+     */
+    @Binds
+    @Singleton
+    fun bindRememberedRenderers(impl: RendererStore): RememberedRenderers
   }
 }

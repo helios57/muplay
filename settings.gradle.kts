@@ -28,6 +28,11 @@ include(":core:cast")
 include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
+// Plan 6 Task 10. The cast picker: the device list, the cast button and the volume slider.
+// Depends on `:core:cast` and `:core:media` and on no other feature -- see this module's own
+// build file, and `ConventionTest`'s severability reasoning for `integrations`: dropping casting
+// stays `git rm -r core/cast feature/castpicker` plus these two include lines.
+include(":feature:castpicker")
 
 // Plan 5 Task 8. The second APPLICATION module in this build, and the only module whose `minSdk` is
 // not 26 -- Wear OS 3 is API 30 and Compose for Wear OS supports nothing earlier. That floor is set

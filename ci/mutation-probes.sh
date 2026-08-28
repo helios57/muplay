@@ -295,6 +295,14 @@ SERVED_MEDIA = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 # so the move needed no change there -- only here, where the path is written out.
 SOAP_FAKE = "core/cast/src/testFixtures/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
 
+# Plan 6 Task 10. The picker's two pure-Kotlin halves -- the state mapping and the view model.
+# Both are reachable from this JVM-only runner because `:feature:castpicker` keeps every decision
+# out of its `@Composable`s: `castUiState`, `castFailure` and `connectedUdn` are top-level
+# functions in their own file, and `CastViewModel` is constructed over two hand-written seams
+# rather than over `RendererDirectory` and `CastSessionManager`. Nothing here needs a device.
+CAST_UI_STATE = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastUiState.kt"
+CAST_VIEW_MODEL = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastViewModel.kt"
+
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
 # `expected failures` is asserted too, not just "the named test failed": a mutation that reddens
@@ -1268,6 +1276,60 @@ PROBES = [
     # test could not see it, because Kotlin emits a companion's property backing fields as static
     # fields on the *containing* class. The blanket static filter was required (the `Companion`
     # handle is ACC_PUBLIC|ACC_STATIC|ACC_FINAL and not synthetic); it was just too wide.
+    # ---- Plan 6 Task 10: the cast picker -------------------------------------------------------
+    #
+    # The picker's whole job is to make three silent failures legible and to show a list nobody
+    # can tell is wrong by looking at it. Every probe below is a value one constant would satisfy.
+    ("castui/empty-network-is-searching", CAST_UI_STATE,
+     "    discovery == null -> CastUiState.Searching",
+     "    discovery?.devices.isNullOrEmpty() == true -> CastUiState.Searching",
+     "an empty network is Devices with an empty list, not Searching", 1),
+    ("castui/connected-hardcoded", CAST_UI_STATE,
+     "          isConnected = device.udn == connectedUdn,",
+     "          isConnected = false,",
+     "the connected device is marked, and only that one", 1),
+    # The plan's own listing used an alphabetical fixture (`Aardvark, Mongoose, Zebra`), on which
+    # this mutation is the identity and the test stayed green. Measured, then the fixture was
+    # changed to `Zebra, Aardvark, Mongoose` before this probe was recorded -- which is the shape
+    # the plan's Step 6 predicted and asked for.
+    ("castui/rows-sorted-by-name", CAST_UI_STATE,
+     "      devices = discovery.devices.map { device ->",
+     "      devices = discovery.devices.sortedBy { it.friendlyName }.map { device ->",
+     "the order of the rows is the order discovery produced", 1),
+    # "Something went wrong" for all four. The single most tempting simplification in the file,
+    # and the one that reduces this whole module to a spinner with a sad face.
+    ("castui/one-failure-sentence", CAST_UI_STATE,
+     "      session.reason.contains(FailurePhrases.GROUPED) ->",
+     "      true ->",
+     "each of the four failures gets its own sentence, and they are different sentences", 1),
+    # The security half: a classified arm that also forwards the protocol string it classified on
+    # puts another module's text back on a label. `CastFailure` guarantees that text is URL-free
+    # today; this probe is what notices when the picker stops depending on that guarantee holding.
+    ("castui/failure-forwards-the-protocol-string", CAST_UI_STATE,
+     '"${session.deviceName} is grouped with another speaker. $CAST_GROUPED_NOTICE"',
+     '"${session.deviceName} is grouped with another speaker. $CAST_GROUPED_NOTICE (${session.reason})"',
+     "a classified failure does not carry the protocol string it was classified from", 1),
+    # Discovery is three multicast datagrams and a three-second listen. An `init` that starts one
+    # is the change somebody makes to "warm the list up", and it runs forever behind a closed
+    # sheet.
+    ("castui/search-in-init", CAST_VIEW_MODEL,
+     "  /** The sheet opened. Start looking. */\n  fun open() {",
+     "  init { search() }\n\n  /** The sheet opened. Start looking. */\n  fun open() {",
+     "a closed picker issues no search", 1),
+    ("castui/select-casts-to-the-first-device", CAST_VIEW_MODEL,
+     "    val device = found.value?.devices.orEmpty().firstOrNull { it.udn == udn } ?: return",
+     "    val device = found.value?.devices.orEmpty().firstOrNull() ?: return",
+     "selecting a device casts to that device and not to another", 2),
+    ("castui/volume-not-coerced", CAST_VIEW_MODEL,
+     "    control.setDeviceVolumePercent((fraction.coerceIn(0f, 1f) * PERCENT).roundToInt())",
+     "    control.setDeviceVolumePercent((fraction * PERCENT).roundToInt())",
+     "a slider value outside zero to one is coerced rather than sent to the speaker", 1),
+    # A closed picker that merely ignores its answer leaves a bound UDP socket and an IO thread
+    # running for the rest of the listen window. Invisible to every count-based assertion.
+    ("castui/close-does-not-cancel", CAST_VIEW_MODEL,
+     "    opened.value = false\n    searchJob?.cancel()",
+     "    opened.value = false",
+     "closing cancels the search in flight rather than letting it run out", 1),
     ("queue/companion-position-field", PLAYBACK_QUEUE,
      "  companion object {\n",
      "  companion object {\n    var positionMs: Long = 0\n",
@@ -4490,6 +4552,12 @@ LATER_PROBE_FILES = [
     AUDIOBOOK_POLICY,
     SUBSONIC_SOURCE,
     SUBSONIC_API,
+    # Plan 6 Task 10, added in the same edit as the nine `castui/` probes above, per this list's
+    # own comment -- never after. Neither file is under any path `revert()`'s checkout line names,
+    # so without these two the first `castui/` probe would leave `CastUiState.kt` mutated and the
+    # second would abort the family with "PROBE TEXT NOT FOUND ... 0 matches".
+    CAST_UI_STATE,
+    CAST_VIEW_MODEL,
 ]
 
 
@@ -4529,6 +4597,11 @@ JVM_TEST_RESULT_DIRS = {
     "core/database": "testDebugUnitTest",
     "feature/setup": "testDebugUnitTest",
     "feature/library": "testDebugUnitTest",
+    # `:feature:castpicker` joined in Plan 6 Task 10. Android module, so `testDebugUnitTest` -- and
+    # its JVM tier is the whole point of the module's shape: the state mapping is top-level
+    # functions in a file with no `@Composable` in it, and `CastViewModel` is built over two
+    # hand-written seams, so both are reachable here rather than only on the emulator.
+    "feature/castpicker": "testDebugUnitTest",
     # `:core:media` joined in Plan 3 Task 2. Android module, so `testDebugUnitTest` -- and its JVM
     # tier is the whole point of the module's shape: `StreamRetryPolicy` and `MediaModule` carry no
     # Android or Media3 type in their signatures precisely so this runner can reach them.
@@ -4647,7 +4720,7 @@ def run_suite():
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
                     ":integrations:core:test", ":integrations:lidarr:test",
                     ":integrations:bindery:test", ":integrations:requests:test",
-                    ":feature:player:test"],
+                    ":feature:player:test", ":feature:castpicker:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

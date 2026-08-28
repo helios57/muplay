@@ -38,6 +38,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun PlayerScreen(
   modifier: Modifier = Modifier,
+  castDeviceName: String? = null,
+  castButton: @Composable () -> Unit = {},
   viewModel: PlayerViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -48,10 +50,21 @@ fun PlayerScreen(
     onPrevious = viewModel::previous,
     onScrubTo = viewModel::scrubTo,
     onScrubFinished = viewModel::commitScrub,
+    castDeviceName = castDeviceName,
+    castButton = castButton,
     modifier = modifier,
   )
 }
 
+/**
+ * @param castDeviceName the speaker playback is on, or `null` for the phone. A `String?` and a
+ *   `@Composable` slot rather than a dependency on `:feature:castpicker`, and that is a module
+ *   decision rather than a stylistic one: two feature modules that depend on each other is the
+ *   first step towards neither being removable, and this plan's definition of done requires that
+ *   dropping casting stays `git rm -r core/cast feature/castpicker`. `:app` supplies both.
+ * @param castButton the control that opens the cast picker. Empty by default, so this screen
+ *   renders correctly in a build with no casting in it at all.
+ */
 @Composable
 internal fun PlayerScreen(
   uiState: PlayerUiState,
@@ -60,6 +73,8 @@ internal fun PlayerScreen(
   onPrevious: () -> Unit,
   onScrubTo: (Long) -> Unit,
   onScrubFinished: () -> Unit,
+  castDeviceName: String? = null,
+  castButton: @Composable () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   when (uiState) {
@@ -107,6 +122,16 @@ internal fun PlayerScreen(
         Text(text = formatDuration(uiState.playback.durationMs))
       }
 
+      // Above the transport controls, and only while something is cast. A player that keeps
+      // showing a play button and says nothing about where the sound is coming from is one whose
+      // user reaches for the phone's own volume keys and hears nothing change.
+      if (castDeviceName != null) {
+        Text(
+          text = PLAYING_ON_PREFIX + castDeviceName,
+          style = MaterialTheme.typography.bodyMedium,
+        )
+      }
+
       Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -122,6 +147,7 @@ internal fun PlayerScreen(
         TextButton(onClick = onNext, enabled = uiState.playback.hasNext) {
           Text(NEXT_LABEL)
         }
+        castButton()
       }
     }
   }
@@ -140,3 +166,10 @@ internal const val PLAY_LABEL = "Play"
 internal const val PAUSE_LABEL = "Pause"
 internal const val NEXT_LABEL = "Next"
 internal const val PREVIOUS_LABEL = "Previous"
+
+/**
+ * Prefixed onto the cast device's name, not a whole sentence with a placeholder, because the name
+ * comes from a speaker a stranger named and this screen must not try to inflect around it. The
+ * Tier 2 cast journey asserts the concatenation verbatim.
+ */
+internal const val PLAYING_ON_PREFIX = "Playing on "
