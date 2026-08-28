@@ -18,7 +18,15 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.retrofit)
   implementation(libs.retrofit.serialization)
-  implementation(libs.serialization.json)
+  // `api`, not `implementation`, and that is a correction rather than a preference:
+  // `LidarrAlbumCandidate.raw` is a `kotlinx.serialization.json.JsonObject` and that class is a
+  // **public property of a public type this module returns**, so a consumer cannot so much as
+  // construct or destructure a candidate without it. Found in Plan 7 Task 9, by a consumer:
+  // `:integrations:requests`' own tests build a `LidarrAlbumCandidate` and failed with
+  // "Cannot access class 'kotlinx.serialization.json.JsonObject'. Check your module classpath".
+  // `:integrations:bindery` has the identical leak through `BinderyBookCandidate.raw` and is
+  // another lane's file; see task-9-report.md.
+  api(libs.serialization.json)
   implementation(libs.coroutines.core)
 
   // `mockwebserver3`, deliberately NOT `okhttp-mockwebserver` -- which resolves to

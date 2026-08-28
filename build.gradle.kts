@@ -5503,6 +5503,176 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
     ),
   ),
+  // `:integrations:requests`, Task 9. Pure Kotlin composition over hand-written fakes on the JVM
+  // tier, plus one instrumented class for the wiring, which has no JVM seam at all.
+  ":integrations:requests" to listOf(
+    // 1. The **fast tier's** BRANCH rule, over the two classes with author-written branches.
+    //
+    // MEASURED from `integrations/requests/build/reports/jacoco/jacocoTestReport/
+    // jacocoTestReport.xml` after a plain `--no-build-cache :integrations:requests:test`, no
+    // emulator involved:
+    //
+    //   `RequestArrivalDetector`  22/22 = 1.0000
+    //   `RequestsRepository`      47/48 = 0.9792
+    //
+    // **The one missing `RequestsRepository` branch is Kotlin-unreachable**, on
+    // `request.remoteId?.toIntOrNull() ?: return@mapNotNull null`: `isPollable` has already
+    // refused every row whose `remoteId` is null, so the `?.`'s null arm cannot be taken while
+    // the elvis's can (a `remoteId` that will not parse as an `Int` — which
+    // `a lidarr remote id that is not a number is left alone rather than rewritten` does drive).
+    // Kotlin cannot smart-cast across the `filter` predicate's own function boundary, so there is
+    // no way to write this without the redundant check. Same artifact, same reason, as
+    // `LidarrClient`'s four and `BinderyClient`'s two. So **0.9792 is the honest ceiling here** and
+    // a 1.00 would fail the build on the Kotlin compiler rather than on this project's code.
+    //
+    // The floor is 0.90 rather than 0.97 for the reason `:integrations:bindery`'s equivalent gives:
+    // Task 10 adds a caller, and a floor one branch under a ceiling fires on the first
+    // Kotlin-unreachable arm that caller introduces. 0.90 over 48 branches still refuses four
+    // uncovered ones.
+    //
+    // FALSIFIED, in both directions, and **the predicted number was wrong** — which is why the run
+    // is worth more than the prediction. Measured:
+    //
+    //   * Withholding the whole of `RequestArrivalDetectorTest` takes that class to
+    //     **13/22 = 0.5909**, not the 0/22 this author predicted, and
+    //     `jacocoJvmCoverageVerification` fails with
+    //
+    //         Rule violated for class app.muplay.integrations.requests.RequestArrivalDetector:
+    //         branches covered ratio is 0.59, but expected minimum is 0.90
+    //
+    //     Thirteen of its twenty-two branches survive because `RequestsRepositoryTest` builds a
+    //     **real** `RequestArrivalDetector` and drives it through `refresh()`. That is this table's
+    //     recurring second-caller effect, in the one place nobody expected it: the class's own test
+    //     file is not the only thing that exercises it.
+    //   * Withholding the whole of `RequestsRepositoryTest` takes `RequestsRepository` to
+    //     **0/48 = 0.0000** and fails with "branches covered ratio is 0.00, but expected minimum is
+    //     0.90" — while leaving `RequestArrivalDetector` at a full 22/22, so each half of this rule
+    //     was fired separately rather than by one withholding that reddens everything.
+    //
+    // Note what that says and does not: this rule fires when a class stops being exercised, and
+    // says nothing about whether the answer it gives is right. `ci/mutation-probes.sh`'s
+    // `integrations/requests-*` family is what holds the answers.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.requests.RequestArrivalDetector",
+        "app.muplay.integrations.requests.RequestsRepository",
+      ),
+    ),
+    // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
+    // MEASURED, all on the same run: `RequestArrivalDetector` 26/26, `RequestsRepository` 84/84,
+    // `TitleMatching` 7/7 — the last of which carries **no BRANCH counter at all** (it is four
+    // chained calls with no branch in them), so LINE is the only counter that can hold it to
+    // anything.
+    //
+    // `RefreshReport` is deliberately NOT here. It measures **5/6 = 0.8333**, the missing line
+    // being the `data class`'s generated `equals`/`hashCode`/`copy` that nothing calls, and it is
+    // gated by rule 3 below at a floor that admits that.
+    //
+    // FALSIFIED, AND TWICE THE PREDICTION WAS WRONG. **Read this before withholding a test here
+    // and concluding anything from the green you get.** Measured, in order:
+    //
+    //   * Withholding the whole of `TitleMatchingTest` — every assertion in this repository about
+    //     how a title is normalised — leaves `TitleMatching` at **7/7 and this rule GREEN**.
+    //     `RequestArrivalDetector` normalises on every call, and eleven detector tests walk the
+    //     same four lines.
+    //   * Withholding `RequestArrivalDetectorTest` **and** `TitleMatchingTest` together, which was
+    //     predicted to take it to 0/7, **still leaves `TitleMatching` at 7/7 and green** — because
+    //     `RequestsRepositoryTest` constructs a real detector, which normalises. That run is red,
+    //     but on `RequestArrivalDetector`'s BRANCH rule above (13/22) and on nothing here.
+    //
+    // So **no withholding of one or two test classes can fire this rule through `TitleMatching`**;
+    // it would take all three at once. What does fire it, measured: withholding the whole of
+    // `RequestsRepositoryTest` takes `RequestsRepository` to **0/84** and the gate fails with
+    //
+    //     Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //     lines covered ratio is 0.00, but expected minimum is 0.90
+    //
+    // A reader who withholds the obvious single test class and sees green must not read that as
+    // "the floor is vacuous" — it is enforcing, through a different class than they were aiming at.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.integrations.requests.RequestArrivalDetector",
+        "app.muplay.integrations.requests.RequestArrivalDetector*Companion",
+        "app.muplay.integrations.requests.RequestsRepository",
+        "app.muplay.integrations.requests.TitleMatching",
+      ),
+    ),
+    // 3. `RefreshReport` and the `Flow.map` machinery behind `configuredServices`, gated **low
+    // rather than not at all** — the identical trade `:integrations:bindery` makes for its five
+    // wire DTOs and `:integrations:core` for `IntegrationCredentialStore*`'s coroutine classes,
+    // and made here for the identical reason: leaving them ungated would print
+    // `warnUngatedClasses` lines on every run forever, which is how a warning mechanism dies.
+    //
+    // MEASURED: `RefreshReport` **5/6 = 0.8333** (the generated `equals`/`hashCode`/`copy` nothing
+    // calls), `RequestsRepository$special$$inlined$map$1` **2/3 = 0.6667** and its `$2` **1/2 =
+    // 0.5000` — Kotlin's own `Flow.map` inlining, whose uncovered lines are the collector's
+    // exception path.
+    //
+    // **So the measured minimum here is 0.5000 and this floor is 0.40, deliberately below it.**
+    // That is a decision rather than an oversight: Task 10 adds flows to this class, and a floor
+    // sitting exactly on the current minimum fires on the first one. What 0.40 still refuses is a
+    // class nothing constructs at all, which measures 0.
+    //
+    // FALSIFIED: withholding the whole of `RequestsRepositoryTest` takes `RefreshReport` to
+    // **0/6 = 0.0000** and both inlined-map classes to 0.00, and the gate fails with three of this
+    // rule's own violations in one run —
+    //
+    //     Rule violated for class app.muplay.integrations.requests.RefreshReport:
+    //     lines covered ratio is 0.00, but expected minimum is 0.40
+    //     Rule violated for class
+    //     app.muplay.integrations.requests.RequestsRepository.special..inlined.map.1:
+    //     lines covered ratio is 0.00, but expected minimum is 0.40
+    //     ...and the same for `.map.1.2`.
+    //
+    // Note the class names JaCoCo prints: `$` is replaced by `.` before a pattern ever sees the
+    // name (see [CoverageFloor]'s gotcha 3), which is why this rule's include is written with a
+    // `*` across each `$` position and why a literal `$` in it would match nothing.
+    //
+    // These carry no BRANCH counter at all, so a BRANCH rule could never gate them (JaCoCo's NaN
+    // pass); LINE is the only counter that can.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.40"),
+      includes = listOf(
+        "app.muplay.integrations.requests.RefreshReport",
+        "app.muplay.integrations.requests.RequestsRepository*inlined*",
+      ),
+    ),
+    // 4. `di.RequestsModule`, **instrumented only** — LINE 4/4 for the object and 1/1 for each of
+    // the three SAM lambdas with the emulator's execution data, and **0/4 and 0/1 without it**.
+    // That is a measurement taken by reading the JVM tier's own report, not a judgement: every one
+    // of the four providers takes a concrete class that transitively reaches the Android Keystore
+    // (`SyncEngine`, `BrowseRepository` and `LibraryRepository` each hold a
+    // `SubsonicSourceProvider` -> `CredentialStore`; `IntegrationCredentialStore` is the Keystore
+    // directly), and this build ships no mock framework to stand in for one.
+    //
+    // Its own rule rather than a ride-along, because this is the layer at which `AlbumSearch` could
+    // be bound to a search of the wrong library or `MirrorSync` to something that is not the sync
+    // engine, with every assertion in `RequestArrivalDetectorTest` and `RequestsRepositoryTest`
+    // still green. Both sibling modules found exactly that in their own wiring at 0/1.
+    //
+    // **This floor is only enforced by the emulator job, so `:integrations:requests` has to be on
+    // that job's command line** in `.github/workflows/e2e.yml`. `ConventionTest`'s `every module
+    // with instrumented tests is run by the emulator job` is what checks that, and it was falsified
+    // first: without the entry it fails with `Expecting empty but was: [":integrations:requests"]`.
+    // Note the failure mode it exists for -- a module missing from that line has its instrumented
+    // tests skipped *and* its `requiresInstrumentedData` floors skipped, by the same omission, so
+    // the gate and the thing it gates fail together and silently.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.integrations.requests.di.RequestsModule*"),
+      requiresInstrumentedData = true,
+    ),
+  ),
 )
 
 /**

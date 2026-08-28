@@ -293,7 +293,7 @@ jobs:
           # exactly the same position, found by that rule, and is now named here too.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest :app:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The watch, on a watch. A second emulator inside the SAME job -- see this job's
       # `timeout-minutes` comment for why not a second job (the coverage gate reads one workspace's

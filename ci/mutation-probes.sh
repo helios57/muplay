@@ -246,6 +246,9 @@ BINDERY_EXC = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bind
 BINDERY_STATUS = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt"
 LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
 LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrSource.kt"
+REQUESTS_ARRIVAL = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestArrivalDetector.kt"
+REQUESTS_REPO = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestsRepository.kt"
+REQUESTS_TITLE = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/TitleMatching.kt"
 PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
 TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
 PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
@@ -4210,6 +4213,82 @@ PROBES = [
      "\n"
      "  suspend fun createBookmark(songId: String, positionMs: Long) = Unit\n}",
      "the Subsonic port declares exactly these operations and no way to write progress", 1),
+    # ---- Plan 7 Task 9: arrival, where a wrong answer is worse than none ------------------------
+    # Every count below is MEASURED, one probe at a time, on a committed tree; none is reasoned out.
+    #
+    # Named `integrations/requests-*` rather than the plan's `integrations/arrival-*` so that the
+    # whole family -- detector, repository and matcher -- is one filtered run
+    # (`./ci/mutation-probes.sh integrations/requests-`) rather than two. Nothing else refers to
+    # the plan's names.
+
+    # 1. The scoping rule spec section 4 spends a page on. A Bindery request looked for in the
+    #    music libraries is the cross-library contamination this whole application exists to
+    #    prevent, and the mutation is one word.
+    ("integrations/requests-role-scope", REQUESTS_ARRIVAL,
+     "IntegrationService.BINDERY -> LibraryRole.AUDIOBOOKS",
+     "IntegrationService.BINDERY -> LibraryRole.MUSIC",
+     "a bindery request is looked for in the audiobook libraries and a lidarr one in music", 4),
+
+    # 2. Exactly one candidate, or no answer. `firstOrNull` is right half the time and silently
+    #    wrong the other half -- the single most damaging change that can be made to this module.
+    ("integrations/requests-single-match", REQUESTS_ARRIVAL,
+     "      .singleOrNull()", "      .firstOrNull()",
+     "two equally good matches is no answer, not the first one", 3),
+
+    # 3. The request's own title reaches the search. A search for a constant finds the right album
+    #    for exactly one request.
+    ("integrations/requests-title-passthrough", REQUESTS_ARRIVAL,
+     "search.search(libraryId, request.title, SEARCH_LIMIT)",
+     'search.search(libraryId, "Kind of Blue", SEARCH_LIMIT)',
+     "the search is issued with the request's own title, in the right libraries", 2),
+
+    # 4 and 5. Mid-scan the mirror is not a fact yet, and a failed sync did not advance the
+    #    watermark. Both arms are separately falsifiable, so both are separately probed.
+    ("integrations/requests-scan-in-progress", REQUESTS_ARRIVAL,
+     "SyncState.ScanInProgress -> return null", "SyncState.ScanInProgress -> Unit",
+     "a scan in progress defers rather than answering", 1),
+    ("integrations/requests-failed-sync", REQUESTS_ARRIVAL,
+     "is SyncState.Failed -> return null", "is SyncState.Failed -> Unit",
+     "a failed sync defers rather than answering", 1),
+
+    # 6. Only an `Imported` request is looked for. Without this every refresh polls Navidrome for
+    #    every dead row -- and an `Arrived` row could be re-answered with a different album.
+    ("integrations/requests-status-filter", REQUESTS_ARRIVAL,
+     "if (request.status != RequestStatus.Imported) return null",
+     "if (request.status == RequestStatus.Requested) return null",
+     "a request that is not imported is not looked for at all", 1),
+
+    # 7. A title with nothing alphanumeric in it normalises to the empty string, and so does every
+    #    other such title -- the one way this matcher can produce a confident wrong answer.
+    ("integrations/requests-empty-title", REQUESTS_ARRIVAL,
+     "    if (title.isEmpty()) return null", "    if (false) return null",
+     "a title that normalises to nothing matches nothing, and syncs nothing", 1),
+
+    # 8. Unicode general categories, not Java's ASCII-only POSIX class. Under `\\p{Alnum}` every
+    #    title in a non-Latin script normalises to the empty string and two unrelated albums
+    #    normalise EQUAL, which the guard in probe 7 then turns into "no answer" -- so this one is
+    #    caught by the normaliser's own test rather than by the detector's.
+    ("integrations/requests-unicode-alnum", REQUESTS_TITLE,
+     'Regex("[^\\\\p{L}\\\\p{N}]+")', 'Regex("[^\\\\p{Alnum}]+")',
+     "a non-latin title survives normalisation and still differs from another", 1),
+
+    # 9. A credential of the wrong type under a service's key is a corrupt store. Without the
+    #    refusal, Lidarr is polled with Bindery's client.
+    ("integrations/requests-credential-service", REQUESTS_REPO,
+     "if (credential.service != service) {", "if (false) {",
+     "a credential filed under the wrong service is reported failed and polls nothing", 2),
+
+    # 10. A status that has not changed is not written back. An unconditional write moves
+    #     `updatedAt` on every refresh and makes "last updated" mean nothing.
+    ("integrations/requests-write-only-on-change", REQUESTS_REPO,
+     "        if (status != request.status) {", "        if (true) {",
+     "a status that has not changed is not written back", 2),
+
+    # 11. `Arrived` is terminal. Re-polling it could only ever take a working "play it" button away.
+    ("integrations/requests-arrived-terminal", REQUESTS_REPO,
+     "request.status !is RequestStatus.Arrived && request.remoteId != null",
+     "request.remoteId != null",
+     "an arrived request is never polled again", 1),
 ]
 
 
@@ -4262,6 +4341,12 @@ def apply(path, old, new):
 # stray-mutation incident this script's header describes -- so add the file here in the same edit
 # that adds the probe, never after.
 LATER_PROBE_FILES = [
+    # Plan 7 Task 9, the three files the `integrations/requests-*` family mutates, added in
+    # the SAME edit as those probes -- per this list's own comment, which four previous tasks
+    # learned the hard way. None of the three is named anywhere else in `revert()`.
+    REQUESTS_ARRIVAL,
+    REQUESTS_REPO,
+    REQUESTS_TITLE,
     # Plan 4 Task 2. Added AFTER the probes were, which is the wrong order and cost a real stray:
     # the first `audiobook/` probe mutated Chapter.kt, `revert()` named no file that matched, and
     # the second probe aborted the whole run with "PROBE TEXT NOT FOUND ... 0 matches" against a
@@ -4487,6 +4572,13 @@ JVM_TEST_RESULT_DIRS = {
     # configured yields null", and "only Lidarr configured yields null" -- is proved by
     # `BinderySourceProviderTest` on the emulator and recorded in task-8-report.md.
     "integrations/bindery": "testDebugUnitTest",
+    # `:integrations:requests` joined in Plan 7 Task 9. An Android library, so `testDebugUnitTest`.
+    # Its JVM tier reaches every class in the module except one: `di.RequestsModule`, whose four
+    # providers each take a concrete class that transitively needs the Android Keystore, so it is
+    # instrumented-only and no probe here can see it. What it owns -- that each port is bound to
+    # the collaborator it names -- is proved by `RequestsWiringTest` on the emulator and recorded
+    # in task-9-report.md, the same way the two sibling providers already are.
+    "integrations/requests": "testDebugUnitTest",
     # `:feature:player` joined in Plan 3 Task 9. Android module, so `testDebugUnitTest`. Its JVM
     # tier is reachable for the same reason `:feature:library`'s is: the state mapping is a pure
     # top-level function in its own file, and `PlayerViewModel` is constructed over a
@@ -4554,7 +4646,7 @@ def run_suite():
                     ":core:database:test", ":feature:setup:test", ":feature:library:test",
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
                     ":integrations:core:test", ":integrations:lidarr:test",
-                    ":integrations:bindery:test",
+                    ":integrations:bindery:test", ":integrations:requests:test",
                     ":feature:player:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
