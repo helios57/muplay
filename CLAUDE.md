@@ -1022,3 +1022,40 @@ already the rule for `connectedDebugAndroidTest` in this file; this is what it c
 when the whole suite is the only thing that can see the bug. And when a device
 failure names a timeout rather than an assertion, suspect process-scoped state
 left behind by an earlier class before suspecting the class that reported it.
+
+## The device suite has order-dependent flakes, and the failing test moves between runs
+
+Measured across five full `:app` + `:core:media` runs on one tree (2026-08-28), after
+the real defects above were fixed:
+
+| run | `:app` | `:core:media` | failing test |
+| --- | --- | --- | --- |
+| 1 | 0/54 | 0/352 | — |
+| 2 | 0/54 | 1/352 | `BrowseSearchBrowserTest.onSearchReportsTheCount…` |
+| 3 | 0/54 | 0/352 | — |
+| 4 | 1/54 | 1/352 | `MuPlaybackServiceTest.theSessionOffersTheTransportCommands…`, `MediaCacheTest.theProductionCacheLivesInAKnownDirectory…` |
+
+**Every one of them passes when its class runs alone** — checked for all four:
+`MediaCacheTest` 15/15, `MuPlaybackServiceTest` 16/16, `BrowseSearchBrowserTest`
+15/15, `VoiceSearchJourneyTest` 8/8.
+
+The two known mechanisms, both worth recognising:
+
+- **A test that asserts on state another class created.**
+  `theProductionCacheLivesInAKnownDirectoryUnderCacheDir` expects
+  `…/cache/media` to exist; it is created lazily, so the assertion holds only if
+  something made a cached read first in that process.
+- **A test that reads a value the player only has once a queue is loaded.**
+  `theSessionOffersTheTransportCommandsALockScreenNeeds` got
+  `[true, true, true, false, true]` — one command unavailable — where a moment later
+  it is available.
+
+So: **a single red in a full device run is not evidence on its own.** Re-run the
+class alone before believing it, and compare against a full run of the same tree
+rather than against a memory of one. What *is* evidence is a failure that
+reproduces in isolation — every real defect found on 2026-08-28 did (the duplicate
+navigation entry, the cancelled singleton scope, the NaN insert, the reflection
+filter), and every flake did not.
+
+Do not "fix" these by adding sleeps. Two of them want the state they depend on made
+explicit in their own `@Before`; that is the change, and it has not been made yet.
