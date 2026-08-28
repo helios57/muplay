@@ -10,14 +10,15 @@ master had moved on — the same stale-measurement defect `CLAUDE.md` records
 against floor comments and lane reports. The current commit lives in the dated
 section below, where the date makes it checkable.)*
 
-## Where the plans stand — 2026-08-28 morning
+## Where the plans stand — 2026-08-28
 
-Master is `0246b9c`, green under `--no-build-cache check`, with androidTest
-compiling for all ten modules. **71 of 82 tasks merged**, up from 64.
+Master is green: `--no-build-cache check`, androidTest compiling for all ten
+modules, `:build-logic:convention:test`, and `ci/probe-preflight.py` at 491 probes
+across 108 files. **71 of 82 tasks merged**, up from 64.
 
-Seven of the eight in-flight lanes were merged and gated overnight after the fleet
-was lost to a weekly rate limit (resets Aug 31 16:00 Europe/Vienna). No subagent can
-run before then; the merging was done from the main session.
+Seven of the eight in-flight lanes were merged and gated after the fleet was lost to
+a weekly rate limit (resets **Aug 31 16:00** Europe/Vienna — no subagent can run
+before then; this was done from the main session).
 
 | Plan | Merged | Remaining |
 | --- | --- | --- |
@@ -29,47 +30,48 @@ run before then; the merging was done from the main session.
 | 7 integrations | 9/11 | T10, T11 not started |
 | 8 release & Play | 8/10 | **T6 blocked** (below) · T10 not started |
 
-### What the merges actually found
+### Four real defects the merges introduced or exposed, all found by gates
 
-Three defects that no single lane could have seen, all caught by gates:
+1. **The app died on launch.** P6 T10 and T12 each added navigation entries, leaving
+   `entry<PlayerRoute>` declared twice; Navigation 3 throws at composition. `check`
+   was green over it. Fixed in `5799c7a` with a derived `ConventionTest` rule.
+2. **A Hilt duplicate binding.** P4 T7's stand-in `provideAudiobookItemSource` and
+   P4 T6's real `@Binds` are two unqualified bindings of one type. The build failed
+   loudly, which T7's KDoc had named in advance as the good outcome.
+3. **Android Auto browse died for the life of the process.** `MuPlaybackService`
+   called `release()` — `scope.cancel()` — on the `@Singleton` browse callback, so
+   every service after the first was inert and answered browsers with 40-second
+   timeouts. `:app` went 48/54 → 54/54. See `CLAUDE.md`.
+4. **Two device tests that could not pass**: an insert of `Float.NaN` into a NOT NULL
+   `REAL` (SQLite stores NaN as NULL), and a reflection filter that reported
+   `Companion` as a field.
 
-1. **The app died on launch.** Merging P6 T10 and T12 left `entry<PlayerRoute>`
-   declared twice; Navigation 3 throws at composition. `check` was fully green over
-   it. Fixed in `5799c7a`, with `ConventionTest`'s `no navigation graph registers one
-   route class twice` added so the fast tier sees the next one.
-2. **A Hilt duplicate binding.** P4 T7 shipped a stand-in
-   `provideAudiobookItemSource { null }` whose KDoc said T6 would replace *its body*;
-   T6 added a second `@Binds` beside it instead. The build failed loudly, which that
-   KDoc had named in advance as the good outcome.
-3. **The store listing became false in five places.** `StoreListingTest` reports that
-   `docs/STORE-LISTING.md` still disclaims casting, playback speed, Lidarr/Bindery
-   requests, the Wear OS app and exact-second book resume — all of which shipped
-   tonight and are wired (`CastPickerSheet` is composed in `MuPlayApp`, `MediaModule`
-   binds `AudiobookResumePolicy` rather than `NeverResume`).
+### Device tier
 
-### P8 T6 is the one lane still out, and why
+406 tests across `:app` (54) and `:core:media` (352). A clean full run has been
+observed; individual runs show 0–2 failures whose identity **changes between runs**,
+and all four such tests pass in isolation. `CLAUDE.md`'s "The device suite has
+order-dependent flakes" records the measurements and the two mechanisms. The fix —
+making those tests set up the state they depend on — has not been done.
 
-Its branch `p8t6-branch` is complete except for the seven phone screenshots, which
-cannot be captured yet: `ci/store-screenshots.sh` now gets past the launch crash but
-times out at step 7, waiting 15 s for the library's shuffle label after a global BACK
-from the player (`StoreScreenshotsTest.kt:207`). Back-navigation itself is structurally
-fine (`onBack = { backStack.removeLastOrNull() }`), so this is the capture harness
-needing an update for the merged UI, not a product regression — but it has not been
-proven either way, and it should be, before the listing text is trusted.
+`:feature:castpicker`, `:feature:settings` and `:integrations:requests` now appear in
+both workflow module lists (the union resolution of four lanes' hand-edits, checked
+by `ConventionTest`), but their device suites have not been run here.
 
-The listing-text edits that go with it were written and are **not** on master; they
-are in the session scratchpad under `keep/STORE-LISTING.md`. Merging p8t6 without
-them, or them without the screenshots, leaves `check` red either way.
+### P8 T6 is the one lane still out
 
-### Why the session ran long
+`p8t6-branch` is complete except the seven phone screenshots.
+`ci/store-screenshots.sh` gets past the launch crash now but times out at step 7,
+waiting for the library's shuffle label after a global BACK from the player
+(`StoreScreenshotsTest.kt:207`). Back-navigation is structurally fine, so this is
+the capture harness needing an update for the merged UI — not proven either way.
 
-The parent process died twice (17:45, 22:40) and the fleet then hit a weekly rate
-limit. The host also ran at 30-44% CPU steal with a load average between 28 and 139
-for most of the evening — a `check` that takes four minutes was taking twenty-five,
-and Gradle test workers were being killed and reported as
-`ProcessExecutionException` with **no test-results directory written at all**, which
-reads exactly like a real failure. Check for the missing results directory before
-believing a red under load.
+Its `StoreListingTest` also correctly reports that `docs/STORE-LISTING.md` still
+disclaims five capabilities that now ship (casting, playback speed, Lidarr/Bindery
+requests, the Wear OS app, exact-second book resume). The listing edits were written
+and are **not** on master; they are in the session scratchpad under
+`keep/STORE-LISTING.md`. Merging p8t6 without them, or them without the screenshots,
+leaves `check` red either way.
 
 ## Remaining waves
 
