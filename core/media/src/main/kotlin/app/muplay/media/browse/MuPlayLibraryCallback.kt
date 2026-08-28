@@ -25,9 +25,9 @@ import com.google.common.util.concurrent.SettableFuture
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 
 /**
@@ -90,6 +90,27 @@ class MuPlayLibraryCallback @Inject constructor(
   private val audiobookSnapshot: AudiobookSnapshot,
 ) : MediaLibrarySession.Callback {
 
+  /**
+   * **Process-scoped, and never cancelled, because this object is a `@Singleton`.**
+   *
+   * One instance is injected into every `MuPlaybackService` the process creates. `onDestroy` used
+   * to call a `release()` here that did `scope.cancel()` — and a cancelled `CoroutineScope` is
+   * cancelled for good, so the browse callback of the *next* service was silently inert: its
+   * `SettableFuture`s were never set and Media3 answered browsers by timing out —
+   * `TimeoutException: Waited 40 seconds ... SequencedFuture[PENDING]`. For a user that is Android
+   * Auto, Wear OS or the Assistant browsing forever after the system reclaims the service once,
+   * with no crash and nothing in the log. Measured: `VoiceSearchJourneyTest` was 8/8 alone and 2/8
+   * after any other `:app` class, whose teardown destroys a service.
+   *
+   * `cancelChildren()` was then tried and is wrong the mirror-image way: the scope is shared across
+   * services, so a dying session's teardown cancels the **live** one's in-flight work. Measured —
+   * it turned `BrowseSearchBrowserTest.onSearchReportsTheCountOnGetSearchResultThenReturns` red,
+   * `recorder.queries` empty because the search coroutine died before `notifySearchResultChanged`.
+   *
+   * So: no cancellation. Every coroutine launched on this scope is a short repository read that
+   * answers one `SettableFuture`; none is a subscription or a collector, so none outlives its own
+   * request. A read that finishes after its session died sets a future nobody holds.
+   */
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   /**
@@ -437,30 +458,16 @@ class MuPlayLibraryCallback @Inject constructor(
     queueRepository.mediaItems(PlaybackQueue.of(selection.songs, selection.startIndex))
 
   /**
-   * Called from `MuPlaybackService.onDestroy` to drop work in flight for a session that is going
-   * away.
+   * Cancels this instance's scope. **Only an owner of the instance may call it, and
+   * `MuPlaybackService` is not one.**
    *
-   * **`cancelChildren()`, not `cancel()`, because this object outlives the service.** It is a
-   * `@Singleton`: one instance per *process*, injected into every `MuPlaybackService` the process
-   * ever creates. A `CoroutineScope` that has been cancelled is cancelled permanently -- every
-   * later `launch` on it returns an already-cancelled `Job` and the body never runs -- so
-   * `scope.cancel()` here left the browse callback of the **next** service silently inert. Its
-   * `SettableFuture`s were then never set, and Media3 answers a browser by timing out:
-   *
-   *     TimeoutException: Waited 40 seconds ... for SequencedFutureManager$SequencedFuture[PENDING]
-   *
-   * For a user that is Android Auto, Wear OS or the Assistant browsing and searching forever after
-   * the system has reclaimed the service once -- with no crash and nothing in the log.
-   *
-   * Measured 2026-08-28: `VoiceSearchJourneyTest` is 8/8 run alone and 2/8 run after any other
-   * `:app` class, because the first class's teardown destroys a service and cancels this scope for
-   * the rest of the process. Cancelling the children stops the in-flight work the old session
-   * owned, which is all this ever needed to do, and leaves the scope able to serve the next one.
+   * The instrumented suites build their own callback per class and release it in `@After`; that is
+   * correct, and it is the only caller. `MuPlaybackService.onDestroy` used to call it too, on the
+   * `@Singleton` Hilt owns — see [scope] for what that did to every service after the first.
    */
   fun release() {
-    scope.coroutineContext.cancelChildren()
+    scope.cancel()
   }
-
   private fun <T> immediate(value: T): ListenableFuture<T> =
     SettableFuture.create<T>().apply { set(value) }
 

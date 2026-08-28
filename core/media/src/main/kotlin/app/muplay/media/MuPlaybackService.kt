@@ -309,7 +309,9 @@ class MuPlaybackService : MediaLibraryService() {
    * silent no-op rather than a failure.
    */
   override fun onDestroy() {
-    libraryCallback.release()
+    // No `libraryCallback.release()`: it is a `@Singleton` that outlives this service, and
+    // cancelling its scope here left the *next* service's browse callback permanently inert.
+    // See that class's `scope` for the measurement and for why cancelChildren() is wrong too.
     progressWriter?.flushBlocking()
     progressWriter?.stop()
     progressWriter = null

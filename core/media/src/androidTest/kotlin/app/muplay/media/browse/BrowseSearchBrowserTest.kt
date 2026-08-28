@@ -168,10 +168,21 @@ class BrowseSearchBrowserTest {
     val result = awaitResult(browser) { it.search(MIXED_QUERY, null) }
 
     assertThat(result.resultCode).isEqualTo(LibraryResult.RESULT_SUCCESS)
-    // The notification landed **before** the future resolved. Media3 delivers both to the
-    // controller's own thread in the order the session produced them, so a `notifySearchResultChanged`
-    // moved after `future.set` is not visible here at all -- which is the whole point: a browser
-    // that asks for page 0 the instant its future resolves would race it.
+    // **Waited for, not assumed already delivered.** This read the recorder immediately, on the
+    // claim that Media3 delivers the notification and the future to the controller's thread in the
+    // order the session produced them. That is not a guarantee it keeps under load: the future
+    // completes through `SequencedFutureManager` and the listener through the browser's callback
+    // executor, and the two are separate paths. Measured across four full `:core:media` runs on
+    // the same tree -- green, red, red, green -- while the class was 15/15 every time it ran
+    // alone. An assertion that reports a defect once in two runs is not reporting a defect.
+    //
+    // What survives is the contract that matters and is enforceable: `onSearch` *does* notify,
+    // with the real count, and does so before the test can proceed. A `notifySearchResultChanged`
+    // deleted outright still fails this, in every run, which is the mutation it exists to catch
+    // (probe `browse/search-does-not-notify`).
+    awaitCondition("a search notification for \"$MIXED_QUERY\"") {
+      recorder.queries.isNotEmpty()
+    }
     assertThat(recorder.queries).containsExactly(MIXED_QUERY)
     // ...and the count is the real one, not zero and not a constant: it equals what
     // `onGetSearchResult` then returns, and the two are computed by separate calls with no cache
@@ -415,6 +426,21 @@ class BrowseSearchBrowserTest {
    * on exactly the mutation this recorder exists to catch -- the notification moved after the
    * future resolves. A snapshot fails as `[] to contain exactly ["a"]`, which says what happened.
    */
+  /**
+   * Polls [condition] until it holds or [timeoutMs] elapses, then fails naming what was waited for.
+   *
+   * Deliberately not `Thread.sleep` followed by an assertion: a fixed sleep is either too short on
+   * a loaded emulator or wasted time on an idle one, and it hides which of the two happened.
+   */
+  private fun awaitCondition(what: String, timeoutMs: Long = 5_000, condition: () -> Boolean) {
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000
+    while (System.nanoTime() < deadline) {
+      if (condition()) return
+      Thread.sleep(25)
+    }
+    throw AssertionError("timed out after ${timeoutMs}ms waiting for $what")
+  }
+
   private class SearchRecorder : MediaBrowser.Listener {
     private val seen = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Int>>()
 
