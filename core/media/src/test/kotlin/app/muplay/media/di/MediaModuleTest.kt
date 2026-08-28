@@ -229,6 +229,9 @@ class MediaModuleTest {
     // Asserted on the declaration rather than on a graph, because the bad merge is not "the wrong
     // answer" but "two bindings where the wrong one wins", and that is visible here and nowhere
     // else on this tier.
+    //
+    // Falsified: put the stand-in back beside the `@Binds` and this test fails, alone, in 1m15s --
+    // `:core:media:testDebugUnitTest` red on this method and no other. Measured 2026-08-28.
     val bindings = MediaModule.Bindings::class.java.declaredMethods
       .filter { it.returnType == AudiobookItemSource::class.java }
 
