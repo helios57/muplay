@@ -54,6 +54,12 @@ dependencies {
   // does not: it takes the button as a `@Composable` slot and the connected speaker's name as a
   // `String?`, so two feature modules never depend on each other and dropping casting stays
   // `git rm -r core/cast feature/castpicker` plus this line.
+  // Plan 6 Task 12. The settings screen is a *slot*: `:app` composes it and names none of the
+  // sections in it. See `SettingsSection`.
+  implementation(project(":feature:settings"))
+  // Plan 6 Task 12 needs this edge only so the renderer-direct section's `@IntoSet` binding is on
+  // the application's classpath and therefore in the `SingletonComponent` -- nothing in `:app`
+  // names a type from it. Plan 6 Task 10 owns this module and will widen the edge to the picker UI.
   implementation(project(":feature:castpicker"))
 
   // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing

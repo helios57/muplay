@@ -28,6 +28,7 @@ import app.muplay.model.Album
 fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onOpenPlayer: () -> Unit,
+  onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
   viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -47,6 +48,7 @@ fun LibraryScreen(
       onOpenPlayer()
     },
     coverArtUrl = viewModel::coverArtUrl,
+    onOpenSettings = onOpenSettings,
     modifier = modifier,
   )
 }
@@ -61,6 +63,7 @@ private fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onShuffledSongClick: (Int) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
+  onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   Column(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -90,6 +93,13 @@ private fun LibraryScreen(
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
           Button(onClick = onShuffle, modifier = Modifier.weight(1f)) { Text(SHUFFLE_LABEL) }
+          // Plan 6 Task 12. The only route to the settings screen, and therefore the only way a
+          // user reaches the renderer-direct switch. `onClick = onOpenSettings` and not
+          // `onClick = { onOpenSettings() }`: a lambda body is a line this module's LINE floor
+          // then requires a *click* to cover, and no journey clicks it.
+          OutlinedButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
+            Text(SETTINGS_LABEL)
+          }
           // The only way a user has to pick up a change made on the server after the app started.
           // See "Why there is a Refresh action, and why it is a button" above.
           OutlinedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) { Text(REFRESH_LABEL) }
@@ -163,6 +173,14 @@ private const val SHUFFLE_LABEL = "Shuffle this library"
 /** `internal`, not `private`: [LibraryViewModel]'s scan-in-progress message names this control, and
  *  a message that names a button by a string typed twice is a message that drifts. */
 internal const val REFRESH_LABEL = "Refresh library"
+
+/**
+ * Plan 6 Task 12. The label on the only route to the settings screen.
+ *
+ * `internal`, like [REFRESH_LABEL], so `:app`'s journey can find the button by the same string the
+ * screen renders rather than by a copy of it.
+ */
+internal const val SETTINGS_LABEL = "Settings"
 private const val SHUFFLE_HEADING = "Shuffled"
 private const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
 private const val OPEN_LABEL = "Open"

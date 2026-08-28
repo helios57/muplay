@@ -302,6 +302,12 @@ SOAP_FAKE = "core/cast/src/testFixtures/kotlin/app/muplay/cast/fake/FakeRenderer
 # rather than over `RendererDirectory` and `CastSessionManager`. Nothing here needs a device.
 CAST_UI_STATE = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastUiState.kt"
 CAST_VIEW_MODEL = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastViewModel.kt"
+# Plan 6 Task 12. The renderer-direct setting: where it is stored, where its consequences are
+# stated, and the slot that puts them in front of a user. `CastRouter` itself is `ROUTE_ROUTER`
+# above, and lives inside `core/cast`, which `revert()` checks out wholesale.
+CAST_SETTINGS = "core/database/src/main/kotlin/app/muplay/database/CastSettings.kt"
+RENDERER_DIRECT_SECTION = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/RendererDirectSection.kt"
+SETTINGS_SECTION = "feature/settings/src/main/kotlin/app/muplay/settings/SettingsSection.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -2660,9 +2666,13 @@ PROBES = [
     # The two fallbacks swapped. Each test still sees a route object of *some* kind, the enum is
     # still populated, and the user is told the opposite of what happened -- or, worse, handed
     # their Subsonic credentials to a speaker they never agreed to give them to.
+    # Plan 6 Task 12 made the parameter a lambda (read inside `confirm`, because the value behind
+    # it is a setting a user can change between casts), so the text moved and the count grew: the
+    # same swap now also reddens the two directions of the shipped provider in `MediaModuleTest`
+    # and the read-late assertion in `CastRouterTest`.
     ("route/fallback-branches-swapped", ROUTE_ROUTER,
-     "    return if (allowRendererDirect) {",
-     "    return if (!allowRendererDirect) {",
+     "    return if (allowRendererDirect()) {",
+     "    return if (!allowRendererDirect()) {",
      "a renderer that cannot reach the phone is Unroutable when direct is not allowed", 5),
 
     # The proof waits on THIS route's token. Keyed on a constant instead, a stale request from the
@@ -4351,6 +4361,49 @@ PROBES = [
      "request.status !is RequestStatus.Arrived && request.remoteId != null",
      "request.remoteId != null",
      "an arrived request is never polled again", 1),
+    # ---- Plan 6 Task 12: renderer-direct, the one setting that hands out a credential ---------
+    #
+    # THE MUTATION THIS FAMILY EXISTS FOR IS `renderer-direct/default-on`. It turns a security
+    # decision inside out while every route still resolves, every cast still starts and nothing
+    # reports a problem -- the speaker is simply handed a URL carrying a non-expiring Subsonic auth
+    # token. `CastSettings.readAllowRendererDirect` is `internal` and takes a plain `Preferences`
+    # rather than a `DataStore` precisely so this probe can exist: the end-to-end reading is
+    # instrumented (`CastSettingsStoreTest`) and out of this runner's reach per the INSTRUMENTED
+    # TIER note above, and a defect of this shape must not be gated by the 45-minute tier alone.
+    ("renderer-direct/default-on", CAST_SETTINGS,
+     "preferences[ALLOW_RENDERER_DIRECT] ?: DEFAULT_ALLOW_RENDERER_DIRECT",
+     "preferences[ALLOW_RENDERER_DIRECT] ?: true",
+     "a store with nothing in it reads as off", 2),
+    # The same defect one layer up: the reader still consults the constant and the constant
+    # lies. Two observations of one value, which is why both spellings are probed.
+    ("renderer-direct/default-constant-flipped", CAST_SETTINGS,
+     "const val DEFAULT_ALLOW_RENDERER_DIRECT: Boolean = false",
+     "const val DEFAULT_ALLOW_RENDERER_DIRECT: Boolean = true",
+     "the shipped default is off, and that is the security decision three other arguments rest on", 3),
+    # The wiring defect the plan names, and the one its own *rejected* Step 2 design would have
+    # shipped: read the preference once, when the graph first needs a router. Every assertion
+    # about a single value stays green; a user who turns the switch on and casts gets the answer
+    # from before they touched it, with the failure message naming the setting they just changed.
+    ("renderer-direct/read-once-at-graph-construction", MEDIA_MODULE,
+     "  ): CastRouter = CastRouter(proxy, registry, allowRendererDirect = rendererDirect::isAllowed)",
+     "  ): CastRouter { val once = rendererDirect.isAllowed()\n    return CastRouter(proxy, registry, allowRendererDirect = { once }) }",
+     "the shipped router asks the setting when it needs it, not when the graph is assembled", 1),
+    # The copy. A test about a *string* is unusual and this is why it is here: dropping a
+    # consequence breaks nothing else in the build, and a switch whose consequence is "hand a
+    # speaker your password" that does not say so is not a choice the user made. This mutation
+    # deletes consequence 1 -- the token -- and leaves the other two, so it is a *shortening*
+    # rather than a deletion of the whole string, which is the shape the real edit would take.
+    ("renderer-direct/explanation-drops-the-token", RENDERER_DIRECT_SECTION,
+     '    "That address carries your Subsonic auth token. It does not expire, it is as good as your " +\n    "password, and speakers write the addresses they are given into their own logs.\\n\\n" +\n',
+     "",
+     "the explanation says the speaker is handed the user's auth token", 3),
+    # The settings slot's one piece of logic. A `Set` has no order, so returning it untouched
+    # looks like a simplification and makes the screen's layout a function of Dagger's codegen
+    # order -- stable within one compilation, and not across one.
+    ("renderer-direct/section-order-ignored", SETTINGS_SECTION,
+     "  sections.sortedWith(compareBy({ it.order }, { it::class.java.name }))",
+     "  sections.toList()",
+     "sections come out in ascending order, whatever order the set is in", 2),
 ]
 
 
@@ -4558,6 +4611,13 @@ LATER_PROBE_FILES = [
     # second would abort the family with "PROBE TEXT NOT FOUND ... 0 matches".
     CAST_UI_STATE,
     CAST_VIEW_MODEL,
+    # Plan 6 Task 12, added in the same edit as the six `renderer-direct/` probes above, per this
+    # list's own comment -- a mutated file no `git checkout` names is left in the tree when the run
+    # ends, and the next agent's dirty-tree guard blames them for it. `MEDIA_MODULE` and `CAST_ROUTER`
+    # (inside `core/cast`) are already on `revert()`'s checkout line; these three are new.
+    CAST_SETTINGS,
+    RENDERER_DIRECT_SECTION,
+    SETTINGS_SECTION,
 ]
 
 
@@ -4661,6 +4721,13 @@ JVM_TEST_RESULT_DIRS = {
     # button is tapped) is recorded in task-9-report.md instead, the same way `LiveNavidromeTest`'s
     # test-side probes already are.
     "feature/player": "testDebugUnitTest",
+    # `:feature:settings` and `:feature:castpicker` joined in Plan 6 Task 12. Android libraries, so
+    # `testDebugUnitTest`. What is reachable here is the settings slot's ordering rule and the
+    # renderer-direct *copy*, both pure Kotlin. What is not is either module's Compose half, which
+    # is instrumented and recorded by hand in this task's report -- the same way `LiveNavidromeTest`'s
+    # test-side probes are.
+    "feature/settings": "testDebugUnitTest",
+    "feature/castpicker": "testDebugUnitTest",
 }
 
 
@@ -4720,7 +4787,8 @@ def run_suite():
                     ":core:media:test", ":core:testing:test", ":core:cast:test",
                     ":integrations:core:test", ":integrations:lidarr:test",
                     ":integrations:bindery:test", ":integrations:requests:test",
-                    ":feature:player:test", ":feature:castpicker:test"],
+                    ":feature:player:test", ":feature:settings:test",
+                    ":feature:castpicker:test"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # A missing result must be loud, not silently globbed as zero failures: if some other cause
     # (a genuine compile failure a dependent task cannot route around, even with --continue)

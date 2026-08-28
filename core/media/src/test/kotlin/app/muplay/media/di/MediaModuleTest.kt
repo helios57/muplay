@@ -1,17 +1,22 @@
 package app.muplay.media.di
 
 import app.muplay.cast.didl.ServedMedia
+import app.muplay.cast.proxy.MediaProxyServer
 import app.muplay.cast.proxy.OkHttpProxyUpstream
+import app.muplay.cast.proxy.ProxyRegistry
 import app.muplay.cast.route.CastRoute
 import app.muplay.media.AudiobookItem
 import app.muplay.media.AudiobookItemSource
 import app.muplay.media.AudiobookResumePolicy
 import app.muplay.media.AudiobookSnapshot
 import app.muplay.media.BookPlaybackSettings
+import app.muplay.cast.route.UnroutableReason
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.ResumeTarget
 import app.muplay.media.cast.OneShotResumePolicy
+import app.muplay.media.cast.RendererDirectPolicy
+import app.muplay.media.cast.StoredRendererDirectPolicy
 import dagger.Provides
 import java.net.URI
 import java.time.Clock
@@ -273,25 +278,93 @@ class MediaModuleTest {
 
   @Test
   fun `the router refuses to hand a renderer the credential-bearing navidrome url`() {
-    // `allowRendererDirect = false` is the shipped answer until the setting that turns it on
-    // exists, and the reason is that a Subsonic stream URL carries the user's `u`, `t` and `s`.
-    // Driven through the router rather than read off a field: `confirm` is where the fallback would
-    // be taken, and a device that never fetches is exactly the case it is taken in.
-    val registry = MediaModule.provideProxyRegistry()
-    val proxy = MediaModule.provideMediaProxyServer(
-      MediaModule.provideProxyUpstream(MediaModule.provideMediaCallFactory()),
-      registry,
-    )
-    proxy.use {
-      val router = MediaModule.provideCastRouter(it, registry)
+    // The user has not turned renderer-direct on, which is every user until one deliberately does.
+    // The reason it matters is that a Subsonic stream URL carries the user's `u`, `t` and `s` --
+    // password equivalents that do not expire. Driven through the router rather than read off a
+    // field: `confirm` is where the fallback would be taken, and a renderer that never fetches is
+    // exactly the case it is taken in.
+    withProxy { proxy, registry ->
+      val router = MediaModule.provideCastRouter(proxy, registry) { false }
       val candidate = router.candidate(device(), UPSTREAM, MP3)
       assertThat(candidate).isInstanceOf(CastRoute.Proxied::class.java)
 
       val confirmed = router.confirm(candidate, UPSTREAM)
 
       assertThat(confirmed).isInstanceOf(CastRoute.Unroutable::class.java)
+      // The URL is not in the message a user reads, and it is not in this file either -- see
+      // `UPSTREAM`'s own note. A failure detail is the one string in this path that gets pasted
+      // into a bug report.
       assertThat((confirmed as CastRoute.Unroutable).detail).doesNotContain(UPSTREAM)
+      assertThat(confirmed.reason)
+        .isEqualTo(UnroutableReason.PROXY_UNREACHABLE_AND_DIRECT_DISABLED)
     }
+  }
+
+  @Test
+  fun `the same shipped provider does hand it over once the user has said yes`() {
+    // The other direction of the same switch, and without it the test above is satisfied by a
+    // provider that ignores the policy entirely and refuses unconditionally -- which is exactly
+    // what this module shipped before Task 12, and which nothing could tell apart from a working
+    // setting. Two observations of one value, on the production provider.
+    withProxy { proxy, registry ->
+      val router = MediaModule.provideCastRouter(proxy, registry) { true }
+      val candidate = router.candidate(device(), UPSTREAM, MP3)
+
+      val confirmed = router.confirm(candidate, UPSTREAM)
+
+      assertThat(confirmed).isEqualTo(CastRoute.RendererDirect(UPSTREAM))
+    }
+  }
+
+  @Test
+  fun `the shipped router asks the setting when it needs it, not when the graph is assembled`() {
+    // `provideCastRouter` is `@Singleton`, so a provider that resolved the answer in its own body
+    // -- `allowRendererDirect = runBlocking { settings.allowRendererDirect.first() }`, the obvious
+    // and rejected wiring -- would resolve it once per process. Turning the switch on and casting
+    // would then do nothing until the app was restarted, and nothing would say so.
+    //
+    // Counted rather than trusted: zero reads through construction and candidate-minting, then one
+    // per fallback, and the answer changes between two casts on the same router object.
+    withProxy { proxy, registry ->
+      var reads = 0
+      var allowed = false
+      val router = MediaModule.provideCastRouter(proxy, registry) { reads++; allowed }
+
+      val first = router.candidate(device(), UPSTREAM, MP3)
+      assertThat(reads).isZero
+      assertThat(router.confirm(first, UPSTREAM)).isInstanceOf(CastRoute.Unroutable::class.java)
+      assertThat(reads).isEqualTo(1)
+
+      allowed = true
+      val second = router.candidate(device(), UPSTREAM, MP3)
+
+      assertThat(router.confirm(second, UPSTREAM)).isEqualTo(CastRoute.RendererDirect(UPSTREAM))
+    }
+  }
+
+  @Test
+  fun `the policy the graph binds is the one that reads the stored setting`() {
+    // The binding, not the behaviour -- the behaviour needs a DataStore and therefore a device
+    // (`StoredRendererDirectPolicyTest`). What this can see from the JVM tier is the shape that
+    // would otherwise be invisible: a second `RendererDirectPolicy` implementation added later
+    // (a debug-only "always allow", say) and bound in place of this one compiles, passes every
+    // other test in this file, and turns the security default inside out for everybody.
+    val binding = MediaModule.Bindings::class.java.declaredMethods
+      .single { it.returnType == RendererDirectPolicy::class.java }
+
+    assertThat(binding.parameterTypes.toList())
+      .containsExactly(StoredRendererDirectPolicy::class.java)
+    assertThat(binding.isAnnotationPresent(Singleton::class.java)).isTrue()
+  }
+
+  /** A started proxy and the registry it shares with the router, closed however the block ends. */
+  private fun withProxy(block: (MediaProxyServer, ProxyRegistry) -> Unit) {
+    val registry = MediaModule.provideProxyRegistry()
+    val proxy = MediaModule.provideMediaProxyServer(
+      MediaModule.provideProxyUpstream(MediaModule.provideMediaCallFactory()),
+      registry,
+    )
+    proxy.use { block(it, registry) }
   }
 
   @Test

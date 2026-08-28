@@ -802,7 +802,9 @@ class CastSessionTest {
   ) = CastRouter(
     proxy,
     registry,
-    allowRendererDirect,
+    // A lambda as of Plan 6 Task 12, because the production value is a stored setting a user can
+    // change between casts; every call site here still passes a plain `Boolean`.
+    { allowRendererDirect },
     localAddress,
     // The renderer is on loopback and really does fetch, so the proof is taken rather than skipped:
     // asserting on a route the fast path waved through would assert nothing about routing.

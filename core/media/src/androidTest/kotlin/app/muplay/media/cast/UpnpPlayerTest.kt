@@ -81,7 +81,7 @@ class UpnpPlayerTest {
     // and the fake renderer -- which advertises itself at `127.0.0.1` -- could not then fetch.
     proxy = MediaProxyServer(OkHttpProxyUpstream(OkHttpClient()), registry, InetAddress.getByName("127.0.0.1"))
     proxy.start()
-    router = CastRouter(proxy, registry, allowRendererDirect = false)
+    router = CastRouter(proxy, registry, allowRendererDirect = { false })
     http = CastHttpClient()
     scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     songs = runBlocking { RealTrackBytes.audiobookFiles() }.take(2)

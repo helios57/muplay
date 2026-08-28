@@ -296,7 +296,9 @@ class CastUiStateTest {
       registry = registry,
       bindAddress = InetAddress.getLoopbackAddress(),
     ).use { proxy ->
-      val router = CastRouter(proxy, registry, allowRendererDirect = false, proofTimeoutMs = 1L)
+      // `allowRendererDirect` became a `() -> Boolean` in Plan 6 Task 12, so the router re-reads
+      // the stored setting rather than freezing it at construction. This test wants it off.
+      val router = CastRouter(proxy, registry, allowRendererDirect = { false }, proofTimeoutMs = 1L)
 
       // `candidate` on a device whose control URL names a host that does not resolve.
       val noRoute = router.candidate(

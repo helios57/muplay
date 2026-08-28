@@ -22,10 +22,12 @@ import app.muplay.library.AlbumScreen
 import app.muplay.library.LibraryScreen
 import app.muplay.player.MiniPlayer
 import app.muplay.player.PlayerScreen
+import app.muplay.settings.SettingsScreen
 import app.muplay.setup.SetupScreen
 import app.muplay.ui.navigation.AlbumRoute
 import app.muplay.ui.navigation.LibraryRoute
 import app.muplay.ui.navigation.PlayerRoute
+import app.muplay.ui.navigation.SettingsRoute
 import app.muplay.ui.navigation.SetupRoute
 
 /**
@@ -122,6 +124,9 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
           LibraryScreen(
             onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) },
             onOpenPlayer = { openPlayer() },
+            // Plan 6 Task 12. The settings screen is a *slot* (`:feature:settings`), so this entry
+            // names no setting and no feature that contributes one -- see `SettingsSection`.
+            onOpenSettings = { backStack.add(SettingsRoute) },
           )
         }
         // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round
@@ -138,6 +143,8 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
             },
           )
         }
+        entry<PlayerRoute> { PlayerScreen() }
+        entry<SettingsRoute> { SettingsScreen() }
       },
     )
   }

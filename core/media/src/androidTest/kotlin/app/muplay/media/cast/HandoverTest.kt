@@ -150,7 +150,7 @@ class HandoverTest {
     // is listening on. Same trap as the fake's own bind address, measured the same afternoon.
     proxy = MediaProxyServer(OkHttpProxyUpstream(OkHttpClient()), registry, InetAddress.getByName("127.0.0.1"))
     proxy.start()
-    router = CastRouter(proxy, registry, allowRendererDirect = false)
+    router = CastRouter(proxy, registry, allowRendererDirect = { false })
     http = CastHttpClient()
     castScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     writerScope = CoroutineScope(
