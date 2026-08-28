@@ -474,16 +474,27 @@ class ConventionTest {
     // this test while the whole journey tier went unrun.
     assertThat(modulesWithDeviceTests).contains(":app", ":core:media")
 
-    val script = workflow.lines().singleOrNull { it.contains("connectedDebugAndroidTest") }
-    assertThat(script)
+    // **Every** such line, not `singleOrNull`. It was `singleOrNull` while this job had one
+    // emulator step; Plan 5 Task 8 added a second (a Wear OS image, with its own
+    // `./gradlew :wear:connectedDebugAndroidTest`), and `singleOrNull` over two matches returns
+    // null -- so the rule would have failed with "must have exactly one line" while the thing it
+    // guards was in fact correct. Comment lines are dropped for the same reason `gradleTaskTokens`
+    // drops them: the prose around these steps names the task.
+    //
+    // The vacuity guard is unchanged in force, only in wording: a scan that found no invoking line
+    // at all must fail here rather than report every module missing (or, worse, none).
+    val scriptLines = workflow.lines()
+      .filterNot { it.trimStart().startsWith("#") }
+      .filter { it.contains("connectedDebugAndroidTest") }
+    assertThat(scriptLines)
       .describedAs(
-        "${workflowFile.path} must have exactly one line invoking connectedDebugAndroidTest; " +
+        "${workflowFile.path} must have at least one line invoking connectedDebugAndroidTest; " +
           "this test cannot check a list it cannot find",
       )
-      .isNotNull()
+      .isNotEmpty()
 
-    val missing = modulesWithDeviceTests.filterNot {
-      checkNotNull(script).contains("$it:connectedDebugAndroidTest")
+    val missing = modulesWithDeviceTests.filterNot { module ->
+      scriptLines.any { it.contains("$module:connectedDebugAndroidTest") }
     }
     assertThat(missing)
       .describedAs(
@@ -492,6 +503,154 @@ class ConventionTest {
       )
       .isEmpty()
   }
+
+  /**
+   * The wear AVD is declared twice - in `.github/workflows/e2e.yml`'s job `env:` and in
+   * `ci/prepare-wear-emulator.sh` - for the same reason the phone AVD is: the workflow launches it
+   * and the script validates the device it is handed, and neither can import from the other. If
+   * they disagree, the script's own "wrong system image" check fires on a correct emulator, or
+   * worse, passes on a wrong one.
+   *
+   * Four values rather than the phone's three, because a Wear AVD also needs a device `profile`
+   * (`wearos_small_round`); `android-emulator-runner` defaults that to a phone profile, and a Wear
+   * system image on a phone profile does not boot to a usable watch.
+   *
+   * Falsified by hand while it was written, in both halves: changing `WEAR_API_LEVEL` in the
+   * workflow alone fails with
+   * `WEAR_API_LEVEL: e2e.yml vs ci/prepare-wear-emulator.sh expected: "36" but was: "35"`, and
+   * replacing `api-level: ${'$'}{{ env.WEAR_API_LEVEL }}` with the literal `36` fails with
+   * `e2e.yml must pass `api-level:` as ${'$'}{{ env.WEAR_API_LEVEL }}, not a literal`.
+   */
+  @Test
+  fun `the wear emulator coordinates in e2e yml and prepare-wear-emulator sh cannot drift apart`() {
+    val workflow = File(repoRoot(), ".github/workflows/e2e.yml").readText()
+    val scriptFile = File(repoRoot(), "ci/prepare-wear-emulator.sh")
+    assertThat(scriptFile).exists()
+    val script = scriptFile.readText()
+
+    listOf("WEAR_API_LEVEL", "WEAR_TARGET", "WEAR_ARCH", "WEAR_PROFILE").forEach { name ->
+      val fromWorkflow = Regex("""^\s*$name:\s*"?([^"\s#]+)"?\s*$""", RegexOption.MULTILINE)
+        .find(workflow)?.groupValues?.get(1)
+      val fromScript = Regex("""^readonly $name=([^\s#]+)\s*$""", RegexOption.MULTILINE)
+        .find(script)?.groupValues?.get(1)
+
+      // A pattern that stops matching either declaration must fail here too, not silently compare
+      // two nulls as equal -- the same principle as the very first test in this class.
+      assertThat(fromWorkflow).describedAs("$name in .github/workflows/e2e.yml").isNotNull()
+      assertThat(fromScript).describedAs("$name in ci/prepare-wear-emulator.sh").isNotNull()
+      assertThat(fromWorkflow).describedAs("$name: e2e.yml vs ci/prepare-wear-emulator.sh")
+        .isEqualTo(fromScript)
+    }
+
+    // ...and the action's own inputs must actually read those variables, or the `env:` block could
+    // agree with the script perfectly while the step it feeds passed a hardcoded literal. Whole-line
+    // matches, not `contains`: `system-image-api-level: ...` *contains*
+    // `api-level: ...` as a substring, which is how the phone version of this
+    // assertion was once satisfied by a workflow whose `api-level:` had been replaced.
+    mapOf(
+      "api-level" to "WEAR_API_LEVEL",
+      "system-image-api-level" to "WEAR_API_LEVEL",
+      "target" to "WEAR_TARGET",
+      "arch" to "WEAR_ARCH",
+      "profile" to "WEAR_PROFILE",
+    ).forEach { (input, variable) ->
+      val line = Regex(
+        """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",
+        RegexOption.MULTILINE,
+      )
+      assertThat(line.containsMatchIn(workflow))
+        .describedAs("e2e.yml must pass `$input:` as \${'$'}{{ env.$variable }}, not a literal")
+        .isTrue()
+    }
+  }
+
+  /**
+   * **A watch module's instrumented suite runs on the watch emulator, and nothing else does.**
+   *
+   * The rule above proves every module with a `src/androidTest` is *named somewhere* in the
+   * emulator job. That was enough while the job had one emulator. It is not enough now: `:wear`
+   * named on the **phone** step's command line would satisfy it completely, and that run would be
+   * the exact defect `ci/prepare-wear-emulator.sh` exists to prevent - a wear suite on a phone
+   * image is green and proves nothing, and because `:wear` and `:app` share the applicationId
+   * `app.muplay` it would also reinstall the phone app underneath itself mid-job.
+   *
+   * The other direction matters too and is cheaper to get wrong: a phone module added to the wear
+   * step would run its suite on a 45 mm round screen with a different API level, which is a slower,
+   * flakier, less meaningful copy of a run that already happened.
+   *
+   * **Which modules are watch modules is derived from the tree, never listed here.** A module is
+   * one iff its own `src/main/AndroidManifest.xml` declares `android.hardware.type.watch` - the
+   * declaration Play routes APKs by, so it is the module's own statement of what it is rather than
+   * a second opinion about it. That is this repository's standing answer to the hand-written list
+   * that drifts, which has now cost it four gates.
+   *
+   * Falsified by hand: moving `:wear:connectedDebugAndroidTest` onto the phone step's line fails
+   * with `these WATCH modules run on a step that is not the wear emulator's: [:wear]`.
+   */
+  @Test
+  fun `a watch module's instrumented suite runs on the watch emulator and only there`() {
+    val root = repoRoot()
+    val workflowFile = File(root, ".github/workflows/e2e.yml")
+    val workflow = workflowFile.readText()
+
+    val watchModules = moduleBuildFiles()
+      .map { it.parentFile }
+      .filter { module ->
+        File(module, "src/main/AndroidManifest.xml")
+          .takeIf { it.isFile }
+          ?.readText()
+          ?.contains("android.hardware.type.watch") == true
+      }
+      .map { ":" + it.relativeTo(root).path.replace(File.separatorChar, ':') }
+      .sorted()
+
+    // Vacuity. A scan that found no watch module would satisfy every assertion below by having
+    // nothing to contradict them -- the failure mode every rule in this class guards against.
+    assertThat(watchModules)
+      .describedAs("modules whose own manifest declares android.hardware.type.watch")
+      .isNotEmpty()
+
+    // The workflow's steps, split on their own `- name:` lines. A step is "the wear one" if its
+    // script runs the wear preflight, which is the thing that makes the device a watch as far as
+    // this job is concerned -- not its name, which anyone may edit.
+    val steps = workflow.split(Regex("""(?=^ {6}- name:)""", RegexOption.MULTILINE))
+    val taskPattern = Regex("""((?::[A-Za-z0-9_.-]+)+):connectedDebugAndroidTest""")
+
+    val onWear = mutableListOf<String>()
+    val onPhone = mutableListOf<String>()
+    steps.forEach { step ->
+      val body = step.lines().filterNot { it.trimStart().startsWith("#") }.joinToString("\n")
+      if (!body.contains("connectedDebugAndroidTest")) return@forEach
+      val modules = taskPattern.findAll(body).map { it.groupValues[1] }.toList()
+      if (body.contains("prepare-wear-emulator.sh")) onWear += modules else onPhone += modules
+    }
+
+    // Both lists non-empty: with one of them empty the two assertions below are each satisfied by
+    // an absence, and a job that had lost its wear step entirely would read as compliant.
+    assertThat(onWear).describedAs("modules run by ${workflowFile.path}'s wear emulator step").isNotEmpty()
+    assertThat(onPhone).describedAs("modules run by ${workflowFile.path}'s phone emulator step").isNotEmpty()
+
+    assertThat(onPhone.filter { it in watchModules })
+      .describedAs(
+        "these WATCH modules run on a step that is not the wear emulator's: a wear suite on a " +
+          "phone image is green and proves nothing, and :wear shares :app's applicationId so it " +
+          "would replace the phone app mid-job -- see ci/prepare-wear-emulator.sh",
+      )
+      .isEmpty()
+    assertThat(onWear.filterNot { it in watchModules })
+      .describedAs(
+        "these non-watch modules run on the wear emulator step: their suites already ran on the " +
+          "phone image, and running them again on a watch is slower and proves nothing new",
+      )
+      .isEmpty()
+    assertThat(watchModules.filterNot { it in onWear })
+      .describedAs(
+        "these watch modules are never run by the wear emulator step, so their instrumented " +
+          "tests exist and execute nowhere",
+      )
+      .isEmpty()
+  }
+
 
   /**
    * **Every module with instrumented tests has those sources compiled by the fast tier.**
