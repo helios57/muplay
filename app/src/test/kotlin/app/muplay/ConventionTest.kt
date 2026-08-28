@@ -14,6 +14,10 @@ class ConventionTest {
   /** The exact declaration `verifyNoMockFrameworks`'s ban list is written as, named once. */
   private val BANNED_MOCK_GROUPS_DECLARATION = "val BANNED_MOCK_GROUPS = listOf("
 
+  /** The markers delimiting the App-access instruction block in `docs/REVIEWER-ACCESS.md`. */
+  private val REVIEWER_TAPS_START = "<!-- reviewer-taps:start -->"
+  private val REVIEWER_TAPS_END = "<!-- reviewer-taps:end -->"
+
   private fun repoRoot(): File {
     var dir = File(".").absoluteFile
     repeat(8) {
@@ -2012,4 +2016,102 @@ class ConventionTest {
       )
       .isEmpty()
   }
+
+  /**
+   * Every control `docs/REVIEWER-ACCESS.md` tells a Play reviewer to tap is a label the app really
+   * renders, and no instruction in that document sends a reviewer to a cleartext remote host.
+   *
+   * The App-access instructions are the one piece of this repository's prose that is **filed with
+   * Google** and then read by a stranger, months later, against whatever binary is current. A
+   * button renamed in `SetupScreen` or `LibraryScreen` does not break a test, does not break a
+   * build, and silently turns the review instructions into a walkthrough of a screen that no
+   * longer exists -- which is a rejection, arrived at with every gate green. This repository has
+   * already been bitten three times by *a list written by hand in one file describing something
+   * discoverable from the tree*; this is the same shape with a slower and more expensive failure.
+   *
+   * The list is not written twice. The rule reads the instruction block itself, between the two
+   * `reviewer-taps` markers, and takes every bolded run in it as a control the reviewer is told to
+   * type into or tap. HTML comments are stripped first, so an explanation *about* the block cannot
+   * satisfy it -- the same discipline `verifyDebugManifest`'s required half learned the hard way,
+   * where a comment quoting a declaration stood in for the declaration.
+   *
+   * The second half is the cleartext one, and it is not theoretical either. Measured on the
+   * minified, release-signed APK (Plan 8 Task 2, recorded in `CLAUDE.md`): `http://10.0.2.2:4533`
+   * answers "Could not reach the server." while `http://localhost:4533` connects and plays, same
+   * install, minutes apart -- Android's default network security config for `targetSdk >= 28`
+   * forbids cleartext to a remote host and carves out `localhost`, and no manifest opts out of
+   * either half. So an `http://` address for anything but `localhost` in these instructions is an
+   * instruction to watch the app fail.
+   */
+  @Test
+  fun `every control the reviewer instructions name is a label the app renders`() {
+    val root = repoRoot()
+    val document = File(root, "docs/REVIEWER-ACCESS.md")
+    assertThat(document).exists()
+    val text = document.readText()
+
+    // Every marked region, not just the first: the recommended route and the fallback route each
+    // carry their own instruction block, and a rule that read only one of them would leave the
+    // other free to name a control that no longer exists.
+    val regions = Regex(
+      Regex.escape(REVIEWER_TAPS_START) + "(.*?)" + Regex.escape(REVIEWER_TAPS_END),
+      RegexOption.DOT_MATCHES_ALL,
+    ).findAll(text).map { withoutBlockComments(it.groupValues[1]) }.toList()
+
+    // Vacuity, and the loudest failure this rule can produce. A document that had lost its markers
+    // -- renamed, reformatted, rewritten by someone who did not know they were load-bearing --
+    // would otherwise satisfy every assertion below by having nothing to check, which is this
+    // project's most-recorded defect shape and the one it least wants in a gate over prose.
+    assertThat(regions)
+      .describedAs(
+        "no $REVIEWER_TAPS_START / $REVIEWER_TAPS_END block in " +
+          document.relativeTo(root).invariantSeparatorsPath + " -- those markers delimit the text " +
+          "that is filed in Play Console, and this rule cannot check anything without them",
+      )
+      .isNotEmpty()
+
+    val controls = regions
+      .flatMap { region -> Regex("""\*\*([^*]+)\*\*""").findAll(region).map { it.groupValues[1] } }
+      .toSortedSet()
+    assertThat(controls)
+      .describedAs("controls named in bold inside the reviewer-taps blocks")
+      .isNotEmpty()
+
+    val shippedUi = File(root, "feature").walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" }
+      .filter { it.invariantSeparatorsPath.contains("/src/main/kotlin/") }
+      .toList()
+    assertThat(shippedUi).describedAs("shipped feature sources").isNotEmpty()
+
+    // Comments stripped: a label that survives only in a comment explaining the label that used to
+    // be there is exactly the false pass this project has already measured once, on the merged
+    // manifest, where prose quoting a declaration satisfied the check on its behalf.
+    val rendered = shippedUi.joinToString("\n") { kotlinCode(it.readText()) }
+
+    assertThat(controls.filterNot { rendered.contains("\"" + it + "\"") })
+      .describedAs(
+        "these controls are named in ${document.relativeTo(root).invariantSeparatorsPath}, which is " +
+          "the text filed in Play Console's App access section, but no shipped feature source " +
+          "renders a label by that name -- so the instructions Google's reviewer follows describe " +
+          "a screen this app no longer has",
+      )
+      .isEmpty()
+
+    // The instruction blocks only, deliberately. The prose around them *quotes* a cleartext URL --
+    // the emulator's `10.0.2.2` alias, the address that was measured failing on a release build --
+    // and that measurement is the reason this half of the rule exists. Scanning the whole document
+    // would make the evidence for a rule fail the rule.
+    val cleartext = regions
+      .flatMap { region -> Regex("""http://[^\s`'"<>)\]]+""").findAll(region).map { it.value } }
+      .filterNot { it.removePrefix("http://").substringBefore("/").substringBefore(":") == "localhost" }
+    assertThat(cleartext)
+      .describedAs(
+        "a release build cannot reach a cleartext remote host -- Android's default network " +
+          "security config forbids it and permits only localhost -- so a reviewer given one of " +
+          "these addresses would see \"Could not reach the server.\" and call the app broken",
+      )
+      .isEmpty()
+  }
+
 }
