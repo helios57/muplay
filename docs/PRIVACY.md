@@ -35,6 +35,11 @@ server requires them. MuPlay uses only read-only endpoints — it never writes t
 reports what you played, and never uploads a playback position. The Subsonic `scrobble`,
 `nowPlaying` and `savePlayQueue` endpoints exist and MuPlay deliberately does not call them.
 
+That paragraph is **checked by the build**, not just written down here:
+`core/network/src/test/kotlin/app/muplay/network/LocalOnlyProgressTest.kt` asserts the exact set of
+operations the Subsonic client declares and the exact set of endpoints it can reach, so adding any
+way to send a listening position to a server fails `check` with a message naming this document.
+
 **To your local network, only while you are casting:** to play on a Sonos or DLNA speaker, MuPlay
 finds speakers by sending a standard discovery message on your local network, and serves the audio
 to the speaker from a small server inside the app. That server accepts connections only from your

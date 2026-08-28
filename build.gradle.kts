@@ -3201,6 +3201,45 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // ---- Plan 4 Task 6: the resume, the snapshot and what "carry on" means --------------------
+    // PLACEHOLDER-MEASUREMENTS -- replaced below once the merged report exists.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.AudiobookResumePolicy"),
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.AudiobookResumePolicy", "app.muplay.media.AudiobookItem"),
+    ),
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.AudiobookSnapshot",
+        "app.muplay.media.AudiobookSnapshot*",
+        "app.muplay.media.ResumptionQueue",
+        "app.muplay.media.ResumptionQueue*",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.AudiobookSnapshot",
+        "app.muplay.media.AudiobookSnapshot*",
+        "app.muplay.media.ResumptionQueue",
+        "app.muplay.media.ResumptionQueue*",
+        "app.muplay.media.browse.MuPlayLibraryCallback*onPlaybackResumption*1",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey

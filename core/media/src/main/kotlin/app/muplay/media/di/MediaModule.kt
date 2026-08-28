@@ -8,6 +8,8 @@ import app.muplay.cast.proxy.ProxyUpstream
 import app.muplay.cast.route.CastRouter
 import app.muplay.cast.soap.SoapClient
 import app.muplay.media.AudiobookItemSource
+import app.muplay.media.AudiobookResumePolicy
+import app.muplay.media.AudiobookSnapshot
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.TranscodeOffsetSupport
@@ -20,6 +22,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import java.time.Clock
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -125,19 +128,36 @@ object MediaModule {
   // the bad one is two bindings where the wrong one wins.
 
   /**
-   * Plan 3 resumes nothing -- spec section 3's stated behaviour for music: *"Only books get resume
-   * treatment. Music restarts from 0."* [NeverResume] is that behaviour and not a placeholder.
+   * **The line this whole project is for.**
    *
-   * Plan 4 replaces **this** provider's body with a policy that answers from an in-memory snapshot
-   * of `media_progress` and changes nothing else. It keeps this qualifier: the rule is not "use
-   * this annotation", it is *"exactly one unqualified `ResumePolicy` exists and it is the
-   * decorator"*. Re-annotating is not decorating [NeverResume] by name -- the delegate is read out
-   * of the graph, so replacing the body below wraps the new policy with no edit anywhere else.
+   * Plan 3 shipped [NeverResume] here -- spec section 3's stated behaviour for music, *"Only books
+   * get resume treatment. Music restarts from 0"* -- and said the audiobook plan would replace this
+   * one binding and change nothing else. This is that replacement, and nothing else did change:
+   * the qualifier, the scope and the decorator below are exactly as Plan 6 Task 9 left them.
+   *
+   * [NeverResume] is **not** deleted. It remains the reference implementation of "no resume", it is
+   * what a future non-audiobook policy starts from, and `ResumePolicyTest` is what keeps `resolve`'s
+   * signature from growing a position parameter.
+   *
+   * ### Why this takes an [AudiobookItemSource] and not the snapshot
+   *
+   * So that a **JVM** test can call it. The plan for this task passed `AudiobookSnapshot` here and
+   * recorded, honestly, that restoring `NeverResume` would then fail no test in this module at all
+   * -- because every other test constructs the policy directly, and the snapshot needs Room. A
+   * narrow `fun interface` costs nothing at the graph (`AudiobookSnapshot` is the only
+   * implementation and is bound to it in [Bindings] below) and moves the single most important
+   * binding in the application onto the fast tier: `MediaModuleTest` hands this a two-entry source
+   * and asserts a real, non-zero resume comes back. `ci/mutation-probes.sh`'s `resume/module-*`
+   * probes are the falsification.
+   *
+   * The `Clock` is `:core:database`'s `DataModule` binding -- see the note further up this file.
+   * It is what makes the smart rewind depend on how long the book was away rather than on nothing.
    */
   @Provides
   @Singleton
   @UndecoratedResumePolicy
-  fun provideUndecoratedResumePolicy(): ResumePolicy = NeverResume
+  fun provideUndecoratedResumePolicy(source: AudiobookItemSource, clock: Clock): ResumePolicy =
+    AudiobookResumePolicy(source, clock)
 
   /**
    * `@Singleton` because [app.muplay.media.cast.CastSessionManager] arms *this instance* and the
@@ -286,5 +306,18 @@ object MediaModule {
     @Binds
     @Singleton
     fun bindTranscodeSeekSupport(impl: TranscodeOffsetSupport): TranscodeSeekSupport
+
+    /**
+     * Plan 4 Task 6. The narrow question the resume policy asks, answered by the one class that can
+     * answer it.
+     *
+     * Unscoped on purpose: [AudiobookSnapshot] is itself a `@Singleton`, so there is exactly one
+     * instance whichever key it is reached through -- which matters, because
+     * `MuPlaybackService.onCreate` starts the collector on the instance **it** injects and the
+     * policy must be reading that one. A `@Singleton` here as well would be a second scoped entry
+     * delegating to the same object: harmless, and a second thing to reason about.
+     */
+    @Binds
+    fun bindAudiobookItemSource(impl: AudiobookSnapshot): AudiobookItemSource
   }
 }
