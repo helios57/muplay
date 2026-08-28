@@ -3,9 +3,11 @@ package app.muplay.media.di
 import app.muplay.cast.didl.ServedMedia
 import app.muplay.cast.proxy.OkHttpProxyUpstream
 import app.muplay.cast.route.CastRoute
-import app.muplay.media.BookPlaybackSettings
 import app.muplay.media.AudiobookItem
+import app.muplay.media.AudiobookItemSource
 import app.muplay.media.AudiobookResumePolicy
+import app.muplay.media.AudiobookSnapshot
+import app.muplay.media.BookPlaybackSettings
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.ResumeTarget
@@ -218,17 +220,30 @@ class MediaModuleTest {
   }
 
   @Test
-  fun `until the audiobook snapshot lands, nothing is a book -- which is not the same as disabled`() {
-    // The stand-in `MediaModule` documents as Task 6's to replace. What is asserted is its
-    // *meaning*: an id it has never heard of is not an audiobook, so `BookPlaybackSettings.of`
-    // answers `MUSIC` and every item plays at 1.0x with silence skipping off. That is the correct
-    // behaviour for a song either way, which is why the speed leak is closed from the first build
-    // rather than from Task 6.
-    val source = MediaModule.provideAudiobookItemSource()
+  fun `what answers which files are books is the snapshot, and there is exactly one such binding`() {
+    // Task 7 shipped a stand-in `provideAudiobookItemSource` answering `null` for everything, with
+    // a KDoc saying Task 6 replaces its *body*. Task 6 instead added a second, unqualified `@Binds`
+    // -- and Hilt failed the build with `AudiobookItemSource is bound multiple times`, which that
+    // KDoc had named in advance as the good outcome. The stand-in is gone; this is what replaced it.
+    //
+    // Asserted on the declaration rather than on a graph, because the bad merge is not "the wrong
+    // answer" but "two bindings where the wrong one wins", and that is visible here and nowhere
+    // else on this tier.
+    val bindings = MediaModule.Bindings::class.java.declaredMethods
+      .filter { it.returnType == AudiobookItemSource::class.java }
 
-    assertThat(source.itemFor("any-media-id")).isNull()
-    assertThat(BookPlaybackSettings.of(source.itemFor("any-media-id")))
-      .isEqualTo(BookPlaybackSettings.MUSIC)
+    assertThat(bindings).hasSize(1)
+    assertThat(bindings.single().parameterTypes).containsExactly(AudiobookSnapshot::class.java)
+    assertThat(MediaModule::class.java.declaredMethods.map { it.returnType })
+      .doesNotContain(AudiobookItemSource::class.java)
+  }
+
+  @Test
+  fun `a media id the snapshot has never heard of plays as music, not as a book at some speed`() {
+    // Survives the stand-in it was written against: the property is `BookPlaybackSettings.of`'s,
+    // not the binding's. A file no snapshot knows is not an audiobook, so it plays at 1.0x with
+    // silence skipping off -- which is what closes the speed leak for a song whatever the wiring.
+    assertThat(BookPlaybackSettings.of(null)).isEqualTo(BookPlaybackSettings.MUSIC)
   }
 
   @Test

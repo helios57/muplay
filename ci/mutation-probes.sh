@@ -4155,15 +4155,6 @@ PROBES = [
      "      speed = 0.0f,",
      "nothing playing claims to be neither a book nor a song, and plays at normal speed", 1),
 
-    # The stand-in binding Plan 4 Task 6 replaces. Answering an item for every media id is not an
-    # abstract mistake: it plays **music** at a book's speed with silence skipping on, which is the
-    # exact defect this task exists to remove, arriving through the object graph instead of through
-    # the player.
-    ("speed/module-source-answers-a-book", MEDIA_MODULE,
-     "  fun provideAudiobookItemSource(): AudiobookItemSource = AudiobookItemSource { null }",
-     "  fun provideAudiobookItemSource(): AudiobookItemSource =\n"
-     "    AudiobookItemSource { id -> app.muplay.media.AudiobookItem(id, id, 0L, 0L, false, 2.0f, true) }",
-     "until the audiobook snapshot lands, nothing is a book -- which is not the same as disabled", 1),
     # ---- Plan 4 Task 6: the swap, the policy, and the local-only guard ----------------------
     #
     # `resume/module-never` is the important one. Restoring `NeverResume` here is the whole defect

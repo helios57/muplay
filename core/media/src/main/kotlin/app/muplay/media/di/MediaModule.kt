@@ -174,29 +174,6 @@ object MediaModule {
   @Provides
   fun provideResumePolicy(oneShot: OneShotResumePolicy): ResumePolicy = oneShot
 
-  /**
-   * Which media ids are audiobook files, and what their book says about speed and silence skipping.
-   *
-   * **A stand-in with a stated replacement, not a placeholder.** Plan 4 Task 6's `AudiobookSnapshot`
-   * is the real answer -- an in-memory view of `book_settings` and `media_progress` kept current by
-   * a Flow collector, because `BookSpeedController` and the resume policy are both called on the
-   * player's application thread where a Room query janks playback. That task replaces **this
-   * provider's body** with it and changes nothing else, exactly as this module's `ResumePolicy`
-   * provider above was written to be replaced.
-   *
-   * Answering `null` for everything is the honest behaviour until then rather than a disabled
-   * feature: nothing has been told any file is a book, so every item plays at 1.0x with silence
-   * skipping off -- which is precisely what `BookPlaybackSettings.MUSIC` means, and precisely what
-   * `BookSpeedController` must do to a song either way. The speed leak this wiring exists to close
-   * is closed from the first build; what Task 6 adds is a book with a speed to leak.
-   *
-   * Adding a **second** unqualified `AudiobookItemSource` binding rather than replacing this body
-   * is a Hilt duplicate-binding failure, and that is the good outcome -- the bad one is two
-   * bindings where the wrong one wins.
-   */
-  @Provides
-  @Singleton
-  fun provideAudiobookItemSource(): AudiobookItemSource = AudiobookItemSource { null }
 
   /**
    * The tokens a renderer fetches media with, and nothing else holds them.
