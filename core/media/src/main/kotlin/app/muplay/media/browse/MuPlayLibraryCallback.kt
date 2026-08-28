@@ -27,7 +27,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 
 /**
@@ -436,9 +436,29 @@ class MuPlayLibraryCallback @Inject constructor(
   private suspend fun items(selection: BrowseSelection): List<MediaItem> =
     queueRepository.mediaItems(PlaybackQueue.of(selection.songs, selection.startIndex))
 
-  /** Called from `MuPlaybackService.onDestroy`. */
+  /**
+   * Called from `MuPlaybackService.onDestroy` to drop work in flight for a session that is going
+   * away.
+   *
+   * **`cancelChildren()`, not `cancel()`, because this object outlives the service.** It is a
+   * `@Singleton`: one instance per *process*, injected into every `MuPlaybackService` the process
+   * ever creates. A `CoroutineScope` that has been cancelled is cancelled permanently -- every
+   * later `launch` on it returns an already-cancelled `Job` and the body never runs -- so
+   * `scope.cancel()` here left the browse callback of the **next** service silently inert. Its
+   * `SettableFuture`s were then never set, and Media3 answers a browser by timing out:
+   *
+   *     TimeoutException: Waited 40 seconds ... for SequencedFutureManager$SequencedFuture[PENDING]
+   *
+   * For a user that is Android Auto, Wear OS or the Assistant browsing and searching forever after
+   * the system has reclaimed the service once -- with no crash and nothing in the log.
+   *
+   * Measured 2026-08-28: `VoiceSearchJourneyTest` is 8/8 run alone and 2/8 run after any other
+   * `:app` class, because the first class's teardown destroys a service and cancels this scope for
+   * the rest of the process. Cancelling the children stops the in-flight work the old session
+   * owned, which is all this ever needed to do, and leaves the scope able to serve the next one.
+   */
   fun release() {
-    scope.cancel()
+    scope.coroutineContext.cancelChildren()
   }
 
   private fun <T> immediate(value: T): ListenableFuture<T> =
