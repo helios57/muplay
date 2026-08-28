@@ -143,7 +143,6 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
             },
           )
         }
-        entry<PlayerRoute> { PlayerScreen() }
         entry<SettingsRoute> { SettingsScreen() }
       },
     )

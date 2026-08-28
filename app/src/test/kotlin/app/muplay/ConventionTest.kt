@@ -676,6 +676,55 @@ class ConventionTest {
    * Derived from the same scan as the emulator-job test, and asserted non-empty first for the same
    * reason: a scan that found nothing must not be able to report success.
    */
+  /**
+   * **No `entryProvider` registers the same route class twice.**
+   *
+   * Navigation 3's `entryProvider` throws `IllegalArgumentException: An 'entry' with the same
+   * 'clazz' has already been added` — at **composition**, so the app dies on the screen that hosts
+   * the graph, and nothing on the JVM tier sees it. `check` was fully green over exactly this
+   * defect on 2026-08-28: merging two lanes that had each added navigation entries left
+   * `entry<PlayerRoute>` declared twice in `MuPlayApp.kt`, and it was found only when a device
+   * run crashed with one test and no useful message.
+   *
+   * That is the shape this file exists for — a duplicate that compiles, so the compiler cannot say
+   * it, and a crash that needs an emulator to observe. A regex over the sources costs nothing and
+   * moves it to the fast tier.
+   *
+   * Falsified: add a second `entry<PlayerRoute> { PlayerScreen() }` to `MuPlayApp.kt` and this test
+   * fails naming `PlayerRoute`; measured 2026-08-28 against the merge that caused it.
+   */
+  @Test
+  fun `no navigation graph registers one route class twice`() {
+    val offenders = mutableListOf<String>()
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.isFile && it.extension == "kt" }
+      .forEach { file ->
+        // Comments stripped first, and this test's own KDoc is why: it *names* the duplicate it
+        // was written against, so a scan over raw text reports this file as the offender. That is
+        // the self-matching failure `CLAUDE.md` records against a `pgrep` matching its own command
+        // line, and `VerifyMergedManifestTask`'s required half strips comments for the same reason.
+        val source = file.readText()
+          .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+          .replace(Regex("""//[^\n]*"""), "")
+        val routes = Regex("""\bentry<([A-Za-z0-9_.]+)>""")
+          .findAll(source)
+          .map { it.groupValues[1] }
+          .toList()
+        routes.groupBy { it }
+          .filterValues { it.size > 1 }
+          .keys
+          .forEach { offenders += "${file.name}: entry<$it> declared ${routes.count { r -> r == it }} times" }
+      }
+
+    assertThat(offenders)
+      .`as`(
+        "Navigation 3 throws \"An 'entry' with the same 'clazz' has already been added\" at " +
+          "composition, which no JVM test and no compiler can see. Keep one entry per route class.",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `every module with instrumented tests is compiled by the fast tier`() {
     val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
