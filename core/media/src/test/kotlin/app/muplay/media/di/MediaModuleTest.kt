@@ -3,6 +3,7 @@ package app.muplay.media.di
 import app.muplay.cast.didl.ServedMedia
 import app.muplay.cast.proxy.OkHttpProxyUpstream
 import app.muplay.cast.route.CastRoute
+import app.muplay.media.BookPlaybackSettings
 import app.muplay.media.NeverResume
 import app.muplay.media.ResumePolicy
 import app.muplay.media.ResumeTarget
@@ -161,6 +162,20 @@ class MediaModuleTest {
       .single { it.returnType == OneShotResumePolicy::class.java }
 
     assertThat(provider.isAnnotationPresent(Singleton::class.java)).isTrue()
+  }
+
+  @Test
+  fun `until the audiobook snapshot lands, nothing is a book -- which is not the same as disabled`() {
+    // The stand-in `MediaModule` documents as Task 6's to replace. What is asserted is its
+    // *meaning*: an id it has never heard of is not an audiobook, so `BookPlaybackSettings.of`
+    // answers `MUSIC` and every item plays at 1.0x with silence skipping off. That is the correct
+    // behaviour for a song either way, which is why the speed leak is closed from the first build
+    // rather than from Task 6.
+    val source = MediaModule.provideAudiobookItemSource()
+
+    assertThat(source.itemFor("any-media-id")).isNull()
+    assertThat(BookPlaybackSettings.of(source.itemFor("any-media-id")))
+      .isEqualTo(BookPlaybackSettings.MUSIC)
   }
 
   @Test

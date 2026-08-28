@@ -123,7 +123,23 @@ class MuPlayerFactory @Inject constructor(
    * that defect, so the production call site has to pass the real one. `TranscodeSeekJourneyTest`
    * is what notices if it stops.
    */
-  fun create(): MuPlayer = MuPlayer(createExoPlayer(), resumePolicy, transcodeSeek)
+  fun create(): MuPlayer = wrap(createExoPlayer())
+
+  /**
+   * Wraps an `ExoPlayer` the caller intends to **keep**.
+   *
+   * `MuPlaybackService` needs both halves: the seam, which is what the session and every
+   * `MediaController` see, and the raw `ExoPlayer`, because `setSkipSilenceEnabled` is on
+   * `ExoPlayer` and not on `Player` -- so `BookSpeedController` cannot reach it through [MuPlayer].
+   * [create] returned only the seam, which left the raw player unreachable from the one place it is
+   * genuinely needed.
+   *
+   * [create] is re-expressed in terms of this rather than the other way round, so there is still
+   * exactly one place the three constructor arguments are assembled. A `wrap` that forgot
+   * [transcodeSeek] would produce a player that plays, passes every unit test, and moves the seek
+   * bar without moving the audio inside the one format this app transcodes.
+   */
+  fun wrap(exoPlayer: ExoPlayer): MuPlayer = MuPlayer(exoPlayer, resumePolicy, transcodeSeek)
 
   /**
    * The **raw** player, for the three device suites whose subject is an `ExoPlayer` behaviour

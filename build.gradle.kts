@@ -2270,6 +2270,87 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.PlaybackState", "app.muplay.media.TaskRemovalPolicy"),
     ),
+    // Plan 4 Task 7. **`PlaybackState` 4/4 = 1.0000 BRANCH, JVM-only** (`PlaybackStateTest`) --
+    // `isAudiobook`'s two `==` comparisons and their short-circuit. Re-measured here, not carried
+    // forward: this class had **no branches at all** until this task, which is exactly what the
+    // LINE row above says about it, and a BRANCH rule over a zero-branch class matches only
+    // zero-total counters and passes silently at every minimum through JaCoCo's `isNaN` path.
+    // `isAudiobook` is the class's first author conditional, and a LINE rule cannot see it: a
+    // getter returning `true` unconditionally keeps all thirty lines covered, every floor green,
+    // and sends every listener to the wrong player screen.
+    //
+    // **It is in BOTH rules, and Plan 4's own task document says not to do that.** The document's
+    // reasoning -- *"a class in two rules is two numbers for one fact, and the weaker one is the one
+    // nobody reads"* -- does not hold here, because they are not one fact. The thirty lines are
+    // `NOTHING_PLAYING`, the value four downstream screens render before anything is loaded, and a
+    // field of it silently changing meaning (`hasNext = true` on an empty queue) moves no BRANCH
+    // counter anywhere; the four branches are the new getter, which moves no LINE counter. Deleting
+    // the LINE row to obey the letter of the plan would have retired a live gate to make room for a
+    // new one. Recorded rather than done silently.
+    //
+    // Falsified by withholding `PlaybackStateTest` (the file moved aside, not `@Disabled`, and
+    // restored by a trap rather than by `git checkout` -- see CLAUDE.md on the revert that destroys
+    // uncommitted work): *"Rule violated for class app.muplay.media.PlaybackState: branches covered
+    // ratio is 0.00, but expected minimum is 0.90"*, BUILD FAILED. **0.00, so that one class is the
+    // only reader of `isAudiobook` in either tier today.** Task 9's book player is its first
+    // production consumer, and when it lands this falsification is void -- re-run it, do not carry
+    // it forward. The row two entries down is what happens when nobody does.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.PlaybackState"),
+    ),
+    // Plan 4 Task 7's decision half. **`BookPlaybackSettings$Companion` 2/2 = 1.0000 BRANCH and
+    // 5/5 LINE; `BookPlaybackSettings` 2/2 LINE**, all from JVM data alone
+    // (`BookPlaybackSettingsTest`, six tests, no emulator) -- which is the whole reason this type is
+    // separate from the `BookSpeedController` that applies it. Applying needs a real `ExoPlayer`;
+    // *deciding* is where the bug is, and a decision that costs an emulator boot per mutation does
+    // not get mutated. Seven `speed/` probes reach it in `ci/mutation-probes.sh`, which is a
+    // JVM-only runner.
+    //
+    // The two branches are `of`'s `when (item)`: the `null` arm that resets a song to normal
+    // playback -- the trap this task is named for -- and the arm that reads the book's own numbers.
+    //
+    // `BookPlaybackSettings` itself carries **no BRANCH counter**, and that is JaCoCo's Kotlin
+    // data-class filter rather than an untested case: `equals`/`hashCode`/`toString`/`copy` are
+    // filtered out, leaving two lines (the declaration and `MUSIC`'s initialiser). A BRANCH rule
+    // over it would therefore match a zero-total counter and pass at every minimum, which is the
+    // silent-pass shape this table's own doc forbids -- hence LINE for the class and BRANCH for the
+    // companion, the same split `PlaybackState` carries two rows up.
+    //
+    // `AudiobookItem` rides on the LINE rule for the same reason: 8/8, no branches of its own. It
+    // is **Plan 4 Task 6's type**, declared here early because Task 7 consumes it and the two
+    // tasks ran concurrently; when Task 6 lands its `AudiobookSnapshot`, this row is where its
+    // item type is already gated.
+    //
+    // FALSIFIED, and the number is not the one this comment was first written with -- which is the
+    // reason it is spelled out rather than summarised. Withholding `BookPlaybackSettingsTest` alone
+    // gives *"Rule violated for class app.muplay.media.BookPlaybackSettings.Companion: branches
+    // covered ratio is **0.50**, but expected minimum is 0.90"*, BUILD FAILED -- not the 0.00 that
+    // was predicted, because `MediaModuleTest`'s *"until the audiobook snapshot lands, nothing is a
+    // book"* asserts `of(source.itemFor(..)) == MUSIC` and so drives the `null` arm from another
+    // file in another package. One withheld class still fires the floor; **one withheld test would
+    // not**. That is CLAUDE.md's "a recorded falsification goes stale when a second caller appears",
+    // caught on the first run rather than by the next reader.
+    //
+    // The same run fired `AudiobookItem` at *"lines covered ratio is 0.00"* and `PlaybackState` at
+    // 0.00 on both counters, so every rule added by this task was shown to fail, in one run.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.BookPlaybackSettings*Companion"),
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.BookPlaybackSettings",
+        "app.muplay.media.AudiobookItem",
+      ),
+    ),
     // 22/22 = 1.0000 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
     // in `:app` (see that suite's own doc for why it cannot live in this module, and `Jacoco.kt`'s
     // `mergedExecutionData` for why its `.ec` still lands here).

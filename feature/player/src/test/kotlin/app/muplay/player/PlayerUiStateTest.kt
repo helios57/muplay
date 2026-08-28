@@ -1,5 +1,6 @@
 package app.muplay.player
 
+import androidx.media3.common.MediaMetadata
 import app.muplay.media.PlaybackState
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -23,6 +24,11 @@ class PlayerUiStateTest {
     durationMs = 5_000L,
     hasNext = true,
     hasPrevious = false,
+    // A song. `mediaType` and `speed` arrived with Plan 4 Task 7's per-book speed;
+    // they carry no default, deliberately, so a caller cannot silently omit the
+    // field that decides whether a listener gets book controls or music ones.
+    mediaType = MediaMetadata.MEDIA_TYPE_MUSIC,
+    speed = 1.0f,
   )
 
   @Test

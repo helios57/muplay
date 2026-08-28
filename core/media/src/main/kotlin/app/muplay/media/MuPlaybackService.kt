@@ -15,6 +15,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
+import app.muplay.database.AudiobookRepository
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.media.browse.MuPlayLibraryCallback
 import app.muplay.media.cast.CastSessionManager
@@ -104,6 +105,21 @@ class MuPlaybackService : MediaLibraryService() {
    */
   @Inject lateinit var castSessionManager: CastSessionManager
 
+  /**
+   * Which media ids are books, and what each book's speed and silence-skipping setting is.
+   *
+   * Injected rather than reached through [AudiobookRepository], because `BookSpeedController` is
+   * asked this question on the player's application thread at every item transition and a Room
+   * query there janks playback. See `MediaModule.provideAudiobookItemSource`.
+   */
+  @Inject lateinit var audiobookItems: AudiobookItemSource
+
+  /**
+   * Where a speed the listener chose is written. **Not read here** -- the read is
+   * [audiobookItems]'s, for the threading reason above.
+   */
+  @Inject lateinit var audiobookRepository: AudiobookRepository
+
   private var session: MediaLibrarySession? = null
 
   /**
@@ -120,6 +136,8 @@ class MuPlaybackService : MediaLibraryService() {
 
   private var progressWriter: ProgressWriter? = null
 
+  private var speedController: BookSpeedController? = null
+
   override fun onCreate() {
     super.onCreate()
 
@@ -130,7 +148,11 @@ class MuPlaybackService : MediaLibraryService() {
     // A `MuPlayer`, not the raw `ExoPlayer`: this is the object the session hands every controller,
     // so it is the one place that can make "no code path sets a playback position" true of all of
     // them. See that class.
-    val player: MuPlayer = playerFactory.create()
+    // Both halves are kept, and that is the whole reason `wrap` exists. The session and every
+    // `MediaController` see the seam; `BookSpeedController` needs the raw player, because
+    // `setSkipSilenceEnabled` is on `ExoPlayer` and not on `Player`.
+    val exoPlayer = playerFactory.createExoPlayer()
+    val player: MuPlayer = playerFactory.wrap(exoPlayer)
 
     // Installed on the seam rather than on the raw player, so a position the writer records is the
     // position the session actually reports -- and so Plan 6 has exactly one writer to repoint.
@@ -139,6 +161,20 @@ class MuPlaybackService : MediaLibraryService() {
     // **One** writer, handed to the thing that moves it. A second writer built around the cast
     // player would race this one for the same `media_progress` row.
     castSessionManager.useProgressWriter(progressWriter!!)
+
+    // Installed **before** any queue exists, so the first item of the session's first queue arrives
+    // as an `onMediaItemTransition` and gets its book's speed like every item after it. A controller
+    // attached after a queue was set would leave the first book of every session at 1.0x and every
+    // book after it correct -- a defect that works the second time, which is the hardest kind to
+    // see.
+    speedController = BookSpeedController(exoPlayer, audiobookItems) { bookId, speed ->
+      // Fire-and-forget into the service scope: this runs on the player's application thread, where
+      // a Room write would jank playback. `onDestroy` cancels that scope after
+      // `progressWriter.flushBlocking()`, so a speed change made in the last instant of the
+      // service's life can be lost -- which costs a listener one tap, unlike a lost position, and
+      // is why the position gets a blocking flush and this does not.
+      serviceScope.launch { audiobookRepository.setSpeed(bookId, speed) }
+    }.also { it.start() }
 
     // Media3 posts its own notification through this provider; what this call changes is its
     // *identity*. Without it the notification lands on Media3's default channel under Media3's
@@ -262,6 +298,10 @@ class MuPlaybackService : MediaLibraryService() {
     progressWriter?.flushBlocking()
     progressWriter?.stop()
     progressWriter = null
+    // No flush of its own: a speed change is already written the moment it happens, and the only
+    // thing left to undo is the listener registration on a player that is about to be released.
+    speedController?.stop()
+    speedController = null
     serviceScope.cancel()
     session?.run {
       val active = player

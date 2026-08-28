@@ -1,5 +1,6 @@
 package app.muplay.media
 
+import androidx.media3.common.MediaMetadata
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -56,6 +57,42 @@ class PlaybackStateTest {
     assertThat(PlaybackState.NOTHING_PLAYING.hasNext).isFalse()
     assertThat(PlaybackState.NOTHING_PLAYING.hasPrevious).isFalse()
   }
+
+  @Test
+  fun `nothing playing claims to be neither a book nor a song, and plays at normal speed`() {
+    // `MEDIA_TYPE_MIXED` rather than `MEDIA_TYPE_MUSIC`: nothing is loaded, so "this is a song" is
+    // a claim, and it is the claim that would make `isAudiobook` false for the wrong reason.
+    assertThat(PlaybackState.NOTHING_PLAYING.mediaType)
+      .isEqualTo(MediaMetadata.MEDIA_TYPE_MIXED)
+    assertThat(PlaybackState.NOTHING_PLAYING.isAudiobook).isFalse()
+    // 1.0, not 0.0: a screen rendered before anything played would otherwise read "0.0x".
+    assertThat(PlaybackState.NOTHING_PLAYING.speed).isEqualTo(1.0f)
+  }
+
+  @Test
+  fun `both audiobook media types are recognised as a book`() {
+    // Two values, because `MediaItems.of` stamps `MEDIA_TYPE_AUDIO_BOOK_CHAPTER` on a file inside a
+    // book while a whole-book browse item carries `MEDIA_TYPE_AUDIO_BOOK`. A getter written with
+    // only the first arm renders a whole-book item with music controls, and is green against any
+    // test that only ever plays chapters.
+    assertThat(state(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER).isAudiobook).isTrue()
+    assertThat(state(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK).isAudiobook).isTrue()
+  }
+
+  @Test
+  fun `music and the unknown type are not books`() {
+    // The false arms. Without them `isAudiobook` could be `true` unconditionally -- every line
+    // covered, every floor green, and every listener sent to the wrong player screen.
+    assertThat(state(MediaMetadata.MEDIA_TYPE_MUSIC).isAudiobook).isFalse()
+    assertThat(state(MediaMetadata.MEDIA_TYPE_MIXED).isAudiobook).isFalse()
+    // A neighbouring type, so "anything but music" cannot satisfy the rule either. A podcast
+    // episode is spoken word and is still not a book.
+    assertThat(state(MediaMetadata.MEDIA_TYPE_PODCAST_EPISODE).isAudiobook).isFalse()
+  }
+
+  /** [PlaybackState.NOTHING_PLAYING] with one field moved -- the field under test and nothing else. */
+  private fun state(mediaType: Int): PlaybackState =
+    PlaybackState.NOTHING_PLAYING.copy(mediaType = mediaType)
 
   @Test
   fun `the player's own duration wins, because it measured what is playing`() {

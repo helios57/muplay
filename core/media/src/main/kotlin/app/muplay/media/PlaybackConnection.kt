@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.google.common.util.concurrent.ListenableFuture
@@ -255,6 +256,17 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
       ),
       hasNext = player.hasNextMediaItem(),
       hasPrevious = player.hasPreviousMediaItem(),
+      // `MediaMetadata.mediaType` is a nullable `Integer` -- genuinely null for an item built
+      // without metadata -- and `MEDIA_TYPE_MIXED` is the honest answer for one, the same value
+      // [PlaybackState.NOTHING_PLAYING] carries. It is not "music": claiming a type nothing
+      // declared is how a book ends up rendered with music controls.
+      mediaType = metadata.mediaType ?: MediaMetadata.MEDIA_TYPE_MIXED,
+      // Read here rather than derived, because it is player state a car or a watch can change
+      // without this process seeing the tap. The listener below refreshes on **every** `onEvents`,
+      // so `EVENT_PLAYBACK_PARAMETERS_CHANGED` is already one of the events that republishes -- the
+      // readout does not freeze at whatever the speed was when the item changed. Checked rather
+      // than assumed: there is no explicit event list in this class to add it to.
+      speed = player.playbackParameters.speed,
     )
   }
 

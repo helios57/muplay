@@ -1,5 +1,7 @@
 package app.muplay.media
 
+import androidx.media3.common.MediaMetadata
+
 /**
  * Everything the UI needs to know about playback, as one immutable value.
  *
@@ -30,7 +32,47 @@ data class PlaybackState(
   val durationMs: Long,
   val hasNext: Boolean,
   val hasPrevious: Boolean,
+  /**
+   * `MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER` for a book, `MEDIA_TYPE_MUSIC` for a song.
+   *
+   * Set by `MediaItems.of` from the user's own `LibraryRole` assignment, because Navidrome
+   * hardcodes `child.Type = "music"` for every media file and no server field can answer it.
+   * Carried here so navigation can choose a player and the UI can choose controls without anything
+   * above `:core:media` re-deriving what a book is.
+   *
+   * A plain `Int` rather than an enum of this module's own: it is Media3's own vocabulary, the
+   * value arrives from a `MediaMetadata` and goes nowhere but a comparison, and a second spelling
+   * of "audiobook" is how two screens end up disagreeing about one book.
+   */
+  val mediaType: Int,
+  /**
+   * The player's current speed. A book's, or 1.0 for anything else -- see [BookSpeedController].
+   *
+   * Here rather than derived in the UI because it is **player** state: the speed control reaches
+   * the player through a `MediaController`, and a car or a watch can change it without this process
+   * ever seeing the tap.
+   */
+  val speed: Float,
 ) {
+
+  /**
+   * Whether what is playing is a book, which is a different question from what library it came
+   * from.
+   *
+   * **This class's first author conditional**, and it is the reason its coverage floor moved from
+   * LINE to BRANCH in Plan 4 Task 7: a getter that returned `true` unconditionally would leave
+   * every line covered and every floor green while sending every listener to the wrong player
+   * screen.
+   *
+   * Both constants, not just the chapter one. `MediaItems.of` stamps
+   * `MEDIA_TYPE_AUDIO_BOOK_CHAPTER` on a file inside a book, and `MEDIA_TYPE_AUDIO_BOOK` is what a
+   * single-file M4B or a browse item for a whole book carries; a UI that recognised only the first
+   * would render a whole-book item with music controls.
+   */
+  val isAudiobook: Boolean
+    get() = mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK_CHAPTER ||
+      mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK
+
   companion object {
     /**
      * What the UI renders before anything has been played, and what [PlaybackConnection] resets to
@@ -53,6 +95,13 @@ data class PlaybackState(
       durationMs = 0L,
       hasNext = false,
       hasPrevious = false,
+      // `MEDIA_TYPE_MIXED`, not `MEDIA_TYPE_MUSIC`: nothing is loaded, so "this is a song" would be
+      // a claim rather than the absence of one -- and it is the claim that makes [isAudiobook]
+      // false for the right reason instead of by accident.
+      mediaType = MediaMetadata.MEDIA_TYPE_MIXED,
+      // 1.0, because that is what a player with nothing loaded is set to. A zero here would render
+      // as "0.0x" on a screen the moment it was shown, before anything had played.
+      speed = 1.0f,
     )
 
     /**
