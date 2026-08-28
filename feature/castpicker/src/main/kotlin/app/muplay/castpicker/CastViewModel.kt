@@ -116,7 +116,11 @@ class CastViewModel @Inject constructor(
    * throwing there would crash the app for a speaker that was merely unplugged.
    */
   fun select(udn: String) {
-    val device = found.value?.devices?.firstOrNull { it.udn == udn } ?: return
+    // `?.devices.orEmpty()` and not `?.devices?.firstOrNull`, which is the same behaviour and one
+    // permanently uncovered branch: the second `?.` can only be null when the first already was, so
+    // no input selects it and it measures as a hole in a BRANCH floor forever. `orEmpty()`'s branch
+    // is reachable from both sides -- no search has finished, and one has.
+    val device = found.value?.devices.orEmpty().firstOrNull { it.udn == udn } ?: return
     viewModelScope.launch {
       control.castTo(device)
       revision.value += 1

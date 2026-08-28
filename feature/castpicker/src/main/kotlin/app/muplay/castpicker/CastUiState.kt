@@ -188,7 +188,9 @@ internal fun castDeviceName(session: CastSessionState): String? = when (session)
  */
 internal fun connectedUdn(discovery: DiscoveryResult?, session: CastSessionState): String? {
   val name = castDeviceName(session) ?: return null
-  return discovery?.devices?.firstOrNull { it.friendlyName == name }?.udn
+  // `?.devices.orEmpty()`, for the reason `CastViewModel.select` records: chaining a second `?.`
+  // onto a non-null `List` emits a branch no input can select.
+  return discovery?.devices.orEmpty().firstOrNull { it.friendlyName == name }?.udn
 }
 
 /**
