@@ -64,15 +64,34 @@ class ScopedShuffleJourneyTest {
   }
 
   /**
-   * The control that makes the first test mean something.
+   * The control that makes the first test mean something: an audiobook shuffle really does return
+   * audiobook content, so `shufflingTheMusicLibraryNeverSurfacesAnAudiobook` is not green merely
+   * because nothing is ever shuffled.
    *
-   * Counted, not asserted by presence. The seeded audiobook's **album name and its one song's
-   * title are the same string** — `ci/seed-fixtures.sh` writes `-metadata title="Test Book"` and
-   * `-metadata album="Test Book"` — so `"Test Book"` is already on screen from the album list
-   * before a shuffle happens at all. `onNodeWithText(AUDIOBOOK_TITLE).assertIsDisplayed()`, which
-   * is what the brief asked for, would therefore either pass against an app that shuffled nothing
-   * (the defect this control exists to rule out) or, once the shuffle did work, fail outright on
-   * two matching nodes. What discriminates is that the shuffle *added* an occurrence.
+   * ### This counted occurrences of "Test Book" once, and the corpus grew out from under it
+   *
+   * The seeded audiobook's album name and its one song's title are the same string
+   * (`ci/seed-fixtures.sh` writes both), so `"Test Book"` is on screen from the album list before
+   * any shuffle. The old assertion therefore compared the count before and after, requiring the
+   * shuffle to *add* an occurrence.
+   *
+   * That broke the moment the audiobook corpus grew past what fits one screen. Measured
+   * 2026-08-28, from the semantics tree at the point of failure: after the shuffle the shuffled
+   * section did contain `Test Book` — correctly — while the album `LazyColumn` below had been
+   * pushed down far enough that it composed only `Multi Part Book`, `Second Book` and
+   * `Tail Book`. One occurrence appeared and one stopped being composed, so the count stayed at 1
+   * and the test failed against an app that was working. A lazily composed list is not a set of
+   * nodes you can count across a screen.
+   *
+   * So the assertion is now the exact mirror of the music test above, which is immune to both:
+   * [SHUFFLE_HEADING] renders only `if (uiState.shuffled.isNotEmpty())`, so waiting for it proves
+   * the shuffle returned rows; and no music title may appear among them. Together the two tests
+   * pin the scoping in both directions without counting anything.
+   *
+   * Falsified against the product, not the fixture: replace `shuffleRepository.shuffle(libraryId,
+   * size)` with `shuffle(libraryRepository.allIds().first(), size)` — a shuffle that ignores which
+   * library the user chose — and this test fails while the two beside it stay green. Measured
+   * 2026-08-28.
    */
   @Test
   fun shufflingTheAudiobookLibraryDoesSurfaceTheAudiobook() {
@@ -82,17 +101,19 @@ class ScopedShuffleJourneyTest {
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().isNotEmpty()
     }
-    val beforeShuffle = composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().size
 
     composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
+    // Its presence *is* the "something was shuffled" assertion -- the heading is inside the
+    // `isNotEmpty()` branch, so an empty shuffle times out here rather than passing quietly.
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
     }
 
-    val afterShuffle = composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().size
-    check(afterShuffle > beforeShuffle) {
-      "an audiobook shuffle put no audiobook on screen: $AUDIOBOOK_TITLE appeared $beforeShuffle " +
-        "time(s) before the shuffle and $afterShuffle after"
+    // ...and what it shuffled is not music. The music library's three tracks are the only titles
+    // that could leak in, and they are the same three the mirror test asserts on.
+    val music = MUSIC_TITLES.flatMap { composeRule.onAllNodesWithText(it).fetchSemanticsNodes() }
+    check(music.isEmpty()) {
+      "an audiobook shuffle surfaced music: ${MUSIC_TITLES.joinToString()} should not be on screen"
     }
   }
 
@@ -122,6 +143,9 @@ class ScopedShuffleJourneyTest {
 
     /** The one seeded audiobook — ci/seed-fixtures.sh writes `Test Book.m4b`. */
     const val AUDIOBOOK_TITLE = "Test Book"
+
+    /** The music library's seeded titles -- the only ones an audiobook shuffle could wrongly show. */
+    val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
 
     /** The two library chips' own labels, i.e. the names ci/configure-libraries.sh gives them. */
     const val MUSIC_LIBRARY = "Music"
