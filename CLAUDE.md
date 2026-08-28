@@ -940,3 +940,53 @@ Two things follow:
 Note also what is *not* the problem, because it was checked: `si`/`so` were both
 0 across every sample, so nothing was thrashing. Swap sat at 8.4 GB used and
 still, which is a machine that swapped once under earlier pressure and settled.
+
+## A mechanical "keep both" merge resolution splices comments and breaks files
+
+Four lanes tonight conflicted on the same hand-written lists, and `CLAUDE.md`'s own
+rule — *"when two lanes extend the same function, the resolution is usually both"* —
+is right about the **intent** and dangerous as an **algorithm**. A script that
+deletes the markers and concatenates the two sides produced, in one merge:
+
+- a KDoc whose `/**` was on the ours side and whose body continued on the theirs
+  side, so the file ended with *"Syntax error: Unclosed comment"* reported at the
+  **last line**, naming nothing useful;
+- a second KDoc spliced into the middle of a function body, which moved a `@Provides`
+  method inside an unrelated class and produced
+  `[ksp] java.lang.IllegalStateException: No enclosing TypeElement for: provideCastPickerScope`;
+- a `run:` line duplicated, so `pr.yml` had **two** gradle invocations where the
+  union of one was meant;
+- a Python list literal closed with the wrong bracket, because one side's `(` and the
+  other's `]` were both kept.
+
+The last one is the good case: `ci/probe-preflight.py` refused to parse and said so
+in 50 ms. The first two cost a compile round each.
+
+So: **union the *elements*, never the *text*.** A conflict whose two sides are both
+items of one list (gradle tasks, module names, probe families, import lines) is a set
+union and can be scripted. A conflict that cuts through a declaration, a KDoc or a
+function body has to be read. Tell them apart before running anything: if either side
+is unbalanced in `{}`, `/**`/`*/` or brackets, it is the second kind.
+
+And check the result with something that parses rather than something that greps —
+`./ci/probe-preflight.py` for the probe file, a compile for Kotlin. Balanced-comment
+counting (`s.count("/**") == s.count("*/")`) found the unclosed KDoc in one command
+when the compiler's own message pointed at the wrong line.
+
+## Two lanes' navigation entries merge cleanly into an app that dies on launch
+
+The same merge left `entry<PlayerRoute>` declared **twice** in one `entryProvider`.
+Navigation 3 throws at *composition*:
+
+    IllegalArgumentException: An 'entry' with the same 'clazz' has already been added: PlayerRoute
+
+`./gradlew --no-build-cache check` was **fully green** over it — it compiles, and no
+JVM test composes the graph — and it surfaced only because a device run crashed with
+one test and a stack trace naming Navigation 3 rather than either lane that caused it.
+
+`ConventionTest`'s `no navigation graph registers one route class twice` now scans for
+it on the fast tier. Note its one subtlety, which bit on the first run: the rule's own
+KDoc *names* the duplicate it was written against, so a raw-text scan reports
+`ConventionTest.kt` as the offender. It strips comments first — the same fix
+`VerifyMergedManifestTask`'s required half makes, and the same self-matching failure as
+the `pgrep` that matched its own command line.
