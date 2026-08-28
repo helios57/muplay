@@ -10,56 +10,66 @@ master had moved on — the same stale-measurement defect `CLAUDE.md` records
 against floor comments and lane reports. The current commit lives in the dated
 section below, where the date makes it checkable.)*
 
-## Where the plans stand — 2026-08-27 23:20
+## Where the plans stand — 2026-08-28 morning
 
-Master is `892a26a`, green under `--no-build-cache check` as measured at
-`026377d` (everything since is documentation). **64 of 82 tasks merged**, and
-**eight more are committed on lane branches but not yet gated**, so the honest
-count of finished-and-verified work is 64.
+Master is `0246b9c`, green under `--no-build-cache check`, with androidTest
+compiling for all ten modules. **71 of 82 tasks merged**, up from 64.
+
+Seven of the eight in-flight lanes were merged and gated overnight after the fleet
+was lost to a weekly rate limit (resets Aug 31 16:00 Europe/Vienna). No subagent can
+run before then; the merging was done from the main session.
 
 | Plan | Merged | Remaining |
 | --- | --- | --- |
 | 1 foundation · 2 library | 16/16 | complete |
 | 3 playback core | 12/12 | complete |
-| 4 audiobooks | 6/10 | T6, T7 committed-not-gated · T9, T10 not started |
-| 5 Auto/Wear | 7/11 | T8 committed-not-gated · T9, T10, T11 not started |
-| 6 casting | 9/12 | T10, T12 committed-not-gated · T11 not started |
-| 7 integrations | 8/11 | T9 committed-not-gated · T10, T11 not started |
-| 8 release & Play | 7/10 | T6, T8 committed-not-gated · T10 not started |
+| 4 audiobooks | 8/10 | T9, T10 not started |
+| 5 Auto/Wear | 8/11 | T9, T10, T11 not started |
+| 6 casting | 11/12 | T11 not started |
+| 7 integrations | 9/11 | T10, T11 not started |
+| 8 release & Play | 8/10 | **T6 blocked** (below) · T10 not started |
 
-### The eight lane branches, as they stand
+### What the merges actually found
 
-Every one of these is committed and therefore survives a session death. None
-has a green `--no-build-cache check` recorded against it yet; that is what each
-was doing when the clock ran out.
+Three defects that no single lane could have seen, all caught by gates:
 
-| Branch | Task | Commits ahead | State |
-| --- | --- | --- | --- |
-| `p4t6` | P4 T6 resume policy | 6 | AudiobookResumeTest committed; gate run owed |
-| `p4t7` | P4 T7 speed + silence | 3 | `--no-build-cache check` in flight since 22:52 |
-| `p5t8` | P5 T8 `:wear` module | 5 | found and fixed a dropped brace in ConventionTest (`95475cf`) that made **every** rule uncompilable; gate relaunched |
-| `p6t10` | P6 T10 `:feature:castpicker` | 5 | nine castui probes committed; 3 files uncommitted |
-| `p6t12` | P6 T12 RendererDirect | 5 | renderer-direct probes committed; contributes a section into p6t10's module |
-| `p7t9` | P7 T9 arrival | 7 | eleven probes + four floors committed; 2 files uncommitted; **still owes the `LidarrValidationException` credential-exposure fix** |
-| `p8t6` | P8 T6 store listing | 5 | screenshots pulled; must exclude `ci/__pycache__/` |
-| `p8t8` | P8 T8 reviewer access | 4 | reviewer-taps rule committed; owes a decision on the `p8t8-review-navidrome` container it left running |
+1. **The app died on launch.** Merging P6 T10 and T12 left `entry<PlayerRoute>`
+   declared twice; Navigation 3 throws at composition. `check` was fully green over
+   it. Fixed in `5799c7a`, with `ConventionTest`'s `no navigation graph registers one
+   route class twice` added so the fast tier sees the next one.
+2. **A Hilt duplicate binding.** P4 T7 shipped a stand-in
+   `provideAudiobookItemSource { null }` whose KDoc said T6 would replace *its body*;
+   T6 added a second `@Binds` beside it instead. The build failed loudly, which that
+   KDoc had named in advance as the good outcome.
+3. **The store listing became false in five places.** `StoreListingTest` reports that
+   `docs/STORE-LISTING.md` still disclaims casting, playback speed, Lidarr/Bindery
+   requests, the Wear OS app and exact-second book resume — all of which shipped
+   tonight and are wired (`CastPickerSheet` is composed in `MuPlayApp`, `MediaModule`
+   binds `AudiobookResumePolicy` rather than `NeverResume`).
 
-**Merge them in the order their gates go green, not in plan order**, and re-read
-the "A lane's report describes master as it was at that lane's last sync" note
-in `CLAUDE.md` before believing any claim a lane makes about master. `p6t10` and
-`p6t12` both touch `:feature:castpicker` by agreement — `p6t10` owns the module,
-`p6t12` contributes a `RendererDirectSection` into it — so expect their
-`build.gradle.kts` floor blocks to conflict textually, and resolve to *both*.
+### P8 T6 is the one lane still out, and why
+
+Its branch `p8t6-branch` is complete except for the seven phone screenshots, which
+cannot be captured yet: `ci/store-screenshots.sh` now gets past the launch crash but
+times out at step 7, waiting 15 s for the library's shuffle label after a global BACK
+from the player (`StoreScreenshotsTest.kt:207`). Back-navigation itself is structurally
+fine (`onBack = { backStack.removeLastOrNull() }`), so this is the capture harness
+needing an update for the merged UI, not a product regression — but it has not been
+proven either way, and it should be, before the listing text is trusted.
+
+The listing-text edits that go with it were written and are **not** on master; they
+are in the session scratchpad under `keep/STORE-LISTING.md`. Merging p8t6 without
+them, or them without the screenshots, leaves `check` red either way.
 
 ### Why the session ran long
 
-The parent process died twice, at 17:45 and 22:40, taking all eight lanes with
-it and leaving no completion record either time. Six of eight lanes had
-committed on both occasions, so nothing was lost, but roughly four hours of wall
-clock were. Neither death was a host reboot (`last reboot` unchanged, uptime
-continuous). The host was also at 30-44% CPU steal with a load average between
-28 and 57 for most of the evening, which is why a `check` that normally takes
-four minutes was taking twenty-five.
+The parent process died twice (17:45, 22:40) and the fleet then hit a weekly rate
+limit. The host also ran at 30-44% CPU steal with a load average between 28 and 139
+for most of the evening — a `check` that takes four minutes was taking twenty-five,
+and Gradle test workers were being killed and reported as
+`ProcessExecutionException` with **no test-results directory written at all**, which
+reads exactly like a real failure. Check for the missing results directory before
+believing a red under load.
 
 ## Remaining waves
 
