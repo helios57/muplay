@@ -725,6 +725,46 @@ class ConventionTest {
       .isEmpty()
   }
 
+  /**
+   * Gradle accepts the same `include` twice in silence: the second is a no-op, the module graph is
+   * identical, and every build stays green. So nothing in this repository could see that Plan 6
+   * Task 10 and Task 12 had each added a line for the cast picker, and that the union merge which
+   * brought the two lanes together kept both comment blocks -- and therefore both include lines.
+   *
+   * That is `CLAUDE.md`'s "union the *elements*, never the *text*" defect caught in the act: both
+   * comments carried real and different information, so keeping both was right, while keeping both
+   * includes was not. A merge resolution that concatenates text cannot tell those apart.
+   *
+   * The comment strip below is not decoration. This rule's own prose quotes the duplicated line to
+   * explain itself, so a scan over raw text reports `settings.gradle.kts` -- and now also this file
+   * -- as the offender. Same self-matching failure as the `pgrep` that matched its own command
+   * line, the nav-entry rule above, and `VerifyMergedManifestTask`'s required half.
+   */
+  @Test
+  fun `settings gradle kts never includes one module twice`() {
+    val settings = File(repoRoot(), "settings.gradle.kts")
+    val source = settings.readText()
+      .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+      .replace(Regex("""//[^\n]*"""), "")
+
+    val included = Regex("""include\("([^"]+)"\)""")
+      .findAll(source)
+      .map { it.groupValues[1] }
+      .toList()
+
+    val duplicated = included.groupBy { it }
+      .filterValues { it.size > 1 }
+      .map { (module, occurrences) -> "$module included ${occurrences.size} times" }
+
+    assertThat(duplicated)
+      .`as`(
+        "settings.gradle.kts includes a module more than once. Gradle ignores the repeat without " +
+          "a warning, so no build fails and no other gate looks. Keep one include per module and " +
+          "fold the second comment onto the survivor.",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `every module with instrumented tests is compiled by the fast tier`() {
     val workflowFile = File(repoRoot(), ".github/workflows/pr.yml")
