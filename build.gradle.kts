@@ -6341,19 +6341,44 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // them) are all reported by `warnUngatedClasses` on every run. That is the honest state of
     // affairs and not an oversight.
     //
+    // **STATUS, AS OF THE COMMIT THAT ADDED `feature/requests/src/androidTest`. READ THIS BEFORE
+    // ADDING A FOURTH RULE.**
+    //
+    //   - Three instrumented suites now exist -- `RequestsScreenTest`, `IntegrationsScreenTest`
+    //     and `IntegrationsSectionContentTest` -- over the stateless halves of the three surfaces,
+    //     and this module is now on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
+    //     androidTest-compile line.
+    //   - **Not one of those tests has ever been executed.** They were written while the emulator
+    //     was unavailable. The only thing anybody has verified about them is that
+    //     `:feature:requests:compileDebugAndroidTestKotlin` succeeds, which proves they are
+    //     well-formed Kotlin and proves nothing about a single assertion in them.
+    //   - **There is therefore still no fourth rule, and no number.** The three rules above are
+    //     measured from a real JVM report. Nothing below them is.
+    //
     // The obvious fourth rule would be a LINE floor with `requiresInstrumentedData = true` over the
     // Compose files, as `:feature:setup` and `:feature:castpicker` carry. **It would be worse than
-    // no floor at all here**, because `requiresInstrumentedData` floors are enforced only by
-    // `jacocoTestCoverageVerification`, which runs in the emulator job -- and this module has no
-    // `src/androidTest`, so `ConventionTest`'s `every module with instrumented tests is run by the
-    // emulator job` never puts it on that job's command line. The floor would be skipped by the same
-    // omission that skips the tests it depends on: a gate and the thing it gates failing together,
-    // silently, which is the exact defect Plan 3 Task 10 found and this table exists to keep out.
+    // no floor at all**, and now for a sharper reason than before the suites existed: a
+    // `requiresInstrumentedData` minimum is enforced only by `jacocoTestCoverageVerification` in
+    // the emulator job, so a number typed in here without a run behind it would read exactly like
+    // a measurement and be backed by nothing. `:feature:settings` already carries one such entry
+    // as a recorded offence; a second is not an improvement.
     //
-    // Task 10 was scoped JVM-only (the emulator was down), so the honest move is to leave these
-    // reported. Whoever adds `feature/requests/src/androidTest` must add this module to
-    // `.github/workflows/e2e.yml` -- the `ConventionTest` rule fires the instant that directory
-    // exists -- and may then measure and add the Compose floors, not before.
+    // WHAT HAS TO HAPPEN, AND WHO DOES IT. Whoever next has a working emulator, in this order:
+    //   1. `./gradlew :feature:requests:assembleDebugAndroidTest :feature:requests:assembleDebug`
+    //      (no device needed), then
+    //      `ci/device-lock.sh ./gradlew :feature:requests:connectedDebugAndroidTest` -- one class
+    //      at a time while fixing, then the module's whole suite before believing any of it.
+    //   2. Fix what fails. Expect the failures to be in the tests: `RequestsScreen` is a
+    //      `LazyColumn` and every fixture in `RequestsScreenTest` is sized on the assumption that
+    //      it fits one screenful, which is an assumption nobody has checked on a device.
+    //   3. Only then read the merged report and add LINE floors with
+    //      `requiresInstrumentedData = true` over `RequestsScreenKt`, `IntegrationsScreenKt` and
+    //      `IntegrationsSectionKt` -- each minimum a number that run produced, each falsified by
+    //      withholding a test and re-reading the XML, each falsification written down beside it.
+    //
+    // `di.RequestsFeatureModule` and its three SAM lambdas are NOT covered by the new suites and
+    // are not on the list above: they exist to be constructed by Hilt, and these suites
+    // deliberately build no Hilt graph. They go on being reported by `warnUngatedClasses`.
   ),
 )
 
