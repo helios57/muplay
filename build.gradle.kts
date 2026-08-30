@@ -3753,25 +3753,53 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   `BookPlaybackLauncher`  LINE 0/20  `BookTimelineReader`  LINE 0/9
     //   the three anonymous seam adapters, LINE 0/4, 0/12 and 0/19
     //
-    // A `@Composable` executes only inside a real composition, and this piece adds **no**
-    // `src/androidTest` -- deliberately: two `ConventionTest` rules derive the emulator-job and
-    // fast-tier module lists from the tree and fire the instant `feature/book/src/androidTest`
-    // exists, and the workflow edits belong with the piece that adds real device tests (Plan 4
-    // Task 10). So there is no tier here that can execute one line of these files.
+    // A `@Composable` executes only inside a real composition, so no tier that has ever run in
+    // this repository can execute one line of these files.
+    //
+    // **STATUS, AS OF THE COMMIT THAT ADDED `feature/book/src/androidTest`. READ THIS BEFORE
+    // ADDING A FLOOR HERE.**
+    //
+    //   - Three instrumented suites now exist -- `BookshelfContentTest`, `BookContentTest` and
+    //     `BookPlayerContentTest` -- over the stateless halves of the three screens, and this
+    //     module is now on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
+    //     androidTest-compile line.
+    //   - **Not one of those tests has ever been executed.** They were written while the emulator
+    //     was unavailable. The only thing anybody has verified about them is that
+    //     `:feature:book:compileDebugAndroidTestKotlin` succeeds, which proves they are
+    //     well-formed Kotlin and proves nothing whatsoever about a single assertion in them.
+    //   - **There is therefore no number here, and no floor.** Every ratio in this table above is
+    //     a measurement; there is nothing to measure for these classes yet, and inventing one
+    //     would be worse than the gap.
     //
     // The honest options were a floor of `0.00`, a `requiresInstrumentedData = true` floor, or no
-    // floor. **All three of the first two are worse.** `0.00` is the unfireable floor this
-    // repository has shipped once already. `requiresInstrumentedData = true` is worse still and
-    // the reason is measured, not assumed: those floors are enforced only by
-    // `jacocoTestCoverageVerification` in the emulator job, and `:feature:book` is not on that
-    // job's module list -- so the rule would be evaluated by nothing at all while reading, in this
-    // table, exactly like a gate. That is a gate reporting on a tree it never looked at, which is
-    // the defect this whole table exists to keep out of its own gates.
+    // floor. **Both of the first two are worse, and the second is worse now than it was before
+    // the suites existed**, because it would *look* measured. `0.00` is the unfireable floor this
+    // repository has shipped once already. A `requiresInstrumentedData` floor is enforced only by
+    // `jacocoTestCoverageVerification` in the emulator job; a number written into one without a
+    // run behind it is a gate reporting on a tree nobody looked at, which is the defect this whole
+    // table exists to keep out of its own gates. `:feature:settings` already carries one such
+    // entry as a recorded offence. Do not add a second.
     //
-    // So they go on being named by `warnUngatedClasses` on every run, which is the honest signal,
-    // and Plan 4 Task 10 is where the numbers come from. The two non-Composable entries above --
-    // `BookPlaybackLauncher` and `BookTimelineReader` -- carry the same admission for a different
-    // reason: both need Room and a bound `MediaSession`, and mocks are banned project-wide.
+    // WHAT HAS TO HAPPEN, AND WHO DOES IT. Whoever next has a working emulator, in this order:
+    //   1. `./gradlew :feature:book:assembleDebugAndroidTest :feature:book:assembleDebug` (no
+    //      device needed), then
+    //      `ci/device-lock.sh ./gradlew :feature:book:connectedDebugAndroidTest` -- one class at a
+    //      time while fixing, then the module's whole suite before believing any of it.
+    //   2. Fix what fails. Expect the failures to be in the tests rather than in the screens; two
+    //      are called out in the suites themselves (`SleepTimerRow`'s seven controls in a
+    //      non-scrolling `Row`, and the lazy-list scroll positions the assertions assume).
+    //   3. Only then read `feature/book/build/reports/jacoco/.../jacocoTestReport.xml` with the
+    //      instrumented `.ec` merged in, and add LINE floors with
+    //      `requiresInstrumentedData = true` over `BookshelfScreenKt`, `BookScreenKt`,
+    //      `BookPlayerScreenKt` and `BookCoverKt` -- each minimum a number that run produced, each
+    //      falsified by withholding a test and re-reading the XML, and each falsification written
+    //      down beside it like every other entry in this table.
+    //
+    // Until step 3 happens these classes go on being named by `warnUngatedClasses` on every run,
+    // which is the honest signal. The two non-Composable entries above -- `BookPlaybackLauncher`
+    // and `BookTimelineReader` -- are not covered by the new suites either and keep the same
+    // admission for a different reason: both need Room and a bound `MediaSession`, and mocks are
+    // banned project-wide.
   ),
   // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
   // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
