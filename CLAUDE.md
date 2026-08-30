@@ -1206,3 +1206,70 @@ emulator touched. This file already records a `pgrep` that could never report
 KDoc — **that is now four self-matching checks in this repository.** Before running
 a pattern over process lists or source, ask whether the thing doing the asking
 contains the pattern. Prefer an explicit PID from a prior `pgrep`, read and checked.
+
+## A repo-wide `ConventionTest` rule can be skipped as UP-TO-DATE while it is being violated
+
+Measured 2026-08-30, falsifying a new rule in `ConventionTest`. With the violating
+line sitting in the tree — an `import com.google.android.gms.wearable.Wearable`
+added to `wear/src/main/kotlin/.../MuPlayWearApplication.kt` — this happened:
+
+    $ ./gradlew :app:testDebugUnitTest --tests '*ConventionTest*'
+    > Task :app:testDebugUnitTest UP-TO-DATE
+    BUILD SUCCESSFUL in 4s
+
+    $ ./gradlew :app:testDebugUnitTest --rerun --tests '*ConventionTest*'
+    ... Expecting actual: [".../DataLayerWatchLink.kt", ".../MuPlayWearApplication.kt"]
+
+Nothing under another module's source set is a **declared input** of
+`:app:testDebugUnitTest`, so Gradle skipped the task entirely and the scan never
+ran. Every rule in that class reads files outside `:app` — the workflow YAML, the
+other modules' build files and manifests, `settings.gradle.kts`, `build.gradle.kts`
+— and every one of them has this hole locally.
+
+CI is a fresh checkout and is unaffected. A local `./gradlew check` after editing
+anything outside `:app` is not: **the gate reports on a tree it never looked at**,
+which is the defect class this repository's gates exist to keep out of themselves.
+
+So: **falsify a `ConventionTest` rule with `--rerun`**, and do not read a green
+`:app:testDebugUnitTest` as evidence about a file you changed in another module
+unless the task actually executed. The same caution applies to `--no-build-cache`
+for the cross-worktree case above; this is the *inputs* version of it, and
+`--no-build-cache` alone does **not** fix it — an UP-TO-DATE task never consults
+the cache in the first place.
+
+## `advanceUntilIdle()` did not run work launched on `runTest`'s `backgroundScope`
+
+kotlinx-coroutines **1.11.0**, measured while writing `WatchSyncEngineTest`. A
+collector started with `engine.start(backgroundScope)`, fed from a
+`MutableSharedFlow(replay = 1)` that already held a value, had **not run** after
+`advanceUntilIdle()`: three tests failed reporting an empty table, which reads
+exactly like a broken fake rather than a scheduler question.
+
+Do not spend the time re-deriving which release changed this. Start the collector
+on a scope you own, dispatched eagerly:
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun TestScope.startCollecting(): CoroutineScope =
+      CoroutineScope(UnconfinedTestDispatcher(testScheduler)).also(engine::start)
+
+`emit` then resumes the collector inline, the assertion after it needs no advance
+at all, and the test stops depending on scheduler semantics it is not about. The
+scope is yours to `cancel()` at the end.
+
+## `:core:testing` is a JVM module, so an Android module's fake cannot live in it
+
+`:core:testing` applies `muplay.jvm.library`. A plain Kotlin JVM project cannot
+depend on an Android library at all, so a fake implementing an interface declared
+in an Android module (`:core:watchlink`'s `WatchLink`, say) has nowhere to sit
+there. It is not a dependency cycle to break; it is an impossibility, and a plan
+that puts one there is wrong about the module.
+
+`testFixtures` is not the escape either. `:core:cast` has a `src/testFixtures` and
+can, because it is a **JVM** module where the `java-test-fixtures` plugin is all it
+takes. An Android library needs `android { testFixtures { enable = true } }`, which
+`ConventionTest`'s `no module configures android or kotlin blocks directly`
+refuses.
+
+What is left is the module's own `src/test`, which is correct when that module is
+the only consumer — and if a second consumer appears, the answer is to move the
+interface, not to copy the fake.
