@@ -3586,6 +3586,41 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.book.BookPlayerUiState*",
       ),
     ),
+    // Plan 4 Task 9, piece 3. `BookUiStateKt` -- `bookUiState`, the lookup that turns the shelf
+    // plus a book id into one book screen's state -- measured BRANCH 2/2 = 1.0000, LINE 4/4, from
+    // JVM data alone.
+    //
+    // **Two branches, not four, and that is worth reading before trusting the number.** The only
+    // BRANCH counter in this file is the `when (val book = ...) null ->` arm. `firstOrNull`'s
+    // predicate compiles to a `String.equals` call and an `ireturn` with no jump of its own, so
+    // JaCoCo records no branch on it -- the same shape `BookPlaybackLauncherKt`'s entry above
+    // records for `coerceAtLeast`. So `a book on the shelf is the book that is shown`, which is
+    // the test that proves the lookup uses its own `bookId` argument, moves no number here; it is
+    // gated by being asserted, not by being counted.
+    //
+    // The previous piece removed this type rather than ship an unfireable floor: it was measured
+    // then at LINE 0/4 with nothing on any tier able to reach it, because it existed only as a
+    // shape inside `BookViewModel`'s `combine`. Extracting the lookup as a top-level function is
+    // what made the `NotFound`-vs-`Content` decision gateable at all.
+    //
+    // `BookUiState`, `$Loading`, `$NotFound` and `$Content` ride along: the first three carry no
+    // counters of either kind, and `$Content` carries LINE 4/4 and no BRANCH, so none of them can
+    // move this ratio. They are named so `warnUngatedClasses` has nothing to say about them.
+    //
+    // FALSIFIED: `@Disabled` on `BookUiStateTest`'s `a book that is not on the shelf is not found
+    // rather than a crash` AND `an empty shelf finds nothing` -- both, because either alone leaves
+    // the `null` arm covered -- drops `BookUiStateKt` to 1/2 = 0.5000, and
+    // `jacocoJvmCoverageVerification` reports it and fails the build.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.book.BookUiStateKt",
+        "app.muplay.book.BookUiState",
+        "app.muplay.book.BookUiState*",
+      ),
+    ),
   ),
   // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
   // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
