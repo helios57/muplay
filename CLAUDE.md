@@ -731,6 +731,20 @@ Where a test genuinely needs one *kind* of track, filter rather than count:
 `RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
 and was unaffected.
 
+## A `Flow` operator inside a `@Composable` is a lint **error**, not a warning
+
+`androidx.compose.runtime`'s `FlowOperatorInvokedInComposition` fails `lintDebug` on
+
+    val x by source.configured().map { it.keys }.collectAsStateWithLifecycle(initialValue = emptySet())
+
+and it is right to: an operator applied during composition builds a new `Flow` on every
+recomposition, so the collector is torn down and restarted each time. It compiles clean, every JVM
+test passes, and the build goes red much later — the same shape as Media3's `@UnstableApi`.
+
+Hoist the operator to a property of the class that owns the composable (`RendererDirectSection`
+collects a flow it does not transform, which is why nothing in `:feature:castpicker` met this).
+Measured in Plan 7 Task 10 on `IntegrationsSection`.
+
 ## Lint's Android Auto checks cannot see a library module's manifest
 
 `AndroidAutoDetector` switches on the moment an application declares itself an Auto media app
@@ -845,6 +859,15 @@ to blame on whoever came next.
 So: **prefix every scratchpad file with your lane name** (`p6t8-falsify.py`), and before killing a
 process you did not expect, check *which worktree* it is running against — the `cd` in its command
 line says so.
+
+**A stray `.py` in that directory shadows the standard library.** Running
+`python3 /…/scratchpad/tool.py` puts the scratchpad on `sys.path` *ahead of* stdlib, so another
+lane's `inspect.py` sitting there was imported instead of `inspect` — by `dataclasses`, by
+`apport`, by anything. Measured in Plan 7 Task 10: a one-line bug in my own script produced a
+traceback whose visible cause was `zipfile.BadZipFile` raised from
+`scratchpad/inspect.py` at import time, naming a file this lane had never seen. Keep scratch
+scripts in a lane-named **subdirectory** (`scratchpad/p7t10/cov.py`), which is enough — the path
+that goes on `sys.path` is then the subdirectory, not the shared one.
 
 Two more things that harness taught, both cheap:
 
