@@ -6380,6 +6380,140 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // are not on the list above: they exist to be constructed by Hilt, and these suites
     // deliberately build no Hilt graph. They go on being reported by `warnUngatedClasses`.
   ),
+  // Plan 5 Task 10. The phone-to-watch wire. **Three rules, all Tier 1** --
+  // `requiresInstrumentedData` appears nowhere in this entry, deliberately: this module has no
+  // `src/androidTest` at all, and the reason is worth stating rather than inferring. The plan routed
+  // its `WatchSyncEngineTest` to the phone emulator so it could run against a real Room; the engine
+  // takes two narrow ports instead (`WatchSyncCredentialStore`, `WatchSyncProgressStore` -- the same
+  // shape `:feature:setup`'s `SetupCredentialSink` already uses for the same class), so every
+  // decision it makes is measured here with no device in the loop.
+  //
+  // MEASURED, per class, from `core/watchlink/build/reports/jacoco/jacocoTestReport/
+  // jacocoTestReport.xml` after a plain `:core:watchlink:test` at this commit:
+  //
+  //   ProgressMerge                BRANCH 10/10 = 1.0000   LINE 10/10 = 1.0000
+  //   WatchSyncPayload$Companion   BRANCH  4/4  = 1.0000   LINE  8/8  = 1.0000
+  //   WatchSyncEngine              BRANCH 12/12 = 1.0000   LINE 31/36 = 0.8611
+  //   ProgressSnapshot             (no BRANCH)             LINE 18/18 = 1.0000
+  //   ProgressSnapshot$Companion   (no BRANCH)             LINE 10/10 = 1.0000
+  //   CredentialSnapshot           (no BRANCH)             LINE  6/6  = 1.0000
+  //   CredentialSnapshot$Companion (no BRANCH)             LINE  1/1  = 1.0000
+  //   WatchSyncPayload             (no BRANCH)             LINE  7/7  = 1.0000
+  //   WatchSyncEngine$start$1      (no BRANCH)             LINE  1/2  = 0.5000
+  //   WatchSyncEngine$start$1$1    (no BRANCH)             LINE  1/1  = 1.0000
+  //
+  // `WatchSyncEngine` is gated on BRANCH and **not** on LINE, and the 0.8611 above says why: five of
+  // its thirty-six lines are the secondary `@Inject` constructor that adapts `CredentialStore` and
+  // `MediaProgressDao` onto the two ports, which only Hilt ever runs. Those five carry no branch
+  // counters, so the BRANCH rule is 12/12 over the four methods that decide anything -- `start`,
+  // `stop`, `publishLocalState` and `apply`.
+  ":core:watchlink" to listOf(
+    // 1. BRANCH, over every decision this module makes.
+    //
+    // **0.95, and it was 0.90 first -- changed because the falsification said so.** Withholding
+    // `ProgressMergeTest`'s `a tie is broken by the greater position, deterministically` -- the only
+    // test in this build that drives rule 2 of the merge -- takes `ProgressMerge` from 10/10 to
+    // **9/10 = 0.9000**, and at a minimum of 0.90 the gate was **BUILD SUCCESSFUL**. A floor that a
+    // real regression clears exactly is not a floor. (The surviving branch of the pair is covered by
+    // `an equal but distinct remote row is not a write`, which ties on position; nothing else in the
+    // suite ever reaches a `lastPlayedAtEpochMs` tie at all.)
+    //
+    // FALSIFIED at 0.95, same single withheld test: **BUILD FAILED** with `Rule violated for class
+    // app.muplay.watchlink.ProgressMerge: branches covered ratio is 0.90, but expected minimum is
+    // 0.95`. Every class this rule covers measures 1.0000 today, so 0.95 costs nothing and refuses
+    // one lost branch in `ProgressMerge` (10), in `WatchSyncPayload$Companion` (4) or in
+    // `WatchSyncEngine` (12) -- 11/12 = 0.9167 would have passed at 0.90.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.95"),
+      includes = listOf(
+        "app.muplay.watchlink.ProgressMerge",
+        "app.muplay.watchlink.WatchSyncPayload*Companion",
+        "app.muplay.watchlink.WatchSyncEngine",
+      ),
+      // `DataLayerWatchLink` **cannot be gated by anything, in either tier**, and this is the
+      // declaration of that rather than an accident of the include list above. It needs a physically
+      // paired phone and watch -- a Bluetooth bond and two Play services installs -- which no CI
+      // runner has and no emulator pair can fake, so a floor over it would report the absence of a
+      // problem it never looked for. It is kept decision-free precisely so that is honest: it puts
+      // bytes on a path and reads bytes off it, and everything upstream of it is in this table.
+      // `warnUngatedClasses` names it, and its three `await` SAM lambdas and its `incoming` callback
+      // flow, on every run. **That noise is deliberate. Do not silence it with a floor.** Task 11
+      // carries the manual verification procedure.
+      //
+      // Written as an exclude rather than left to the include list's silence so that broadening
+      // `includes` later -- to `app.muplay.watchlink.*`, say -- cannot quietly pull it in.
+      excludes = listOf("app.muplay.watchlink.DataLayerWatchLink*"),
+    ),
+    // 2. LINE, over the wire types, which carry no BRANCH counters at all and which a BRANCH rule
+    // could therefore never gate (JaCoCo's NaN pass -- see `warnVacuousFloors`).
+    //
+    // FALSIFIED: withhold `WatchSyncPayloadTest`'s `the wire field names are the contract between two
+    // builds` -- the only test that pins the JSON key names, which are the actual contract between
+    // two devices running two different builds -- and `CredentialSnapshot$Companion` drops to
+    // **0/1 = 0.0000** while `ProgressSnapshot$Companion` drops to **9/10 = 0.9000**. BUILD FAILED
+    // with `Rule violated for class app.muplay.watchlink.CredentialSnapshot.Companion: lines covered
+    // ratio is 0.00, but expected minimum is 0.95`.
+    //
+    // **0.95 here for the same reason as rule 1, and measured the same way.** At 0.90 the
+    // `ProgressSnapshot$Companion` half of that withholding measured 0.9000 and passed exactly; only
+    // the `CredentialSnapshot$Companion` half fired. Two classes lost coverage and one gate message
+    // came out, which is a floor telling you half of what happened. At 0.95 both fire, in one run.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.95"),
+      includes = listOf(
+        "app.muplay.watchlink.WatchSyncPayload",
+        "app.muplay.watchlink.WatchSyncPayload*Companion",
+        "app.muplay.watchlink.ProgressSnapshot",
+        "app.muplay.watchlink.ProgressSnapshot*Companion",
+        "app.muplay.watchlink.CredentialSnapshot",
+        "app.muplay.watchlink.CredentialSnapshot*Companion",
+      ),
+      excludes = listOf("app.muplay.watchlink.DataLayerWatchLink*"),
+    ),
+    // 3. LINE, over the synthetic classes Kotlin compiles `start`'s collector into -- the one path
+    // Plan 5 Task 10's own listing left untested by anything (it called `apply(...)` directly and
+    // never `start()`/`deliver()`). `WatchSyncEngine$start$1` measures 1/2 and `$start$1$1` 1/1;
+    // the missed line is the collector's own completion path, which a `SharedFlow` never reaches.
+    //
+    // 0.40 and not 0.50, deliberately below the measured minimum, so that a later change to the
+    // collector does not fire this on its first run. What it still refuses is the state before this
+    // task's three collection tests existed: a collector nothing constructs measures 0/2.
+    //
+    // FALSIFIED: withhold `WatchSyncEngineTest`'s `start applies whatever the peer delivers`, `stop
+    // ends the collection, and a later delivery is ignored` and `starting twice replaces the
+    // collection rather than adding a second`. `WatchSyncEngine$start$1` drops to **0/2 = 0.0000**
+    // and `$start$1$1` to **0/1 = 0.0000**; BUILD FAILED naming both --
+    // `Rule violated for class app.muplay.watchlink.WatchSyncEngine.start.1: lines covered ratio is
+    // 0.00, but expected minimum is 0.40`.
+    //
+    // The same withholding also takes `WatchSyncEngine` itself from BRANCH 12/12 to **9/12 =
+    // 0.7500** and fires rule 1 -- `start`'s two branches plus `stop`'s non-null arm. So rule 3 is
+    // not the only thing standing between this build and an unexercised collector; it is the only
+    // thing that says so *about the collector*, which is what makes a red here diagnostic rather
+    // than merely present.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.40"),
+      includes = listOf("app.muplay.watchlink.WatchSyncEngine*start*"),
+    ),
+    // **WHAT IS DELIBERATELY NOT GATED HERE.** All of these are reported by `warnUngatedClasses` on
+    // every run, and that is the honest state of affairs rather than an oversight:
+    //
+    //   `DataLayerWatchLink` (LINE 0/16), `$incoming$1` (BRANCH 0/13, LINE 0/11) and the three
+    //   `$await$2$*` SAM lambdas (0/1 each) -- see rule 1's `excludes` above.
+    //
+    //   `WatchSyncEngine$1` (0/3) and `$2` (0/4) -- the two anonymous port adapters in the secondary
+    //   `@Inject` constructor. They exist to be constructed by Hilt over the real `CredentialStore`
+    //   and `MediaProgressDao`, and this suite deliberately builds no Hilt graph and no Room.
+    //
+    //   `di.WatchLinkModule` (0/1) -- an abstract `@Module`'s implicit constructor, the same shape
+    //   and the same reasoning as `:feature:requests`'s `di.RequestsFeatureModule` above.
+  ),
 )
 
 /**

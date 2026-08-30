@@ -63,6 +63,16 @@ jacoco = "0.8.12"
 wearCompose = "1.6.2"
 wearToolingPreview = "1.0.0"
 openapiValidator = "3.0.0"
+# The Wearable Data Layer, and the ONLY API there is for phone-to-watch messaging: a raw Bluetooth
+# socket between two apps that cannot see each other's lifecycles is not an alternative anyone should
+# build. Dependency minimalism yields here and the dependency is contained -- `:core:watchlink` alone
+# declares it, and exactly one file in that module (`DataLayerWatchLink`) imports it.
+#
+# Resolved against dl.google.com's own maven-metadata while this task ran (2026-08-30): `<latest>` is
+# 20.0.1, and unlike `agp`/`wearCompose` above there is no pre-release question here -- Google Play
+# services publishes no alphas to this channel, and 19.0.0 is the previous entry. Re-read the
+# metadata rather than guessing a neighbouring number when this moves.
+playServicesWearable = "20.0.1"
 
 [libraries]
 compose-bom            = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -141,6 +151,8 @@ androidx-test-espresso = { module = "androidx.test.espresso:espresso-core", vers
 # same shell as the test run.
 androidx-test-rules    = { module = "androidx.test:rules", version.ref = "androidxTest" }
 openapi-validator      = { module = "com.atlassian.oai:openapi-request-validator-core", version.ref = "openapiValidator" }
+# Only `:core:watchlink` may declare this -- see that module's build file and `DataLayerWatchLink`.
+play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "playServicesWearable" }
 # Coil 3 publishes under io.coil-kt.coil3, not io.coil-kt.
 coil-compose           = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp    = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }

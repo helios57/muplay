@@ -82,3 +82,11 @@ include(":integrations:requests")
 // depends on an integration` names it explicitly as the second and last permitted consumer --
 // dropping Plan 7 is `git rm -r integrations feature/requests` plus these five include lines.
 include(":feature:requests")
+
+// Plan 5 Task 10. The wire between the phone app and the watch app: `SubsonicCredentials` and
+// `media_progress` rows, replicated both ways over the Wearable Data Layer. An Android library and
+// not a JVM one, because exactly one file in it (`DataLayerWatchLink`) touches
+// `play-services-wearable` and Hilt's `@ApplicationContext`; everything that *decides* anything is
+// pure and gated on the JVM tier. It depends on `:core:database` and `:core:model` and on no
+// feature module.
+include(":core:watchlink")
