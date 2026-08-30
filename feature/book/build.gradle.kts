@@ -1,5 +1,6 @@
 plugins {
   id("muplay.android.library")
+  id("muplay.android.compose")
   id("muplay.android.hilt")
 }
 
@@ -19,4 +20,22 @@ dependencies {
   // playback through exactly one type, the same way `:feature:library` does, and it renders
   // nothing Media3 hands back.
   implementation(project(":core:media"))
+
+  // The three screens. Copied from `:feature:library`, which is this module's model in every
+  // other respect too -- the Compose BOM arrives with `muplay.android.compose`, so none of these
+  // carries a version of its own.
+  //
+  // `coil.compose` is here for `BookCover`, which is this module's own and deliberately not
+  // `:feature:library`'s `CoverArtImage`: a feature-to-feature edge is the one thing
+  // `settings.gradle.kts` says this module must not have, and `:feature:player`'s `Artwork` is
+  // the precedent for solving it locally.
+  implementation(libs.compose.ui)
+  implementation(libs.compose.material3)
+  implementation(libs.lifecycle.viewmodel.compose)
+  implementation(libs.lifecycle.runtime.compose)
+  implementation(libs.coroutines.core)
+  implementation(libs.hilt.navigation.compose)
+  implementation(libs.coil.compose)
+
+  testImplementation(libs.coroutines.test)
 }

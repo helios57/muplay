@@ -3621,6 +3621,107 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.book.BookUiState*",
       ),
     ),
+    // ---- Plan 4 Task 9, piece 4: the three view models. ----
+    //
+    // Reachable from the fast tier at all because each is constructed over a seam
+    // (`BookshelfSource`, `BookSource`, `BookPlayerControls`) rather than over
+    // `AudiobookRepository`/`PlaybackConnection`/`SleepTimerController` directly -- the same
+    // shape, and the same stated reason, as `:feature:library`'s `LibrarySource` and
+    // `:feature:player`'s `PlaybackControls`. Every number below is MEASURED from
+    // `./gradlew :feature:book:test :feature:book:jacocoTestReport` on this tree.
+    //
+    // `BookViewModel` 4/4 BRANCH (21/24 LINE) and `BookPlayerViewModel` 4/4 BRANCH (47/51 LINE).
+    // No LINE rule over either, for the reason `:feature:library` gives for its own two: the
+    // missed lines are the `@Inject` secondary constructor's own body, which only Hilt reaches.
+    //
+    // FALSIFIED, both, and each number was read back off the XML rather than predicted:
+    //   - `BookViewModel`: `@Disabled` on `loading the same book twice never reads its chapters a
+    //     second time` -> 3/4 = 0.7500. Independently, `@Disabled` on `an action before a book is
+    //     loaded touches nothing rather than throwing` -> 3/4 = 0.7500. Two different tests, two
+    //     different branches, same ratio.
+    //   - `BookPlayerViewModel`: `@Disabled` on the ELEVEN tests that publish a playing book ->
+    //     3/4 = 0.7500 (LINE 43/51). **No single test moves it**, measured: withholding `a playing
+    //     book resolves its own summary, chapters and settings` alone left 4/4. That is worth
+    //     recording rather than hiding -- this class's two conditionals are `mediaId?.let` and
+    //     `if (bookId == null)`, and the `init` block's very first emission (`NOTHING_PLAYING`,
+    //     mediaId `null`) takes both null arms before any test does anything. So what this floor
+    //     actually holds is that *something* still plays a book through this class, which is the
+    //     honest description of it.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.book.BookViewModel",
+        "app.muplay.book.BookPlayerViewModel",
+      ),
+    ),
+    // `BookshelfViewModel` carries **no BRANCH counter at all** -- it collects one flow and
+    // forwards two calls, with no author conditional anywhere -- so a BRANCH rule over it would be
+    // JaCoCo's NaN path and could not fail at any minimum. It gets a LINE rule instead, and the
+    // reason is written down here because "it rides along on the BRANCH rule above" is exactly the
+    // silent hole this table's own doc warns about.
+    //
+    // Measured LINE 11/14 = 0.7857. The three missed lines are the `@Inject` secondary
+    // constructor's body, as above. Floored at 0.75.
+    //
+    // FALSIFIED: `@Disabled` on `BookshelfViewModelTest`'s `resuming names the book it was asked
+    // for` -> 9/14 = 0.6429, reported and failed. (One test, two lines: `resume`'s
+    // `viewModelScope.launch` and its body.)
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.75"),
+      includes = listOf("app.muplay.book.BookshelfViewModel"),
+    ),
+    // The three view models' coroutine and `Flow` codegen -- `$resume$1`, `$load$1`, `$onBook$1`,
+    // `$playChapter$1`, `$seekToChapter$1`, `$endOfChapterTimer$1`, `$nudge$1`, `$playPause$1`, the
+    // `$$inlined$map$1` and `$$inlined$flatMapLatest$1` families, and the `$2`/`$3` bodies of
+    // `BookPlayerViewModel`'s `init`.
+    //
+    // LINE, and this is the other half of the ruling the BRANCH rules above make: these classes
+    // measure 0.375-0.60 BRANCH because a `suspend` continuation's state machine emits arms the
+    // compiler chose, not arms an author wrote. What is worth knowing about them is whether they
+    // ran. Exactly the split `:feature:library` and `:core:database` already make for the same
+    // codegen.
+    //
+    // MEASURED, all of them, LINE: `$$inlined$map$1` 2/3 = 0.6667 (twice -- `BookshelfViewModel`'s
+    // and `BookPlayerViewModel`'s; the lowest here, and its third line is `map`'s collector
+    // adapter); `BookPlayerViewModel$3` 4/5 = 0.8000; every other class 1/1 to 6/6 at 1.0000.
+    // Floored at 0.65 -- one line of headroom under the lowest, a real number this run produced.
+    //
+    // EXCLUDED, and each exclusion is a class that measures 0 rather than one that is unimportant:
+    // the three outer view-model classes (their own rules are above; a `*` include matches the
+    // bare name too, since JaCoCo's `*` matches the empty string), and the three anonymous seam
+    // adapters `BookshelfViewModel.1` (0/4), `BookViewModel.1` (0/12) and
+    // `BookPlayerViewModel.1` (0/19), which exist only to be constructed by Hilt and cannot run
+    // without Room and a bound `MediaSession`. **They are written with a literal `.`, not a `$`**:
+    // `JavaNames.getQualifiedClassName` replaces `$` with `.` before any pattern sees the name, so
+    // a pattern containing `$` can never match -- this table's own header records that, and this
+    // is the first entry in it to need the dotted form for an exclude rather than a `*`.
+    //
+    // FALSIFIED: the same withholding that falsifies the `BookshelfViewModel` rule above --
+    // `@Disabled` on `resuming names the book it was asked for` -- takes
+    // `BookshelfViewModel$resume$1` from 1/1 to **0/1 = 0.0000**, which this rule reports and
+    // fails on independently of the LINE rule over the outer class.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf(
+        "app.muplay.book.BookshelfViewModel*",
+        "app.muplay.book.BookViewModel*",
+        "app.muplay.book.BookPlayerViewModel*",
+      ),
+      excludes = listOf(
+        "app.muplay.book.BookshelfViewModel",
+        "app.muplay.book.BookViewModel",
+        "app.muplay.book.BookPlayerViewModel",
+        "app.muplay.book.BookshelfViewModel.1",
+        "app.muplay.book.BookViewModel.1",
+        "app.muplay.book.BookPlayerViewModel.1",
+      ),
+    ),
   ),
   // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
   // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
