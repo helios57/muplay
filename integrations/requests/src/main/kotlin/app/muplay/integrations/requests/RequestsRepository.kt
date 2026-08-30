@@ -7,13 +7,19 @@ import app.muplay.integrations.MediaRequestRepository
 import app.muplay.integrations.RequestStatus
 import app.muplay.integrations.bindery.BinderyBook
 import app.muplay.integrations.bindery.BinderyBookCandidate
+import app.muplay.integrations.bindery.BinderyMediaType
+import app.muplay.integrations.bindery.BinderyMessageException
 import app.muplay.integrations.bindery.BinderySource
 import app.muplay.integrations.bindery.BinderySourceFactory
 import app.muplay.integrations.bindery.BinderyStatusMapper
+import app.muplay.integrations.lidarr.LidarrAddOutcome
+import app.muplay.integrations.lidarr.LidarrAddTargets
 import app.muplay.integrations.lidarr.LidarrAlbumCandidate
 import app.muplay.integrations.lidarr.LidarrSource
 import app.muplay.integrations.lidarr.LidarrSourceFactory
 import app.muplay.integrations.lidarr.LidarrStatusMapper
+import app.muplay.integrations.lidarr.LidarrValidationException
+import app.muplay.integrations.lidarr.LidarrValidationFailure
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -208,6 +214,84 @@ class RequestsRepository @Inject constructor(
       remoteId = book.id.toString(),
     )
 
+  /**
+   * Asks every **configured** service what it can find for [term].
+   *
+   * Task 10 needed this and the plan did not have it: `LidarrSource.lookupAlbums` and
+   * `BinderySource.searchBooks` existed, and reaching either one meant a view model holding the two
+   * `…SourceFactory` interfaces and `ConfiguredServices` itself. It is here instead, because this
+   * class is already the one entry point to this feature's data and because the severability
+   * contract is **structural** here and would have had to be re-established there: a service that is
+   * not in the credential map has nothing to build a client with, so a user with only Lidarr causes
+   * zero Bindery traffic without anybody remembering to check.
+   *
+   * A blank [term] asks nobody. Both lookups are proxied to a third party — `api.lidarr.audio` and
+   * Open Library — and are rate-limited upstream, so the empty search a text field produces on its
+   * way to the first character must not become a request.
+   *
+   * One service failing leaves the other's results intact and reports itself in
+   * [SearchReport.failed]; see that type for why that is not an exception.
+   */
+  suspend fun search(term: String): SearchReport {
+    val trimmed = term.trim()
+    if (trimmed.isEmpty()) return SearchReport(emptyList(), emptySet())
+    val credentials = services.configured().first()
+    // Read once, before any lookup: `alreadyAdded` is answered from MuPlay's own rows as well as
+    // from the service's, because Bindery's search carries no such flag at all (measured: after an
+    // add, the same search still returns the book with `"id": 0`).
+    val stored = requests.requests().first().mapTo(mutableSetOf()) { it.id }
+    val candidates = mutableListOf<RequestCandidate>()
+    val failed = mutableSetOf<IntegrationService>()
+
+    for (service in IntegrationService.entries) {
+      val credential = credentials[service] ?: continue
+      // The corrupt-store case `refresh` refuses for the same reason: never send one service's key
+      // to the other. Reported as failed rather than skipped, because the user did configure it.
+      if (credential.service != service) {
+        failed += service
+        continue
+      }
+      try {
+        candidates += lookup(credential, trimmed, stored)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        failed += service
+      }
+    }
+    return SearchReport(candidates, failed)
+  }
+
+  /**
+   * Asks [candidate]'s service for it, and records the row on success.
+   *
+   * Returns a [SubmitResult] rather than throwing, because both outcomes are things a screen shows:
+   * a new row, or a sentence. The two services' own shapes differ — Lidarr answers a duplicate with
+   * a recognisable 400 while Bindery upserts — and that difference is absorbed here rather than by
+   * every caller.
+   */
+  suspend fun submit(candidate: RequestCandidate): SubmitResult {
+    val credential = services.configured().first()[candidate.service]
+    return try {
+      when {
+        credential is IntegrationCredentials.Lidarr && candidate is RequestCandidate.Album ->
+          submitAlbum(credential, candidate.album)
+        credential is IntegrationCredentials.Bindery && candidate is RequestCandidate.Book ->
+          submitBook(credential, candidate.book)
+        // Not configured at all, or a credential of the wrong type filed under this service's key.
+        // One sentence for both: a user can act on neither differently, and the second is a corrupt
+        // store rather than something they did.
+        else -> SubmitResult.Refused(
+          "MuPlay has no working ${candidate.service.displayName} setup to send this to.",
+        )
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      SubmitResult.Refused(reasonFor(e))
+    }
+  }
+
   /** Forgets one request. Deletes MuPlay's row and nothing on any server — see spec section 8. */
   suspend fun forget(id: String) = requests.forget(id)
 
@@ -297,6 +381,113 @@ class RequestsRepository @Inject constructor(
     } while (page.books.isNotEmpty() && books.size < page.total && books.size < MAX_BOOKS)
     return books
   }
+
+  /**
+   * One service's lookup, mapped into [RequestCandidate]s.
+   *
+   * Dispatched on the credential's own type, exactly as [nextStatuses] is and for the same reason:
+   * [search] has already refused a credential that disagrees with its key, so no cast lives here.
+   */
+  private suspend fun lookup(
+    credential: IntegrationCredentials,
+    term: String,
+    stored: Set<String>,
+  ): List<RequestCandidate> = when (credential) {
+    is IntegrationCredentials.Lidarr ->
+      lidarrFactory.create(credential).lookupAlbums(term).map { album ->
+        RequestCandidate.Album(
+          album = album,
+          // Lidarr's own flag OR our row: the first covers an album a housemate added, the second
+          // one this user asked for on a previous run.
+          alreadyAdded = album.alreadyAdded ||
+            MediaRequest.idFor(IntegrationService.LIDARR, album.foreignAlbumId) in stored,
+        )
+      }
+
+    is IntegrationCredentials.Bindery ->
+      binderyFactory.create(credential).searchBooks(term).map { book ->
+        RequestCandidate.Book(
+          book = book,
+          // Bindery has no flag of its own -- measured, a search returns an added book unchanged --
+          // so MuPlay's own row is the only thing that can answer this without a second round trip.
+          alreadyAdded = MediaRequest.idFor(IntegrationService.BINDERY, book.foreignBookId) in stored,
+        )
+      }
+  }
+
+  /**
+   * Four calls, in the order Lidarr's own validators require them.
+   *
+   * A root folder and both profiles are read rather than remembered, because `LidarrAddTargets`
+   * resolves an album's whole filing from the folder's own defaults and those change on the server
+   * without telling anybody. The first **accessible** folder is used: measured, an inaccessible one
+   * fails the add with a message about UNIX ownership shown to somebody who was choosing an album.
+   *
+   * `searchNow = true`, because a user who asked for an album meant "go and get it". Note that
+   * `LidarrAddPayload` still sends the artist's own `searchForMissingAlbums` as `false` — a `true`
+   * there makes the server silently cancel the album search.
+   */
+  private suspend fun submitAlbum(
+    credential: IntegrationCredentials.Lidarr,
+    candidate: LidarrAlbumCandidate,
+  ): SubmitResult {
+    val source = lidarrFactory.create(credential)
+    val folder = source.rootFolders().firstOrNull { it.accessible }
+      ?: return SubmitResult.Refused(
+        "Lidarr has no writable music folder set up, so it has nowhere to put this album.",
+      )
+    val targets = LidarrAddTargets.resolve(folder, source.qualityProfiles(), source.metadataProfiles())
+      ?: return SubmitResult.Refused(
+        "Lidarr's \"${folder.name}\" folder has no quality or metadata profile to file this under.",
+      )
+    return when (val outcome = source.submitAlbum(candidate, targets, searchNow = true)) {
+      is LidarrAddOutcome.Added ->
+        SubmitResult.Recorded(recordLidarrAdd(candidate, outcome.albumId))
+      // Normal, not an error: the user asked twice, or somebody else added it. The row is still
+      // recorded -- with whatever id Lidarr already has for it, so status polling works -- because
+      // a user who pressed the button is entitled to see the result in their own list.
+      LidarrAddOutcome.AlreadyAdded ->
+        SubmitResult.Recorded(recordLidarrAdd(candidate, source.findAddedAlbumId(candidate.foreignAlbumId)))
+      is LidarrAddOutcome.Rejected -> SubmitResult.Refused(reasonFor(outcome.failures))
+    }
+  }
+
+  /**
+   * One call. Bindery upserts, so there is no duplicate outcome to tell apart from a refusal.
+   *
+   * [BinderyMediaType.AUDIOBOOK] is passed explicitly and there is no default anywhere on this
+   * path: `mediaType` defaults to `ebook` **server-side**, and MuPlay plays audiobooks.
+   */
+  private suspend fun submitBook(
+    credential: IntegrationCredentials.Bindery,
+    candidate: BinderyBookCandidate,
+  ): SubmitResult {
+    val source = binderyFactory.create(credential)
+    val book = source.submitBook(candidate, BinderyMediaType.AUDIOBOOK, searchOnAdd = true)
+    return SubmitResult.Recorded(recordBinderyAdd(candidate, book))
+  }
+
+  /**
+   * What to tell the user about a failure, taking each service's text from the **named** field it
+   * put it in rather than from `Throwable.message`.
+   *
+   * That is the whole reason `LidarrValidationException` and `BinderyMessageException` have those
+   * fields: server-supplied text must not reach the one string a crash reporter uploads, and
+   * showing it has to be a deliberate act at a surface. This is that surface. Anything else falls
+   * back to the exception's own constant message, and a blank one to a sentence rather than to an
+   * empty line under the button.
+   */
+  private fun reasonFor(failure: Throwable): String = when (failure) {
+    is LidarrValidationException -> failure.lidarrMessage
+    is BinderyMessageException -> failure.binderyMessage
+    else -> failure.message
+  }.orEmpty().ifBlank { "That could not be requested, and the server did not say why." }
+
+  /** Lidarr's own sentences from a rejected add, joined; see [reasonFor] for why by name. */
+  private fun reasonFor(failures: List<LidarrValidationFailure>): String =
+    failures.mapNotNull { it.errorMessage?.takeIf(String::isNotBlank) }
+      .joinToString(" ")
+      .ifBlank { "Lidarr refused this album and did not say why." }
 
   private companion object {
     /** Bindery's own default limit, measured in Task 8. One page covers an ordinary library. */

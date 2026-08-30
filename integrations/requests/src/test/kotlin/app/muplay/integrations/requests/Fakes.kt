@@ -166,7 +166,12 @@ class FakeMediaRequestDao : MediaRequestDao {
   }
 }
 
-/** A Lidarr that answers only the two calls a status refresh makes. */
+/**
+ * A Lidarr that answers the calls a status refresh, a lookup and an add make.
+ *
+ * `ping` and `status` still throw: a connection check builds its own source, and an accidental call
+ * to either from here would be a loud failure naming the method rather than a green run.
+ */
 class FakeLidarrSource : LidarrSource {
   var queue: List<LidarrQueueItem> = emptyList()
 
@@ -193,22 +198,67 @@ class FakeLidarrSource : LidarrSource {
     return progress[albumId]
   }
 
-  override suspend fun ping(): Boolean = unused("ping")
-  override suspend fun status(): LidarrServer = unused("status")
-  override suspend fun lookupAlbums(term: String): List<LidarrAlbumCandidate> = unused("lookupAlbums")
-  override suspend fun rootFolders(): List<LidarrRootFolder> = unused("rootFolders")
-  override suspend fun qualityProfiles(): List<LidarrProfile> = unused("qualityProfiles")
-  override suspend fun metadataProfiles(): List<LidarrProfile> = unused("metadataProfiles")
+  // ---- the lookup and add calls a search and a submit make -----------------------------------
+
+  var lookupResults: List<LidarrAlbumCandidate> = emptyList()
+
+  /** When set, `lookupAlbums` throws it. Separate from [failWith] so one call can fail alone. */
+  var lookupFailWith: Exception? = null
+
+  /** Every term `lookupAlbums` was asked, verbatim -- argument passthrough, not "it was called". */
+  val lookupTerms: MutableList<String> = mutableListOf()
+
+  /** One accessible folder whose defaults resolve, so a test opts *out* of a working add. */
+  var rootFolders: List<LidarrRootFolder> = listOf(rootFolder())
+  var qualityProfiles: List<LidarrProfile> = listOf(LidarrProfile(id = 3, name = "Any"))
+  var metadataProfiles: List<LidarrProfile> = listOf(LidarrProfile(id = 4, name = "Standard"))
+
+  var addOutcome: LidarrAddOutcome = LidarrAddOutcome.Added(albumId = 101)
+  var addFailWith: Exception? = null
+
+  /** Every `(candidate, targets, searchNow)` an add was made with, in order. */
+  val submitted: MutableList<Triple<LidarrAlbumCandidate, LidarrAddTargets, Boolean>> = mutableListOf()
+
+  /** What `findAddedAlbumId` answers -- `null` is a real answer and not "not configured". */
+  var addedAlbumId: Int? = null
+  val addedAlbumIdsAsked: MutableList<String> = mutableListOf()
+
+  override suspend fun lookupAlbums(term: String): List<LidarrAlbumCandidate> {
+    lookupTerms += term
+    lookupFailWith?.let { throw it }
+    return lookupResults
+  }
+
+  override suspend fun rootFolders(): List<LidarrRootFolder> = rootFolders
+
+  override suspend fun qualityProfiles(): List<LidarrProfile> = qualityProfiles
+
+  override suspend fun metadataProfiles(): List<LidarrProfile> = metadataProfiles
+
   override suspend fun submitAlbum(
     candidate: LidarrAlbumCandidate,
     targets: LidarrAddTargets,
     searchNow: Boolean,
-  ): LidarrAddOutcome = unused("submitAlbum")
+  ): LidarrAddOutcome {
+    submitted += Triple(candidate, targets, searchNow)
+    addFailWith?.let { throw it }
+    return addOutcome
+  }
 
-  override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? = unused("findAddedAlbumId")
+  override suspend fun findAddedAlbumId(foreignAlbumId: String): Int? {
+    addedAlbumIdsAsked += foreignAlbumId
+    return addedAlbumId
+  }
+
+  override suspend fun ping(): Boolean = unused("ping")
+  override suspend fun status(): LidarrServer = unused("status")
 }
 
-/** A Bindery that answers only the one call a status refresh makes. */
+/**
+ * A Bindery that answers the calls a status refresh, a search and an add make.
+ *
+ * `health` still throws, for the reason `FakeLidarrSource.ping` does.
+ */
 class FakeBinderySource : BinderySource {
   /** Every book this Bindery holds. [books] pages over it, honouring `limit`/`offset`. */
   var library: List<BinderyBook> = emptyList()
@@ -235,13 +285,35 @@ class FakeBinderySource : BinderySource {
     )
   }
 
-  override suspend fun health(): BinderyServer = unused("health")
-  override suspend fun searchBooks(term: String): List<BinderyBookCandidate> = unused("searchBooks")
+  // ---- the search and add calls a submit makes ------------------------------------------------
+
+  var searchResults: List<BinderyBookCandidate> = emptyList()
+  var searchFailWith: Exception? = null
+  val searchTerms: MutableList<String> = mutableListOf()
+
+  var addResult: BinderyBook = binderyBook(id = 55, foreignBookId = "book", title = "A", status = "wanted")
+  var addFailWith: Exception? = null
+
+  /** Every `(candidate, mediaType, searchOnAdd)` an add was made with. `mediaType` is the trap. */
+  val submitted: MutableList<Triple<BinderyBookCandidate, BinderyMediaType, Boolean>> = mutableListOf()
+
+  override suspend fun searchBooks(term: String): List<BinderyBookCandidate> {
+    searchTerms += term
+    searchFailWith?.let { throw it }
+    return searchResults
+  }
+
   override suspend fun submitBook(
     candidate: BinderyBookCandidate,
     mediaType: BinderyMediaType,
     searchOnAdd: Boolean,
-  ): BinderyBook = unused("submitBook")
+  ): BinderyBook {
+    submitted += Triple(candidate, mediaType, searchOnAdd)
+    addFailWith?.let { throw it }
+    return addResult
+  }
+
+  override suspend fun health(): BinderyServer = unused("health")
 }
 
 /**
@@ -356,3 +428,28 @@ private fun baseUrl(raw: String): IntegrationBaseUrl =
     is BaseUrlResult.Valid -> result.url
     else -> error("test base URL $raw did not parse: $result")
   }
+
+/**
+ * A root folder Lidarr would accept an add into: accessible, with both profile defaults set.
+ *
+ * Defaults chosen so a test that cares about something else gets a working add, and a test about
+ * an unusable folder says so explicitly.
+ */
+fun rootFolder(
+  id: Int = 1,
+  name: String = "Music",
+  path: String = "/music",
+  accessible: Boolean = true,
+  defaultQualityProfileId: Int = 3,
+  defaultMetadataProfileId: Int = 4,
+) = LidarrRootFolder(
+  id = id,
+  name = name,
+  path = path,
+  accessible = accessible,
+  freeSpaceBytes = null,
+  defaultQualityProfileId = defaultQualityProfileId,
+  defaultMetadataProfileId = defaultMetadataProfileId,
+  defaultMonitorOption = "all",
+  defaultNewItemMonitorOption = "all",
+)

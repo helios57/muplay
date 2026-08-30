@@ -5911,12 +5911,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   ":integrations:requests" to listOf(
     // 1. The **fast tier's** BRANCH rule, over the two classes with author-written branches.
     //
-    // MEASURED from `integrations/requests/build/reports/jacoco/jacocoTestReport/
+    // RE-MEASURED IN PLAN 7 TASK 10, which added `search` and `submit` to `RequestsRepository` and
+    // doubled its branch count. From `integrations/requests/build/reports/jacoco/jacocoTestReport/
     // jacocoTestReport.xml` after a plain `--no-build-cache :integrations:requests:test`, no
     // emulator involved:
     //
-    //   `RequestArrivalDetector`  22/22 = 1.0000
-    //   `RequestsRepository`      47/48 = 0.9792
+    //   `RequestArrivalDetector`  22/22 = 1.0000  (unchanged by Task 10)
+    //   `RequestsRepository`      95/96 = 0.9896  (was 47/48 = 0.9792 before Task 10)
     //
     // **The one missing `RequestsRepository` branch is Kotlin-unreachable**, on
     // `request.remoteId?.toIntOrNull() ?: return@mapNotNull null`: `isPollable` has already
@@ -5925,20 +5926,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `a lidarr remote id that is not a number is left alone rather than rewritten` does drive).
     // Kotlin cannot smart-cast across the `filter` predicate's own function boundary, so there is
     // no way to write this without the redundant check. Same artifact, same reason, as
-    // `LidarrClient`'s four and `BinderyClient`'s two. So **0.9792 is the honest ceiling here** and
+    // `LidarrClient`'s four and `BinderyClient`'s two. So **0.9896 is the honest ceiling here** and
     // a 1.00 would fail the build on the Kotlin compiler rather than on this project's code.
     //
-    // The floor is 0.90 rather than 0.97 for the reason `:integrations:bindery`'s equivalent gives:
-    // Task 10 adds a caller, and a floor one branch under a ceiling fires on the first
-    // Kotlin-unreachable arm that caller introduces. 0.90 over 48 branches still refuses four
+    // The one missing branch is still that one and only that one, which is why the number moved UP
+    // rather than down while the denominator doubled: Task 10's 48 new branches are all covered.
+    //
+    // **The floor stays 0.90 rather than moving to 0.98**, for the reason it was 0.90 before: the
+    // next task adds a caller, and a floor one branch under a ceiling fires on the first
+    // Kotlin-unreachable arm that caller introduces. 0.90 over 96 branches still refuses nine
     // uncovered ones.
     //
-    // FALSIFIED, in both directions, and **the predicted number was wrong** — which is why the run
-    // is worth more than the prediction. Measured:
+    // FALSIFIED AGAIN IN TASK 10, and the previous falsification is now stale in a way worth
+    // recording rather than deleting: it said "withholding the whole of `RequestsRepositoryTest`
+    // takes `RequestsRepository` to **0/48**". That is no longer true, because
+    // `RequestsRepositorySearchTest` is a **second caller** of the same class — exactly the effect
+    // the entry below this one warns a reader about, met by the entry above it. Re-measured, with
+    // `@Disabled` on the named classes and the report regenerated:
     //
-    //   * Withholding the whole of `RequestArrivalDetectorTest` takes that class to
-    //     **13/22 = 0.5909**, not the 0/22 this author predicted, and
-    //     `jacocoJvmCoverageVerification` fails with
+    //   * Withholding `RequestsRepositorySearchTest` alone leaves `RequestsRepository` at
+    //     **47/96 = 0.4896** and `jacocoJvmCoverageVerification` FAILS with
+    //
+    //         Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //         branches covered ratio is 0.48, but expected minimum is 0.90
+    //
+    //   * Withholding `RequestsRepositoryTest` alone leaves it at **51/96 = 0.5312** and fails the
+    //     same way. Each of the two test classes therefore fires this rule on its own, which is
+    //     what "0/48" used to mean and no longer says. Note that the two numbers do not add up to
+    //     96 and are not meant to: the two classes share the credential read, the entries loop and
+    //     the misfiled-credential arm, so each covers branches the other also covers.
+    //   * Withholding `RequestsRepositoryTest` leaves `RequestArrivalDetector` at a full
+    //     **22/22** — the reverse of the run below — so each half of this rule still fires
+    //     separately rather than by one withholding that reddens everything.
+    //   * Withholding the whole of `RequestArrivalDetectorTest` still takes that class to
+    //     **13/22 = 0.5909**, not 0/22, and fails with
     //
     //         Rule violated for class app.muplay.integrations.requests.RequestArrivalDetector:
     //         branches covered ratio is 0.59, but expected minimum is 0.90
@@ -5947,10 +5968,6 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     **real** `RequestArrivalDetector` and drives it through `refresh()`. That is this table's
     //     recurring second-caller effect, in the one place nobody expected it: the class's own test
     //     file is not the only thing that exercises it.
-    //   * Withholding the whole of `RequestsRepositoryTest` takes `RequestsRepository` to
-    //     **0/48 = 0.0000** and fails with "branches covered ratio is 0.00, but expected minimum is
-    //     0.90" — while leaving `RequestArrivalDetector` at a full 22/22, so each half of this rule
-    //     was fired separately rather than by one withholding that reddens everything.
     //
     // Note what that says and does not: this rule fires when a class stops being exercised, and
     // says nothing about whether the answer it gives is right. `ci/mutation-probes.sh`'s
@@ -5965,17 +5982,35 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
-    // MEASURED, all on the same run: `RequestArrivalDetector` 26/26, `RequestsRepository` 84/84,
+    // MEASURED, all on the same run, and all re-measured in Task 10: `RequestArrivalDetector`
+    // 26/26, `RequestsRepository` **158/158** (was 84/84 before `search` and `submit`),
     // `TitleMatching` 7/7 — the last of which carries **no BRANCH counter at all** (it is four
     // chained calls with no branch in them), so LINE is the only counter that can hold it to
     // anything.
     //
+    // Task 10's own four types join this rule, measured on the same run:
+    //   `RequestCandidate$Album`  LINE 8/8, no BRANCH counter
+    //   `RequestCandidate$Book`   LINE 8/8, BRANCH 2/2 (`authorName.orEmpty()`)
+    //   `SearchReport`            LINE 3/3
+    //   `SubmitResult$Recorded`   LINE 1/1
+    //   `SubmitResult$Refused`    LINE 1/1
+    // The two `RequestCandidate` members reached 8/8 rather than 7/8 only once a test read
+    // `coverUrl` — two wire keys (`remoteCover` and `imageUrl`) behind one property, and a getter
+    // no test reads is a mapping no test checks. That line is what earned the entry.
+    //
+    // `RequestCandidate` and `SubmitResult` themselves — the two sealed interfaces — carry **no
+    // counters of any kind**, so they can move no ratio; they are matched by the `*` patterns below
+    // purely so `warnUngatedClasses` has nothing to say about them.
+    //
     // `RefreshReport` is deliberately NOT here. It measures **5/6 = 0.8333**, the missing line
     // being the `data class`'s generated `equals`/`hashCode`/`copy` that nothing calls, and it is
-    // gated by rule 3 below at a floor that admits that.
+    // gated by rule 3 below at a floor that admits that. `SearchReport` — the same shape, added by
+    // Task 10 — IS here, because it measures 3/3 rather than 2/3: `RequestsRepositorySearchTest`
+    // destructures it, and a destructuring declaration calls the generated `componentN`.
     //
     // FALSIFIED, AND TWICE THE PREDICTION WAS WRONG. **Read this before withholding a test here
-    // and concluding anything from the green you get.** Measured, in order:
+    // and concluding anything from the green you get.** Measured, in order (the first two runs
+    // predate Task 10 and were re-confirmed against it):
     //
     //   * Withholding the whole of `TitleMatchingTest` — every assertion in this repository about
     //     how a title is normalised — leaves `TitleMatching` at **7/7 and this rule GREEN**.
@@ -5987,11 +6022,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     but on `RequestArrivalDetector`'s BRANCH rule above (13/22) and on nothing here.
     //
     // So **no withholding of one or two test classes can fire this rule through `TitleMatching`**;
-    // it would take all three at once. What does fire it, measured: withholding the whole of
-    // `RequestsRepositoryTest` takes `RequestsRepository` to **0/84** and the gate fails with
+    // it would take all three at once.
     //
-    //     Rule violated for class app.muplay.integrations.requests.RequestsRepository:
-    //     lines covered ratio is 0.00, but expected minimum is 0.90
+    // What does fire it, RE-MEASURED IN TASK 10 — and the old sentence here is now wrong for the
+    // same second-caller reason as rule 1's: it said withholding `RequestsRepositoryTest` takes
+    // `RequestsRepository` to **0/84**, and there is now a second test class driving the same
+    // methods. Measured with `@Disabled` on the named class and the report regenerated:
+    //
+    //   * Withholding `RequestsRepositorySearchTest` alone -> `RequestsRepository` **84/158 =
+    //     0.5316**, and every one of Task 10's own types to **zero** — `RequestCandidate$Album`
+    //     0/8, `$Book` 0/8, `SearchReport` 0/3, `SubmitResult$Recorded` and `$Refused` 0/1 each —
+    //     and the gate fails naming all six in one run:
+    //
+    //         Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //         lines covered ratio is 0.53, but expected minimum is 0.90
+    //         Rule violated for class app.muplay.integrations.requests.RequestCandidate.Album:
+    //         lines covered ratio is 0.00, but expected minimum is 0.90
+    //         ...and the same for RequestCandidate.Book, SearchReport, SubmitResult.Recorded and
+    //         SubmitResult.Refused.
+    //
+    //     That zero is worth noting rather than assuming: nothing else in this module constructs a
+    //     `RequestCandidate`, so unlike `TitleMatching` above these five have exactly one caller and
+    //     the obvious withholding really does fire them.
+    //   * Withholding `RequestsRepositoryTest` alone -> `RequestsRepository` **97/158 = 0.6139**,
+    //     and fails the same way, while leaving all five of Task 10's types at their full ratios.
     //
     // A reader who withholds the obvious single test class and sees green must not read that as
     // "the floor is vacuous" — it is enforcing, through a different class than they were aiming at.
@@ -6004,6 +6058,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.requests.RequestArrivalDetector*Companion",
         "app.muplay.integrations.requests.RequestsRepository",
         "app.muplay.integrations.requests.TitleMatching",
+        // Task 10's search and submit vocabulary. `$` is replaced by `.` before a pattern ever sees
+        // a class name (see [CoverageFloor]'s gotcha 3), so the members are matched with a `*`.
+        "app.muplay.integrations.requests.RequestCandidate",
+        "app.muplay.integrations.requests.RequestCandidate*",
+        "app.muplay.integrations.requests.SearchReport",
+        "app.muplay.integrations.requests.SubmitResult",
+        "app.muplay.integrations.requests.SubmitResult*",
       ),
     ),
     // 3. `RefreshReport` and the `Flow.map` machinery behind `configuredServices`, gated **low
@@ -6022,9 +6083,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // sitting exactly on the current minimum fires on the first one. What 0.40 still refuses is a
     // class nothing constructs at all, which measures 0.
     //
-    // FALSIFIED: withholding the whole of `RequestsRepositoryTest` takes `RefreshReport` to
-    // **0/6 = 0.0000** and both inlined-map classes to 0.00, and the gate fails with three of this
-    // rule's own violations in one run —
+    // FALSIFIED, and RE-CONFIRMED in Task 10 — which matters here because `search` and `submit` do
+    // not construct a `RefreshReport` and `RequestsRepositorySearchTest` therefore does not cover
+    // one, so this rule's falsification is the one the new test class did NOT make stale.
+    // Withholding the whole of `RequestsRepositoryTest` takes `RefreshReport` to **0/6 = 0.0000**,
+    // `…inlined.map.1` to **1/3 = 0.3333** and `…map.1.2` to **0/2 = 0.0000**, and the gate fails
+    // with three of this rule's own violations in one run —
     //
     //     Rule violated for class app.muplay.integrations.requests.RefreshReport:
     //     lines covered ratio is 0.00, but expected minimum is 0.40
