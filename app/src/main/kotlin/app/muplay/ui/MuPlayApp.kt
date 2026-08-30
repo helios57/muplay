@@ -190,7 +190,7 @@ private fun MuPlayNavigation(
         // Navigation 3 populates no `SavedStateHandle` argument from a key's own properties.
         entry<BookRoute> { route -> BookScreen(bookId = route.bookId, onOpenPlayer = { openPlayer() }) }
         entry<BookPlayerRoute> { BookPlayerScreen() }
-        entry<SettingsRoute> { SettingsScreen() }
+        entry<SettingsRoute> { SettingsScreen(onNavigate = { key -> backStack.add(key) }) }
       },
     )
   }

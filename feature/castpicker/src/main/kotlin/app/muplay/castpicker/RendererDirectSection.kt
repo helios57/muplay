@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
 import app.muplay.database.CastSettings
 import app.muplay.settings.SettingsSection
 import javax.inject.Inject
@@ -90,8 +91,13 @@ class RendererDirectSection @Inject constructor(
    */
   override val order: Int = 200
 
+  /**
+   * [onNavigate] is ignored, and deliberately so: this section is a switch, not a way in. The
+   * parameter exists for sections that open a screen of their own -- Plan 7's integrations row --
+   * and a section with nowhere to go says so by not using it.
+   */
   @Composable
-  override fun Content() {
+  override fun Content(onNavigate: (NavKey) -> Unit) {
     // `initialValue = DEFAULT_ALLOW_RENDERER_DIRECT` and not `true`, obviously -- but stated
     // rather than assumed, because the first composition happens before DataStore has answered and
     // a screen that painted the switch **on** for one frame would be telling the user something

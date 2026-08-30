@@ -1,6 +1,7 @@
 package app.muplay.settings
 
 import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.NavKey
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -62,7 +63,7 @@ class SettingsViewModelTest {
 
   private abstract class FakeSection(override val order: Int) : SettingsSection {
     @Composable
-    override fun Content() = Unit
+    override fun Content(onNavigate: (NavKey) -> Unit) = Unit
   }
 
   /** Named so that class-name ordering matches position ordering, and the tie test can rely on it. */

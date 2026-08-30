@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.navigation3.runtime.NavKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
@@ -32,7 +33,7 @@ class SettingsScreenTest {
     // The state a build with casting removed is in, and it is a real one -- Plan 6's severability
     // contract says `git rm -r core/cast feature/castpicker` must leave a working app. A blank
     // column is indistinguishable from a screen that failed to load.
-    composeRule.setContent { SettingsScreen(sections = emptyList()) }
+    composeRule.setContent { SettingsScreen(sections = emptyList(), onNavigate = {}) }
 
     composeRule.onNodeWithText(SETTINGS_TITLE).assertIsDisplayed()
     composeRule.onNodeWithText(SETTINGS_EMPTY).assertIsDisplayed()
@@ -42,7 +43,7 @@ class SettingsScreenTest {
   fun aSectionTheScreenKnowsNothingAboutIsRendered() {
     // The whole contract of the slot, in one assertion: the screen has never heard of `Loud`, and
     // `Loud` appears on it.
-    composeRule.setContent { SettingsScreen(sections = listOf(Loud)) }
+    composeRule.setContent { SettingsScreen(sections = listOf(Loud), onNavigate = {}) }
 
     composeRule.onNodeWithText("Loud section").assertIsDisplayed()
     // ...and the empty-state sentence is gone, which is the other half of the `if` above it.
@@ -55,7 +56,9 @@ class SettingsScreenTest {
     // already asserts what `orderedSections` returns, and what could still be wrong here is the
     // screen iterating something else -- the unsorted set, say, or the list reversed by a
     // `LazyColumn` with `reverseLayout`. The list is handed over in the wrong order on purpose.
-    composeRule.setContent { SettingsScreen(sections = orderedSections(setOf(Late, Early))) }
+    composeRule.setContent {
+      SettingsScreen(sections = orderedSections(setOf(Late, Early)), onNavigate = {})
+    }
 
     val earlyY = composeRule.onNodeWithText("Early section").fetchSemanticsNode().positionInRoot.y
     val lateY = composeRule.onNodeWithText("Late section").fetchSemanticsNode().positionInRoot.y
@@ -64,8 +67,9 @@ class SettingsScreenTest {
   }
 
   private class FakeSection(override val order: Int, private val label: String) : SettingsSection {
+    /** The navigation callback is ignored: what this class exists to prove is that it is rendered. */
     @Composable
-    override fun Content() {
+    override fun Content(onNavigate: (NavKey) -> Unit) {
       Text(label)
     }
   }

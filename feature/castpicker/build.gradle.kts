@@ -44,6 +44,10 @@ dependencies {
   // Manifest only -- it declares the `androidx.activity.ComponentActivity` that
   // `createComposeRule()` needs to host a composition.
   debugImplementation(libs.compose.ui.test.manifest)
+  // `NavKey`, named by `RendererDirectSection.Content`'s own signature. Declared rather than left
+  // to `:feature:settings`'s `api`, because this module writes the type itself.
+  implementation(libs.navigation3.runtime)
+
   // The arrow that matters, and it points this way only. `:feature:settings` must never name this
   // module or `:core:cast`: removing casting is `git rm -r core/cast feature/castpicker`, which
   // takes the `@IntoSet` binding below with it and leaves the settings screen with one fewer

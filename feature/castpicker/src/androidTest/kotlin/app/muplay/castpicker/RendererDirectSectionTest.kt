@@ -66,7 +66,7 @@ class RendererDirectSectionTest {
 
   @Test
   fun theSwitchOpensOffAndSaysWhatTurningItOnCosts() {
-    composeRule.setContent { section.Content() }
+    composeRule.setContent { section.Content(onNavigate = {}) }
 
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).assertIsOff()
     // The copy is not merely a constant that exists -- it is on the screen, beside the control.
@@ -80,14 +80,14 @@ class RendererDirectSectionTest {
     // in this file and tells a user their setting is off while a speaker is being handed the URL.
     settings.setAllowRendererDirect(true)
 
-    composeRule.setContent { section.Content() }
+    composeRule.setContent { section.Content(onNavigate = {}) }
 
     composeRule.waitUntil(TIMEOUT_MS) { runCatching { onSwitch().assertIsOn() }.isSuccess }
   }
 
   @Test
   fun turningItOnStoresTheChoiceWhereTheRouterWillReadIt(): Unit = runBlocking {
-    composeRule.setContent { section.Content() }
+    composeRule.setContent { section.Content(onNavigate = {}) }
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).assertIsOff()
 
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).performClick()
@@ -103,7 +103,7 @@ class RendererDirectSectionTest {
     // Both directions, because a user who cannot revoke this has not been given a choice -- and a
     // setter that only ever wrote `true` passes the test above on its own.
     settings.setAllowRendererDirect(true)
-    composeRule.setContent { section.Content() }
+    composeRule.setContent { section.Content(onNavigate = {}) }
     composeRule.waitUntil(TIMEOUT_MS) { runCatching { onSwitch().assertIsOn() }.isSuccess }
 
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).performClick()
@@ -117,7 +117,7 @@ class RendererDirectSectionTest {
     // The join between the two modules, composed for real: `SettingsScreen` has never heard of
     // `RendererDirectSection` -- it takes a list of `SettingsSection` -- and the switch appears on
     // it anyway. That is the severability contract as a rendered screen rather than as a promise.
-    composeRule.setContent { SettingsScreen(sections = listOf(section)) }
+    composeRule.setContent { SettingsScreen(sections = listOf(section), onNavigate = {}) }
 
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).assertIsOff()
     composeRule.onNodeWithText(RENDERER_DIRECT_EXPLANATION).assertIsDisplayed()

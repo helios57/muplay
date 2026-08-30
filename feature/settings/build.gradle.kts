@@ -26,6 +26,15 @@ dependencies {
   implementation(libs.compose.material3)
   implementation(libs.hilt.navigation.compose)
   implementation(libs.lifecycle.viewmodel.compose)
+  // `NavKey` and nothing else -- the marker interface `SettingsSection.Content` hands a section so
+  // that a section can open a screen of its own. A navigation primitive with no members, in the
+  // same category as `Modifier`: it names no route, no destination and no feature, so this module
+  // still learns nothing about what is in it. See `SettingsSection`'s own note for the three worse
+  // alternatives, and note that this is `navigation3-runtime` only -- `navigation3-ui`, which owns
+  // `NavDisplay` and the back stack, stays in `:app` where the graph is.
+  // `api`, not `implementation`: `NavKey` is in `SettingsSection.Content`'s own signature, so a
+  // module that implements a section cannot compile without it on its compile classpath.
+  api(libs.navigation3.runtime)
 
   // Tier 2, this module's own composables. Same artifact set `:feature:player` documents in its own
   // build file, and for the same reasons; see there for why JUnit 4 is unavoidable on-device and

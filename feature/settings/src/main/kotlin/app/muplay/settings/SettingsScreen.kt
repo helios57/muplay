@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation3.runtime.NavKey
 
 /** The heading, and what a screen with nothing in it says. Asserted by `SettingsScreenTest`. */
 const val SETTINGS_TITLE: String = "Settings"
@@ -34,10 +35,11 @@ const val SETTINGS_EMPTY: String = "There is nothing to configure yet."
  */
 @Composable
 fun SettingsScreen(
+  onNavigate: (NavKey) -> Unit,
   modifier: Modifier = Modifier,
   viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-  SettingsScreen(sections = viewModel.sections, modifier = modifier)
+  SettingsScreen(sections = viewModel.sections, onNavigate = onNavigate, modifier = modifier)
 }
 
 /**
@@ -48,6 +50,7 @@ fun SettingsScreen(
 @Composable
 fun SettingsScreen(
   sections: List<SettingsSection>,
+  onNavigate: (NavKey) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   Column(
@@ -68,7 +71,9 @@ fun SettingsScreen(
 
     sections.forEachIndexed { index, section ->
       if (index > 0) HorizontalDivider()
-      section.Content()
+      // Passed through untouched. This screen never inspects a key, never holds one, and has no
+      // list of the ones that exist -- see `SettingsSection`'s own note on why that is the point.
+      section.Content(onNavigate)
     }
   }
 }

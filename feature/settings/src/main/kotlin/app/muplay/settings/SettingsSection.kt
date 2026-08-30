@@ -1,6 +1,7 @@
 package app.muplay.settings
 
 import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.NavKey
 
 /**
  * One block of the settings screen, contributed by whichever feature owns the thing being set.
@@ -22,6 +23,22 @@ import androidx.compose.runtime.Composable
  * module's Hilt module. It may inject whatever it needs; [Content] is composed inside the settings
  * screen's own column, so it should render its own title and use the ambient `MaterialTheme`
  * rather than a `Scaffold` or a surface of its own.
+ *
+ * ### A section that navigates
+ *
+ * [Content] is handed a `(NavKey) -> Unit`, and that parameter is the smallest thing that could
+ * possibly work here. Plan 7 Task 10 needed a settings row that **opens a screen** rather than
+ * flipping a switch, and there was no way to express one: a section is composed inside this
+ * module's column and had no route out of it. The three alternatives were all worse -- a closed
+ * `SettingsDestination` type declared here would make this module learn what is in it, an
+ * application-scoped navigation channel would be an event bus, and rendering the whole feature
+ * inline would put a search field inside a scrolling settings screen.
+ *
+ * `NavKey` is a navigation primitive with no members, exactly like `Modifier`: naming it says
+ * nothing about which sections exist or where any of them goes. Each section declares its own keys
+ * in its own module, and `:app` -- which owns the back stack and the `entryProvider` -- is the only
+ * thing that knows how to honour one. `ConventionTest`'s `the settings slot never learns what is in
+ * it` is unaffected and still passes, which is the check that this remained a slot.
  */
 interface SettingsSection {
 
@@ -36,9 +53,14 @@ interface SettingsSection {
    */
   val order: Int
 
-  /** The section's own UI. Composed into the settings screen's column, in [order]. */
+  /**
+   * The section's own UI. Composed into the settings screen's column, in [order].
+   *
+   * [onNavigate] opens a destination this section owns; see the class doc for why it is a bare
+   * `NavKey`. A section with nowhere to go ignores it, which is what `RendererDirectSection` does.
+   */
   @Composable
-  fun Content()
+  fun Content(onNavigate: (NavKey) -> Unit)
 }
 
 /**
