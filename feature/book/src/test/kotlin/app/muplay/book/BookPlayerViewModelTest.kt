@@ -127,6 +127,9 @@ class BookPlayerViewModelTest {
     override suspend fun timeline(bookId: String): List<BookChapter> = timelines[bookId].orEmpty()
 
     override fun observeSettings(bookId: String): Flow<BookSettings> = settingsFor(bookId)
+
+    override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
+      "https://host/art?id=$coverArtId&size=$sizePx"
   }
 
   private val dispatcher = StandardTestDispatcher()
@@ -493,6 +496,15 @@ class BookPlayerViewModelTest {
       assertThat(controls.calls)
         .containsExactly("startSleepTimer(${SleepTimerRequest.UntilPosition("m4b", 15_000L)})")
     }
+
+  @Test
+  fun `the cover art url is the controls', for the id and size asked for`() = runTest(dispatcher) {
+    // Two disjoint observations: a provider that ignored either argument passes one of them.
+    val viewModel = warm(controls())
+
+    assertThat(viewModel.coverArtUrl("art", 512)).isEqualTo("https://host/art?id=art&size=512")
+    assertThat(viewModel.coverArtUrl("art-2", 128)).isEqualTo("https://host/art?id=art-2&size=128")
+  }
 
   @Test
   fun `end of chapter with nothing playing starts no timer`() = runTest(dispatcher) {

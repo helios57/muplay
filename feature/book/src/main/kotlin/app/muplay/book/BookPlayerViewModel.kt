@@ -3,6 +3,7 @@ package app.muplay.book
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.muplay.database.AudiobookRepository
+import app.muplay.database.BrowseRepository
 import app.muplay.media.AudiobookSnapshot
 import app.muplay.media.BookChapter
 import app.muplay.media.BookTimeline
@@ -75,6 +76,9 @@ interface BookPlayerControls {
   suspend fun timeline(bookId: String): List<BookChapter>
 
   fun observeSettings(bookId: String): Flow<BookSettings>
+
+  /** Suspending because building an authenticated cover URL reads the stored credentials. */
+  suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
 }
 
 /**
@@ -91,6 +95,7 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
   constructor(
     playbackConnection: PlaybackConnection,
     audiobookRepository: AudiobookRepository,
+    browseRepository: BrowseRepository,
     audiobookSnapshot: AudiobookSnapshot,
     timelineReader: BookTimelineReader,
     sleepTimerController: SleepTimerController,
@@ -140,6 +145,9 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
 
       override fun observeSettings(bookId: String): Flow<BookSettings> =
         audiobookRepository.observeSettings(bookId)
+
+      override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
+        browseRepository.coverArtUrl(coverArtId, sizePx)
     },
   )
 
@@ -240,6 +248,9 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
   fun startSleepTimer(request: SleepTimerRequest) = controls.startSleepTimer(request)
 
   fun cancelSleepTimer() = controls.cancelSleepTimer()
+
+  suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
+    controls.coverArtUrl(coverArtId, sizePx)
 
   /**
    * "Until the end of this chapter", turned into the position the timer actually takes.

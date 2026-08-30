@@ -3722,6 +3722,56 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.book.BookPlayerViewModel.1",
       ),
     ),
+    // ---- Plan 4 Task 9, piece 5: the screens. ----
+    //
+    // `BookLabelsKt` -- `formatSpeed` and `chapterRowLabel` -- LINE 2/2 = 1.0000, BRANCH n/a
+    // (neither has a conditional, so a BRANCH rule over this class could not fail at any minimum).
+    //
+    // **These two functions are in their own file so that they can be gated at all**, which is
+    // this module's most load-bearing convention and the one `CoverArtCacheKey.kt` was split out
+    // of `CoverArt.kt` to obey: every top-level declaration in a Kotlin file compiles into one
+    // file-class, and the three `@Composable` file-classes beside them measure LINE **0**. Folding
+    // either function into a screen would silently delete this gate.
+    //
+    // FALSIFIED: `@Disabled` on `BookLabelsTest`'s three `formatSpeed` cases (`the speed reads as
+    // one decimal place with an x`, `a speed arrived at by stepping still reads as one decimal
+    // place`, `the speed's decimal separator is a dot under any default locale`) -> 1/2 = 0.5000,
+    // reported and failed.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.book.BookLabelsKt"),
+    ),
+    // WHAT THIS MODULE DELIBERATELY DOES NOT GATE, and why it is a list rather than a rule.
+    //
+    // Measured on this tree, from a plain `:feature:book:test` + `jacocoTestReport`:
+    //
+    //   `BookshelfScreenKt`   LINE 0/64    `BookScreenKt`     LINE 0/82
+    //   `BookPlayerScreenKt`  LINE 0/115   `BookCoverKt`      LINE 0/23
+    //   plus their Compose-generated `$$inlined$items$default$N` adapters, all 0/1 or 0/3
+    //   `BookPlaybackLauncher`  LINE 0/20  `BookTimelineReader`  LINE 0/9
+    //   the three anonymous seam adapters, LINE 0/4, 0/12 and 0/19
+    //
+    // A `@Composable` executes only inside a real composition, and this piece adds **no**
+    // `src/androidTest` -- deliberately: two `ConventionTest` rules derive the emulator-job and
+    // fast-tier module lists from the tree and fire the instant `feature/book/src/androidTest`
+    // exists, and the workflow edits belong with the piece that adds real device tests (Plan 4
+    // Task 10). So there is no tier here that can execute one line of these files.
+    //
+    // The honest options were a floor of `0.00`, a `requiresInstrumentedData = true` floor, or no
+    // floor. **All three of the first two are worse.** `0.00` is the unfireable floor this
+    // repository has shipped once already. `requiresInstrumentedData = true` is worse still and
+    // the reason is measured, not assumed: those floors are enforced only by
+    // `jacocoTestCoverageVerification` in the emulator job, and `:feature:book` is not on that
+    // job's module list -- so the rule would be evaluated by nothing at all while reading, in this
+    // table, exactly like a gate. That is a gate reporting on a tree it never looked at, which is
+    // the defect this whole table exists to keep out of its own gates.
+    //
+    // So they go on being named by `warnUngatedClasses` on every run, which is the honest signal,
+    // and Plan 4 Task 10 is where the numbers come from. The two non-Composable entries above --
+    // `BookPlaybackLauncher` and `BookTimelineReader` -- carry the same admission for a different
+    // reason: both need Room and a bound `MediaSession`, and mocks are banned project-wide.
   ),
   // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
   // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
