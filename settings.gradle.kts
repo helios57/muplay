@@ -28,6 +28,13 @@ include(":core:cast")
 include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
+// Plan 4 Task 9. The audiobook shelf, one book, and a player built for listening rather than for
+// browsing. It depends on `:core:media`, `:core:database` and `:core:model` and on **no other
+// feature** -- in particular not on `:feature:player`, and `:feature:player` not on it. The two
+// are different instruments over the same transport, and `:app` chooses between them from
+// `PlaybackState.isAudiobook`; a feature-to-feature edge here is how two screens stop being able
+// to change independently.
+include(":feature:book")
 // Plan 6 Task 10. The cast picker: the device list, the cast button and the volume slider.
 // Depends on `:core:cast` and `:core:media` and on no other feature -- see this module's own
 // build file, and `ConventionTest`'s severability reasoning for `integrations`: dropping casting

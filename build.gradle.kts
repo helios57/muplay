@@ -3462,6 +3462,131 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // Plan 4 Task 9, pieces 1-2 (`:feature:book`): the audiobook launcher and the pure state this
+  // feature derives. Every number below is MEASURED from
+  // `./gradlew :feature:book:test :feature:book:jacocoTestReport` on this tree, and every
+  // falsification quoted was actually run (`@Disabled` on the named tests, report regenerated,
+  // number read back) rather than predicted.
+  //
+  // BRANCH only, and no LINE rule anywhere in this module. That is this table's standing ruling
+  // applied to a module that, at this point in the task, contains no `@Composable` at all: every
+  // line here is either author-written logic with branches of its own -- which BRANCH gates
+  // strictly harder -- or `data class` codegen, which a LINE floor would measure instead of
+  // measuring a test.
+  //
+  // What is deliberately NOT gated, and will stay ungated until the piece that adds the
+  // ViewModels and an instrumented suite: `BookPlaybackLauncher` itself, measured LINE 0/20,
+  // BRANCH n/a. Its four statements need an `AudiobookRepository` over Room, a bound
+  // `MediaSession` and an `AudiobookSnapshot`, none of which exists on the JVM tier and none of
+  // which may be faked here (no mock framework, project-wide). `0.00` is the unfireable floor
+  // this project has shipped once already, so it gets no rule and goes on being named by
+  // `warnUngatedClasses` on every run -- which is the honest signal. What *is* gated is the one
+  // decision in that file a listener notices immediately when it is wrong, and it is a top-level
+  // function precisely so that it can be: `startIndexFor`, in `BookPlaybackLauncherKt`.
+  ":feature:book" to listOf(
+    // Three classes, each individually at 1.0000 (a `"CLASS"`-element rule evaluates `minimum`
+    // per matched class, never as a blend):
+    //
+    //   `BookPlaybackLauncherKt`    2/2 -- and read what those two ARE before trusting this
+    //                               number, because it is not what the file looks like it should
+    //                               measure. Both branches are on ONE line: `resumeAt?.mediaId`'s
+    //                               own null check in the `ResumePoint?` overload. The
+    //                               `mediaId: String` overload contributes nothing (no nullable
+    //                               receiver), and neither `coerceAtLeast` does either -- it
+    //                               compiles to `Math.max` and JaCoCo records no branch on it.
+    //                               So the -1-to-0 fold this function exists FOR is invisible to
+    //                               any BRANCH floor; `StartIndexTest`'s three missing-id cases
+    //                               are the only thing holding it, and no number in this table
+    //                               would move if they were deleted. Recorded because the
+    //                               opposite was assumed here first and measured false.
+    //   `BookshelfUiStateKt`        4/4 -- `bookshelfUiState`'s `null` (not loaded) and `isEmpty`
+    //                               (no books) arms, which exist to be different screens.
+    //   `BookshelfUiState$Content`  8/8 -- `hasStarted && !isFinished`, twice: once in
+    //                               `continueListening` and once in `rest`'s `filterNot` over the
+    //                               same predicate.
+    //
+    // `BookshelfUiState`, `$Loading` and `$Empty` ride along, for the reason `LibraryUiState*`
+    // rides along in `:feature:library`'s rule above: a sealed interface and two `data object`s
+    // carry no BRANCH counter at all, so they cannot move any ratio, and naming them is what keeps
+    // `warnUngatedClasses` from reporting three types with nothing a floor could gate.
+    //
+    // FALSIFIED in two runs -- `@Disabled` on the named tests, report regenerated, number read
+    // back off the XML:
+    //   - `BookshelfUiStateTest`'s `nothing loaded yet is loading, and no books is empty`
+    //     -> `BookshelfUiStateKt` 2/4 = 0.5000.
+    //   - `BookshelfUiStateTest`'s `a book heard to the end leaves the continue-listening group
+    //     without leaving the shelf` AND `the two groups always partition the shelf` -- BOTH, and
+    //     that is the finding worth keeping: withholding only the first left this class at 8/8,
+    //     because the partition test's own fixture contains a finished book. -> 6/8 = 0.7500.
+    //   - `StartIndexTest`'s `a book nobody has opened starts on its first file` -- on its own,
+    //     measured separately -- is the whole of this class's falsification:
+    //     `BookPlaybackLauncherKt` 1/2 = 0.5000. It is the only case that passes a null
+    //     `ResumePoint`, and per the note above that null check is the only branch here.
+    // The first run withheld all seven at once: `jacocoJvmCoverageVerification` reported all
+    // three violations and the build FAILED. The second withheld only `a book nobody has opened`
+    // and confirmed the number attributed to it above.
+    //
+    // Also measured, and the reason the note on `BookPlaybackLauncherKt` above is stated so
+    // flatly: withholding the three missing-id cases WITHOUT `a book nobody has opened` left that
+    // class at 2/2. The tests that prove `startIndexFor` folds -1 to 0 move no number in this
+    // table at all.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.book.BookPlaybackLauncherKt",
+        "app.muplay.book.BookshelfUiStateKt",
+        "app.muplay.book.BookshelfUiState",
+        "app.muplay.book.BookshelfUiState*",
+      ),
+    ),
+    // `BookPlayerUiStateKt` -- `bookPlayerUiState`, `formatClock` and `formatRemaining` -- measured
+    // 19/20 = 0.9500 BRANCH, 34/34 LINE, from JVM data alone.
+    //
+    // 0.95, not 1.00, and 0.95 is the honest ceiling rather than a rounded-down number: the
+    // twentieth branch is Kotlin's unreachable "the property was null" arm of
+    // `chapter?.title ?: book.title`, where `BookChapter.title` is a non-null `String`, so the
+    // safe call's own null check can never be true. Exactly the shape, and exactly the reason,
+    // that `:feature:library`'s `CoverArtCacheKeyKt` sits at 0.75 and `:feature:setup`'s
+    // `SetupFailureReasonKt` at 0.85.
+    //
+    // Note what 0.95 costs, which is nothing: 20 branches with one unreachable means 19 is the
+    // maximum, and 0.95 * 20 = 19, so losing ANY single reachable branch takes this to 18/20 =
+    // 0.9000 and fails. This floor is exactly as strict as 1.00 would be over the reachable set.
+    //
+    // `BookPlayerUiState` and `$NothingPlaying` ride along with no BRANCH counters, as above.
+    // `BookPlayerUiState$Content` rides along too and is the one rider that is not branchless-
+    // and-tiny: it measures LINE 17/17 (a sixteen-property `data class`), so naming it here is
+    // what keeps `warnUngatedClasses` quiet about generated `component`/`copy`/`equals` lines
+    // that no BRANCH rule can reach and that no LINE rule should be measuring.
+    //
+    // FALSIFIED: withhold `BookPlayerUiStateTest`'s `a book whose chapters have not loaded yet
+    // still shows the transport` and `with no chapters the chapter length falls back to the
+    // playing item's own duration` -- the only two cases with an empty timeline, hence the only
+    // two that take the `chapter == null` arm of the four null-safe chains in the middle of
+    // `bookPlayerUiState` -- and this drops to 15/20 = 0.7500, reported and failed by
+    // `jacocoJvmCoverageVerification`.
+    //
+    // A withholding that did NOT move it is worth recording, because it looked like the obvious
+    // falsification and would have been written down as one: withhold `a position past the
+    // declared duration has nothing remaining rather than less than nothing` and this class stays
+    // at 19/20. That test guards a `coerceAtLeast`, and `coerceAtLeast` on a `Long` compiles to
+    // `Math.max` -- the per-line report records no branch on any of the four clamped expressions
+    // in `bookPlayerUiState`, so `a position before the first chapter's own start reports zero
+    // rather than a negative` is invisible here for the same reason. Both gate real behaviour and
+    // no BRANCH floor in this table can see either of them.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.95"),
+      includes = listOf(
+        "app.muplay.book.BookPlayerUiStateKt",
+        "app.muplay.book.BookPlayerUiState",
+        "app.muplay.book.BookPlayerUiState*",
+      ),
+    ),
+  ),
   // Plan 3 Task 9 (`:feature:player`). Every number below is MEASURED from
   // `./gradlew :feature:player:jacocoTestReport` (JVM) and from this module's own
   // `connectedDebugAndroidTest` run (instrumented) at commit time.
