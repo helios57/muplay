@@ -1298,6 +1298,84 @@ class ConventionTest {
   }
 
   /**
+   * Google Play services' containment, as a check rather than a promise.
+   *
+   * Plan 5 Task 10 admits `play-services-wearable` because there is no other API for phone-to-watch
+   * messaging, and the entire argument for admitting it is that it is contained: **one module
+   * declares it and one file imports it**, so everything that decides anything stays behind
+   * `WatchLink` where a JVM test can reach it. A second importer would move a decision into the one
+   * place no gate in this repository can run -- it needs a Bluetooth bond and two Play services
+   * installs -- and it would do so silently, with `check` green.
+   *
+   * Both halves are derived rather than written down. The catalogue alias is found from the Maven
+   * coordinate, so renaming the alias moves the rule with it; the declaring module is read out of
+   * the build files rather than asserted against a hardcoded name.
+   *
+   * **Matches a declaration, not a mention**, for the reason this file has now paid for four times:
+   * comments are stripped from the build files, and the source half matches an `import` line rather
+   * than any occurrence of the package. `core/model`'s `BrowseSurface` names
+   * `com.google.android.gms.car` as a *string literal* -- an Android Auto manifest key -- and a
+   * `contains` over the package would report it as an offender. This test also scans `src/main`
+   * source sets only, which is what keeps it from reporting its own KDoc.
+   *
+   * FALSIFIED in both halves. Adding `implementation(libs.play.services.wearable)` to
+   * `wear/build.gradle.kts` fails with `Expecting actual: ["core/watchlink", "wear"]`; adding
+   * `import com.google.android.gms.wearable.Wearable` to `MuPlayWearApplication.kt` fails naming
+   * that file.
+   *
+   * **The second half needed `--rerun` to fail at all, and that is worth knowing about every rule in
+   * this class.** Nothing under `wear`'s main source set is a declared input of
+   * `:app:testDebugUnitTest`, so with the
+   * violating import in the tree Gradle reported `> Task :app:testDebugUnitTest UP-TO-DATE` and
+   * `BUILD SUCCESSFUL` -- a repo-wide scan skipped entirely because the file it scans is invisible to
+   * the task's up-to-date check. CI is a fresh checkout and is unaffected; a local gate run is not.
+   * Falsify a rule in this class with `./gradlew :app:testDebugUnitTest --rerun --tests
+   * '*ConventionTest*'`.
+   */
+  @Test
+  fun `only one module declares play services and only one file imports it`() {
+    val coordinate = "com.google.android.gms:play-services-wearable"
+    val catalogue = File(repoRoot(), "gradle/libs.versions.toml")
+    val alias = Regex("""^([\w-]+)\s*=\s*\{\s*module\s*=\s*"${Regex.escape(coordinate)}"""", RegexOption.MULTILINE)
+      .find(catalogue.readText())?.groupValues?.get(1)
+
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(alias)
+      .describedAs("${catalogue.path} must declare a library alias for $coordinate")
+      .isNotNull()
+
+    // `play-services-wearable` is reached from a build file as `libs.play.services.wearable`.
+    val accessor = "libs." + checkNotNull(alias).replace('-', '.')
+    val declaringModules = moduleBuildFiles()
+      .filter { withoutComments(it.readText()).contains(accessor) || withoutComments(it.readText()).contains(coordinate) }
+      .map { it.parentFile.relativeTo(repoRoot()).path }
+      .sorted()
+
+    assertThat(declaringModules)
+      .describedAs(
+        "exactly one module may declare $coordinate -- that containment is the whole argument " +
+          "for admitting a dependency no gate in this repository can exercise",
+      )
+      .containsExactly("core/watchlink")
+
+    val importers = repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.extension == "kt" && it.path.contains("${File.separator}src${File.separator}main${File.separator}") }
+      .filter { Regex("""^\s*import\s+com\.google\.android\.gms\.""", RegexOption.MULTILINE).containsMatchIn(it.readText()) }
+      .map { it.relativeTo(repoRoot()).path }
+      .sorted()
+      .toList()
+
+    assertThat(importers)
+      .describedAs(
+        "only DataLayerWatchLink may import Google Play services: it is the one file in this " +
+          "repository that no gate covers in either tier, and it is kept decision-free so that " +
+          "is honest",
+      )
+      .containsExactly("core/watchlink/src/main/kotlin/app/muplay/watchlink/DataLayerWatchLink.kt")
+  }
+
+  /**
    * The settings slot's severability, as a check rather than a promise.
    *
    * `:feature:settings` renders whatever `SettingsSection` implementations the Hilt graph contains
