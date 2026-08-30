@@ -104,8 +104,14 @@ jobs:
       # compiling and only the emulator job, which runs later and costs far more,
       # would say so. That is the fourth hand-written list in this repository to
       # drift with nothing noticing.
+      #
+      # `:feature:book` and `:feature:requests` matter here more than anywhere else on this list.
+      # Their instrumented suites have **never been executed** -- they were written while the
+      # emulator was unavailable -- so this step is the only gate that has ever looked at those
+      # sources at all. It proves they compile and nothing more; it does not and cannot prove that
+      # a single assertion in them is true.
       - name: Compile the gates check does not
-        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:castpicker:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :feature:settings:compileDebugAndroidTestKotlin :integrations:bindery:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:lidarr:compileDebugAndroidTestKotlin :integrations:requests:compileDebugAndroidTestKotlin :wear:compileDebugAndroidTestKotlin
+        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:book:compileDebugAndroidTestKotlin :feature:castpicker:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :feature:requests:compileDebugAndroidTestKotlin :feature:settings:compileDebugAndroidTestKotlin :integrations:bindery:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:lidarr:compileDebugAndroidTestKotlin :integrations:requests:compileDebugAndroidTestKotlin :wear:compileDebugAndroidTestKotlin
 
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a

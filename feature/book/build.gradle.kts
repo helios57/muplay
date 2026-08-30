@@ -38,4 +38,23 @@ dependencies {
   implementation(libs.coil.compose)
 
   testImplementation(libs.coroutines.test)
+
+  // Tier 2, this module's own three screens. The same artifact set `:feature:player` and
+  // `:feature:settings` document in their own build files, and for the same reasons; see
+  // `:feature:player` for why JUnit 4 is unavoidable on-device and why `androidx-test-espresso`
+  // has to be named rather than left transitive at 3.5.0.
+  //
+  // The suites compose the **stateless** halves -- `BookshelfContent`, `BookContent`,
+  // `BookPlayerContent` -- against a state built by hand, so they need no Hilt graph, no Room and
+  // no media session. What they therefore cannot prove is the `hiltViewModel()` default argument
+  // or the hop out of each view model, which only an `:app` journey reaches.
+  androidTestImplementation(libs.compose.ui.test.junit4)
+  // Manifest only -- it declares the `androidx.activity.ComponentActivity` that
+  // `createComposeRule()` needs to host a composition. `debugImplementation`, because a library
+  // module's test APK merges this module's debug manifest.
+  debugImplementation(libs.compose.ui.test.manifest)
+  androidTestImplementation(libs.androidx.test.ext)
+  androidTestImplementation(libs.androidx.test.runner)
+  androidTestImplementation(libs.androidx.test.espresso)
+  androidTestImplementation(libs.assertj)
 }

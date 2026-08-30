@@ -291,9 +291,20 @@ jobs:
           # to grow a `src/androidTest` cannot be forgotten here -- and it earned its place on the first
           # merge after it was written: `:integrations:core` (17 instrumented tests, Plan 7) was in
           # exactly the same position, found by that rule, and is now named here too.
+          #
+          # `:feature:book` and `:feature:requests` joined the same way and by the same rule, and
+          # what is different about them has to be said plainly: **their instrumented suites have
+          # never been executed.** They were written while this emulator was unavailable, so no run
+          # anywhere has yet observed one of those tests pass or fail. That is precisely why they
+          # are on this line -- the first CI run that reaches an emulator is the first measurement
+          # of them, and a suite that nothing executes is the failure mode the two modules above
+          # are on this list to remember. Expect the first green here to require fixing tests
+          # rather than product code; neither module carries a coverage floor over its Composables,
+          # deliberately, because nobody has measured one. See both modules' entries in the root
+          # `coverageFloors` table for what has to be measured once this job is green.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :integrations:bindery:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:lidarr:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The watch, on a watch. A second emulator inside the SAME job -- see this job's
       # `timeout-minutes` comment for why not a second job (the coverage gate reads one workspace's
