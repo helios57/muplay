@@ -24,7 +24,14 @@ import java.util.Locale
 internal const val BOOKSHELF_TITLE = "Books"
 internal const val CONTINUE_LISTENING_LABEL = "Continue listening"
 internal const val LOADING_BOOKS_LABEL = "Loading books"
-internal const val NO_BOOKS_LABEL = "No audiobooks in this library"
+/**
+ * Deliberately not the plan's "No audiobooks in this library", which is wrong twice: the shelf is
+ * every audiobook library at once, not one, and the sentence tells a listener nothing they can act
+ * on. The `Books` button is unconditional -- it shows for somebody who has never tagged a library,
+ * which is exactly the person who has never heard that a library has a role -- so this string is
+ * that person's only explanation, and it names the screen that fixes it.
+ */
+internal const val NO_BOOKS_LABEL = "No audiobooks yet. Mark a library as audiobooks in setup."
 internal const val RESUME_LABEL = "Resume"
 
 // ---- One book ----

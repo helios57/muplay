@@ -49,6 +49,12 @@ dependencies {
   // The player screen and the mini player `MuPlayApp` hosts, and the `PlayerViewModel` behind
   // both. `:app` is the only module that composes them.
   implementation(project(":feature:player"))
+  // Plan 4 Task 9. The shelf, one book and the audiobook player `MuPlayApp` hosts, and the three
+  // view models behind them. `:app` is the only module that composes them -- in particular
+  // `:feature:player` does not, and `:feature:book` does not compose `:feature:player`: the two
+  // are different instruments over one transport, and `:app` chooses between them from
+  // `PlaybackState.isAudiobook`.
+  implementation(project(":feature:book"))
   // Plan 6 Task 10. The cast button and the picker sheet `MuPlayApp` hosts, and the `CastViewModel`
   // both share. `:app` is the only module that composes them -- in particular `:feature:player`
   // does not: it takes the button as a `@Composable` slot and the connected speaker's name as a

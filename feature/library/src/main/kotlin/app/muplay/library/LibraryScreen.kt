@@ -29,6 +29,7 @@ fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onOpenPlayer: () -> Unit,
   onOpenSettings: () -> Unit,
+  onOpenBookshelf: () -> Unit,
   modifier: Modifier = Modifier,
   viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -49,6 +50,7 @@ fun LibraryScreen(
     },
     coverArtUrl = viewModel::coverArtUrl,
     onOpenSettings = onOpenSettings,
+    onOpenBookshelf = onOpenBookshelf,
     modifier = modifier,
   )
 }
@@ -64,6 +66,7 @@ private fun LibraryScreen(
   onShuffledSongClick: (Int) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   onOpenSettings: () -> Unit,
+  onOpenBookshelf: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   Column(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -103,6 +106,21 @@ private fun LibraryScreen(
           // The only way a user has to pick up a change made on the server after the app started.
           // See "Why there is a Refresh action, and why it is a button" above.
           OutlinedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) { Text(REFRESH_LABEL) }
+        }
+
+        // Plan 4 Task 9. The only route to the audiobook shelf, and therefore to the whole
+        // audiobook engine -- which shipped complete, gated, and reachable from no screen at all.
+        //
+        // `onClick = onOpenBookshelf` and not `onClick = { onOpenBookshelf() }`, for the reason
+        // the settings button above records: a lambda body is a line this module's LINE floor
+        // then requires a *click* to cover, and no journey clicks it. The button itself renders on
+        // every journey that reaches this screen, so the lines it adds are covered lines.
+        //
+        // Its own row rather than a fourth `weight(1f)` in the row above: four buttons across a
+        // phone leaves each of them too narrow to read, and this one names a whole half of the
+        // app rather than an action on the library in front of you.
+        OutlinedButton(onClick = onOpenBookshelf, modifier = Modifier.fillMaxWidth()) {
+          Text(BOOKS_LABEL)
         }
 
         // `onSurfaceVariant`, not `error`. All four of this string's values are *states* -- checking,
@@ -181,6 +199,16 @@ internal const val REFRESH_LABEL = "Refresh library"
  * screen renders rather than by a copy of it.
  */
 internal const val SETTINGS_LABEL = "Settings"
+
+/**
+ * Plan 4 Task 9. The label on the only route to the audiobook shelf.
+ *
+ * `internal`, like the two above, so this module's own tests can find the button by the string the
+ * screen renders. `:feature:book` declares its own `BOOKSHELF_TITLE` with the same text and they
+ * are deliberately two constants: a journey duplicates a string rather than sharing it, so a
+ * wording change is caught rather than silently followed.
+ */
+internal const val BOOKS_LABEL = "Books"
 private const val SHUFFLE_HEADING = "Shuffled"
 private const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
 private const val OPEN_LABEL = "Open"

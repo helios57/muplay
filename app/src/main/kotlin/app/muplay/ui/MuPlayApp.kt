@@ -18,6 +18,9 @@ import androidx.navigation3.ui.NavDisplay
 import app.muplay.castpicker.CastButton
 import app.muplay.castpicker.CastPickerSheet
 import app.muplay.castpicker.CastViewModel
+import app.muplay.book.BookPlayerScreen
+import app.muplay.book.BookScreen
+import app.muplay.book.BookshelfScreen
 import app.muplay.library.AlbumScreen
 import app.muplay.library.LibraryScreen
 import app.muplay.player.MiniPlayer
@@ -25,6 +28,9 @@ import app.muplay.player.PlayerScreen
 import app.muplay.settings.SettingsScreen
 import app.muplay.setup.SetupScreen
 import app.muplay.ui.navigation.AlbumRoute
+import app.muplay.ui.navigation.BookPlayerRoute
+import app.muplay.ui.navigation.BookRoute
+import app.muplay.ui.navigation.BookshelfRoute
 import app.muplay.ui.navigation.LibraryRoute
 import app.muplay.ui.navigation.PlayerRoute
 import app.muplay.ui.navigation.SettingsRoute
@@ -63,9 +69,19 @@ fun MuPlayApp(
  * closed the app from the album screen.
  */
 @Composable
-private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
+private fun MuPlayNavigation(
+  start: NavKey,
+  modifier: Modifier,
+  playerDestinationViewModel: PlayerDestinationViewModel = hiltViewModel(),
+) {
   val backStack = rememberNavBackStack(start)
-  val openPlayer = { backStack.add(PlayerRoute) }
+
+  // **Which player opens is decided here, from `PlaybackState.isAudiobook`, and nowhere else.**
+  // `:feature:book` and `:feature:player` do not depend on each other -- a feature-to-feature edge
+  // is how two screens stop being able to change independently -- so `:app` is the only place that
+  // can hold both keys, and this is the only expression in the app that reads `isAudiobook`.
+  val isAudiobook by playerDestinationViewModel.isAudiobook.collectAsStateWithLifecycle()
+  val openPlayer = { backStack.add(if (isAudiobook) BookPlayerRoute else PlayerRoute) }
 
   // **One `CastViewModel`, hoisted here**, and handed to both the button and the sheet rather than
   // left to each of them to resolve for itself. `hiltViewModel()` answers against the nearest
@@ -100,7 +116,12 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
       //
       // `MiniPlayer` renders nothing at all when nothing is playing, so this bar takes no space
       // before the first track -- that decision is the composable's, not this call site's.
-      if (backStack.lastOrNull() != PlayerRoute) {
+      //
+      // Hidden on **both** player screens. The audiobook player is a second full player, so the
+      // "two controls for one thing, and the top one wins by accident" the paragraph above
+      // describes applies to it identically.
+      val onScreen = backStack.lastOrNull()
+      if (onScreen != PlayerRoute && onScreen != BookPlayerRoute) {
         MiniPlayer(onOpenPlayer = { openPlayer() })
       }
     },
@@ -127,6 +148,19 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
             // Plan 6 Task 12. The settings screen is a *slot* (`:feature:settings`), so this entry
             // names no setting and no feature that contributes one -- see `SettingsSection`.
             onOpenSettings = { backStack.add(SettingsRoute) },
+            // Plan 4 Task 9. **The only way a user reaches an audiobook.** Everything under it --
+            // the shelf, one book, the book player, and the whole engine beneath them -- was
+            // unreachable from any screen until this line existed.
+            //
+            // A plain button rather than the plan's "selecting an AUDIOBOOKS library navigates
+            // instead of filtering", and the reason is worth recording. `LibraryScreen` switches
+            // libraries in place, so that version needs a branch on `LibraryRole` inside the
+            // chip's own `onClick` -- an arm no existing journey takes, in a file whose LINE floor
+            // (`LibraryScreenKt`, 56/62 = 0.9032 against a minimum of 0.90) clears by exactly one
+            // line and is `requiresInstrumentedData`, so this piece could not measure what it did
+            // to it. It would also make the shelf unreachable for anyone who has not tagged a
+            // library, which is precisely the user who most needs to be told the feature exists.
+            onOpenBookshelf = { backStack.add(BookshelfRoute) },
           )
         }
         // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round
@@ -143,6 +177,19 @@ private fun MuPlayNavigation(start: NavKey, modifier: Modifier) {
             },
           )
         }
+        // These three bodies are each **one statement on one line**, which is a coverage decision
+        // and not a style one. `:app`'s only floor is a BUNDLE LINE 0.90 over merged JVM +
+        // instrumented data, and nothing navigates to these three destinations until Plan 4 Task
+        // 10's journeys exist -- so every line inside these lambdas is a line that floor counts
+        // and cannot cover. The `entry<...>` lines themselves run on every composition and are
+        // fine; it is only the bodies. See the note on `:app`'s entry in the root build script.
+        entry<BookshelfRoute> {
+          BookshelfScreen(onBookClick = { backStack.add(BookRoute(it)) }, onOpenPlayer = { openPlayer() })
+        }
+        // `route.bookId`, for the reason `entry<AlbumRoute>` above passes `route.albumId`:
+        // Navigation 3 populates no `SavedStateHandle` argument from a key's own properties.
+        entry<BookRoute> { route -> BookScreen(bookId = route.bookId, onOpenPlayer = { openPlayer() }) }
+        entry<BookPlayerRoute> { BookPlayerScreen() }
         entry<SettingsRoute> { SettingsScreen() }
       },
     )

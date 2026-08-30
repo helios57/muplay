@@ -4021,6 +4021,31 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // **PLAN 4 TASK 9 GREW THIS MODULE BY A THIRD AND COULD NOT RE-MEASURE THIS FLOOR. READ THIS
+  // BEFORE DEBUGGING AN `:app` COVERAGE FAILURE IN THE EMULATOR JOB.**
+  //
+  // What is measured: this bundle's LINE denominator went from **110 to 146** when Task 9 added
+  // the three audiobook routes, `PlayerDestinationViewModel`, and the shelf/book/player entries in
+  // `MuPlayApp`. Both numbers are real -- taken from `:app:jacocoTestReport`'s XML before and
+  // after, by stashing the change and rebuilding.
+  //
+  // What is NOT measured, and could not be: the numerator. That needs instrumented execution data
+  // from `:app:connectedDebugAndroidTest`, and Task 9 was scoped to add no device tests and not to
+  // touch the shared emulator. So no number here was adjusted -- inventing one is the defect this
+  // whole table exists to prevent, and it is the one `:wear`'s entry below is at pains about.
+  //
+  // What that leaves: of the 36 new lines, roughly 28 run on every launch --
+  // `PlayerDestinationViewModel` and its `map` internals (13), the six new
+  // `$$inlined$entry$default$N` adapters `entryProvider` builds at composition, and `MuPlayApp`'s
+  // own wiring. The rest cannot be covered until something navigates to a book: the three
+  // `entry<...>` **bodies** (compacted to one line each, deliberately, and the comment at those
+  // lines says so) and the `BookshelfRoute`/`BookRoute` classes. `BookPlayerRoute` is referenced
+  // by the mini player's own visibility test on every composition, so it is not in that group.
+  //
+  // So this floor holds if `:app` was at about 0.895 LINE or better before Task 9, and fails
+  // otherwise -- and if it fails, **the fix is Plan 4 Task 10's audiobook journeys, which navigate
+  // to all three destinations, not a lower number here.** Re-measure and rewrite this comment
+  // there; do not carry these paragraphs forward, they describe one commit's arithmetic.
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
   ),
