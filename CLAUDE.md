@@ -1113,3 +1113,96 @@ unreachable -- so 3/4 or 19/20 is the honest ceiling, not a rounded-down number.
 `:feature:library`'s `CoverArtCacheKeyKt` (0.75) and `:feature:setup`'s
 `SetupFailureReasonKt` (0.85) are the same shape; check for one before assuming a
 floor a branch or two short is a missing test.
+
+## An ANR dialog outlives the app, so a UI dump can report a crash that already ended
+
+Measured 2026-08-30 while smoke-testing the audiobook UI. `uiautomator dump` after
+relaunching returned exactly three strings — `MuPlay isn't responding`, `Wait`,
+`Close app` — and nothing from the app. That reads unambiguously as "the build I
+just installed ANRs on launch", and it was one step from being reported as a
+regression in the four commits that had just landed.
+
+It was a **stale system dialog from an earlier launch**. The Application Not
+Responding window belongs to `system_server`, not to the app, so it survives all
+three of the things you would reach for to get a clean slate:
+
+    adb shell am force-stop app.muplay
+    adb shell pm clear app.muplay
+    adb install -r ...            # even a full uninstall/reinstall
+
+It sits on top of whatever launches next, and a dump reads the topmost window. The
+app underneath was fine: dismissing the dialog first (`input keyevent KEYCODE_BACK`,
+or uninstalling and reading the dump after a fresh start) showed the setup screen
+rendering normally, on the identical APK.
+
+Two things follow, and the second is the general one:
+
+- **Dismiss or uninstall before you dump.** A `force-stop` is not enough, and the
+  reading it produces is confidently wrong rather than empty.
+- This is the same shape as every other stale-measurement trap in this file — the
+  build-cache serving another worktree's failure, a floor comment describing a run
+  that no longer happens, a lane's report describing master as it was at its last
+  sync. **The check returned a real observation of the wrong moment.** When a
+  device reading contradicts what the code says should be true, establish *when*
+  the reading was taken before believing what it says.
+
+## The emulator will not boot: `/dev/kvm` lost its ACL, and qemu now segfaults
+
+Recorded 2026-08-30 22:20, unresolved, so nobody spends another hour on it.
+
+At 19:20 `/dev/kvm` was **recreated** (its mtime says so) and the running `muplay37`
+emulator died with it — no OOM in the kernel log, no crash record, ~18 GB freed.
+Two separate problems then stack up, and the first hides the second:
+
+**1. The ACL no longer grants this user.** `getfacl /dev/kvm` lists `user:gdm:rw-`
+and no entry for `helios`; access now depends on the `kvm` *group*. `/etc/group`
+does contain `kvm:x:993:helios`, but a shell whose session predates that addition
+has no `kvm` in its effective set — `id` shows only `helios,sudo,docker`. So the
+emulator prints *"This user doesn't have permissions to use KVM"* while
+`/etc/group` looks correct, which sends you to the wrong page of the docs.
+
+    sg kvm -c "<command>"        # works, changes no system state
+
+Under `sg kvm`, `emulator -accel-check` reports **"KVM (version 12) is installed
+and usable."** So permissions are solvable and are *not* the blocker.
+
+**2. qemu's guest CPUs do not execute.** Every boot attempt under `sg kvm` logs
+
+    ERROR | detected a hanging thread 'QEMU2 CPU0 thread'. No response for 15000 ms
+
+repeatedly, reaches `adb devices` state `offline`, never sets `sys.boot_completed`,
+and ends in `Segmentation fault (core dumped)`. Measured across four attempts, and
+these are the hypotheses that are already **eliminated** — do not re-test them:
+
+- **Not graphics.** Identical with `-gpu swiftshader_indirect -feature Minigbm` and
+  with a plain `-gpu off`. (The `libgfxstream_backend.so: undefined symbol:
+  stream_renderer_set_service_ops` line in the log is a red herring; it is present
+  in runs from the three days this emulator worked.)
+- **Not an SDK update.** `emulator/` and `libgfxstream_backend.so` are unchanged
+  since 2026-08-17; the system image since 08-21.
+- **Not memory pressure or a cgroup cap.** 49 GB available; the launching scope's
+  `memory.max` reads `max`; no `CONSTRAINT_MEMCG` in the log.
+- **Not host CPU contention.** Reproduced at load 33 *and* at load 11, and `vmstat`
+  showed `id` 86-89% with `st` 0-2 throughout — the CPU was idle both times.
+- **Not stale lock files.** `hardware-qemu.ini.lock`, `multiinstance.lock` and
+  `/run/user/1001/avd/running/pid_*.ini` were cleared before two of the attempts.
+
+KVM itself is healthy: an unrelated `qemu-system-x86_64` VM on this host
+(`kissdesk-at`) ran throughout on `accel=kvm`. So it is something about this
+emulator's use of KVM specifically, after whatever recreated the device node.
+
+Until it is fixed, **the entire device tier is unavailable** and no floor marked
+`requiresInstrumentedData` can be measured. Write the instrumented tests anyway —
+`compileDebugAndroidTestKotlin` needs no device and is real verification that they
+are well-formed — but **do not invent the floors**, and say in the commit message
+that the tests have never been executed.
+
+### `pkill -f` matches its own command line
+
+While recovering the above: `pkill -f 'qemu-system.*muplay37'` killed the shell
+running it, because that shell's command line contains the pattern. Exit 143, no
+emulator touched. This file already records a `pgrep` that could never report
+"finished" for the same reason, and a `ConventionTest` rule that reported its own
+KDoc — **that is now four self-matching checks in this repository.** Before running
+a pattern over process lists or source, ask whether the thing doing the asking
+contains the pattern. Prefer an explicit PID from a prior `pgrep`, read and checked.
