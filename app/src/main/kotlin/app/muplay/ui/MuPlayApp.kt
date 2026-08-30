@@ -25,6 +25,11 @@ import app.muplay.library.AlbumScreen
 import app.muplay.library.LibraryScreen
 import app.muplay.player.MiniPlayer
 import app.muplay.player.PlayerScreen
+import app.muplay.requests.IntegrationsPresenceViewModel
+import app.muplay.requests.IntegrationsRoute
+import app.muplay.requests.IntegrationsScreen
+import app.muplay.requests.RequestsRoute
+import app.muplay.requests.RequestsScreen
 import app.muplay.settings.SettingsScreen
 import app.muplay.setup.SetupScreen
 import app.muplay.ui.navigation.AlbumRoute
@@ -88,6 +93,13 @@ private fun MuPlayNavigation(
   // `ViewModelStoreOwner`, and a `NavDisplay` entry brings its own -- so a button inside the player
   // entry and a sheet hosted out here would be two view models, two discovery passes, and a sheet
   // that never learned which speaker the button was pointing at.
+  // Plan 7 Task 10. **Whether the requests destination exists at all**, and it is read here because
+  // `entryProvider` is the only place that decision can be made. Its two lines live in
+  // `:feature:requests` rather than in this module so that they are gated on the fast tier; see
+  // `IntegrationsPresenceViewModel`.
+  val presenceViewModel: IntegrationsPresenceViewModel = hiltViewModel()
+  val anyIntegrationConfigured by presenceViewModel.anyConfigured.collectAsStateWithLifecycle()
+
   val castViewModel: CastViewModel = hiltViewModel()
   val castDeviceName by castViewModel.connectedDeviceName.collectAsStateWithLifecycle()
   // `rememberSaveable`, so a rotation with the picker open does not close it. The search is started
@@ -97,6 +109,14 @@ private fun MuPlayNavigation(
 
   LaunchedEffect(pickerOpen) {
     if (pickerOpen) castViewModel.open() else castViewModel.close()
+  }
+
+  // A destination that stops existing must not stay on the back stack. `NavDisplay` throws for a key
+  // its `entryProvider` has no entry for, and forgetting the last integration is done from the
+  // integrations screen -- which a user can perfectly well have reached with the requests screen
+  // still underneath it.
+  LaunchedEffect(anyIntegrationConfigured) {
+    if (!anyIntegrationConfigured) backStack.removeAll { it == RequestsRoute }
   }
 
   if (pickerOpen) {
@@ -191,6 +211,18 @@ private fun MuPlayNavigation(
         entry<BookRoute> { route -> BookScreen(bookId = route.bookId, onOpenPlayer = { openPlayer() }) }
         entry<BookPlayerRoute> { BookPlayerScreen() }
         entry<SettingsRoute> { SettingsScreen(onNavigate = { key -> backStack.add(key) }) }
+        // Plan 7 Task 10. Always registered: a user has to be able to turn the feature on, and this
+        // screen is the only thing that can. It is reached from the one always-present settings row,
+        // which `:feature:requests` contributes into `:feature:settings`'s slot -- so nothing here
+        // names it and deleting that module takes the row away with it.
+        entry<IntegrationsRoute> { IntegrationsScreen() }
+        // **Registered only while at least one integration is configured, and not
+        // registered-and-hidden.** A destination that exists is reachable by a restored back stack
+        // and by a stale navigation event, and either would land a user who runs neither service on
+        // a screen for a feature they do not have.
+        if (anyIntegrationConfigured) {
+          entry<RequestsRoute> { RequestsScreen(onOpenAlbum = { backStack.add(AlbumRoute(it)) }) }
+        }
       },
     )
   }

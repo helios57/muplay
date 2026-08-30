@@ -68,12 +68,18 @@ dependencies {
   // names a type from it. Plan 6 Task 10 owns this module and will widen the edge to the picker UI.
   implementation(project(":feature:castpicker"))
 
-  // The only edge from :app into integrations/. Task 9 adds :feature:requests beside it; nothing
-  // else in the tree may name an :integrations:* project, and `ConventionTest`'s
-  // `nothing outside integrations depends on an integration` enforces that. The edge exists for
-  // the two variant-specific `CleartextPolicyModule`s under src/debug and src/release, which are
-  // what decides whether an http:// integration URL is accepted at all.
+  // One of the two edges from :app into integrations/. Nothing else in the tree may name an
+  // :integrations:* project, and `ConventionTest`'s `nothing outside integrations depends on an
+  // integration` enforces that. This one exists for the two variant-specific
+  // `CleartextPolicyModule`s under src/debug and src/release, which are what decides whether an
+  // http:// integration URL is accepted at all.
   implementation(project(":integrations:core"))
+  // Plan 7 Task 10. The requests screen and the integrations screen `MuPlayApp` hosts, the two
+  // `NavKey`s they are reached by, and the `IntegrationsPresenceViewModel` that decides whether the
+  // first of them is registered at all. `:app` is the only module that composes them. Note what
+  // this edge is NOT for: the always-present settings row arrives through an `@IntoSet` binding on
+  // `SettingsSection`, so nothing in `:app` names it and deleting `feature/requests/` takes it away.
+  implementation(project(":feature:requests"))
 
   implementation(libs.activity.compose)
   implementation(libs.compose.ui)

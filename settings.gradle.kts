@@ -75,3 +75,10 @@ include(":integrations:bindery")
 // all three of the others: `:integrations:core`, `:integrations:lidarr` and `:integrations:bindery`
 // all depend on it being somewhere else. Still inside the one directory a `git rm -r` removes.
 include(":integrations:requests")
+
+// Plan 7 Task 10. The surface: the requests screen, the integrations setup screen, and the one
+// always-present settings row that turns the feature on. It is a `feature/` module rather than an
+// `integrations/` one because it is UI, and `ConventionTest`'s `nothing outside integrations
+// depends on an integration` names it explicitly as the second and last permitted consumer --
+// dropping Plan 7 is `git rm -r integrations feature/requests` plus these five include lines.
+include(":feature:requests")

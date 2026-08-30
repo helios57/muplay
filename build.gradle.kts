@@ -6140,6 +6140,193 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
+  // Plan 7 Task 10. The surface. **Three rules, all Tier 1, and a deliberately large ungated
+  // remainder** -- read the note at the bottom of this entry before adding a fourth.
+  ":feature:requests" to listOf(
+    // 1. BRANCH, over every decision this feature makes that is not Compose.
+    //
+    // MEASURED from `feature/requests/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml`
+    // after `--no-build-cache :feature:requests:test`, no emulator involved:
+    //
+    //   `ConnectionCheck$Companion`  26/26 = 1.0000  (`of`, the five-way branch)
+    //   `ConnectionCheckKt`          15/16 = 0.9375  (`message`, and the two probes)
+    //   `IntegrationSetupUiState`    16/16 = 1.0000  (`canTest` and `canSave`)
+    //   `IntegrationsUiStateKt`       9/10 = 0.9000  (`credentialFrom`)
+    //   `IntegrationsViewModel`      18/18 = 1.0000
+    //   `IntegrationsViewModel*forget*` 6/6 = 1.0000
+    //   `RequestsUiStateKt`            8/8 = 1.0000  (`requestsUiState`, `hasRequested`, the copy)
+    //   `RequestsViewModel`            4/4 = 1.0000
+    //   `RequestsViewModel*request*`   2/2 = 1.0000
+    //
+    // **Two of those ceilings are below 1.00 and neither is a missing test.**
+    // `ConnectionCheckKt`'s sixteenth branch is the try/catch dispatch inside `observeLidarr`, whose
+    // three paths -- normal, `CancellationException`, everything else -- are all driven (LINE is
+    // 36/36) and which JaCoCo still counts as one arm short. `IntegrationsUiStateKt`'s tenth is
+    // `(… as? BaseUrlResult.Valid)?.url`: the `?.` can only be null when the `as?` already was, so
+    // Kotlin emits a check nothing can take. Same artifact, same reason, as
+    // `RequestsRepository`'s one missing branch above.
+    //
+    // **0.90, and it was 0.85 first -- changed because the falsification said so.** At 0.85,
+    // withholding the whole of `IntegrationSetupUiStateTest` left `IntegrationSetupUiState` at
+    // 14/16 = 0.8750 and the gate GREEN: `IntegrationsViewModelTest` is a second caller of
+    // `canTest`/`canSave` and covers all but two of their branches on its way past. A floor that
+    // cannot fire when a class's own test file is deleted is the class of gate this table exists to
+    // keep out, so the number moved rather than the comment. At 0.90 that same withholding fails.
+    //
+    // The cost, stated rather than discovered later: **two classes then sit exactly on their
+    // ceilings.** 0.90 x 16 requires 15 of `ConnectionCheckKt`'s branches and it has 15; 0.90 x 10
+    // requires 9 of `IntegrationsUiStateKt`'s and it has 9. That is the same trade `:feature:book`'s
+    // `BookPlayerUiStateKt` records at 0.95 -- as strict as 1.00 over the reachable set -- and it
+    // has the same consequence: a later task that adds a Kotlin-unreachable arm to either function
+    // must re-measure this floor rather than assume it still clears.
+    //
+    // `IntegrationsViewModel*uiState*` is EXCLUDED: it is the `combine` lambda's own suspend state
+    // machine, measured 1/2 = 0.5000, and it is author code in no useful sense. It is gated on LINE
+    // by rule 2 instead, where it reads 2/2.
+    //
+    // FALSIFIED, by `@Disabled` on each named test class in turn, the report regenerated and the
+    // number read back off the XML. All four runs failed `jacocoJvmCoverageVerification`:
+    //
+    //   * `ConnectionCheckTest` withheld -> `ConnectionCheck$Companion` **16/26 = 0.6154** and
+    //     `ConnectionCheckKt` **7/16 = 0.4375** BRANCH, plus **26/36 = 0.7222** LINE.
+    //     Note the shape rather than the numbers: **not 0/26**, because `ConnectionProbeTest` and
+    //     `IntegrationsViewModelTest` are both second callers of `of` and of `message`. Ten of the
+    //     twenty-six branches survive the deletion of the file that exists to drive them.
+    //   * `IntegrationsViewModelTest` withheld -> `IntegrationsViewModel` **0/18** BRANCH and
+    //     **0/39** LINE, its `forget`/`save`/`test` bodies to 0, and `IntegrationsUiState` to 0/5.
+    //   * `RequestsViewModelTest` withheld -> `RequestsViewModel` **0/4** BRANCH and **0/23** LINE,
+    //     and its four coroutine bodies to 0.
+    //   * `IntegrationSetupUiStateTest` withheld -> `IntegrationSetupUiState` **14/16 = 0.8750**.
+    //     This is the run that set the minimum; see the paragraph above.
+    //
+    // What no withholding fires: `IntegrationsUiStateKt` stayed at 9/10 in all four, because
+    // `credentialFrom` is reached from the view model as well as from its own test. Firing it would
+    // take both classes at once -- the same second-caller effect `:integrations:requests`'s rule 2
+    // documents for `TitleMatching`, and worth reading before concluding this floor is vacuous.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        // `$` never matches; JaCoCo presents `A$B` as `A.B` before a pattern sees it (see
+        // [CoverageFloor]'s gotcha 3), so every nested class is matched with a `*`.
+        "app.muplay.requests.ConnectionCheck",
+        "app.muplay.requests.ConnectionCheck*",
+        "app.muplay.requests.ConnectionCheckKt",
+        "app.muplay.requests.ConnectionCheckKt*",
+        "app.muplay.requests.IntegrationSetupUiState",
+        "app.muplay.requests.IntegrationsUiState",
+        "app.muplay.requests.IntegrationsUiStateKt",
+        "app.muplay.requests.IntegrationsViewModel",
+        "app.muplay.requests.IntegrationsViewModel*",
+        "app.muplay.requests.RequestSearchState",
+        "app.muplay.requests.RequestsUiState",
+        "app.muplay.requests.RequestsUiState*",
+        "app.muplay.requests.RequestsUiStateKt",
+        "app.muplay.requests.RequestsViewModel",
+        "app.muplay.requests.RequestsViewModel*",
+      ),
+      excludes = listOf("app.muplay.requests.IntegrationsViewModel*uiState*"),
+    ),
+    // 2. LINE, over every author-written class the JVM tier reaches. **Every one of them measured
+    // 1.0000** on the run above:
+    //
+    //   ConnectionCheck$Companion 13/13, $Ok/$Failed/$WrongApplication 1/1 each,
+    //   ConnectionCheckKt 36/36, ConnectionObservation 4/4,
+    //   IntegrationSetupUiState 10/10, IntegrationsUiState 5/5, IntegrationsUiStateKt 5/5,
+    //   IntegrationsViewModel 39/39 and its four coroutine bodies 3/3, 4/4, 13/13, 2/2,
+    //   IntegrationsPresenceViewModel 6/6,
+    //   IntegrationsRoute 2/2, RequestsRoute 2/2,
+    //   RequestSearchState 6/6, RequestsUiState$Ready 7/7, RequestsUiStateKt 15/15,
+    //   RequestsViewModel 23/23 and its four coroutine bodies 1/1, 4/4, 6/6, 11/11.
+    //
+    // The two routes are here for a reason worth stating, because 2/2 on a `@Serializable data
+    // object` looks like nothing: a key that is not serializable compiles, runs, and fails on
+    // process death when `rememberNavBackStack` tries to save it. `RequestsRoutesTest` round-trips
+    // both, and this floor is what stops that test being deleted quietly.
+    //
+    // `ConnectionProbe`, `IntegrationCredentialWriter` and `IntegrationCredentialEraser` -- the
+    // three `fun interface`s -- carry no counters at all and ride along only so
+    // `warnUngatedClasses` has nothing to say about them.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.requests.ConnectionCheck",
+        "app.muplay.requests.ConnectionCheck*",
+        "app.muplay.requests.ConnectionCheckKt",
+        "app.muplay.requests.ConnectionCheckKt*",
+        "app.muplay.requests.ConnectionObservation",
+        "app.muplay.requests.ConnectionProbe",
+        "app.muplay.requests.IntegrationCredentialWriter",
+        "app.muplay.requests.IntegrationCredentialEraser",
+        "app.muplay.requests.IntegrationSetupUiState",
+        "app.muplay.requests.IntegrationsUiState",
+        "app.muplay.requests.IntegrationsUiStateKt",
+        "app.muplay.requests.IntegrationsViewModel",
+        "app.muplay.requests.IntegrationsViewModel*",
+        "app.muplay.requests.IntegrationsPresenceViewModel",
+        "app.muplay.requests.IntegrationsPresenceViewModel*",
+        "app.muplay.requests.IntegrationsRoute",
+        "app.muplay.requests.RequestsRoute",
+        "app.muplay.requests.RequestSearchState",
+        "app.muplay.requests.RequestsUiState",
+        "app.muplay.requests.RequestsUiState*",
+        "app.muplay.requests.RequestsUiStateKt",
+        "app.muplay.requests.RequestsViewModel",
+        "app.muplay.requests.RequestsViewModel*",
+      ),
+      // Kotlin's own `Flow.map` inlining, gated low by rule 3 rather than at 0.90 here.
+      excludes = listOf(
+        "app.muplay.requests.IntegrationsViewModel*inlined*",
+        "app.muplay.requests.IntegrationsPresenceViewModel*inlined*",
+      ),
+    ),
+    // 3. The `Flow.map` machinery behind the two view models' state flows, gated **low rather than
+    // not at all** -- the identical trade `:integrations:requests`'s rule 3 makes, for the identical
+    // reason: leaving them ungated would print `warnUngatedClasses` lines on every run forever,
+    // which is how a warning mechanism dies.
+    //
+    // MEASURED: `IntegrationsViewModel*inlined*map*1` **2/3 = 0.6667** and its `*2` **2/2 =
+    // 1.0000**; `IntegrationsPresenceViewModel*inlined*map*1` **2/3 = 0.6667** and its `*2` 2/2.
+    // The uncovered line is the collector's exception path. 0.40 is deliberately below the measured
+    // minimum, so a later flow added to either class does not fire this on its first run; what it
+    // still refuses is a class nothing constructs at all, which measures 0.
+    //
+    // These carry no BRANCH counter, so a BRANCH rule could never gate them (JaCoCo's NaN pass).
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.40"),
+      includes = listOf(
+        "app.muplay.requests.IntegrationsViewModel*inlined*",
+        "app.muplay.requests.IntegrationsPresenceViewModel*inlined*",
+      ),
+    ),
+    // **WHAT IS DELIBERATELY NOT GATED HERE, AND WHY THERE IS NO FOURTH RULE.**
+    //
+    // `IntegrationsScreenKt` (LINE 0/109), `RequestsScreenKt` (9/96), `IntegrationsSection`
+    // (5/12 -- its constructor, its `order` and its flow are driven by `IntegrationsSectionTest`;
+    // its `Content` is Compose), `IntegrationsSectionKt` (0/36), that section's own `Flow.map`
+    // classes (2/3 and 1/2), and `di.RequestsFeatureModule` with its three SAM lambdas (0/4 between
+    // them) are all reported by `warnUngatedClasses` on every run. That is the honest state of
+    // affairs and not an oversight.
+    //
+    // The obvious fourth rule would be a LINE floor with `requiresInstrumentedData = true` over the
+    // Compose files, as `:feature:setup` and `:feature:castpicker` carry. **It would be worse than
+    // no floor at all here**, because `requiresInstrumentedData` floors are enforced only by
+    // `jacocoTestCoverageVerification`, which runs in the emulator job -- and this module has no
+    // `src/androidTest`, so `ConventionTest`'s `every module with instrumented tests is run by the
+    // emulator job` never puts it on that job's command line. The floor would be skipped by the same
+    // omission that skips the tests it depends on: a gate and the thing it gates failing together,
+    // silently, which is the exact defect Plan 3 Task 10 found and this table exists to keep out.
+    //
+    // Task 10 was scoped JVM-only (the emulator was down), so the honest move is to leave these
+    // reported. Whoever adds `feature/requests/src/androidTest` must add this module to
+    // `.github/workflows/e2e.yml` -- the `ConventionTest` rule fires the instant that directory
+    // exists -- and may then measure and add the Compose floors, not before.
+  ),
 )
 
 /**
