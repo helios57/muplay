@@ -1059,3 +1059,34 @@ filter), and every flake did not.
 
 Do not "fix" these by adding sleeps. Two of them want the state they depend on made
 explicit in their own `@Before`; that is the change, and it has not been made yet.
+
+## A `coerceAtLeast`/`coerceIn` clamp is invisible to a BRANCH coverage floor
+
+Measured in Plan 4 Task 9 while falsifying `:feature:book`'s floors. Kotlin's
+`Long.coerceAtLeast` compiles to `Math.max`, which carries **no JaCoCo branch
+counter at all**. So a test written specifically to prove a clamp fires moves no
+number in `coverageFloors`, and withholding it leaves the floor green.
+
+Two floors' worth of falsification were written as predictions on this and both
+were wrong: withholding `a position past the declared duration has nothing
+remaining` left `BookPlayerUiStateKt` at 19/20, and withholding the three
+missing-id cases that prove `startIndexFor` folds `-1` to `0` left
+`BookPlaybackLauncherKt` at 2/2. What those classes' branch counters actually
+measure is the **null checks** beside the clamps -- `chapter?.title ?: ...`,
+`resumeAt?.mediaId` -- which is not what either file looks like it is about.
+
+Two consequences:
+
+- **Run the falsification; never write one from reading.** This is already the
+  rule at that table, and this is the failure mode it exists for: the predicted
+  withholding produced green, which reads exactly like "the floor is too low".
+- **A clamp needs its test for the clamp's own sake**, and the floor is not what
+  holds it there. Say so at the floor, or the next person deletes a test that no
+  number defends.
+
+Related, same session: a null-safe chain on a **non-null** property
+(`chapter?.title` where `title: String`) emits two decisions, one of them
+unreachable -- so 3/4 or 19/20 is the honest ceiling, not a rounded-down number.
+`:feature:library`'s `CoverArtCacheKeyKt` (0.75) and `:feature:setup`'s
+`SetupFailureReasonKt` (0.85) are the same shape; check for one before assuming a
+floor a branch or two short is a missing test.
