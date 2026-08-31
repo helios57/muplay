@@ -130,6 +130,17 @@ class MuPlaybackService : MediaLibraryService() {
    */
   @Inject lateinit var audiobookRepository: AudiobookRepository
 
+  /**
+   * The sleep timer, attached to whichever player is making the sound.
+   *
+   * A `@Singleton`, and the same object `BookPlayerViewModel` calls `start` on from the book
+   * screen -- which is the whole point: a listener sets the timer in the UI and this service is
+   * where the countdown has to reach a `Player`. Until this field existed, `attach` was called from
+   * nowhere in any `src/main`, so `start` returned at its own `attachment ?: return` and the UI
+   * acknowledged a timer that could never fire.
+   */
+  @Inject lateinit var sleepTimer: SleepTimerController
+
   private var session: MediaLibrarySession? = null
 
   /**
@@ -222,17 +233,28 @@ class MuPlaybackService : MediaLibraryService() {
     // install onto. `MutableStateFlow` replays its current value to a late collector, which is why
     // this ordering is safe rather than lucky.
     outputSwitch.installLocal(player)
-    // The session follows the switch. Everything player-bound that is broken by being left behind
-    // is re-pointed here -- which today is the session itself. The `ProgressWriter` is deliberately
-    // NOT on this list: it has to be attached *before* `setMediaItems` on the incoming player, and
-    // this collector is a coroutine that would not have resumed by then, so `CastSessionManager`
-    // moves it synchronously inside the handover. When the audiobook plan lands,
-    // `SleepTimerController.attach(player, serviceScope)` goes here -- it binds to one player and
-    // its fade drives that player's `volume`, so left behind it counts down against a paused,
-    // silent phone while the speaker plays all night, and nothing throws and nothing logs.
+    // The session follows the switch, and so does the sleep timer. Everything player-bound that is
+    // broken by being left behind is re-pointed here.
+    //
+    // **The timer is on this list because its mechanism is one player's `volume` and `pause()`.**
+    // Left attached to the phone after audio moved to a speaker it would ramp a player nobody is
+    // listening to down to zero and pause something already paused, while the speaker plays all
+    // night -- nothing throws and nothing logs. `SleepTimerController.attach` restores the outgoing
+    // player's volume and restarts a countdown already in flight against the incoming one; see its
+    // KDoc.
+    //
+    // The `ProgressWriter` is deliberately **not** on this list, and the difference between the two
+    // is worth stating because they look alike. The writer has to be attached *before*
+    // `setMediaItems` on the incoming player -- it records a position, and a position read after
+    // the queue was replaced is the wrong one -- and this collector is a coroutine that would not
+    // have resumed by then, so `CastSessionManager` moves it synchronously inside the handover. The
+    // timer reads no history and writes nothing a later transition invalidates, so a dispatch of
+    // lateness costs it at most one tick against the outgoing player, whose volume `attach` then
+    // puts back.
     serviceScope.launch {
       outputSwitch.activePlayer.filterNotNull().collect { active ->
         session?.let { if (it.player !== active) it.player = active }
+        sleepTimer.attach(active, serviceScope)
       }
     }
   }
@@ -319,6 +341,15 @@ class MuPlaybackService : MediaLibraryService() {
     // thing left to undo is the listener registration on a player that is about to be released.
     speedController?.stop()
     speedController = null
+    // `detach()`, and **not** anything that reaches the singleton's own state: `SleepTimerController`
+    // is a `@Singleton` that outlives this service, so the rule `MuPlayLibraryCallback` was written
+    // in blood is in force here too. What `detach` gives up is exactly what this service lent --
+    // the player reference and the ticker `Job`, which rides `serviceScope` and is about to be
+    // cancelled anyway -- and the next service's `activePlayer` collector attaches again. Omitting
+    // it is not free either way round: the singleton would hold a released `ExoPlayer` for the life
+    // of the process, and a `start()` from the book screen after the service died would ramp and
+    // pause it.
+    sleepTimer.detach()
     // Before the scope is cancelled, for the same reason the flush is: cancelling the scope stops
     // the collector anyway, and stopping it here is what lets a recreated service start a fresh one
     // -- `start` is idempotent on a non-null job, so a snapshot never stopped would refuse to

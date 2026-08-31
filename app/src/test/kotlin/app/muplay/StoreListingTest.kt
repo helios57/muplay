@@ -24,8 +24,8 @@ import org.junit.jupiter.api.Test
  *    add a `wearApp(...)` dependency to it
  * 5. every claim names code that still exists — rename a cited file or symbol
  * 6. the description claims nothing this build cannot do — put "sleep timer" in the feature copy
- * 7. what the description disclaims is still absent — name `SleepTimerController` in
- *    `MuPlaybackService`, or add a `:wear:` task to the release workflow
+ * 7. what the description disclaims is still absent — inject `ShakeSensor` somewhere, or add a
+ *    `:wear:` task to the release workflow
  *
  * **Rules 4 and 7 were rewritten after they were caught being wrong**, and the way they were wrong
  * is the point. Rule 4 asked whether `settings.gradle.kts` includes a `:wear` module; it does, over
@@ -286,7 +286,11 @@ class StoreListingTest {
     // recorded in this document's own "Not in this version" table -- each entry there was measured
     // (the class exists and nothing constructs it, or no module declares it) rather than assumed.
     val banned = listOf(
-      Regex("""\bsleep timer\b""", RegexOption.IGNORE_CASE),
+      // `\bsleep timer\b` was here until Plan 8 Task 6 wired the controller to the service's
+      // player. It came out with the disclaimer row it was derived from -- leaving it would have
+      // forbidden the description from naming a feature that now works, which is the under-claim
+      // this file's other rule exists to catch, expressed as an over-strict ban. The *gesture* is
+      // still absent, so `\bshake\b` stays and is what keeps the timer's copy honest.
       Regex("""\bshake\b""", RegexOption.IGNORE_CASE),
       Regex("""\bChromecast\b""", RegexOption.IGNORE_CASE),
       Regex("""\bdownload\w*\b""", RegexOption.IGNORE_CASE),
@@ -510,7 +514,10 @@ class StoreListingTest {
      *   a probe reporting it absent.
      * - `Sleep timer` probed `SleepTimerController\(`. The class is `internal constructor` and is
      *   Hilt-injected, so nothing ever writes that. It reported the right answer for the wrong
-     *   reason and would have gone on reporting it after somebody wired the timer up.
+     *   reason and would have gone on reporting it after somebody wired the timer up. Its
+     *   replacement -- `\bSleepTimerController\b` scoped to `MuPlaybackService.kt` -- did fire,
+     *   the moment Plan 8 Task 6 wired it, which is what a probe is for. Both are now history: the
+     *   timer ships, and the claims table asserts the wiring is still there.
      *
      * That is this repository's own defining defect aimed at its own gate, so: when you add a
      * probe, write the line that would make it fire and check that it does.
@@ -545,11 +552,11 @@ class StoreListingTest {
      * `PRESENCE_PROBES` held one entry, for a resume policy that now ships.
      */
     val SCOPED_ABSENCE_PROBES = listOf(
-      Triple(
-        "Sleep timer",
-        "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt",
-        Regex("""\bSleepTimerController\b"""),
-      ),
+      // The "Sleep timer" triple that stood first here -- `\bSleepTimerController\b` over
+      // `MuPlaybackService.kt` -- is gone, because it fired: Plan 8 Task 6 injected the controller
+      // there and attaches it from the `activePlayer` collector. Its replacement is a *presence*
+      // check, the `sleepTimer.attach(` row of the claims table, which `every claim names code
+      // that still exists` holds against the same file from the other direction.
       Triple(
         "Casting an audiobook",
         "feature/book/src/main/kotlin/app/muplay/book/BookPlayerScreen.kt",

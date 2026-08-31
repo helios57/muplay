@@ -25,6 +25,8 @@ import app.muplay.media.PlaybackNotification
 import app.muplay.media.MuPlaybackService
 import app.muplay.media.PlaybackQueue
 import app.muplay.media.PlaybackState
+import app.muplay.model.SleepTimerRequest
+import app.muplay.model.SleepTimerState
 import app.muplay.model.Song
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
@@ -653,6 +655,71 @@ class MuPlaybackServiceTest {
   }
 
   /**
+   * The sleep timer the **app** injects, against the player the **service** built.
+   *
+   * This is the only shape of test that could have caught what it was written for.
+   * `SleepTimerController` shipped with a full device suite of its own, a countdown, a fade, a
+   * grace window and thirteen green tests -- every one of which handed it a player itself. Nothing
+   * in any `src/main` ever called `attach`, so `attachment` was null in the running app and both
+   * `start` and `extend` opened with `val attached = attachment ?: return`. The listener set a
+   * timer, the screen acknowledged it, and playback never stopped. A test that supplies the
+   * dependency production forgets to supply cannot see that; this one asks the real graph for the
+   * real singleton and calls the method the book screen's view model calls.
+   *
+   * **`playWhenReady == false`, not `!isPlaying`, and that is the whole discrimination.** The music
+   * fixtures are five seconds long, so "playback stopped" is something a queue reaches on its own
+   * -- and CLAUDE.md's own rule about five-second fixtures says to prefer an observation the
+   * fixture cannot produce. A queue that simply runs out ends at `STATE_ENDED` with `playWhenReady`
+   * still `true`. Only something calling `pause()` puts it to `false`, and the only thing here that
+   * could is the timer. The `STATE_READY` assertion afterwards closes the other half: the pause
+   * landed inside the queue rather than at the end of it.
+   *
+   * The state read is taken **in the same main-thread turn as `start`** and asserted with no wait,
+   * for the reason the same file's other timing tests record: `start` publishes synchronously when
+   * it has a player and returns without touching `_state` when it does not, so `Running` here is
+   * true immediately or never.
+   */
+  @Test
+  fun theSleepTimerTheAppInjectsStopsTheServicesPlayback() {
+    // Three tracks, so the queue outlives the timer by a comfortable margin and the pause below
+    // cannot be the fixture running out.
+    setQueueAndPlay(songs.take(3))
+    awaitPositionAtLeast(500L)
+    val timer = sleepTimerController()
+
+    val published = onMain {
+      timer.start(SleepTimerRequest.Duration(SLEEP_TIMER_MS))
+      timer.state.value
+    }
+
+    try {
+      assertThat(published)
+        .describedAs(
+          "`start` on the singleton the book screen holds, with the service's own player attached",
+        )
+        .isInstanceOf(SleepTimerState.Running::class.java)
+      // The control: a timer that fired the instant it was set would satisfy everything below.
+      Thread.sleep(SLEEP_TIMER_MS / 2)
+      assertThat(onMain { controller.playWhenReady })
+        .describedAs("still asked to play halfway through a %d ms timer", SLEEP_TIMER_MS)
+        .isTrue
+      awaitState("playWhenReady == false") { !onMain { controller.playWhenReady } }
+      assertThat(onMain { controller.playbackState })
+        .describedAs(
+          "STATE_READY (%d), not STATE_ENDED (%d): the timer paused a queue that had not run out",
+          Player.STATE_READY,
+          Player.STATE_ENDED,
+        )
+        .isEqualTo(Player.STATE_READY)
+      assertThat(timer.state.value).isEqualTo(SleepTimerState.Off)
+    } finally {
+      // The controller is a process-wide `@Singleton`: a countdown left running here would pause
+      // whichever test runs next. `cancel` also puts the faded volume back.
+      onMain { timer.cancel() }
+    }
+  }
+
+  /**
    * Starts [items] through **`PlaybackLauncher`, the production entry point**, and hands back the
    * `MediaItem`s built for them.
    *
@@ -788,6 +855,10 @@ class MuPlaybackServiceTest {
   private fun appPlaybackConnection() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).playbackConnection()
 
+  private fun sleepTimerController() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java)
+      .sleepTimerController()
+
   private fun credentialStore() =
     EntryPointAccessors.fromApplication(context, CredentialStoreEntryPoint::class.java)
       .credentialStore()
@@ -806,6 +877,13 @@ class MuPlaybackServiceTest {
      */
     const val FASTER = 1.5f
     const val POLL_MS = 50L
+
+    /**
+     * The countdown the wiring test sets. Long enough that the halfway control is a real reading
+     * on a loaded emulator, short enough to sit well inside a three-track queue of five-second
+     * fixtures.
+     */
+    const val SLEEP_TIMER_MS = 4_000L
 
     /**
      * Sixteen and a half minutes, on a five-second fixture track.

@@ -56,4 +56,15 @@ interface PlaybackEntryPoint {
    * itself stayed green because it re-connects afterwards and never asserted the service had gone.
    */
   fun playbackConnection(): PlaybackConnection
+
+  /**
+   * The **application's own** singleton [SleepTimerController] — the one the book screen's view
+   * model calls `start` on, and the one `MuPlaybackService` attaches to its player.
+   *
+   * There is no other way to ask the question the test that uses this asks. Every other test of
+   * this class hands it a player itself, which is precisely how it shipped with `attach` called
+   * from nowhere: a controller given a player passes, and production was never giving it one.
+   * Reached from the running graph, the object under test is the object the app has.
+   */
+  fun sleepTimerController(): SleepTimerController
 }
