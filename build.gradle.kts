@@ -4102,33 +4102,59 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       requiresInstrumentedData = true,
     ),
   ),
-  // **PLAN 4 TASK 9 GREW THIS MODULE BY A THIRD AND COULD NOT RE-MEASURE THIS FLOOR. READ THIS
-  // BEFORE DEBUGGING AN `:app` COVERAGE FAILURE IN THE EMULATOR JOB.**
+  // MEASURED at this commit, from `app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml`
+  // after a full `:app:connectedDebugAndroidTest` (61 tests, green) on `muplay37`:
   //
-  // What is measured: this bundle's LINE denominator went from **110 to 146** when Task 9 added
-  // the three audiobook routes, `PlayerDestinationViewModel`, and the shelf/book/player entries in
-  // `MuPlayApp`. Both numbers are real -- taken from `:app:jacocoTestReport`'s XML before and
-  // after, by stashing the change and rebuilding.
+  //   bundle app  LINE  136/144 = 0.9444
   //
-  // What is NOT measured, and could not be: the numerator. That needs instrumented execution data
-  // from `:app:connectedDebugAndroidTest`, and Task 9 was scoped to add no device tests and not to
-  // touch the shared emulator. So no number here was adjusted -- inventing one is the defect this
-  // whole table exists to prevent, and it is the one `:wear`'s entry below is at pains about.
+  // Plan 4 Task 9 left this entry saying the floor would hold "if `:app` was at about 0.895 before
+  // Task 9, and if it fails, the fix is Plan 4 Task 10's audiobook journeys, not a lower number
+  // here." It did fail -- **124/138 = 0.8986**, one line short -- and the journeys are what fixed
+  // it. `BookshelfRoute` and `BookRoute` measured 0/2 each because nothing in `:app` had ever
+  // navigated to a book.
   //
-  // What that leaves: of the 36 new lines, roughly 28 run on every launch --
-  // `PlayerDestinationViewModel` and its `map` internals (13), the six new
-  // `$$inlined$entry$default$N` adapters `entryProvider` builds at composition, and `MuPlayApp`'s
-  // own wiring. The rest cannot be covered until something navigates to a book: the three
-  // `entry<...>` **bodies** (compacted to one line each, deliberately, and the comment at those
-  // lines says so) and the `BookshelfRoute`/`BookRoute` classes. `BookPlayerRoute` is referenced
-  // by the mini player's own visibility test on every composition, so it is not in that group.
+  // AND THE FALSIFICATION IS THE PART WORTH READING, because it does not say what it was expected
+  // to. Withholding **both** audiobook journeys and re-running the other 56 tests measures
+  // **130/144 = 0.9028** -- still green, by 0.0028. The bundle floor is therefore no longer what
+  // gates "something navigates to a book": the same task that added those journeys also added six
+  // covered lines to `MuPlayApp` (the `LaunchedEffect` that corrects which player is on top), and
+  // those six alone lift the ratio over the minimum. A floor that passes whether or not the thing
+  // it exists for is tested is the assertion-that-cannot-fail this repository keeps deleting, so
+  // the second floor below is what actually holds the line, and this one stays at the project
+  // minimum measuring the module as a whole.
   //
-  // So this floor holds if `:app` was at about 0.895 LINE or better before Task 9, and fails
-  // otherwise -- and if it fails, **the fix is Plan 4 Task 10's audiobook journeys, which navigate
-  // to all three destinations, not a lower number here.** Re-measure and rewrite this comment
-  // there; do not carry these paragraphs forward, they describe one commit's arithmetic.
+  // Re-measure BOTH numbers when this module grows again, and re-run the withholding -- a recorded
+  // falsification is a measurement with a timestamp, not a property.
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
+    // **The gate on the audiobook half of the application being reachable at all.**
+    //
+    // Two `NavKey`s, four lines between them, and every one of them is executed by *constructing
+    // the key* -- which only happens when something pushes it onto the back stack. So this floor
+    // reads "a test navigates to the shelf, and from the shelf into a book", and it is the
+    // narrowest true statement of that available to a coverage counter.
+    //
+    // MEASURED, both directions, on the same tree:
+    //   with `AudiobookResumeJourneyTest` + `AudiobookChapterJourneyTest`:  BookshelfRoute 2/2,
+    //     BookRoute 2/2 -- green.
+    //   with both classes withheld from the run:                            0/2 and 0/2 -- red,
+    //     naming both classes.
+    //
+    // `BookRoute.Companion` is deliberately NOT in this list. It holds the generated `serializer()`
+    // and is reached only when `rememberNavBackStack` saves or restores the stack, which no journey
+    // here does; including it would be a floor no test could clear. `BookPlayerRoute` is not here
+    // either, and does not need to be -- the mini player's own visibility check names it on every
+    // composition, so it measures 2/2 with or without any of this.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.ui.navigation.BookshelfRoute",
+        "app.muplay.ui.navigation.BookRoute",
+      ),
+      requiresInstrumentedData = true,
+    ),
   ),
   // `:wear` (Plan 5 Task 8). **THE ONE ENTRY IN THIS TABLE WHOSE RATIO IS NOT MEASURED**, and that
   // is stated first because every other comment here is a measurement and a reader is entitled to
