@@ -1273,3 +1273,75 @@ refuses.
 What is left is the module's own `src/test`, which is correct when that module is
 the only consumer — and if a second consumer appears, the answer is to move the
 interface, not to copy the fake.
+
+## Moving `outputs/code_coverage` out from under a running connected test loses the `.ec`
+
+That directory is `connectedDebugAndroidTest`'s declared `@OutputDirectory`. Move
+it mid-run — to check whether another module's `.ec` is inflating your ratios, which
+is a reasonable thing to want — and the run still reports **BUILD SUCCESSFUL** and
+`Finished 42 tests`. It simply has nowhere to put the coverage file. The only
+complaint is a Google-test-platform stack trace naming
+`NonInteractiveServerStrategy`, which names no directory and reads like emulator
+noise.
+
+Measured 2026-08-31 on `:feature:requests`: 42 tests green, zero coverage, and
+the wasted device run could not be repeated because the emulator died before the
+retry. **A green connected run with no `.ec` behind it is the shape to recognise.**
+Confirm `<module>/build/outputs/code_coverage/.../coverage.ec` exists before
+reading any ratio, and stash `.ec` files *between* runs or not at all.
+
+Worth knowing what the check itself is for: `mergedExecutionData` hands every
+module **every** project's `.ec`, so `:app`'s journeys can pay for a feature
+module's Compose ratios and a per-module floor can be gating another module's
+suite without saying so. It is a real question. On `:feature:book` the answer was
+that `:app` contributed nothing — all four ratios came back byte-identical with
+the other modules' data stashed — but that was measured, and it is the first time
+anyone in that table had checked rather than hoped.
+
+## `@Disabled` is JVM-tier only; withholding a device test needs `@Ignore`
+
+`coverageFloors`' falsification comments all say `@Disabled`, because they are all
+JVM-tier withholdings and the JVM tier is JUnit 5. Every `src/androidTest` here
+imports `org.junit.Test` — JUnit 4 — so `@Disabled` is not on that classpath at
+all. Use `@Ignore`.
+
+And note the harder half, which no annotation fixes: **withholding a device test
+and re-reading the report measures nothing.** `@Ignore` changes the *test* class;
+the production class is untouched, so JaCoCo goes on matching the previous run's
+`.ec` to it by class id and credits every line the withheld test used to cover.
+The re-read reproduces the baseline exactly — which reads like a floor that cannot
+fire, and would get written down as one. Falsifying a `requiresInstrumentedData`
+floor requires a **fresh `connectedDebugAndroidTest`**, i.e. a device you still
+have. `Jacoco.kt`'s own header records the underlying footgun from the other side.
+
+## An emulator can die outright, and it does not look like the recorded failure
+
+CLAUDE.md's "Neither the emulator nor the container survives a session restart"
+describes qemu surviving while the *adb server* dies, repaired by `adb
+start-server`. Measured 2026-08-31, mid-task, between two module suites: `adb
+devices` empty, **the adb server itself still running**, `last reboot` still
+2026-08-27, no `CONSTRAINT_MEMCG` or any OOM in the kernel log — and no
+`qemu-system-x86_64` for `muplay37` anywhere on the host. The emulator process was
+simply gone, and `adb start-server` cannot reach a device that is not running.
+
+So check for the *qemu process*, not just for `adb devices`, before deciding which
+of the two failures you have — and get the check right, because the obvious form of
+it is the **fourth** liveness check in this file that cannot report "dead".
+
+Measured on a host with no emulator running at all:
+
+    pgrep -af "qemu-system-x86_64.*muplay37|emulator64|/emulator/" | wc -l   -> 1
+    pgrep -c  -f "qemu-system-x86_64.*muplay37|emulator64|/emulator/"        -> 1
+    pgrep -c  -x qemu-system-x86_64                                          -> 0, with a warning
+    pgrep -af "qemu-system-x86_64.*muplay37" | grep -v "bin/bash" | wc -l    -> 0   <-- correct
+
+The first two match **this harness's own `/bin/bash -c ...` wrapper**, whose command
+line contains the pattern text. `pgrep` skips its own pid, so "pgrep excludes itself"
+is true and does not help — the process it finds is the shell one layer up. Note the
+third line especially: `-x` is the natural fix and it is a trap of its own, because
+`qemu-system-x86_64` is 18 characters and `pgrep` silently cannot match a process
+*name* longer than 15 — it prints a warning and returns 0, i.e. the right answer here
+for the wrong reason, and the wrong answer on a host where the emulator is up.
+
+Filter the shell out explicitly, and sanity-check any process probe by running it
+once when you know the answer is "alive".
