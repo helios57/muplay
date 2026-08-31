@@ -3745,7 +3745,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
     // WHAT THIS MODULE DELIBERATELY DOES NOT GATE, and why it is a list rather than a rule.
     //
-    // Measured on this tree, from a plain `:feature:book:test` + `jacocoTestReport`:
+    // Measured on this tree, from a plain `:feature:book:test` + `jacocoTestReport` -- i.e. from
+    // the **JVM tier alone**, which is still what these numbers describe:
     //
     //   `BookshelfScreenKt`   LINE 0/64    `BookScreenKt`     LINE 0/82
     //   `BookPlayerScreenKt`  LINE 0/115   `BookCoverKt`      LINE 0/23
@@ -3753,47 +3754,99 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   `BookPlaybackLauncher`  LINE 0/20  `BookTimelineReader`  LINE 0/9
     //   the three anonymous seam adapters, LINE 0/4, 0/12 and 0/19
     //
-    // A `@Composable` executes only inside a real composition, so no tier that has ever run in
-    // this repository can execute one line of these files.
+    // A `@Composable` executes only inside a real composition, which is why every one of those
+    // reads 0 and why no JVM floor can ever reach them. This paragraph used to go on to say that
+    // "no tier that has ever run in this repository can execute one line of these files", and
+    // **that half is now false**: `:feature:book:connectedDebugAndroidTest` runs a real
+    // composition, it has now been executed, and the four Composable file-classes are no longer
+    // at 0. See the STATUS block below for what they actually measure. The two non-Composable
+    // entries -- `BookPlaybackLauncher` and `BookTimelineReader` -- are still 0 on both tiers.
     //
-    // **STATUS, AS OF THE COMMIT THAT ADDED `feature/book/src/androidTest`. READ THIS BEFORE
-    // ADDING A FLOOR HERE.**
+    // **STATUS: THE SUITE HAS NOW RUN, THE NUMBERS BELOW ARE MEASURED, AND THERE IS STILL NO
+    // FLOOR. READ ALL THREE PARTS OF THAT BEFORE ADDING ONE.**
     //
-    //   - Three instrumented suites now exist -- `BookshelfContentTest`, `BookContentTest` and
+    //   - Three instrumented suites exist -- `BookshelfContentTest`, `BookContentTest` and
     //     `BookPlayerContentTest` -- over the stateless halves of the three screens, and this
-    //     module is now on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
-    //     androidTest-compile line.
-    //   - **Not one of those tests has ever been executed.** They were written while the emulator
-    //     was unavailable. The only thing anybody has verified about them is that
-    //     `:feature:book:compileDebugAndroidTestKotlin` succeeds, which proves they are
-    //     well-formed Kotlin and proves nothing whatsoever about a single assertion in them.
-    //   - **There is therefore no number here, and no floor.** Every ratio in this table above is
-    //     a measurement; there is nothing to measure for these classes yet, and inventing one
-    //     would be worse than the gap.
+    //     module is on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
+    //     androidTest-compile line (both re-checked at this commit, not inherited from the note
+    //     that first claimed them).
+    //   - **They were executed for the first time on 2026-08-31 and are 42/42 green.**
+    //     `feature/book/build/outputs/androidTest-results/.../TEST-*.xml` read
+    //     `tests="42" failures="0" errors="0" skipped="0"`. The paragraph that used to stand here
+    //     -- "not one of those tests has ever been executed" -- is therefore retired, and the
+    //     prediction it carried was wrong in the good direction: nothing failed, and neither of
+    //     the two failures it told the next reader to expect (`SleepTimerRow`'s seven controls in
+    //     a non-scrolling `Row`, the lazy-list scroll positions) materialised.
     //
-    // The honest options were a floor of `0.00`, a `requiresInstrumentedData = true` floor, or no
-    // floor. **Both of the first two are worse, and the second is worse now than it was before
-    // the suites existed**, because it would *look* measured. `0.00` is the unfireable floor this
-    // repository has shipped once already. A `requiresInstrumentedData` floor is enforced only by
-    // `jacocoTestCoverageVerification` in the emulator job; a number written into one without a
-    // run behind it is a gate reporting on a tree nobody looked at, which is the defect this whole
-    // table exists to keep out of its own gates. `:feature:settings` already carries one such
-    // entry as a recorded offence. Do not add a second.
+    // MEASURED, from `feature/book/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml`
+    // after that run, with the instrumented `.ec` merged in -- the four classes this block exists
+    // to talk about, all of which read LINE **0** before it:
+    //
+    //   BookCoverKt          LINE 22/23  = 0.9565     (BRANCH 23/52  = 0.4423)
+    //   BookPlayerScreenKt   LINE 93/115 = 0.8087     (BRANCH 118/322 = 0.3665)
+    //   BookshelfScreenKt    LINE 46/64  = 0.7188     (BRANCH 59/172 = 0.3430)
+    //   BookScreenKt         LINE 55/82  = 0.6707     (BRANCH 49/196 = 0.2500)
+    //
+    // The BRANCH column is recorded only to show why LINE is the counter here and is not a
+    // candidate for a floor: it is the Compose compiler's `$changed`/`$dirty` weave, measured at a
+    // third to a half whatever the tests do, exactly as this table's own doc comment predicts.
+    //
+    // **These four ratios come from `:feature:book`'s own suite alone, and that was measured
+    // rather than assumed.** `mergedExecutionData` hands every module every project's `.ec`, so
+    // `:app`'s audiobook journeys could in principle have been paying for part of the numbers
+    // above. With `:app`'s, `:core:media`'s, `:core:database`'s and `:feature:requests`'s
+    // `outputs/code_coverage` moved aside and the report regenerated over this module's `.ec`
+    // alone, all four ratios came back **byte-identical**. So a floor here would gate this
+    // module's suite and nothing else -- which is the property a per-module floor is supposed to
+    // have, and the first time anyone in this table has checked it rather than hoping for it.
+    //
+    // **WHY THERE IS STILL NO FLOOR, AND IT IS NOT THE OLD REASON.** The blocker used to be that
+    // no number existed. A number exists now. What does not exist is a **falsification**, and this
+    // table's standing rule is that a floor arrives with one it actually ran -- a minimum that was
+    // reasoned about rather than fired is the defect the whole table is built against, and it is
+    // the one defect a plausible-looking number makes *harder* to spot, not easier.
+    //
+    // The falsification cannot be faked from what is on disk, and the reason is specific rather
+    // than procedural. Withholding a test changes the *test* class; the production class is
+    // untouched, so JaCoCo goes on matching the previous run's `.ec` to it by class id and credits
+    // every line that test used to cover. `Jacoco.kt`'s own header records this footgun. Re-reading
+    // the XML after an `@Disabled` therefore measures nothing at all -- it reproduces the baseline
+    // and reads like a floor that cannot fire. **A falsification here needs a fresh
+    // `connectedDebugAndroidTest`, i.e. a device.**
+    //
+    // The emulator died between this module's run and `:feature:requests`'s, mid-task, with no
+    // host reboot behind it (`last reboot` still reads 2026-08-27) and no OOM in the kernel log --
+    // `adb devices` empty, the adb server itself still alive, and no `qemu-system-x86_64` for
+    // `muplay37` left on the host. That is *not* the failure mode CLAUDE.md records under "Neither
+    // the emulator nor the container survives a session restart", where qemu survives and only the
+    // adb server dies; here the emulator process itself is gone, and `adb start-server` cannot
+    // reach a device that is not running.
     //
     // WHAT HAS TO HAPPEN, AND WHO DOES IT. Whoever next has a working emulator, in this order:
     //   1. `./gradlew :feature:book:assembleDebugAndroidTest :feature:book:assembleDebug` (no
     //      device needed), then
-    //      `ci/device-lock.sh ./gradlew :feature:book:connectedDebugAndroidTest` -- one class at a
-    //      time while fixing, then the module's whole suite before believing any of it.
-    //   2. Fix what fails. Expect the failures to be in the tests rather than in the screens; two
-    //      are called out in the suites themselves (`SleepTimerRow`'s seven controls in a
-    //      non-scrolling `Row`, and the lazy-list scroll positions the assertions assume).
-    //   3. Only then read `feature/book/build/reports/jacoco/.../jacocoTestReport.xml` with the
-    //      instrumented `.ec` merged in, and add LINE floors with
-    //      `requiresInstrumentedData = true` over `BookshelfScreenKt`, `BookScreenKt`,
-    //      `BookPlayerScreenKt` and `BookCoverKt` -- each minimum a number that run produced, each
-    //      falsified by withholding a test and re-reading the XML, and each falsification written
-    //      down beside it like every other entry in this table.
+    //      `ci/device-lock.sh ./gradlew :feature:book:connectedDebugAndroidTest`, then
+    //      `./gradlew :feature:book:jacocoTestReport`. Confirm the four ratios above still hold
+    //      before trusting them -- they are a measurement of one commit, not a property, and this
+    //      file records twice what a stale recorded number costs the reader who believes it.
+    //   2. For each class, withhold the test(s) that drive it with JUnit 4's **`@Ignore`** -- not
+    //      the `@Disabled` every other falsification in this table names. Those are all JVM-tier
+    //      withholdings and this module's JVM tier is JUnit 5; `src/androidTest` here imports
+    //      `org.junit.Test`, so `@Disabled` is not even on its classpath. Then re-run
+    //      `connectedDebugAndroidTest` (**not** just the report -- see the paragraph above on why
+    //      the `.ec` lies otherwise), re-read the XML, and confirm
+    //      `jacocoTestCoverageVerification` goes BUILD FAILED at the minimum you intend to ship.
+    //   3. Add the four LINE floors with `requiresInstrumentedData = true`, each carrying the
+    //      number its falsification actually dropped to, written down beside it like every other
+    //      entry in this table.
+    //
+    // One thing step 2 should expect, because it decides whether three of these four floors are
+    // worth having at the minimum they look like they deserve: `BookScreenKt` at 0.6707 and
+    // `BookshelfScreenKt` at 0.7188 are a long way below this project's usual 0.90, and the gap is
+    // not slack a test can take up. It is the stateful `BookScreen`/`BookshelfScreen` halves,
+    // which these suites deliberately do not compose at all -- only the `*Content` halves. A floor
+    // set just under the measured ratio gates the stateless half honestly; one set at 0.90 would
+    // be red on the first CI run for a reason no test can fix.
     //
     // Until step 3 happens these classes go on being named by `warnUngatedClasses` on every run,
     // which is the honest signal. The two non-Composable entries above -- `BookPlaybackLauncher`
@@ -6341,40 +6394,73 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // them) are all reported by `warnUngatedClasses` on every run. That is the honest state of
     // affairs and not an oversight.
     //
-    // **STATUS, AS OF THE COMMIT THAT ADDED `feature/requests/src/androidTest`. READ THIS BEFORE
-    // ADDING A FOURTH RULE.**
+    // **STATUS: THE SUITE HAS NOW RUN GREEN, ITS COVERAGE WAS NOT CAPTURED, AND THERE IS STILL NO
+    // FOURTH RULE. READ THIS BEFORE ADDING ONE.**
     //
-    //   - Three instrumented suites now exist -- `RequestsScreenTest`, `IntegrationsScreenTest`
-    //     and `IntegrationsSectionContentTest` -- over the stateless halves of the three surfaces,
-    //     and this module is now on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
-    //     androidTest-compile line.
-    //   - **Not one of those tests has ever been executed.** They were written while the emulator
-    //     was unavailable. The only thing anybody has verified about them is that
-    //     `:feature:requests:compileDebugAndroidTestKotlin` succeeds, which proves they are
-    //     well-formed Kotlin and proves nothing about a single assertion in them.
-    //   - **There is therefore still no fourth rule, and no number.** The three rules above are
-    //     measured from a real JVM report. Nothing below them is.
+    //   - Three instrumented suites exist -- `RequestsScreenTest`, `IntegrationsScreenTest` and
+    //     `IntegrationsSectionContentTest` -- over the stateless halves of the three surfaces, and
+    //     this module is on `.github/workflows/e2e.yml`'s emulator line and `pr.yml`'s
+    //     androidTest-compile line (both re-checked at this commit).
+    //   - **They have now been executed, and they are 42/42 green.** Twice, on 2026-08-31, on the
+    //     shared `muplay37` emulator. The first of those runs found and fixed a real product
+    //     crash -- two `LazyColumn` sections sharing one key -- which is the return on running a
+    //     suite that had only ever been compiled, and is the answer to the paragraph that used to
+    //     stand here saying nothing had ever been executed.
+    //   - The prediction that paragraph carried was wrong in the good direction: `RequestsScreen`
+    //     is a `LazyColumn` and every fixture was sized on the unchecked assumption that it fits
+    //     one screenful. It does. Nothing in the suite failed for that reason.
+    //   - **No coverage number was captured, so there is still no fourth rule.** The three rules
+    //     above remain measured from a real JVM report; nothing below them is, and nothing below
+    //     them is invented to fill the gap.
     //
-    // The obvious fourth rule would be a LINE floor with `requiresInstrumentedData = true` over the
-    // Compose files, as `:feature:setup` and `:feature:castpicker` carry. **It would be worse than
-    // no floor at all**, and now for a sharper reason than before the suites existed: a
-    // `requiresInstrumentedData` minimum is enforced only by `jacocoTestCoverageVerification` in
-    // the emulator job, so a number typed in here without a run behind it would read exactly like
-    // a measurement and be backed by nothing. `:feature:settings` already carries one such entry
-    // as a recorded offence; a second is not an improvement.
+    // WHY THE NUMBER IS MISSING, since "the suite ran green" and "the suite's coverage was
+    // measured" are two different claims and only the first is true here. The first run's `.ec`
+    // was destroyed by a mistake of this task's own making, and it is worth writing down because
+    // it is cheap to repeat: `outputs/code_coverage` is `connectedDebugAndroidTest`'s declared
+    // `@OutputDirectory`, and this task moved that directory aside **while the run was in
+    // progress** -- to check, for `:feature:book`, whether other modules' `.ec` files were paying
+    // for that module's ratios. The run still reported BUILD SUCCESSFUL and `Finished 42 tests`;
+    // it simply had nowhere to put the coverage file, and said so only in a Google-test-platform
+    // stack trace that names `NonInteractiveServerStrategy` and no directory at all. A green
+    // connected run with no `.ec` behind it is the shape to recognise. Do not move a build
+    // directory out from under a running task; stash `.ec` files between runs or not at all.
+    //
+    // The re-run that would have fixed that never got a device: the emulator died between it and
+    // the preceding `:feature:book` run -- `adb devices` empty, adb server still alive, no
+    // `qemu-system-x86_64` for `muplay37` on the host, no host reboot (`last reboot` still reads
+    // 2026-08-27) and no OOM in the kernel log. Note that this is *not* the failure CLAUDE.md
+    // records under "Neither the emulator nor the container survives a session restart", where
+    // qemu survives and only the adb server dies; `adb start-server` does not reach a device that
+    // is not running.
+    //
+    // The obvious fourth rule is still a LINE floor with `requiresInstrumentedData = true` over
+    // the Compose files, as `:feature:setup` and `:feature:castpicker` carry, and it would still
+    // be **worse than no floor at all** until somebody measures it. A `requiresInstrumentedData`
+    // minimum is enforced only by `jacocoTestCoverageVerification` in the emulator job, so a number
+    // typed in here without a run behind it reads exactly like a measurement and is backed by
+    // nothing. `:feature:settings` already carries one such entry as a recorded offence.
     //
     // WHAT HAS TO HAPPEN, AND WHO DOES IT. Whoever next has a working emulator, in this order:
     //   1. `./gradlew :feature:requests:assembleDebugAndroidTest :feature:requests:assembleDebug`
     //      (no device needed), then
-    //      `ci/device-lock.sh ./gradlew :feature:requests:connectedDebugAndroidTest` -- one class
-    //      at a time while fixing, then the module's whole suite before believing any of it.
-    //   2. Fix what fails. Expect the failures to be in the tests: `RequestsScreen` is a
-    //      `LazyColumn` and every fixture in `RequestsScreenTest` is sized on the assumption that
-    //      it fits one screenful, which is an assumption nobody has checked on a device.
-    //   3. Only then read the merged report and add LINE floors with
-    //      `requiresInstrumentedData = true` over `RequestsScreenKt`, `IntegrationsScreenKt` and
-    //      `IntegrationsSectionKt` -- each minimum a number that run produced, each falsified by
-    //      withholding a test and re-reading the XML, each falsification written down beside it.
+    //      `ci/device-lock.sh ./gradlew :feature:requests:connectedDebugAndroidTest`, then
+    //      `./gradlew :feature:requests:jacocoTestReport` -- as separate invocations, and with
+    //      nothing touching `feature/requests/build/outputs/` in between. Confirm
+    //      `feature/requests/build/outputs/code_coverage/.../coverage.ec` exists before reading
+    //      any ratio; that check is the whole lesson above.
+    //   2. Read the per-class LINE ratios for `RequestsScreenKt`, `IntegrationsScreenKt` and
+    //      `IntegrationsSectionKt` out of the merged XML. Expect them well below this project's
+    //      usual 0.90: these suites compose the stateless `*Content` halves only, and the stateful
+    //      halves are not reachable from them at all. `:feature:book`'s block, measured in the same
+    //      session, came out between 0.6707 and 0.9565 for exactly that reason.
+    //   3. Falsify each floor by withholding the covering test with JUnit 4's **`@Ignore`** (this
+    //      module's `src/androidTest` imports `org.junit.Test`; `@Disabled` is JUnit 5 and belongs
+    //      to the JVM-tier falsifications elsewhere in this table) and **re-running
+    //      `connectedDebugAndroidTest`** -- not merely re-reading the report. JaCoCo matches
+    //      execution data to classes by class id, and an `@Disabled` changes only the *test* class,
+    //      so the previous run's `.ec` goes on crediting every line the withheld test used to
+    //      cover and the re-read reproduces the baseline exactly. `Jacoco.kt`'s own header records
+    //      this footgun. Confirm BUILD FAILED, then add the rule with the number the run produced.
     //
     // `di.RequestsFeatureModule` and its three SAM lambdas are NOT covered by the new suites and
     // are not on the list above: they exist to be constructed by Hilt, and these suites
