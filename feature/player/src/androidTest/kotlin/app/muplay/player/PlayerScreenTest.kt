@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.within
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -92,6 +93,22 @@ class PlayerScreenTest {
   private fun leftOf(text: String): Float =
     composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.left
 
+  /**
+   * The same two readings for a control whose accessible name is a `contentDescription` rather than
+   * its own text -- which is every transport button since the design pass. `centreYOf` and not
+   * `topOf`, because the play button is deliberately the tallest thing in the row: two controls
+   * that share a row no longer share a top edge, and asserting that they did would fail on a
+   * layout that is correct.
+   */
+  private fun centreYOf(description: String): Float =
+    composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.center.y
+
+  private fun centreYOfText(text: String): Float =
+    composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.center.y
+
+  private fun leftOfControl(description: String): Float =
+    composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.left
+
   @Test
   fun nothingPlayingSaysSoAndOffersNoTransportControls() {
     show(PlayerUiState.NothingPlaying)
@@ -99,10 +116,10 @@ class PlayerScreenTest {
     composeRule.onNodeWithText(NOTHING_PLAYING_LABEL).assertIsDisplayed()
     // The other half, and the half that matters: a screen that rendered the message *and* a row of
     // dead buttons would pass the assertion above on its own.
-    composeRule.onNodeWithText(PLAY_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(NEXT_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PREVIOUS_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).assertDoesNotExist()
     composeRule.onNodeWithContentDescription(ARTWORK_DESCRIPTION).assertDoesNotExist()
   }
 
@@ -159,8 +176,8 @@ class PlayerScreenTest {
   fun theTransportButtonsFollowWhetherThereIsAnythingEitherSide() {
     show(content(PLAYING.copy(hasPrevious = false, hasNext = true)))
 
-    composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsNotEnabled()
-    composeRule.onNodeWithText(NEXT_LABEL).assertIsEnabled()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).assertIsNotEnabled()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).assertIsEnabled()
   }
 
   /** The other way round, so neither button can be wired to the wrong flag or to a constant. */
@@ -168,24 +185,24 @@ class PlayerScreenTest {
   fun theTransportButtonsFollowTheOtherEndOfTheQueueToo() {
     show(content(PLAYING.copy(hasPrevious = true, hasNext = false)))
 
-    composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsEnabled()
-    composeRule.onNodeWithText(NEXT_LABEL).assertIsNotEnabled()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).assertIsEnabled()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).assertIsNotEnabled()
   }
 
   @Test
   fun theButtonOffersPauseWhilePlaying() {
     show(content(PLAYING.copy(isPlaying = true)))
 
-    composeRule.onNodeWithText(PAUSE_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(PLAY_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertDoesNotExist()
   }
 
   @Test
   fun theButtonOffersPlayWhilePaused() {
     show(content(PLAYING.copy(isPlaying = false)))
 
-    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertDoesNotExist()
   }
 
   /**
@@ -197,13 +214,13 @@ class PlayerScreenTest {
   fun eachTransportControlCallsItsOwnAction() {
     show(content(PLAYING.copy(hasPrevious = true, hasNext = true)))
 
-    composeRule.onNodeWithText(NEXT_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).performClick()
     assertThat(actions).containsExactly("next")
 
-    composeRule.onNodeWithText(PREVIOUS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).performClick()
     assertThat(actions).containsExactly("next", "previous")
 
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     assertThat(actions).containsExactly("next", "previous", "playPause")
   }
 
@@ -317,11 +334,11 @@ class PlayerScreenTest {
 
     // ...and back the other way, to the method that belongs to the control that was tapped.
     controls.playerIsPlaying = true
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     composeRule.waitUntil(WAIT_MILLIS) { controls.calls.contains("pause") }
     assertThat(controls.calls).doesNotContain("play", "next", "previous")
 
-    composeRule.onNodeWithText(NEXT_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).performClick()
     composeRule.waitUntil(WAIT_MILLIS) { controls.calls.contains("next") }
     assertThat(controls.calls).doesNotContain("previous")
   }
@@ -392,8 +409,21 @@ class PlayerScreenTest {
 
     // Positional, not "it rendered": a slot dropped at the top of the screen is a control a user's
     // thumb never finds. Same row as Play, to the right of Next.
-    assertThat(topOf(CAST_SLOT_LABEL)).isEqualTo(topOf(PLAY_LABEL))
-    assertThat(leftOf(CAST_SLOT_LABEL)).isGreaterThan(leftOf(NEXT_LABEL))
+    //
+    // Centre lines rather than top edges, because the design pass made the play button the tallest
+    // control in the row on purpose: the cast slot is a text button of ordinary height beside a
+    // 68dp circle, so their tops are legitimately ~14dp apart while their centres coincide (the
+    // row is `verticalAlignment = CenterVertically`). Comparing tops here would fail on a layout
+    // that is correct.
+    //
+    // Within [SAME_ROW_TOLERANCE_PX], and the number is measured rather than defensive: on
+    // `muplay37` this read **2247.5 vs 2248.5**, one pixel apart, because two controls of
+    // different odd heights centred on one line round to centres a pixel apart. The defect this
+    // assertion exists for -- a slot laid out somewhere other than the transport row -- is
+    // hundreds of pixels, so two is a tolerance that cannot hide it.
+    assertThat(centreYOfText(CAST_SLOT_LABEL))
+      .isCloseTo(centreYOf(PLAY_LABEL), within(SAME_ROW_TOLERANCE_PX))
+    assertThat(leftOf(CAST_SLOT_LABEL)).isGreaterThan(leftOfControl(NEXT_LABEL))
 
     composeRule.onNodeWithText(CAST_SLOT_LABEL).performClick()
     assertThat(actions).contains("cast")
@@ -406,12 +436,20 @@ class PlayerScreenTest {
     // same reason as the test above: `PLAY_LABEL` is what a paused transport row renders.
     show(content(PLAYING.copy(isPlaying = false)))
 
-    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(CAST_SLOT_LABEL).assertDoesNotExist()
     composeRule.onNodeWithText(PLAYING_ON_PREFIX, substring = true).assertDoesNotExist()
   }
 
   private companion object {
+    /**
+     * How far apart two controls' centre lines may be and still be "in the same row".
+     *
+     * Two pixels, measured: see `theCastSlotSitsInTheTransportRowAndIsTappable`. A control in a
+     * different row is off by hundreds.
+     */
+    const val SAME_ROW_TOLERANCE_PX = 2f
+
     /**
      * Stands in for `:feature:castpicker`'s `CastButton`, which this module deliberately cannot see.
      * The slot is a `@Composable () -> Unit`; what goes in it is `:app`'s business.

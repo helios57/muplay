@@ -211,8 +211,8 @@ class PlaybackJourneyTest {
     playTrackNamed(MUSIC_TRACKS[1])
     awaitElapsedAtLeast(2)
 
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
-    awaitLabel(PLAY_LABEL)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
+    awaitControl(PLAY_LABEL)
     val whenPaused = timeReadouts().first
     Thread.sleep(PAUSE_OBSERVATION_MILLIS)
     assertThat(timeReadouts().first)
@@ -238,8 +238,8 @@ class PlaybackJourneyTest {
       secondsOf(timeReadouts().first) == 0
     }
 
-    composeRule.onNodeWithText(PLAY_LABEL).performClick()
-    awaitLabel(PAUSE_LABEL)
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).performClick()
+    awaitControl(PAUSE_LABEL)
     // From a position this test put at zero, so reaching a second is the resume and nothing else.
     awaitElapsedAtLeast(1)
     assertThat(awaitMusicActive(true))
@@ -251,19 +251,19 @@ class PlaybackJourneyTest {
     // its own: with `next()` mutated to `seekToPreviousMediaItem()` this test was green, because
     // the wait for Track 3 was satisfied by the auto-advance a few seconds later. With the queue
     // frozen, the only thing that can change the track is the button.
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
-    awaitLabel(PLAY_LABEL)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
+    awaitControl(PLAY_LABEL)
     val frozenAt = timeReadouts().first
 
     // The middle of a three-track album is the one position where both ends are live.
-    composeRule.onNodeWithText(NEXT_LABEL).assertIsEnabled().performClick()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).assertIsEnabled().performClick()
     awaitLabel(MUSIC_TRACKS[2])
     composeRule.onNodeWithText(MUSIC_TRACKS[1]).assertDoesNotExist()
-    composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsEnabled().performClick()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).assertIsEnabled().performClick()
     awaitLabel(MUSIC_TRACKS[1])
     composeRule.onNodeWithText(MUSIC_TRACKS[2]).assertDoesNotExist()
     // Still paused throughout, so neither step above can have been the queue advancing itself.
-    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
     assertThat(secondsOf(timeReadouts().first))
       .describedAs("the position after two steps, from a queue frozen at '$frozenAt'")
       .isLessThanOrEqualTo(secondsOf(frozenAt))
@@ -293,7 +293,7 @@ class PlaybackJourneyTest {
       .isFalse
     // The app agrees with the system about what happened; otherwise the screen would go on showing
     // Pause over a stopped player.
-    awaitLabel(PLAY_LABEL)
+    awaitControl(PLAY_LABEL)
 
     shell("input keyevent 85")
     awaitOnMain("playback to resume") { controller.isPlaying }
@@ -301,7 +301,7 @@ class PlaybackJourneyTest {
       controller.currentPosition > pausedAt
     }
     assertThat(awaitMusicActive(true)).isTrue
-    awaitLabel(PAUSE_LABEL)
+    awaitControl(PAUSE_LABEL)
   }
 
   /**
@@ -345,7 +345,7 @@ class PlaybackJourneyTest {
     // Back to the foreground, so the rule tears the activity down from a resumed state and the
     // next test does not start behind the launcher.
     shell("am start -n $LAUNCHER_COMPONENT")
-    awaitLabel(PAUSE_LABEL)
+    awaitControl(PAUSE_LABEL)
   }
 
   /**
@@ -384,7 +384,7 @@ class PlaybackJourneyTest {
 
       val (rowY, tapped) = shuffledRowToTap()
       clickRow(tapped, rowY)
-      awaitLabel(PAUSE_LABEL)
+      awaitControl(PAUSE_LABEL)
       awaitOnMain("the session to report what it is playing") {
         controller.mediaMetadata.title != null
       }
@@ -476,8 +476,8 @@ class PlaybackJourneyTest {
   private fun playTrackNamed(title: String) {
     composeRule.onAllNodesWithText(title).notTheMiniPlayer()[0].performClick()
     composeRule.waitUntil("the player screen to open", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
-        composeRule.onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithContentDescription(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
+        composeRule.onAllNodesWithContentDescription(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
   }
 
@@ -485,6 +485,20 @@ class PlaybackJourneyTest {
   private fun awaitLabel(text: String) {
     composeRule.waitUntil("'$text' to appear on screen", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  /**
+   * [awaitLabel], for a control named by its `contentDescription`.
+   *
+   * The transport controls became icons in the design pass and their label constants did not move:
+   * `Play`, `Pause`, `Next` and `Previous` are each control's `contentDescription` now rather than
+   * its text, which is the same accessible name reached through the property a screen reader
+   * actually reads for a graphic. Only the finder changed.
+   */
+  private fun awaitControl(description: String) {
+    composeRule.waitUntil("'$description' to appear on screen", TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithContentDescription(description).fetchSemanticsNodes().isNotEmpty()
     }
   }
 

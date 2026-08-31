@@ -3,15 +3,14 @@ package app.muplay.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -33,6 +32,11 @@ import coil3.request.ImageRequest
  * already-built URL by the media session and keys on a media id. Consolidating the two into
  * `:core:designsystem` is a later refactor with two call sites, not a design change — but it must
  * keep both cache-key policies, which is why they are not merged by simply deleting one.
+ *
+ * [shape] defaults to the theme's medium corner and is widened to `large` by the full player, where
+ * this is the picture on the screen rather than a thumbnail beside a title. It is a parameter and
+ * not a constant because those two uses genuinely want different radii and a single number would be
+ * wrong for one of them.
  */
 @Composable
 fun Artwork(
@@ -40,10 +44,11 @@ fun Artwork(
   cacheKey: String?,
   contentDescription: String?,
   modifier: Modifier = Modifier,
+  shape: Shape = MaterialTheme.shapes.medium,
 ) {
   Box(
     modifier = modifier
-      .clip(RoundedCornerShape(12.dp))
+      .clip(shape)
       .background(MaterialTheme.colorScheme.surfaceVariant)
       // On the Box, not on the AsyncImage: the placeholder must carry the same label as the
       // loaded image, or the screen loses its only description of this element for as long as the

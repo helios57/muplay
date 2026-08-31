@@ -5,7 +5,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -112,8 +114,8 @@ class TranscodeSeekJourneyTest {
     // duration in both slots from satisfying either of the two assertions above.
     assertThat(afterSeek).isLessThan(totalSeconds())
 
-    composeRule.onNodeWithText(PLAY_LABEL).performClick()
-    awaitLabel(PAUSE_LABEL)
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).performClick()
+    awaitControl(PAUSE_LABEL)
     awaitElapsedAtLeast(afterSeek + RESUME_ADVANCE_SECONDS, RESUME_WAIT_MILLIS)
     assertThat(elapsedSeconds()).isGreaterThan(afterSeek)
   }
@@ -131,8 +133,8 @@ class TranscodeSeekJourneyTest {
    * did not have it, and passing in the test that did.
    */
   private fun pauseAndConfirmTheClockIsStopped(): Int {
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
-    awaitLabel(PLAY_LABEL)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
+    awaitControl(PLAY_LABEL)
     val whenPaused = elapsedSeconds()
     Thread.sleep(PAUSE_OBSERVATION_MILLIS)
     assertThat(elapsedSeconds())
@@ -161,8 +163,8 @@ class TranscodeSeekJourneyTest {
     }
     composeRule.onNodeWithText(OPUS_TRACK).performClick()
     composeRule.waitUntil("the player screen to open", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
-        composeRule.onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithContentDescription(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
+        composeRule.onAllNodesWithContentDescription(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
     // Audio advancing, not a button pressed. The Opus fixture's first ten seconds are silent by
     // design, and the position readout is what says the decoder is running regardless.
@@ -268,6 +270,16 @@ class TranscodeSeekJourneyTest {
   private fun awaitLabel(text: String) {
     composeRule.waitUntil("'$text' to appear on screen", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  /**
+   * [awaitLabel], for a control named by its `contentDescription` -- the transport buttons, since
+   * the design pass made them icons carrying the same label constants they used to render.
+   */
+  private fun awaitControl(description: String) {
+    composeRule.waitUntil("'$description' to appear on screen", TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithContentDescription(description).fetchSemanticsNodes().isNotEmpty()
     }
   }
 

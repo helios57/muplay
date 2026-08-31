@@ -4,7 +4,9 @@ import androidx.compose.ui.test.SemanticsNodeInteractionCollection
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -165,7 +167,8 @@ private fun ComposeTestRule.bookRows(title: String): SemanticsNodeInteractionCol
 /**
  * The one pause control on screen, whichever surface is showing it.
  *
- * All three of them label it with the same word — `:feature:player`'s full player, `:feature:book`'s
+ * All three of them label it with the same word -- as an icon's `contentDescription` since the
+ * design pass, which is the same accessible name and the same string — `:feature:player`'s full player, `:feature:book`'s
  * book player, and the mini player under everything else — and exactly one of them is ever visible
  * at a time, because `MuPlayApp` hides the mini player on both player screens. The count is
  * therefore asserted rather than assumed: a helper that quietly clicked nothing would make every
@@ -174,11 +177,11 @@ private fun ComposeTestRule.bookRows(title: String): SemanticsNodeInteractionCol
  */
 internal fun ComposeTestRule.pausePlayback() {
   waitUntil("a pause control to be on screen", JOURNEY_TIMEOUT_MILLIS) {
-    onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+    onAllNodesWithContentDescription(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
   }
-  val found = onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().size
+  val found = onAllNodesWithContentDescription(PAUSE_LABEL).fetchSemanticsNodes().size
   check(found == 1) { "expected exactly one \"$PAUSE_LABEL\" control on screen, found $found" }
-  onNodeWithText(PAUSE_LABEL).performClick()
+  onNodeWithContentDescription(PAUSE_LABEL).performClick()
 }
 
 /**

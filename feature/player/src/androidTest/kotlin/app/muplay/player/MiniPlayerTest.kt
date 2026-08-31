@@ -50,8 +50,8 @@ class MiniPlayerTest {
     show(PlayerUiState.NothingPlaying)
 
     composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PLAY_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertDoesNotExist()
   }
 
   @Test
@@ -102,7 +102,7 @@ class MiniPlayerTest {
   fun tappingPlayTogglesPlaybackAndDoesNotOpenThePlayer() {
     show(content(PLAYING.copy(isPlaying = true)))
 
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
 
     assertThat(actions).containsExactly("playPause")
   }
@@ -111,16 +111,16 @@ class MiniPlayerTest {
   fun theBarOffersPauseWhilePlaying() {
     show(content(PLAYING.copy(isPlaying = true)))
 
-    composeRule.onNodeWithText(PAUSE_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(PLAY_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertDoesNotExist()
   }
 
   @Test
   fun theBarOffersPlayWhilePaused() {
     show(content(PLAYING.copy(isPlaying = false)))
 
-    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertDoesNotExist()
   }
 
   /**
@@ -146,7 +146,7 @@ class MiniPlayerTest {
     composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertIsDisplayed()
 
     controls.playerIsPlaying = true
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     composeRule.waitUntil(5_000L) { controls.calls.contains("pause") }
     // Tapping the button did not also navigate -- the same nested-clickable rule as above, now
     // through the real view model.

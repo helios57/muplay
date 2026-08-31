@@ -15,6 +15,10 @@ dependencies {
   // `ExoPlayer` eventually does, and then the process holds two players, one of which is not the
   // one behind the media session.
   implementation(project(":core:media"))
+  // The palette, the type scale, the spacing grid and `MuPlayIcons` -- the transport glyphs this
+  // screen draws. A `:core:` module, so this is not the feature-to-feature edge `settings.gradle.kts`
+  // forbids; it is the same edge `:app` already has.
+  implementation(project(":core:designsystem"))
 
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)

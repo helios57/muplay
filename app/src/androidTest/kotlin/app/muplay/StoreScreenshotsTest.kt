@@ -11,7 +11,9 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -217,12 +219,14 @@ class StoreScreenshotsTest {
     // ---- 6. The player -----------------------------------------------------------------------
     composeRule.onAllNodesWithText(shuffled.first())[FIRST_MATCH].performClick()
     // `Pause` renders only while `isPlaying` is true, so finding it is the assertion that real
-    // audio is coming out of the emulator rather than that a screen was merely navigated to.
+    // audio is coming out of the emulator rather than that a screen was merely navigated to. It is
+    // a `contentDescription` since the design pass made the transport row icons -- the same string,
+    // on the property a screen reader reads for a graphic control.
     await(PLAYBACK_TIMEOUT_MILLIS, "$PAUSE_LABEL, i.e. audio actually coming out") {
-      nodesWithText(PAUSE_LABEL).isNotEmpty()
+      nodesWithControl(PAUSE_LABEL).isNotEmpty()
     }
-    composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(NEXT_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PREVIOUS_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(NEXT_LABEL).assertIsDisplayed()
     capture(output, "06-now-playing")
 
     // ---- 7. The mini player over the library --------------------------------------------------
@@ -241,8 +245,8 @@ class StoreScreenshotsTest {
     // twenty seconds of audio end to end, so a slow run can reach here after the queue has already
     // finished and the bar shows Play. A cleanup step that fails the run *after* every capture is
     // on disk would throw the whole thing away for nothing.
-    if (nodesWithText(PAUSE_LABEL).isNotEmpty()) {
-      composeRule.onAllNodesWithText(PAUSE_LABEL)[FIRST_MATCH].performClick()
+    if (nodesWithControl(PAUSE_LABEL).isNotEmpty()) {
+      composeRule.onAllNodesWithContentDescription(PAUSE_LABEL)[FIRST_MATCH].performClick()
     }
 
     // Derived from what was written, never compared against a total typed here -- a hardcoded
@@ -374,6 +378,10 @@ class StoreScreenshotsTest {
 
   private fun nodesWithText(text: String) = composeRule.onAllNodesWithText(text).fetchSemanticsNodes()
 
+  /** [nodesWithText], for a control named by its `contentDescription` rather than by its text. */
+  private fun nodesWithControl(description: String) =
+    composeRule.onAllNodesWithContentDescription(description).fetchSemanticsNodes()
+
   /** Every content description on screen — the mini player is identified by one, not by text. */
   private fun visibleContentDescriptions(): List<String> =
     composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ContentDescription))
@@ -402,7 +410,12 @@ class StoreScreenshotsTest {
   private fun browseText(): List<String> {
     val furniture = setOf(
       SEARCH_LABEL, SHUFFLE_LABEL, REFRESH_LABEL, SETTINGS_LABEL, BOOKS_LABEL, SHUFFLE_HEADING,
-      OPEN_LABEL, EMPTY_LIBRARY_LABEL, PLAY_LABEL, PAUSE_LABEL,
+      OPEN_LABEL, EMPTY_LIBRARY_LABEL,
+      // `Play`/`Pause` are kept in this set even though the mini player's button is an icon now
+      // and contributes no text node: this list is furniture to ignore, and an entry that matches
+      // nothing costs nothing while an entry that is missing puts a control's word into a
+      // screenshot's caption. `browseText` is a description of a screenshot, not a gate.
+      PLAY_LABEL, PAUSE_LABEL,
     ) + libraryChipLabels()
     return visibleText()
       .filterNot { it in furniture || it.contains(SYNC_MESSAGE_MARKER, ignoreCase = true) }
