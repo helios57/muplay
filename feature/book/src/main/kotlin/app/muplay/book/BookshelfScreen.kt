@@ -2,29 +2,51 @@ package app.muplay.book
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.theme.MuPlayIcons
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.BookSummary
 
 /**
  * The audiobook shelf: what the listener is part-way through, then everything else.
+ *
+ * **A shelf of objects rather than a list of strings**, which is the one job this screen has. Each
+ * book is a card on its own surface with a rounded cover, its title above its author, and -- for a
+ * book that has been started -- a thick progress bar in the audiobook colour with "how much is
+ * left" beside it. Before this pass the rows were a cover, three `Text`s at three sizes and a
+ * hairline indicator, all flush against the page, and the answer to "where am I in this" was a
+ * sentence you had to read.
+ *
+ * The two headings are eyebrows: sentence case, `labelMedium`, wide tracking, in the muted colour,
+ * over a hairline rule. **Not** `text.uppercase()` -- `Continue listening` and `Books` are this
+ * feature's contract with its journeys (see `BookLabels.kt`), and transforming the string would
+ * break every finder while a screen reader spelled the result out. Tracking buys the same effect
+ * and changes no character.
  *
  * Split into a stateful entry point and a **stateless** `BookshelfContent`, the shape every screen
  * in this codebase uses, and here it is what would let a Compose test render the shelf without
@@ -62,9 +84,16 @@ internal fun BookshelfContent(
   modifier: Modifier = Modifier,
 ) {
   when (state) {
-    BookshelfUiState.Loading -> Text(LOADING_BOOKS_LABEL, modifier.padding(16.dp))
-    BookshelfUiState.Empty -> Text(NO_BOOKS_LABEL, modifier.padding(16.dp))
-    is BookshelfUiState.Content -> LazyColumn(modifier.fillMaxSize()) {
+    BookshelfUiState.Loading -> Message(LOADING_BOOKS_LABEL, modifier)
+    BookshelfUiState.Empty -> Message(NO_BOOKS_LABEL, modifier)
+    is BookshelfUiState.Content -> LazyColumn(
+      modifier = modifier.fillMaxSize(),
+      contentPadding = PaddingValues(
+        horizontal = MuPlaySpacing.lg,
+        vertical = MuPlaySpacing.md,
+      ),
+      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+    ) {
       // Both headers are conditional, and both conditions are real: a listener who has started
       // everything has no second group, and one who has started nothing has no first. A header
       // over an empty list is a heading for nothing.
@@ -84,9 +113,34 @@ internal fun BookshelfContent(
   }
 }
 
+/** Loading, and "no audiobooks yet": one sentence, centred, in the muted voice. */
+@Composable
+private fun Message(text: String, modifier: Modifier) {
+  Box(
+    modifier = modifier.fillMaxSize().padding(MuPlaySpacing.xxl),
+    contentAlignment = Alignment.Center,
+  ) {
+    Text(
+      text = text,
+      style = MaterialTheme.typography.bodyLarge,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      textAlign = TextAlign.Center,
+    )
+  }
+}
+
 @Composable
 private fun SectionHeader(text: String) {
-  Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(
+      start = MuPlaySpacing.xs,
+      top = MuPlaySpacing.lg,
+      bottom = MuPlaySpacing.xs,
+    ),
+  )
 }
 
 @Composable
@@ -96,45 +150,101 @@ private fun BookRow(
   onResume: (String) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
 ) {
-  Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable { onBookClick(book.bookId) }
-      .padding(horizontal = 16.dp, vertical = 8.dp),
-    horizontalArrangement = Arrangement.spacedBy(12.dp),
-    verticalAlignment = Alignment.CenterVertically,
+  // `Surface` for the card, and the click on the `Row` inside it rather than on the `Surface`
+  // itself. That is a semantics decision, not a style one: `Surface(onClick = ...)` merges its
+  // descendants, which would fold each row's title, author, time-left and `Resume` into one node
+  // and change what every finder in `BookshelfContentTest` resolves to. `Modifier.clickable` does
+  // not merge, so the tree this shelf presents is exactly the one it presented before the design
+  // pass.
+  Surface(
+    shape = MaterialTheme.shapes.medium,
+    color = MaterialTheme.colorScheme.surfaceContainerLow,
+    modifier = Modifier.fillMaxWidth(),
   ) {
-    BookCover(
-      coverArtId = book.coverArtId,
-      sizePx = COVER_THUMBNAIL_PX,
-      // Null: the row already renders the title, and a cover carrying the same string would make
-      // an `onNodeWithContentDescription` in a journey ambiguous and read the book out twice.
-      // `MiniPlayer` makes the same call for the same reason.
-      contentDescription = null,
-      urlProvider = coverArtUrl,
-      modifier = Modifier.size(56.dp),
-    )
-    Column(Modifier.weight(1f)) {
-      Text(book.title, style = MaterialTheme.typography.titleSmall)
-      Text(book.author, style = MaterialTheme.typography.bodySmall)
-      // Only for a book that has been started. A progress bar at zero and "under a minute left"
-      // on every unopened book turns the shelf into a wall of identical rectangles.
-      if (book.hasStarted) {
-        LinearProgressIndicator(
-          // `.toFloat()`: `BookSummary.progressFraction` is a `Double`, and the plan's listing
-          // passed it straight in. It is a Double because it is derived from two `Long`s and
-          // narrowing at the source would lose the distinction between 0.0 and "not quite 0".
-          progress = { book.progressFraction.toFloat() },
-          modifier = Modifier.fillMaxWidth(),
+    Row(
+      modifier = Modifier
+        .clickable { onBookClick(book.bookId) }
+        .padding(MuPlaySpacing.md),
+      horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      BookCover(
+        coverArtId = book.coverArtId,
+        sizePx = COVER_THUMBNAIL_PX,
+        // Null: the row already renders the title, and a cover carrying the same string would make
+        // an `onNodeWithContentDescription` in a journey ambiguous and read the book out twice.
+        // `MiniPlayer` makes the same call for the same reason.
+        contentDescription = null,
+        urlProvider = coverArtUrl,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.size(COVER_THUMBNAIL_DP.dp),
+      )
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
+      ) {
+        Text(
+          text = book.title,
+          style = MaterialTheme.typography.titleSmall,
+          color = MaterialTheme.colorScheme.onSurface,
+          maxLines = TITLE_LINES,
+          overflow = TextOverflow.Ellipsis,
         )
-        Text(formatRemaining(book.remainingMs), style = MaterialTheme.typography.bodySmall)
+        Text(
+          text = book.author,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        // Only for a book that has been started. A progress bar at zero and "under a minute left"
+        // on every unopened book turns the shelf into a wall of identical rectangles.
+        if (book.hasStarted) {
+          LinearProgressIndicator(
+            // `.toFloat()`: `BookSummary.progressFraction` is a `Double`, and the plan's listing
+            // passed it straight in. It is a Double because it is derived from two `Long`s and
+            // narrowing at the source would lose the distinction between 0.0 and "not quite 0".
+            progress = { book.progressFraction.toFloat() },
+            color = MaterialTheme.colorScheme.tertiary,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(top = MuPlaySpacing.xs)
+              .height(PROGRESS_HEIGHT_DP.dp),
+          )
+          Text(
+            text = formatRemaining(book.remainingMs),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.tertiary,
+          )
+        }
       }
-    }
-    if (book.hasStarted) {
-      TextButton(onClick = { onResume(book.bookId) }) { Text(RESUME_LABEL) }
+      if (book.hasStarted) {
+        // Icon **and** text. The glyph is what makes the shelf scannable; the word is what a
+        // journey finds and what makes the action unambiguous for anyone who has not met the
+        // glyph before. `RESUME_LABEL` is unchanged and is still this button's text.
+        FilledTonalButton(
+          onClick = { onResume(book.bookId) },
+          contentPadding = PaddingValues(
+            horizontal = MuPlaySpacing.md,
+            vertical = MuPlaySpacing.sm,
+          ),
+        ) {
+          Icon(
+            MuPlayIcons.Play,
+            contentDescription = null,
+            modifier = Modifier.size(INLINE_GLYPH_DP.dp),
+          )
+          Text(RESUME_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+        }
+      }
     }
   }
 }
 
 /** What the shelf asks the server for. Matches `LibraryScreen`'s album thumbnails. */
 private const val COVER_THUMBNAIL_PX = 128
+private const val COVER_THUMBNAIL_DP = 64
+private const val TITLE_LINES = 2
+private const val PROGRESS_HEIGHT_DP = 5
+private const val INLINE_GLYPH_DP = 16

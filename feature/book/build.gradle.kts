@@ -20,6 +20,10 @@ dependencies {
   // playback through exactly one type, the same way `:feature:library` does, and it renders
   // nothing Media3 hands back.
   implementation(project(":core:media"))
+  // The palette, the type scale, the spacing grid and `MuPlayIcons` -- the transport glyphs these
+  // three screens draw. A `:core:` module, so this is not the feature-to-feature edge
+  // `settings.gradle.kts` forbids; `:feature:player` takes the same edge for the same reason.
+  implementation(project(":core:designsystem"))
 
   // The three screens. Copied from `:feature:library`, which is this module's model in every
   // other respect too -- the Compose BOM arrives with `muplay.android.compose`, so none of these

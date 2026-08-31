@@ -3,10 +3,12 @@ package app.muplay.book
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -71,6 +73,16 @@ class BookContentTest {
    */
   private fun scrollTo(text: String) {
     composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(text))
+  }
+
+  /**
+   * The same, for a control whose accessible name is a `contentDescription` rather than its own
+   * text -- the two speed steppers, since the design pass made them icons. See
+   * `BookPlayerContentTest.scrollToControl` for why this is a second helper and not a widened
+   * first one.
+   */
+  private fun scrollToControl(description: String) {
+    composeRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription(description))
   }
 
   private fun topOf(text: String): Float =
@@ -198,9 +210,9 @@ class BookContentTest {
   fun fasterAndSlowerStepFromTheDisplayedSpeedInOppositeDirections() {
     show(content(settings = bookSettings(speed = 1.5f)))
 
-    scrollTo(FASTER_LABEL)
-    composeRule.onNodeWithText(FASTER_LABEL).performClick()
-    composeRule.onNodeWithText(SLOWER_LABEL).performClick()
+    scrollToControl(FASTER_LABEL)
+    composeRule.onNodeWithContentDescription(FASTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SLOWER_LABEL).performClick()
 
     assertThat(speeds).containsExactly(1.5f + BookSettings.SPEED_STEP, 1.5f - BookSettings.SPEED_STEP)
   }

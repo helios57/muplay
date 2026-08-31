@@ -2,15 +2,14 @@ package app.muplay.book
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -42,6 +41,11 @@ import coil3.request.ImageRequest
  *
  * [urlProvider] is a suspending lookup rather than a plain string because building the URL reads
  * the stored credentials.
+ *
+ * [shape] comes from `MuPlayShapes` rather than from a constant in this file, and it is a parameter
+ * because the three sizes this cover is drawn at want three radii: a 56dp shelf thumbnail, a 96dp
+ * one on a book's own screen, and the 240dp picture on the player. A single number is wrong for at
+ * least two of them, which is what the old fixed 4dp was.
  */
 @Composable
 internal fun BookCover(
@@ -50,11 +54,12 @@ internal fun BookCover(
   contentDescription: String?,
   urlProvider: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
+  shape: Shape = MaterialTheme.shapes.small,
 ) {
   if (coverArtId == null) {
     Box(
       modifier = modifier
-        .clip(RoundedCornerShape(COVER_CORNER_DP.dp))
+        .clip(shape)
         .background(MaterialTheme.colorScheme.surfaceVariant),
     )
     return
@@ -76,9 +81,6 @@ internal fun BookCover(
       .build(),
     contentDescription = contentDescription,
     contentScale = ContentScale.Crop,
-    modifier = modifier.clip(RoundedCornerShape(COVER_CORNER_DP.dp)),
+    modifier = modifier.clip(shape),
   )
 }
-
-/** Matches `:feature:library`'s and `:feature:player`'s cover corners. */
-private const val COVER_CORNER_DP = 4

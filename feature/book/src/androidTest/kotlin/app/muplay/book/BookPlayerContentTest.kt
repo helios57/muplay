@@ -1,18 +1,18 @@
 package app.muplay.book
 
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.media.BookChapter
 import app.muplay.media.SleepTimerController
@@ -117,6 +117,20 @@ class BookPlayerContentTest {
     composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(text))
   }
 
+  /**
+   * The same, for a control whose accessible name is a `contentDescription` rather than its own
+   * text -- which is every transport button since the design pass.
+   *
+   * It has to exist rather than being folded into [scrollTo], and the reason is the trap this
+   * file's own header warns about: `performScrollToNode(hasText(...))` for a control that no longer
+   * carries text fails at the *scroll*, and every `assertDoesNotExist`/`countOf(..) == 0` after it
+   * would then be passing on a node that was never composed. That is the assertion-that-cannot-fail
+   * shape, arriving by way of a helper.
+   */
+  private fun scrollToControl(description: String) {
+    composeRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription(description))
+  }
+
   private fun topOf(text: String): Float =
     composeRule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().positionInRoot.y
 
@@ -129,6 +143,10 @@ class BookPlayerContentTest {
   private fun countOf(text: String): Int =
     composeRule.onAllNodesWithText(text).fetchSemanticsNodes().size
 
+  /** [countOf], for a control named by its `contentDescription`. */
+  private fun countOfControl(description: String): Int =
+    composeRule.onAllNodesWithContentDescription(description).fetchSemanticsNodes().size
+
   // ---- nothing playing -------------------------------------------------------------------------
 
   /**
@@ -140,12 +158,12 @@ class BookPlayerContentTest {
     show(BookPlayerUiState.NothingPlaying)
 
     composeRule.onNodeWithText(NOTHING_PLAYING_LABEL).assertIsDisplayed()
-    composeRule.onNodeWithText(PLAY_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PAUSE_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(NEXT_CHAPTER_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(PREVIOUS_CHAPTER_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(BACK_30_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(FORWARD_30_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(NEXT_CHAPTER_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(PREVIOUS_CHAPTER_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(BACK_30_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithContentDescription(FORWARD_30_LABEL).assertDoesNotExist()
     composeRule.onNodeWithText(SLEEP_TIMER_LABEL).assertDoesNotExist()
     composeRule.onNodeWithContentDescription(BOOK_COVER_LABEL).assertDoesNotExist()
   }
@@ -208,8 +226,8 @@ class BookPlayerContentTest {
     assertThat(countOf("Chapter 2 of 0")).isZero()
     // ...and the transport is still there, because a book whose chapters have not arrived is still
     // playing and still has to be pausable.
-    scrollTo(PAUSE_LABEL)
-    composeRule.onNodeWithText(PAUSE_LABEL).assertIsDisplayed()
+    scrollToControl(PAUSE_LABEL)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertIsDisplayed()
   }
 
   @Test
@@ -260,11 +278,11 @@ class BookPlayerContentTest {
   fun aPlayingBookOffersPauseRatherThanPlay() {
     show(content(isPlaying = true))
 
-    scrollTo(PAUSE_LABEL)
-    composeRule.onNodeWithText(PAUSE_LABEL).assertIsDisplayed()
-    assertThat(countOf(PLAY_LABEL)).isZero()
+    scrollToControl(PAUSE_LABEL)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).assertIsDisplayed()
+    assertThat(countOfControl(PLAY_LABEL)).isZero()
 
-    composeRule.onNodeWithText(PAUSE_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     assertThat(actions).containsExactly("playPause")
   }
 
@@ -272,9 +290,9 @@ class BookPlayerContentTest {
   fun aPausedBookOffersPlayRatherThanPause() {
     show(content(isPlaying = false))
 
-    scrollTo(PLAY_LABEL)
-    composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
-    assertThat(countOf(PAUSE_LABEL)).isZero()
+    scrollToControl(PLAY_LABEL)
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
+    assertThat(countOfControl(PAUSE_LABEL)).isZero()
   }
 
   /**
@@ -286,9 +304,9 @@ class BookPlayerContentTest {
   fun theNudgeButtonsMoveThirtySecondsInOppositeDirections() {
     show(content())
 
-    scrollTo(BACK_30_LABEL)
-    composeRule.onNodeWithText(BACK_30_LABEL).performClick()
-    composeRule.onNodeWithText(FORWARD_30_LABEL).performClick()
+    scrollToControl(BACK_30_LABEL)
+    composeRule.onNodeWithContentDescription(BACK_30_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(FORWARD_30_LABEL).performClick()
 
     assertThat(nudges).containsExactly(-NUDGE_MS, NUDGE_MS)
   }
@@ -297,9 +315,9 @@ class BookPlayerContentTest {
   fun previousAndNextChapterAreWiredToTwoDifferentActions() {
     show(content())
 
-    scrollTo(PREVIOUS_CHAPTER_LABEL)
-    composeRule.onNodeWithText(PREVIOUS_CHAPTER_LABEL).performClick()
-    composeRule.onNodeWithText(NEXT_CHAPTER_LABEL).performClick()
+    scrollToControl(PREVIOUS_CHAPTER_LABEL)
+    composeRule.onNodeWithContentDescription(PREVIOUS_CHAPTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(NEXT_CHAPTER_LABEL).performClick()
 
     assertThat(actions).containsExactly("previous", "next")
   }
@@ -308,10 +326,10 @@ class BookPlayerContentTest {
   fun fasterAndSlowerStepFromThePlayersOwnSpeedInOppositeDirections() {
     show(content(speed = 1.5f))
 
-    scrollTo(FASTER_LABEL)
+    scrollToControl(FASTER_LABEL)
     composeRule.onNodeWithText(formatSpeed(1.5f)).assertIsDisplayed()
-    composeRule.onNodeWithText(FASTER_LABEL).performClick()
-    composeRule.onNodeWithText(SLOWER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(FASTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SLOWER_LABEL).performClick()
 
     assertThat(speeds).containsExactly(1.5f + BookSettings.SPEED_STEP, 1.5f - BookSettings.SPEED_STEP)
   }
@@ -345,13 +363,14 @@ class BookPlayerContentTest {
 
     composeRule.onNodeWithText(SLEEP_TIMER_LABEL).performClick()
 
-    // `assertExists`, not `assertIsDisplayed`, and the reason is a property of the production
-    // layout rather than of this test: `SleepTimerRow` puts six presets and `End of chapter` in a
-    // plain `Row` with no horizontal scroll, which is wider than a phone. Whether the last of them
-    // is reachable by a finger is a real question this suite deliberately does not answer -- see
-    // `choosingEndOfChapterIsADifferentRequestFromAnyDuration` below.
-    composeRule.onNodeWithText(presetLabel(SleepTimerController.PRESETS.first())).assertExists()
-    composeRule.onNodeWithText(END_OF_CHAPTER_LABEL).assertExists()
+    // **`assertIsDisplayed`, and it used to be `assertExists`.** The weaker form was here because
+    // `SleepTimerRow` put six presets and `End of chapter` into a plain, non-scrolling `Row` that
+    // is wider than any phone, so the last of them were clipped off the right edge and could not
+    // be tapped; this file recorded that as an open question rather than answering it. The row is
+    // a `FlowRow` now and wraps, so every option is on screen and this asserts it.
+    scrollTo(END_OF_CHAPTER_LABEL)
+    composeRule.onNodeWithText(presetLabel(SleepTimerController.PRESETS.first())).assertIsDisplayed()
+    composeRule.onNodeWithText(END_OF_CHAPTER_LABEL).assertIsDisplayed()
   }
 
   /**
@@ -366,9 +385,11 @@ class BookPlayerContentTest {
     scrollTo(SLEEP_TIMER_LABEL)
     composeRule.onNodeWithText(SLEEP_TIMER_LABEL).performClick()
 
+    scrollTo(END_OF_CHAPTER_LABEL)
     SleepTimerController.PRESETS.forEach { preset ->
-      // Existence, for the layout reason given above.
-      composeRule.onNodeWithText(presetLabel(preset)).assertExists()
+      // Displayed, not merely composed: whether a half-asleep listener can actually reach the
+      // sixth preset is the whole question this control exists to answer well.
+      composeRule.onNodeWithText(presetLabel(preset)).assertIsDisplayed()
     }
   }
 
@@ -394,16 +415,14 @@ class BookPlayerContentTest {
 
     scrollTo(SLEEP_TIMER_LABEL)
     composeRule.onNodeWithText(SLEEP_TIMER_LABEL).performClick()
-    // **`performSemanticsAction` rather than `performClick`, and this is a compromise worth
-    // reading.** `performClick` refuses a node that is not displayed, and `End of chapter` is the
-    // seventh control in a non-scrolling `Row` that is wider than a phone -- so a `performClick`
-    // here would fail for a layout reason and report it as a wiring failure. What this test is
-    // about is the wiring: end-of-chapter is a different request from every duration. Whether the
-    // control can be reached by a finger is a separate question, and the answer on this fixture is
-    // very likely "no"; that is a defect in `SleepTimerRow`, not in this test, and it needs a
-    // device to confirm before anybody changes the layout.
-    composeRule.onNodeWithText(END_OF_CHAPTER_LABEL)
-      .performSemanticsAction(SemanticsActions.OnClick)
+    // **A real `performClick`, which this could not do before.** It used to be
+    // `performSemanticsAction(OnClick)`, because `performClick` refuses a node that is not
+    // displayed and `End of chapter` was the seventh control in a non-scrolling `Row` wider than
+    // the screen -- so the test could prove the wiring and not the reachability, and said so. The
+    // `FlowRow` wraps, so the control is on screen and a finger can land on it. This is the
+    // assertion that fails against the old layout.
+    scrollTo(END_OF_CHAPTER_LABEL)
+    composeRule.onNodeWithText(END_OF_CHAPTER_LABEL).performClick()
 
     assertThat(actions).containsExactly("endOfChapter")
     assertThat(presets).isEmpty()
@@ -420,11 +439,11 @@ class BookPlayerContentTest {
     val remaining = 125_000L
     show(content(sleepTimer = SleepTimerState.Running(remaining, untilEndOfChapter = false, isFading = false)))
 
-    scrollTo(CANCEL_TIMER_LABEL)
+    scrollToControl(CANCEL_TIMER_LABEL)
     composeRule.onNodeWithText(formatClock(remaining)).assertIsDisplayed()
     assertThat(countOf(SLEEP_TIMER_LABEL)).isZero()
 
-    composeRule.onNodeWithText(CANCEL_TIMER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(CANCEL_TIMER_LABEL).performClick()
     assertThat(actions).containsExactly("cancelTimer")
   }
 
@@ -433,7 +452,7 @@ class BookPlayerContentTest {
     show(content(sleepTimer = SleepTimerState.Off))
 
     scrollTo(SLEEP_TIMER_LABEL)
-    assertThat(countOf(CANCEL_TIMER_LABEL)).isZero()
+    assertThat(countOfControl(CANCEL_TIMER_LABEL)).isZero()
   }
 
   private companion object {
