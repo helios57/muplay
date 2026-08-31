@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
@@ -16,6 +17,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.model.LibraryRole
@@ -120,7 +122,9 @@ class StoreScreenshotsTest {
     val output = outputDirectory()
 
     // ---- 1. Setup ---------------------------------------------------------------------------
-    composeRule.waitUntil(SETTLE_TIMEOUT_MILLIS) { nodesWithText(SERVER_URL_LABEL).isNotEmpty() }
+    await(SETTLE_TIMEOUT_MILLIS, "the setup screen's $SERVER_URL_LABEL field") {
+      nodesWithText(SERVER_URL_LABEL).isNotEmpty()
+    }
     fillSetupForm(SHOWCASE_SERVER_URL, SHOWCASE_USERNAME, SHOWCASE_PASSWORD)
     composeRule.onNodeWithText(SETUP_HEADING).assertIsDisplayed()
     composeRule.onNodeWithText(SHOWCASE_SERVER_URL).assertIsDisplayed()
@@ -130,7 +134,9 @@ class StoreScreenshotsTest {
     clearSetupForm()
     fillSetupForm(serverUrl(), username(), password())
     composeRule.onNodeWithText(CONNECT_LABEL).performClick()
-    composeRule.waitUntil(CONNECT_TIMEOUT_MILLIS) { nodesWithText(CONTINUE_LABEL).isNotEmpty() }
+    await(CONNECT_TIMEOUT_MILLIS, "$CONTINUE_LABEL, i.e. the server having answered") {
+      nodesWithText(CONTINUE_LABEL).isNotEmpty()
+    }
     // The server really answered, and said what it is -- this distinguishes "connected" from a
     // failure message rendered in the same place.
     composeRule.onNodeWithText(CONNECTED_PREFIX, substring = true).assertIsDisplayed()
@@ -141,6 +147,14 @@ class StoreScreenshotsTest {
     composeRule.onNodeWithText(SERVER_URL_LABEL).performTextInput(SHOWCASE_SERVER_URL)
     composeRule.onNodeWithText(USERNAME_LABEL).performTextClearance()
     composeRule.onNodeWithText(USERNAME_LABEL).performTextInput(SHOWCASE_USERNAME)
+    // The password field too, and this one is not cosmetic. `PasswordVisualTransformation` hides
+    // the characters and not the *count*: shot 02 was published showing eight dots, which is the
+    // length of the real password the journey connected with. Harmless for the CI container and
+    // not harmless at all for the human this class invites to re-run it with `--password`. The
+    // credentials were saved by `connect` above and `continueToLibrary` takes none, so overwriting
+    // the field here cannot affect the rest of the walk.
+    composeRule.onNodeWithText(PASSWORD_LABEL).performTextClearance()
+    composeRule.onNodeWithText(PASSWORD_LABEL).performTextInput(SHOWCASE_PASSWORD)
     capture(output, "02-choose-what-each-library-is-for")
 
     // ---- 3. Browse the first library --------------------------------------------------------
@@ -148,17 +162,24 @@ class StoreScreenshotsTest {
     composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick().assertIsSelected()
     composeRule.onNodeWithText(CONTINUE_LABEL).performClick()
 
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) { nodesWithText(SHUFFLE_LABEL).isNotEmpty() }
+    await(SYNC_TIMEOUT_MILLIS, "the library screen's $SHUFFLE_LABEL button") {
+      nodesWithText(SHUFFLE_LABEL).isNotEmpty()
+    }
     // The launch sync has committed, so the album list below is the server's and not an empty
     // mirror. Same signal `JourneyNavigation.reachLibraryScreen` waits on, for the same reason.
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) { runBlocking { journeyWatermarkDao().read() } != null }
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) { nodesWithText(OPEN_LABEL).isNotEmpty() }
+    await(SYNC_TIMEOUT_MILLIS, "a committed sync watermark") {
+      runBlocking { journeyWatermarkDao().read() } != null
+    }
+    await(SYNC_TIMEOUT_MILLIS, "at least one album row ($OPEN_LABEL)") {
+      nodesWithText(OPEN_LABEL).isNotEmpty()
+    }
     composeRule.onNodeWithText(SEARCH_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(SHUFFLE_LABEL).assertIsDisplayed()
 
     val musicLibrary = selectedLibraryLabel()
     val musicBrowse = browseText()
     assertThat(musicBrowse).describedAs("what the $musicLibrary library lists").isNotEmpty()
+    awaitStableFrame()
     capture(output, "03-browse-your-music")
 
     // ---- 4. Browse the other library --------------------------------------------------------
@@ -172,17 +193,18 @@ class StoreScreenshotsTest {
     composeRule.onNodeWithText(otherLibrary).performClick()
     // The list really changed. "Some albums are on screen" would be satisfied by the first
     // library still being displayed, which is exactly the screenshot this must not take.
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) {
+    await(SYNC_TIMEOUT_MILLIS, "a browse list that is not $musicLibrary's") {
       browseText().let { it.isNotEmpty() && it != musicBrowse }
     }
     composeRule.onNodeWithText(otherLibrary).assertIsSelected()
+    awaitStableFrame()
     capture(output, "04-browse-your-audiobooks")
 
     // ---- 5. Library-scoped shuffle -----------------------------------------------------------
     composeRule.onNodeWithText(musicLibrary).performClick()
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) { browseText() == musicBrowse }
+    await(SYNC_TIMEOUT_MILLIS, "$musicLibrary's browse list again") { browseText() == musicBrowse }
     composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
-    composeRule.waitUntil(SYNC_TIMEOUT_MILLIS) { nodesWithText(SHUFFLE_HEADING).isNotEmpty() }
+    await(SYNC_TIMEOUT_MILLIS, "the $SHUFFLE_HEADING heading") { nodesWithText(SHUFFLE_HEADING).isNotEmpty() }
     composeRule.onNodeWithText(SHUFFLE_HEADING).assertIsDisplayed()
     // Nothing was dropped for being outside the library. Had anything been, this screen would
     // carry a line in red, which is not what this asset is for -- and the shuffle would not be
@@ -196,7 +218,9 @@ class StoreScreenshotsTest {
     composeRule.onAllNodesWithText(shuffled.first())[FIRST_MATCH].performClick()
     // `Pause` renders only while `isPlaying` is true, so finding it is the assertion that real
     // audio is coming out of the emulator rather than that a screen was merely navigated to.
-    composeRule.waitUntil(PLAYBACK_TIMEOUT_MILLIS) { nodesWithText(PAUSE_LABEL).isNotEmpty() }
+    await(PLAYBACK_TIMEOUT_MILLIS, "$PAUSE_LABEL, i.e. audio actually coming out") {
+      nodesWithText(PAUSE_LABEL).isNotEmpty()
+    }
     composeRule.onNodeWithText(PREVIOUS_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(NEXT_LABEL).assertIsDisplayed()
     capture(output, "06-now-playing")
@@ -204,9 +228,11 @@ class StoreScreenshotsTest {
     // ---- 7. The mini player over the library --------------------------------------------------
     InstrumentationRegistry.getInstrumentation().uiAutomation
       .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-    composeRule.waitUntil(SETTLE_TIMEOUT_MILLIS) { nodesWithText(SHUFFLE_LABEL).isNotEmpty() }
-    composeRule.waitUntil(SETTLE_TIMEOUT_MILLIS) {
+    await(SETTLE_TIMEOUT_MILLIS, "the $MINI_PLAYER_LABEL bar over the library") {
       composeRule.onAllNodes(hasContentDescriptionOf(MINI_PLAYER_LABEL)).fetchSemanticsNodes().isNotEmpty()
+    }
+    await(SETTLE_TIMEOUT_MILLIS, "the library screen back under it ($SHUFFLE_LABEL)") {
+      nodesWithText(SHUFFLE_LABEL).isNotEmpty()
     }
     capture(output, "07-what-is-playing-follows-you")
 
@@ -228,6 +254,43 @@ class StoreScreenshotsTest {
     assertThat(written.filter { it.length() == 0L })
       .describedAs("empty screenshot files")
       .isEmpty()
+  }
+
+  /**
+   * Blocks until two frames [FRAME_SETTLE_MILLIS] apart are pixel-identical.
+   *
+   * Cover art arrives over the network through Coil, which is not work `waitForIdle` waits for.
+   * Measured across two consecutive runs of this class on one tree:
+   * `04-browse-your-audiobooks.png` came out 120,471 bytes with four blank thumbnails, then
+   * 193,844 bytes with four painted ones. Both runs were green — the assertions are about the
+   * list's *text*, and text is there long before the images are. A published asset that renders
+   * differently every run is the same defect as a flaky test, and a `Thread.sleep` before the
+   * capture would only be a guess about how long a network fetch takes. Two identical frames is
+   * the signal itself.
+   *
+   * Deliberately **not** used before the player captures: the elapsed-time text and the seek bar
+   * move every second there, so no two frames are ever identical and this would do nothing but
+   * time out.
+   */
+  private fun awaitStableFrame(timeoutMillis: Long = FRAME_TIMEOUT_MILLIS) {
+    val deadline = System.currentTimeMillis() + timeoutMillis
+    var previous = frame()
+    while (System.currentTimeMillis() < deadline) {
+      Thread.sleep(FRAME_SETTLE_MILLIS)
+      val current = frame()
+      if (current.sameAs(previous)) return
+      previous = current
+    }
+    throw AssertionError(
+      "the screen was still repainting $timeoutMillis ms after its content settled, so any capture " +
+        "here would be of a half-drawn screen. Something on it is animating, or an image fetch is " +
+        "not finishing.",
+    )
+  }
+
+  private fun frame(): Bitmap {
+    composeRule.waitForIdle()
+    return composeRule.onRoot().captureToImage().asAndroidBitmap()
   }
 
   /** Wipes and recreates the output directory, so a renamed capture leaves no orphan behind. */
@@ -282,7 +345,40 @@ class StoreScreenshotsTest {
     composeRule.onNodeWithText(PASSWORD_LABEL).performTextClearance()
   }
 
+  /**
+   * `composeRule.waitUntil`, except that running out of time says what *was* on screen.
+   *
+   * A bare `ComposeTimeoutException: Condition still not satisfied after 15000 ms` names the line
+   * and nothing else, which is worth almost nothing on a seven-step walk: it cannot distinguish
+   * "the screen never arrived" from "the screen arrived and the label this journey looks for is not
+   * on it any more". This journey met exactly that — see the step-7 note — and the message below is
+   * what settled it in one run.
+   *
+   * The dump goes to logcat as well as into the exception, because the exception message is
+   * truncated in some report formats and the whole semantics tree is worth more than a list of
+   * strings when the answer is "the label is there but something else is over it".
+   */
+  private fun await(timeoutMillis: Long, expected: String, condition: () -> Boolean) {
+    try {
+      composeRule.waitUntil(timeoutMillis, condition)
+    } catch (timeout: ComposeTimeoutException) {
+      composeRule.onRoot().printToLog(LOG_TAG)
+      throw AssertionError(
+        "waited $timeoutMillis ms for $expected and it never appeared.\n" +
+          "  text on screen: ${visibleText().sorted()}\n" +
+          "  content descriptions: ${visibleContentDescriptions().sorted()}",
+        timeout,
+      )
+    }
+  }
+
   private fun nodesWithText(text: String) = composeRule.onAllNodesWithText(text).fetchSemanticsNodes()
+
+  /** Every content description on screen — the mini player is identified by one, not by text. */
+  private fun visibleContentDescriptions(): List<String> =
+    composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ContentDescription))
+      .fetchSemanticsNodes()
+      .flatMap { node -> node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() } }
 
   /** Every string any node on screen renders. */
   private fun visibleText(): List<String> =
@@ -305,8 +401,8 @@ class StoreScreenshotsTest {
    */
   private fun browseText(): List<String> {
     val furniture = setOf(
-      SEARCH_LABEL, SHUFFLE_LABEL, REFRESH_LABEL, SHUFFLE_HEADING, OPEN_LABEL,
-      EMPTY_LIBRARY_LABEL, PLAY_LABEL, PAUSE_LABEL,
+      SEARCH_LABEL, SHUFFLE_LABEL, REFRESH_LABEL, SETTINGS_LABEL, BOOKS_LABEL, SHUFFLE_HEADING,
+      OPEN_LABEL, EMPTY_LIBRARY_LABEL, PLAY_LABEL, PAUSE_LABEL,
     ) + libraryChipLabels()
     return visibleText()
       .filterNot { it in furniture || it.contains(SYNC_MESSAGE_MARKER, ignoreCase = true) }
@@ -336,7 +432,9 @@ class StoreScreenshotsTest {
    * fixture title.
    */
   private fun shuffledTitles(alreadyListed: List<String>): List<String> {
-    val furniture = setOf(SEARCH_LABEL, SHUFFLE_LABEL, REFRESH_LABEL, OPEN_LABEL) + libraryChipLabels()
+    val furniture =
+      setOf(SEARCH_LABEL, SHUFFLE_LABEL, REFRESH_LABEL, SETTINGS_LABEL, BOOKS_LABEL, OPEN_LABEL) +
+        libraryChipLabels()
     return composeRule.onAllNodes(hasClickAction())
       .fetchSemanticsNodes()
       .flatMap { node -> node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text } }
@@ -360,6 +458,9 @@ class StoreScreenshotsTest {
   private companion object {
     const val OUTPUT_DIRECTORY = "store-screenshots"
 
+    /** logcat tag for the semantics dump `await` writes when a step times out. */
+    const val LOG_TAG = "StoreScreenshots"
+
     /** What the screenshots show a user having typed. Never used to authenticate anything. */
     const val SHOWCASE_SERVER_URL = "https://music.example.com"
     const val SHOWCASE_USERNAME = "alice"
@@ -381,6 +482,11 @@ class StoreScreenshotsTest {
     const val SEARCH_LABEL = "Search this library"
     const val SHUFFLE_LABEL = "Shuffle this library"
     const val REFRESH_LABEL = "Refresh library"
+
+    // Both arrived on the library screen after this journey was written, and neither was in the
+    // furniture sets below. See `browseText`'s own note on what that cost.
+    const val SETTINGS_LABEL = "Settings"
+    const val BOOKS_LABEL = "Books"
     const val SHUFFLE_HEADING = "Shuffled"
     const val OPEN_LABEL = "Open"
     const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
@@ -402,6 +508,10 @@ class StoreScreenshotsTest {
     const val MIN_SIDE_PX = 320
     const val MAX_SIDE_PX = 3840
     const val PNG_QUALITY = 100
+
+    /** Long enough for a cover-art fetch over `adb reverse`; see `awaitStableFrame`. */
+    const val FRAME_TIMEOUT_MILLIS = 20_000L
+    const val FRAME_SETTLE_MILLIS = 400L
 
     const val SETTLE_TIMEOUT_MILLIS = 15_000L
     const val CONNECT_TIMEOUT_MILLIS = 30_000L
