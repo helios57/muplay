@@ -60,7 +60,8 @@ MADE FOR LISTENING WITH THE SCREEN OFF
 - Albums play through without gaps
 - Volume levelling from your files' ReplayGain tags
 - The seek bar works even on formats your server re-encodes on the fly
-- A sleep timer that fades down and pauses, by the clock or at the end of the chapter
+- A sleep timer that fades down and pauses, by the clock or at the end of the chapter; shake
+  the phone for five more minutes
 
 AUDIOBOOKS ARE A DIFFERENT INSTRUMENT
 
@@ -102,8 +103,7 @@ WHAT YOU LISTEN TO STAYS YOURS
 
 NOT IN THIS VERSION
 
-MuPlay is young and claims only what it does today. There is no shake gesture to extend the sleep
-timer, no Chromecast support (Sonos and DLNA/UPnP only), no Wear OS app, no Material You or dynamic
+MuPlay is young and claims only what it does today. There is no Chromecast support (Sonos and DLNA/UPnP only), no Wear OS app, no Material You or dynamic
 colour, and no downloading for offline listening — recently played audio is cached, which is much
 weaker.
 Nothing you listen to is ever scrobbled back to your server, and that is a promise, not a gap.
@@ -267,6 +267,7 @@ symbol. It is deliberately a weak check of a strong discipline: it cannot tell y
 | Per-book speed, 0.5x to 3.0x | `core/model/src/main/kotlin/app/muplay/model/BookSettings.kt` | `MAX_SPEED` |
 | Speed and silence skipping reach the real player, per book | `core/media/src/main/kotlin/app/muplay/media/BookSpeedController.kt` | `player.skipSilenceEnabled` |
 | The sleep timer reaches the player the service is actually driving | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | `sleepTimer.attach(` |
+| A shake extends the sleep timer, and the sensor listens only while one is in play | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | `shakeSensor.start` |
 | Playing to Sonos and generic DLNA/UPnP renderers | `core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt` | `SetAVTransportURI` |
 | Renderers are found on the network, by SSDP | `core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt` | `TARGET_MEDIA_RENDERER` |
 | The phone relays the audio, so the speaker gets no credential | `core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt` | `class MediaProxyServer` |
@@ -283,7 +284,6 @@ audit that produced this list.
 
 | Capability | Status in this build |
 |---|---|
-| Shake to extend the sleep timer | The timer itself now works — `MuPlaybackService` attaches it to whichever player is making the sound — but the gesture that extends it does not. `ShakeSensor` is injected by nothing and its `start` is called by nothing, so `SleepTimerController.onShake` has no caller in any `src/main`. |
 | Casting to Chromecast | `core/cast` speaks SSDP and UPnP `AVTransport`, and only those. There is no Google Cast dependency in `gradle/libs.versions.toml` and no `CastContext` anywhere in the tree. Sonos is reached *as* a DLNA renderer, not through SMAPI. |
 | Casting an audiobook | The cast button is in `PlayerScreen`'s slot and `:app` routes a book to `BookPlayerScreen`, which has no cast anything. So the capability exists and a book cannot reach it. |
 | Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. No selection, no pinning, no queue. |

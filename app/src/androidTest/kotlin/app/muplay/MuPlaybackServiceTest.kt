@@ -741,6 +741,60 @@ class MuPlaybackServiceTest {
    * derivations produce the same ids and the same endpoints; only the auth salt differs, and
    * nothing here asserts on one.
    */
+  /**
+   * The shake gesture is **reachable at all**, which until Plan 8 it was not.
+   *
+   * `ShakeSensor` and `ShakeDetector` shipped complete: a threshold in g, a peak window, an
+   * idempotent `start`, seventeen tests between them, all green. And `ShakeSensor` was injected by
+   * nothing -- `start` had no caller in any `src/main` -- so `SleepTimerController.onShake` had no
+   * route to a real jolt and the affordance did not exist for a user. That is the same defect, one
+   * seam further out, as `theSleepTimerTheAppInjectsStopsTheServicesPlayback` above was written
+   * for, and it is invisible to every test that turns the sensor on itself.
+   *
+   * So this asks the real graph for the real singleton and never touches `start`: the only thing
+   * that may register the listener is `MuPlaybackService`'s own collector. Delete that collector
+   * and this fails at the `awaitState` below.
+   *
+   * **What it deliberately does not assert is the sensor going off again**, and that is a property
+   * of the design rather than a gap in the test. The service keeps listening for
+   * `SleepTimerController.GRACE_MS` -- a minute -- after a timer ends, because waking up *just
+   * after* the audio stopped is the ordinary case the grace window exists for. Waiting that out on
+   * a shared emulator would cost a minute of the device lock to observe a `delay`.
+   *
+   * The same minute is why the sensor is stopped **before** the precondition is read rather than
+   * asserted to be off: an earlier class in this process may have left a timer's grace tail
+   * running, and "it happens to be off right now" is exactly the order-dependent premise this
+   * suite's own notes warn about. The transition is what this test is about.
+   */
+  @Test
+  fun theSleepTimerTurnsOnTheShakeSensorThatMakesTheGestureReachable() {
+    setQueueAndPlay(songs.take(3))
+    awaitPositionAtLeast(500L)
+    val timer = sleepTimerController()
+    val sensor = shakeSensor()
+
+    // Every read and write on the main thread, which is where the service's collector runs: the
+    // sensor's listener field is a plain `var`, and the main looper is what orders this against
+    // it.
+    onMain { sensor.stop() }
+    assertThat(onMain { sensor.isListening })
+      .describedAs("with no timer set and the sensor just stopped")
+      .isFalse
+
+    try {
+      onMain { timer.start(SleepTimerRequest.Duration(SLEEP_TIMER_MS)) }
+      awaitState("the shake sensor to be listening while a timer runs") {
+        onMain { sensor.isListening }
+      }
+    } finally {
+      // The controller and the sensor are both process-wide `@Singleton`s: a countdown left
+      // running would pause whichever test runs next, and a registered accelerometer would wake
+      // the CPU for the rest of the run.
+      onMain { timer.cancel() }
+      onMain { sensor.stop() }
+    }
+  }
+
   private fun setQueueAndPlay(items: List<Song>, startIndex: Int = 0): List<MediaItem> {
     runBlocking { PlaybackLauncher(queueRepository(), connection).play(items, startIndex) }
     return runBlocking { queueRepository().mediaItems(PlaybackQueue.of(items, startIndex)) }
@@ -858,6 +912,9 @@ class MuPlaybackServiceTest {
   private fun sleepTimerController() =
     EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java)
       .sleepTimerController()
+
+  private fun shakeSensor() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).shakeSensor()
 
   private fun credentialStore() =
     EntryPointAccessors.fromApplication(context, CredentialStoreEntryPoint::class.java)

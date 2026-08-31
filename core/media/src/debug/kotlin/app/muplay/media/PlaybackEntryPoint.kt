@@ -67,4 +67,16 @@ interface PlaybackEntryPoint {
    * Reached from the running graph, the object under test is the object the app has.
    */
   fun sleepTimerController(): SleepTimerController
+
+  /**
+   * The **application's own** singleton [ShakeSensor] — the one `MuPlaybackService` starts and
+   * stops as the sleep timer comes and goes.
+   *
+   * Here for the same reason [sleepTimerController] is, and against the same defect one seam
+   * further out: `ShakeSensor` had a complete instrumented suite of its own in which the test
+   * called `start` itself, and nothing in any `src/main` ever did — so the gesture was dead in the
+   * shipped app while every test of it was green. Reached from the running graph, the object under
+   * test is the object the app has.
+   */
+  fun shakeSensor(): ShakeSensor
 }

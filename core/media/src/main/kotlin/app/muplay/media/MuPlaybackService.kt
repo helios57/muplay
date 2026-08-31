@@ -19,6 +19,7 @@ import app.muplay.database.AudiobookRepository
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.media.browse.MuPlayLibraryCallback
 import app.muplay.media.cast.CastSessionManager
+import app.muplay.model.SleepTimerState
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.Clock
 import java.util.concurrent.Executor
@@ -27,6 +28,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
@@ -140,6 +143,18 @@ class MuPlaybackService : MediaLibraryService() {
    * acknowledged a timer that could never fire.
    */
   @Inject lateinit var sleepTimer: SleepTimerController
+
+  /**
+   * The accelerometer behind "shake to keep going", listened to only while a timer is in play.
+   *
+   * **This field is the whole feature.** `ShakeSensor` and `ShakeDetector` shipped complete and
+   * fully tested -- a threshold in g, a peak window, an idempotent `start` -- and `ShakeSensor` was
+   * injected by nothing, so `start` had no caller in any `src/main` and
+   * `SleepTimerController.onShake` had no route to a real jolt. `docs/STORE-LISTING.md` disclaimed
+   * the gesture for exactly that reason, and `StoreListingTest` held the disclaimer in place with a
+   * probe over this file's own source. Same shape as `sleepTimer` above, one seam further out.
+   */
+  @Inject lateinit var shakeSensor: ShakeSensor
 
   private var session: MediaLibrarySession? = null
 
@@ -257,6 +272,32 @@ class MuPlaybackService : MediaLibraryService() {
         sleepTimer.attach(active, serviceScope)
       }
     }
+
+    // **The accelerometer follows the timer, and outlives it by the grace window.**
+    //
+    // Listening all the time would be the wrong trade twice over -- a wake-up per sample for a
+    // gesture that means nothing unless a countdown is in play, in an app whose sleep timer exists
+    // for people who are falling asleep. Listening only while `Running` would be wrong in the
+    // other direction, and worse: `SleepTimerController.fire` sets the state to `Off`, and waking
+    // up *just after* the audio stopped is the ordinary case the grace window is for. A sensor
+    // switched off at that instant would refuse every shake the affordance exists to accept.
+    //
+    // `collectLatest`, so a timer set during the tail cancels the wait rather than queueing behind
+    // it. The first emission is `Off` at startup, which spends the grace window delaying and then
+    // stops a sensor that was never started -- `stop` is a no-op on an unregistered listener, and
+    // `ShakeSensorTest` observes that rather than assuming it.
+    serviceScope.launch {
+      sleepTimer.state.collectLatest { state ->
+        if (state is SleepTimerState.Running) {
+          // Idempotent: the countdown emits four times a second, and a `start` per emission that
+          // stacked listeners would wake the CPU harder every second the timer ran.
+          shakeSensor.start { sleepTimer.onShake() }
+        } else {
+          delay(SleepTimerController.GRACE_MS)
+          shakeSensor.stop()
+        }
+      }
+    }
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
@@ -350,6 +391,10 @@ class MuPlaybackService : MediaLibraryService() {
     // of the process, and a `start()` from the book screen after the service died would ramp and
     // pause it.
     sleepTimer.detach()
+    // The sensor is a `@Singleton` too, and an accelerometer left registered by a service that is
+    // going away is a wake-up per sample for the life of the process. The collector above is about
+    // to be cancelled with `serviceScope`, so nothing else would ever turn it off.
+    shakeSensor.stop()
     // Before the scope is cancelled, for the same reason the flush is: cancelling the scope stops
     // the collector anyway, and stopping it here is what lets a recreated service start a fresh one
     // -- `start` is idempotent on a non-null job, so a snapshot never stopped would refuse to

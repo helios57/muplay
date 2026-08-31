@@ -24,8 +24,8 @@ import org.junit.jupiter.api.Test
  *    add a `wearApp(...)` dependency to it
  * 5. every claim names code that still exists — rename a cited file or symbol
  * 6. the description claims nothing this build cannot do — put "sleep timer" in the feature copy
- * 7. what the description disclaims is still absent — inject `ShakeSensor` somewhere, or add a
- *    `:wear:` task to the release workflow
+ * 7. what the description disclaims is still absent — add a `CastContext`, or add a `:wear:` task
+ *    to the release workflow
  *
  * **Rules 4 and 7 were rewritten after they were caught being wrong**, and the way they were wrong
  * is the point. Rule 4 asked whether `settings.gradle.kts` includes a `:wear` module; it does, over
@@ -287,11 +287,13 @@ class StoreListingTest {
     // (the class exists and nothing constructs it, or no module declares it) rather than assumed.
     val banned = listOf(
       // `\bsleep timer\b` was here until Plan 8 Task 6 wired the controller to the service's
-      // player. It came out with the disclaimer row it was derived from -- leaving it would have
-      // forbidden the description from naming a feature that now works, which is the under-claim
-      // this file's other rule exists to catch, expressed as an over-strict ban. The *gesture* is
-      // still absent, so `\bshake\b` stays and is what keeps the timer's copy honest.
-      Regex("""\bshake\b""", RegexOption.IGNORE_CASE),
+      // player, and `\bshake\b` until Plan 8's design pass wired `ShakeSensor` to that same
+      // service. Each came out with the disclaimer row it was derived from: leaving one in would
+      // forbid the description from naming a feature that now works, which is the under-claim this
+      // file's other rule exists to catch, expressed as an over-strict ban. Both are now held from
+      // the *presence* side instead, by rows of the claims table (`sleepTimer.attach(` and
+      // `shakeSensor.start(` in `MuPlaybackService.kt`), which `every claim names code that still
+      // exists` checks on every run.
       Regex("""\bChromecast\b""", RegexOption.IGNORE_CASE),
       Regex("""\bdownload\w*\b""", RegexOption.IGNORE_CASE),
       Regex("""\boffline\b""", RegexOption.IGNORE_CASE),
@@ -523,7 +525,6 @@ class StoreListingTest {
      * probe, write the line that would make it fire and check that it does.
      */
     val ABSENCE_PROBES = listOf(
-      "Shake to extend the sleep timer" to Regex(""": ShakeSensor\b"""),
       // Google Cast's own entry points. `core/cast` is SSDP + UPnP `AVTransport` and touches none
       // of these; a Chromecast implementation could not avoid them.
       "Casting to Chromecast" to Regex("""\bCastContext\b|\bCastPlayer\b|\bMediaRouteButton\b"""),

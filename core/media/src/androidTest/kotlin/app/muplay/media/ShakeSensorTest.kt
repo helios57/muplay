@@ -156,16 +156,24 @@ class ShakeSensorTest {
     // every second the timer runs.
     subject.start { }
     subject.start { }
+    // `isListening` is what `MuPlaybackService`'s collector is observed through -- see
+    // `MuPlaybackServiceTest.theSleepTimerTurnsOnTheShakeSensorThatMakesTheGestureReachable` --
+    // so the flag itself is asserted here, against the class that owns it, rather than only in the
+    // wiring test that trusts it.
+    assertThat(subject.isListening).describedAs("after two starts").isTrue
 
     subject.stop()
+    assertThat(subject.isListening).describedAs("after a stop").isFalse
     // A second stop, and a stop with nothing registered, must both be no-ops rather than throw:
     // `SensorManager.unregisterListener` on an unregistered listener is quietly fine, and this is
     // the only place that is observed rather than assumed.
     subject.stop()
     ShakeSensor(context).stop()
+    assertThat(subject.isListening).describedAs("after a second, redundant stop").isFalse
 
     // Restartable afterwards, which is what makes a second sleep timer work at all.
     subject.start { }
+    assertThat(subject.isListening).describedAs("restarted after a stop").isTrue
     subject.stop()
   }
 

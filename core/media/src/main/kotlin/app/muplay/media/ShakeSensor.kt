@@ -12,6 +12,12 @@ import javax.inject.Singleton
 /**
  * The three lines that turn a `SensorEvent` into three floats, and nothing else.
  *
+ * **Wired from [MuPlaybackService]**, which starts it while a sleep timer is running and stops it a
+ * grace window after one fires. Until Plan 8 that wiring did not exist: this class was injected by
+ * nothing, [start] had no caller in any `src/main`, and [SleepTimerController.onShake] was
+ * therefore unreachable -- so the shake-to-extend affordance did not exist for any user while the
+ * code for it sat here fully tested. See [isListening] for what makes the wiring observable.
+ *
  * Everything that can be wrong about shake detection is in [ShakeDetector], which has no Android in
  * it and is gated on the fast tier. This class exists because `SensorEvent` has no public
  * constructor and its `values` array is package-private to write -- so any logic living here could
@@ -70,6 +76,23 @@ class ShakeSensor @Inject constructor(@ApplicationContext private val context: C
     listener?.let { manager?.unregisterListener(it) }
     listener = null
   }
+
+  /**
+   * Whether a listener is registered right now.
+   *
+   * Exists because the wiring in [MuPlaybackService] is otherwise unobservable. Everything this
+   * class does after `registerListener` is the platform's, so a test of "the app turns the
+   * accelerometer on while a sleep timer is running" has nothing to assert on -- and that is
+   * exactly the shape of defect this feature already shipped once, on the other side of the same
+   * seam: `SleepTimerController.attach` was called from nowhere in any `src/main` and thirteen
+   * green tests handed the controller a player themselves. A boolean the service's own collector
+   * moves is what makes `MuPlaybackServiceTest.theSleepTimerTurnsTheShakeSensorOnAndOffAgain`
+   * able to fail.
+   *
+   * It is also the honest reading of "is the shake gesture live": [start] returns silently on a
+   * device with no accelerometer, so a caller that merely called it has proved nothing.
+   */
+  val isListening: Boolean get() = listener != null
 
   private companion object {
     const val NANOS_PER_MILLI = 1_000_000L
