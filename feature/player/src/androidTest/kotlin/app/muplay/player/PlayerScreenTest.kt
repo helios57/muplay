@@ -384,7 +384,11 @@ class PlayerScreenTest {
 
   @Test
   fun theCastSlotSitsInTheTransportRowAndIsTappable() {
-    showWithCast(content(), castDeviceName = null)
+    // Explicitly NOT playing, because the transport button this row is measured against renders
+    // `PAUSE_LABEL` while `isPlaying` is true and `PLAY_LABEL` only when it is false -- and the
+    // shared `PLAYING` fixture is playing. Written with the default, this asserted the position of
+    // a node that was never on screen.
+    showWithCast(content(PLAYING.copy(isPlaying = false)), castDeviceName = null)
 
     // Positional, not "it rendered": a slot dropped at the top of the screen is a control a user's
     // thumb never finds. Same row as Play, to the right of Next.
@@ -397,9 +401,10 @@ class PlayerScreenTest {
 
   @Test
   fun aScreenWithNoCastingInTheBuildRendersTheTransportRowUnchanged() {
-    // The defaults. `:feature:player` must build and behave with no casting in the tree at all --
-    // this plan's definition of done requires that dropping casting stays two `git rm`s.
-    show(content())
+    // `:feature:player` must build and behave with no casting in the tree at all -- this plan's
+    // definition of done requires that dropping casting stays two `git rm`s. Not playing, for the
+    // same reason as the test above: `PLAY_LABEL` is what a paused transport row renders.
+    show(content(PLAYING.copy(isPlaying = false)))
 
     composeRule.onNodeWithText(PLAY_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(CAST_SLOT_LABEL).assertDoesNotExist()
