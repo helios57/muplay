@@ -3,10 +3,13 @@ package app.muplay
 import android.Manifest
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -170,9 +173,9 @@ class AudiobookChapterJourneyTest {
     // The audiobook player, which is a different instrument from the music one: five transport
     // controls, a speed control and a sleep timer, none of which `PlayerScreen` has.
     composeRule.waitUntil("the audiobook player's own transport", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(NEXT_CHAPTER_LABEL).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithContentDescription(NEXT_CHAPTER_LABEL).fetchSemanticsNodes().isNotEmpty()
     }
-    composeRule.onNodeWithText(PREVIOUS_CHAPTER_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PREVIOUS_CHAPTER_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(SLEEP_TIMER_LABEL).assertIsDisplayed()
 
     awaitOnMain("the book to start decoding") { controller.currentPosition > STARTED_MS }
@@ -184,22 +187,22 @@ class AudiobookChapterJourneyTest {
 
     // Every jump below happens on a *stopped* player, so none of them is something real time could
     // have produced.
-    composeRule.onNodeWithText(NEXT_CHAPTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(NEXT_CHAPTER_LABEL).performClick()
     awaitPositionNear(controller, SECOND_CHAPTER.startMs, "the second chapter's start")
     assertThat(onMain { controller.currentMediaItemIndex })
       .describedAs("\"next chapter\" must be a seek inside one file, never a queue move")
       .isZero
 
-    composeRule.onNodeWithText(NEXT_CHAPTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(NEXT_CHAPTER_LABEL).performClick()
     awaitPositionNear(controller, THIRD_CHAPTER.startMs, "the third chapter's start")
 
-    composeRule.onNodeWithText(PREVIOUS_CHAPTER_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PREVIOUS_CHAPTER_LABEL).performClick()
     awaitPositionNear(controller, SECOND_CHAPTER.startMs, "the second chapter's start again")
     assertThat(onMain { controller.currentMediaItemIndex }).isZero
 
     // The book still plays from where the chapter buttons left it — a player that seeked and then
     // failed to decode satisfies every assertion above.
-    composeRule.onNodeWithText(PLAY_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).performClick()
     awaitOnMain("audio to advance from the chapter that was seeked to") {
       controller.currentPosition > SECOND_CHAPTER.startMs + ADVANCED_MS
     }
@@ -217,6 +220,17 @@ class AudiobookChapterJourneyTest {
   private fun scrollTo(text: String) {
     composeRule.onAllNodes(hasScrollAction())[FIRST_SCROLLABLE]
       .performScrollToNode(hasText(text))
+  }
+
+  /**
+   * The same, for a control named by its `contentDescription` -- the book player's transport,
+   * since the design pass made those icons. A separate helper rather than a widened one, because
+   * `performScrollToNode(hasText(..))` for a control that carries no text fails at the scroll and
+   * every assertion after it would then be about a node that was never composed.
+   */
+  private fun scrollToControl(description: String) {
+    composeRule.onAllNodes(hasScrollAction())[FIRST_SCROLLABLE]
+      .performScrollToNode(hasContentDescription(description))
   }
 
   /**
