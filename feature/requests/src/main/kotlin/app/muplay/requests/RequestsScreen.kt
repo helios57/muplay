@@ -98,7 +98,15 @@ internal fun RequestsScreen(
       item { Text(text = "Searching…", style = MaterialTheme.typography.bodyMedium) }
     }
 
-    items(ready.results, key = { "${it.service.name}:${it.externalId}" }) { candidate ->
+    // The `result:` prefix is load-bearing, not decoration. A `LazyColumn` key must be unique
+    // across the WHOLE list, and this list renders the same logical album twice on the ordinary
+    // path -- once as a search hit and once as the stored request it produced. `MediaRequest.idFor`
+    // builds ids as "${service.name}:$externalId", which is byte-for-byte what this key used to be,
+    // so searching for something you had already asked for threw
+    // `IllegalArgumentException: Key "LIDARR:mb-album-1" was already used` and took the screen down.
+    // Prefixing by section keeps each row's identity stable for animation and scroll position while
+    // making the two sections' key spaces disjoint by construction.
+    items(ready.results, key = { "result:${it.service.name}:${it.externalId}" }) { candidate ->
       CandidateRow(
         candidate = candidate,
         requested = ready.hasRequested(candidate),
@@ -117,7 +125,8 @@ internal fun RequestsScreen(
           modifier = Modifier.testTag("requests:section:${service.name}"),
         )
       }
-      items(rows, key = { it.id }) { request ->
+      // `request:` for the same reason as `result:` above -- see that comment.
+      items(rows, key = { "request:${it.id}" }) { request ->
         RequestRow(request = request, onForget = { onForget(request.id) }, onOpenAlbum = onOpenAlbum)
       }
     }
