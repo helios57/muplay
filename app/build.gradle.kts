@@ -172,4 +172,27 @@ dependencies {
   androidTestImplementation(project(":core:network"))
   androidTestImplementation(libs.androidx.test.rules)
   androidTestImplementation(libs.assertj)
+
+  // Plan 4 Task 10. `AudiobookResumeJourneyTest` and `AudiobookChapterJourneyTest` read the seeded
+  // corpus -- book titles, chapter titles and chapter boundaries -- out of `BookFixtures`, which
+  // parses `ci/probe-chapters.sh`'s ffprobe-derived table. Derived rather than written down: a
+  // hardcoded corpus fact is what turned this repository's whole device tier red the day a fourth
+  // music fixture landed, and `ci/probe-chapters.sh --check` runs in both CI tiers so the table
+  // cannot rot silently.
+  //
+  // The `exclude` is `:core:media`'s, for the reason its own build file records: `:core:testing`
+  // carries `OpenApiFixtureValidator`, whose `implementation(libs.openapi.validator)` stays on a
+  // consumer's *runtime* classpath and drags swagger-parser, jackson and their duplicated
+  // `META-INF` entries into this APK -- the same shape as the `mockwebserver3-junit5`
+  // duplicate-LICENSE.md failure `CLAUDE.md` records. Nothing here references that validator, and
+  // excluding its root artifact takes the whole subtree with it.
+  androidTestImplementation(project(":core:testing")) {
+    exclude(group = "com.atlassian.oai", module = "openapi-request-validator-core")
+  }
+  // `AudiobookResumeJourneyTest` asks Navidrome directly whether it holds a bookmark or a saved
+  // play queue for the book that was just listened to. Declared here because okhttp is
+  // `implementation` in `:core:network` and therefore not on this source set's classpath -- and it
+  // has to be a client of the test's own anyway: a question asked through `SubsonicClient` would be
+  // answered by the same code the assertion is about.
+  androidTestImplementation(libs.okhttp)
 }

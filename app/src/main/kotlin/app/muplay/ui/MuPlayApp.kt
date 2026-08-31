@@ -88,6 +88,32 @@ private fun MuPlayNavigation(
   val isAudiobook by playerDestinationViewModel.isAudiobook.collectAsStateWithLifecycle()
   val openPlayer = { backStack.add(if (isAudiobook) BookPlayerRoute else PlayerRoute) }
 
+  // **And corrected here once the session has answered**, which is the half that was missing.
+  //
+  // Every caller of `openPlayer` starts playback and opens the player in the same tap --
+  // `viewModel.resume(); onOpenPlayer()` -- and the first of those two launches a coroutine. So
+  // `isAudiobook` above is still describing whatever was playing *before* the tap, and the player
+  // that opens is the previous item's. Measured on a device by `AudiobookResumeJourneyTest`: from a
+  // cold session, tapping a book opened `PlayerScreen` (no chapters, no speed, no sleep timer), and
+  // tapping a music track straight afterwards opened `BookPlayerScreen`, which renders
+  // "Nothing playing" and has no transport at all -- with the mini player hidden underneath it,
+  // because `MuPlayApp` hides it on both player screens. The audiobook player was, in practice,
+  // unreachable.
+  //
+  // A **swap of the top entry**, not a push and not a pop-then-push: the player destination shows
+  // whatever the session is playing (that is why both keys are `data object`s), so the choice
+  // between the two has to follow the session for the same reason the screen's contents do. It
+  // fires only when a player is already on top, so navigating anywhere else is untouched, and it is
+  // idempotent -- the arms are mutually exclusive and each one removes its own trigger.
+  LaunchedEffect(isAudiobook) {
+    val index = backStack.lastIndex
+    when (backStack.lastOrNull()) {
+      PlayerRoute -> if (isAudiobook) backStack[index] = BookPlayerRoute
+      BookPlayerRoute -> if (!isAudiobook) backStack[index] = PlayerRoute
+      else -> Unit
+    }
+  }
+
   // **One `CastViewModel`, hoisted here**, and handed to both the button and the sheet rather than
   // left to each of them to resolve for itself. `hiltViewModel()` answers against the nearest
   // `ViewModelStoreOwner`, and a `NavDisplay` entry brings its own -- so a button inside the player

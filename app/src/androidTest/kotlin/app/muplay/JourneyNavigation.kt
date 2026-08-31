@@ -1,12 +1,18 @@
 package app.muplay
 
+import androidx.compose.ui.test.SemanticsNodeInteractionCollection
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.database.MediaProgressEntryPoint
 import app.muplay.database.SyncWatermarkEntryPoint
+import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.dao.SyncWatermarkDao
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.runBlocking
@@ -111,3 +117,113 @@ private const val AUDIOBOOKS_ROW_CHIP = 1
 
 /** Generous: a first sync fetches every album and every album's tracks over the loopback. */
 private const val JOURNEY_TIMEOUT_MILLIS = 30_000L
+
+// ---- Audiobooks ---------------------------------------------------------------------------------
+
+/**
+ * From the library screen to the audiobook shelf.
+ *
+ * Plan 4 Task 10. Until these helpers existed nothing in `:app` had ever navigated to
+ * [app.muplay.ui.navigation.BookshelfRoute] or [app.muplay.ui.navigation.BookRoute] — both keys
+ * measured **0 lines covered**, and `MuPlayApp`'s own comment beside those two `entry` blocks says
+ * so from the other side.
+ *
+ * The same stance as everything above: what is shared here is *navigation*, and the strings it taps
+ * are duplicated from `:feature:book`'s `BookLabels.kt` rather than imported from it, so a wording
+ * change is caught rather than silently followed.
+ */
+internal fun ComposeTestRule.openBookshelf() {
+  onNodeWithText(BOOKS_LABEL).performClick()
+  waitUntil("the bookshelf to leave its loading state", JOURNEY_TIMEOUT_MILLIS) {
+    onAllNodesWithText(LOADING_BOOKS_LABEL).fetchSemanticsNodes().isEmpty()
+  }
+}
+
+/**
+ * Taps a book on the shelf and waits for its own screen.
+ *
+ * **Not `onNodeWithText(title)`**, and the reason is the mini player: it renders the playing item's
+ * title too, so from the second visit onwards there are *two* nodes carrying a book's name and the
+ * single-node matcher throws before anything is asserted. The mini player's whole `Row` carries
+ * `contentDescription = "Now playing"` (`MiniPlayer` sets it so a journey has a handle on the bar),
+ * which is what tells the two apart — a filter on the *bar*, not on a position on screen, so it
+ * needs no re-measuring at another screen density.
+ */
+internal fun ComposeTestRule.openBookNamed(title: String) {
+  waitUntil("the bookshelf to list \"$title\"", JOURNEY_TIMEOUT_MILLIS) {
+    bookRows(title).fetchSemanticsNodes().isNotEmpty()
+  }
+  bookRows(title)[0].performClick()
+  waitUntil("\"$title\"'s own screen", JOURNEY_TIMEOUT_MILLIS) {
+    onAllNodesWithText(CHAPTERS_HEADING).fetchSemanticsNodes().isNotEmpty()
+  }
+}
+
+private fun ComposeTestRule.bookRows(title: String): SemanticsNodeInteractionCollection =
+  onAllNodesWithText(title).filter(hasContentDescription(MINI_PLAYER_LABEL).not())
+
+/**
+ * The one pause control on screen, whichever surface is showing it.
+ *
+ * All three of them label it with the same word — `:feature:player`'s full player, `:feature:book`'s
+ * book player, and the mini player under everything else — and exactly one of them is ever visible
+ * at a time, because `MuPlayApp` hides the mini player on both player screens. The count is
+ * therefore asserted rather than assumed: a helper that quietly clicked nothing would make every
+ * assertion after it meaningless, which is the failure this repository keeps finding in its own
+ * gates.
+ */
+internal fun ComposeTestRule.pausePlayback() {
+  waitUntil("a pause control to be on screen", JOURNEY_TIMEOUT_MILLIS) {
+    onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()
+  }
+  val found = onAllNodesWithText(PAUSE_LABEL).fetchSemanticsNodes().size
+  check(found == 1) { "expected exactly one \"$PAUSE_LABEL\" control on screen, found $found" }
+  onNodeWithText(PAUSE_LABEL).performClick()
+}
+
+/**
+ * Backs out to the library screen with real system back presses.
+ *
+ * A real `pressBack` and not a node labelled "Back": predictive back is on, and the app's back
+ * affordance is the system gesture rather than a labelled button — looking for text would find
+ * nothing and the failure would read as "the screen did not render".
+ *
+ * The Shuffle check happens **before** each press, never after: a back press on the library screen
+ * finishes the activity, and every Espresso call after that dies with `NoActivityResumedException`
+ * naming nothing that happened here.
+ */
+internal fun ComposeTestRule.pressBackToLibraryScreen() {
+  repeat(MAX_BACK_PRESSES) {
+    if (onAllNodesWithText(SHUFFLE_LABEL).fetchSemanticsNodes().isNotEmpty()) return
+    Espresso.pressBack()
+    waitForIdle()
+  }
+  throw AssertionError(
+    "the library screen was still not on top after $MAX_BACK_PRESSES back presses",
+  )
+}
+
+/** The real singleton [MediaProgressDao] — the table the app itself writes listening positions to. */
+internal fun journeyProgressDao(): MediaProgressDao =
+  EntryPointAccessors.fromApplication(
+    InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+    MediaProgressEntryPoint::class.java,
+  ).mediaProgressDao()
+
+/** The library screen's button into the shelf. `LibraryScreen`'s `BOOKS_LABEL`. */
+private const val BOOKS_LABEL = "Books"
+
+/** `BookshelfScreen`'s loading state. The shelf renders this and nothing else until it has rows. */
+private const val LOADING_BOOKS_LABEL = "Loading books"
+
+/** `BookScreen`'s chapter heading — present on every book, chapters extracted or not. */
+private const val CHAPTERS_HEADING = "Chapters"
+
+/** Shared by `PlayerScreen`, `BookPlayerScreen` and `MiniPlayer`. */
+private const val PAUSE_LABEL = "Pause"
+
+/** `MiniPlayer`'s own accessible name, which is what tells its title apart from a shelf row's. */
+private const val MINI_PLAYER_LABEL = "Now playing"
+
+/** Book player -> book -> shelf -> library is three; the fourth is the margin that reports rather than exits. */
+private const val MAX_BACK_PRESSES = 4
