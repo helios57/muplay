@@ -2036,16 +2036,22 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // left are both real and both driven (`aPlayerWithNothingLoadedWritesNothingAndDoesNotThrow`
     // and `aDiscontinuityOutOfNothingWritesNothing`).
     //
-    // **Re-falsified this round, by withholding a test rather than all of them.** The old record
-    // here -- move the connected `.ec` aside and watch 0.00 fire -- proves only that the rule is
-    // wired, which is the weak half of a falsification and is why this floor could drift four
-    // branches without anything noticing. With `@Ignore` on
-    // `attachMovesAWriterThatWasNeverStartedAndIgnoresThePlayerItAlreadyHolds` and the device suite
-    // **re-run** (an `@Ignore` alone changes only the test class, so JaCoCo matches the untouched
-    // production class in the old `.ec` and reproduces the baseline exactly -- the trap CLAUDE.md
-    // records), this class drops to **26/30 = 0.8667**: "Rule violated for class
+    // **Re-falsified this round, by withholding the two new tests rather than all of them.** The old
+    // record here -- move the connected `.ec` aside and watch 0.00 fire -- proves only that the rule
+    // is wired, which is the weak half of a falsification and is why this floor could drift four
+    // branches without anything noticing.
+    //
+    // `@Ignore` on both `attach` tests **and the device suite re-run** (363 tests, 5 skipped): this
+    // class drops to exactly **26/30 = 0.8667**, reproducing master's number, and
+    // `jacocoTestCoverageVerification` reports "Rule violated for class
     // app.muplay.media.ProgressWriter: branches covered ratio is 0.86, but expected minimum is
-    // 0.90", BUILD FAILED. Restored, and green at 30/30.
+    // 0.90", BUILD FAILED. Restored, green at 30/30.
+    //
+    // **The re-run is not optional and the reason is worth keeping.** An `@Ignore` changes only the
+    // *test* class; the production class is untouched, so JaCoCo matches the old `.ec` by class id
+    // and credits every branch the withheld test covered -- reproducing the baseline exactly, which
+    // reads like a floor that cannot fire. Any `requiresInstrumentedData` floor falsified from disk
+    // alone is a falsification that measured nothing.
     //
     // The all-tests-withheld residual is still recorded, because it is a different claim and both
     // are cheap to state: with the connected `.ec` moved aside, "branches covered ratio is 0.00",
@@ -3018,6 +3024,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // journey, which starts the real service: that builds the callback and connects a controller
     // through it, and `Jacoco.kt` globs every project's `.ec`. So this floor is enforced by two
     // suites, and withholding either one alone is not enough to fire the whole rule.
+    //
+    // **`$onSetMediaItems$2` is inside this glob and took the whole rule red**, at LINE 10/12 =
+    // 0.8333, which is how this floor came to be one of the five failing on master. The two missing
+    // lines were the Assistant's *already-connected* path -- `onSetMediaItems` carrying a
+    // `requestMetadata.searchQuery` instead of a usable media id -- and **nothing in the repository
+    // had ever set `requestMetadata` at all**. `VoiceSearchJourneyTest` drives the *cold* half of
+    // the same feature (an `ACTION_MEDIA_PLAY_FROM_SEARCH` intent into `onStartCommand`) and
+    // `BrowseSearchBrowserTest` calls `spokenQueue` directly, so the feature looked well covered
+    // from either end while the branch joining them was dead. `BrowsePlaybackTest`'s two spoken
+    // tests close it at 12/12, and the first of them pins the *precedence* the source comment
+    // claims rather than only that a query is read: the item carries a real, expandable album id
+    // and the answer is the book the query names.
+    //
+    // Re-falsified this round by withholding those two tests and **re-running the device suite**
+    // (an `@Ignore` alone leaves JaCoCo crediting the old `.ec`, which measures nothing):
+    // `$onSetMediaItems$2` drops to 10/12, "Rule violated for class
+    // app.muplay.media.browse.MuPlayLibraryCallback.onSetMediaItems.2: lines covered ratio is 0.83,
+    // but expected minimum is 0.90", BUILD FAILED. Restored.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -3394,9 +3418,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // It is reachable only by a `replaceLibraryContents` landing **between** `mostRecent`'s three
     // separate reads, which no test can schedule -- untestable rather than impossible, which is the
     // honest way to say it and is not what the source comment said. Falsified by raising the
-    // minimum to 0.90 -- the value it had before this round: "Rule violated for class
-    // app.muplay.media.ResumptionQueue: branches covered ratio is 0.87, but expected minimum is
-    // 0.90", BUILD FAILED. Restored.
+    // Falsified twice, both watched. **By withholding the test**, with the device suite re-run:
+    // 6/8 = 0.7500, "Rule violated for class app.muplay.media.ResumptionQueue: branches covered
+    // ratio is 0.75, but expected minimum is 0.87", BUILD FAILED -- which is master's own number,
+    // so the test is exactly what closes the gap. **And by raising the minimum** to the 0.90 it had
+    // before this round, which is the falsification that matters for the dead arm, since no test
+    // can move it: "branches covered ratio is 0.87, but expected minimum is 0.90", BUILD FAILED.
+    // Both restored.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
