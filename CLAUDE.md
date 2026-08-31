@@ -378,6 +378,18 @@ assertion-that-cannot-fail class, aimed at the gates rather than at the product.
 the number moves.** Do not copy a recorded falsification forward; it is evidence
 of one past run, not a property.
 
+**And a floor can be cured by the very commit that was supposed to test it.**
+`:app`'s bundle LINE floor was failing at 124/138 = 0.8986 for want of a journey
+that navigates to a book. Plan 4 Task 10 wrote that journey — and in the same
+commit fixed a navigation defect the journey found, which added six covered lines
+to `MuPlayApp`. Measured afterwards: with both new journeys **withheld** the
+bundle reads 130/144 = 0.9028, still green. The floor that was meant to be
+enforcing the journeys would have passed without them. When a fix and its test
+land together, withhold the *test* and re-measure; if the floor still clears, the
+floor is not the gate you think it is, and the answer is a narrower rule (there,
+a CLASS floor over the two `NavKey`s whose lines only execute when something
+pushes them) rather than a comment claiming otherwise.
+
 ## Backticked test names do not reach the device tier at all
 
 This project's JVM tier uses `` fun `a name with spaces`() ``. On the **device** tier that fails
@@ -1045,6 +1057,46 @@ already the rule for `connectedDebugAndroidTest` in this file; this is what it c
 when the whole suite is the only thing that can see the bug. And when a device
 failure names a timeout rather than an assertion, suspect process-scoped state
 left behind by an earlier class before suspecting the class that reported it.
+
+## A `media_progress` row is only final once its item stops being current
+
+`ProgressWriter`'s ticker calls `captureCurrent` every five seconds **whether or not
+anything is playing**, and `captureCurrent` writes the position of whatever the player
+says is current. So pausing does not freeze a row: for up to one tick afterwards the
+row can still be rewritten, and the value that lands is the one the pause callbacks
+raced to store. Measured writing Plan 4 Task 10's resume journey, which read the row
+1.5 s after a pause and asserted it again later:
+
+    expected:<6773L> but was:<6785L>      (and, in the second journey, <6475L> vs <6671L>)
+
+Neither is a race in the product. `onPlayWhenReadyChanged` and `onIsPlayingChanged`
+both fire on a pause, both `launch` into the same scope, and the audio sink drains
+between them — so the settled value arrives on the *next tick*, not on the pause.
+
+The fix is not a longer settle. It is to read the row once the book has **stopped being
+the current item** — after music, or another book, has taken the session over. Nothing
+writes a row whose item is not current, so that is the first moment "where the listener
+left it" is a number rather than a moving target. Any journey that wants an exact
+stored position needs this; a tolerance instead would have hidden the two-second rewind
+assertion the same journey exists to make.
+
+## Which player screen opens is decided from state that has not changed yet
+
+`MuPlayApp` chose between `PlayerRoute` and `BookPlayerRoute` from
+`PlaybackState.isAudiobook` **at the moment of the tap**, and every caller does
+`viewModel.resume(); onOpenPlayer()` — the first of which launches a coroutine. So the
+player that opened was always the *previous* item's. Measured on a device from a cold
+session: tapping a book opened `PlayerScreen` (no chapters, no speed, no sleep timer),
+and tapping a music track straight afterwards opened `BookPlayerScreen`, which renders
+"Nothing playing" and has no transport at all — with the mini player hidden underneath
+it, because both player screens hide it. The audiobook player was in practice
+unreachable, and `./gradlew check` was green over all of it: nothing composes the graph
+on the JVM tier.
+
+A `LaunchedEffect(isAudiobook)` now swaps the top entry once the session answers. The
+general shape is worth recognising: **a navigation decision read from a flow that the
+same tap is about to change is always one event stale**, and the only test that can see
+it is one that drives the real screens.
 
 ## The device suite has order-dependent flakes, and the failing test moves between runs
 
