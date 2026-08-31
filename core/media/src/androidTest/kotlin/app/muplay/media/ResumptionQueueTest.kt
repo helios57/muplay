@@ -95,6 +95,34 @@ class ResumptionQueueTest {
     assertThat(queue.songs.map { it.id }).containsExactly("bk-second-p1", "bk-second-p2")
   }
 
+  /**
+   * The `!it.isFinished` half of the filter, actually **evaluated** -- which the test above never
+   * manages, and that is worth reading before trusting either of them.
+   *
+   * `BookSummaries.order` groups the shelf in-progress, then unstarted, then **finished last**, and
+   * `firstOrNull` stops at its first match. So on any shelf that holds an in-progress book at all,
+   * the finished one is never looked at: `aFinishedBookIsNotWhatYouCarryOnWith` passes because the
+   * answer sorts *ahead* of `bk-test`, not because the predicate rejected it. Deleting
+   * `&& !it.isFinished` leaves that test green.
+   *
+   * Measured, and this is how it surfaced: with all eight of this class's other tests running, the
+   * `isFinished == true` arm of this predicate was the one uncovered branch in `ResumptionQueue`'s
+   * BRANCH ratio (6/8, floor 0.90) -- the filter had never once rejected anything.
+   *
+   * Here the finished book is the **only** started book on the shelf, so the loop has to reach it,
+   * ask the question, and reject it. `bk-tail` is a one-file book, so its only file is also its
+   * last and `isFinished` on that row is the whole book finished; `withProgress = false` leaves
+   * every other book unstarted, which is what makes this one the only thing the filter can be asked
+   * about. Delete `&& !it.isFinished` and this returns `bk-tail` instead of null.
+   */
+  @Test
+  fun aShelfWhoseOnlyStartedBookIsFinishedHasNothingToCarryOnWith(): Unit = runBlocking {
+    seed(withProgress = false)
+    store("bk-tail-p1", positionMs = 100_000L, at = 9_000L, finished = true)
+
+    assertThat(subject()).isNull()
+  }
+
   @Test
   fun aBookFinishedOnlyPartWayThroughIsStillWhatYouCarryOnWith(): Unit = runBlocking {
     // The control for the test above. `bk-gamma` carries `isFinished = true` on part one of two --

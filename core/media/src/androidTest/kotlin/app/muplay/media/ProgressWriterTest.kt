@@ -553,6 +553,108 @@ class ProgressWriterTest {
     assertThat(find("ticked")!!.positionMs).isEqualTo(3_333L)
   }
 
+  // ---- attach: the handover's move, and the two guards the handover never takes -----------------
+
+  /**
+   * [ProgressWriter.attach] with the player it **already holds**: the identity guard returns and
+   * nothing moves.
+   *
+   * Measured: `this.player === player` was one of the four uncovered branches that had this class
+   * at 26/30 against a 0.90 BRANCH floor. Nothing in the repository had ever attached a player to
+   * the writer that was already on it, and Media3 hands the same `Player` back often enough that
+   * the guard is what keeps a listener from being removed and re-added underneath an in-flight
+   * event dispatch.
+   *
+   * Read back through [ProgressWriter.flushBlocking], which reads `player` out of the field on the
+   * caller's own thread, so **the row names which player the writer was holding**. That is what
+   * makes this decisive rather than a bare call for the counter's sake: an `attach` that failed to
+   * repoint writes the first player's item, and the two ids are told apart by the assertion.
+   *
+   * Both players are parked and never prepared and the writer is never started, so there is no
+   * ticker and no listener in the process -- the two flushes are the only things that could have
+   * written either row. The `running == false` arms this also takes were already covered, by
+   * `cast/HandoverTest`, which builds its writer and never starts it; the arms nothing covered are
+   * the other three, and [attachMovesTheListenerOfARunningWriterOffTheOldPlayerAndOntoTheNew] is
+   * where they are taken.
+   */
+  @Test
+  fun attachMovesAWriterThatWasNeverStartedAndIgnoresThePlayerItAlreadyHolds() {
+    val (first, subject) = parkedPlayerAndWriter("held-already", 111L)
+    val second = parkedPlayer("attached-later", 222L)
+
+    // The player it already holds. The identity guard returns before touching anything, and the
+    // writer goes on reporting the first player's item.
+    first.onMain {
+      subject.attach(first.player)
+      subject.flushBlocking()
+    }
+
+    assertThat(find("attached-later")).isNull()
+    assertThat(row("held-already").positionMs).isEqualTo(111L)
+
+    // A different player, with nothing running: the field moves and both listener calls are
+    // skipped. `attach` is a move, not a second `start()`.
+    second.onMain {
+      subject.attach(second.player)
+      subject.flushBlocking()
+    }
+
+    assertThat(row("attached-later").positionMs).isEqualTo(222L)
+  }
+
+  /**
+   * [ProgressWriter.attach] on a **running** writer: the listener really moves.
+   *
+   * This is the production shape, and it is the one nothing tested. `MuPlaybackService.onCreate`
+   * builds the writer as `ProgressWriter(player, ..).also { it.start() }` and only *then* hands it
+   * to `CastSessionManager.useProgressWriter`, so every real handover reaches `attach` with a
+   * ticker running. `HandoverTest` builds its writer and never calls `start()`, which takes the
+   * opposite arm of all three guards -- and measured across the whole 357-test device suite,
+   * `HandoverTest` included, `running == true` was uncovered on every one of them.
+   *
+   * What that left untested is the half of `attach` the cast handover actually needs. With no
+   * listener registered there is nothing to move, so
+   * `HandoverTest.theProgressWriterFollowsTheSwitchAndKeepsWritingWhileCast` passes on the field
+   * repoint alone: delete both listener calls in `attach` and it stays green.
+   *
+   * Asserted from **both sides**, because only the pair distinguishes a move from a copy -- a seek
+   * on the player being left must no longer reach the writer, and a seek on the player being joined
+   * must. Two listeners racing for one row is exactly what this method exists to prevent.
+   *
+   * ### Why two seeks each, and why no tick can explain either row
+   *
+   * A discontinuity persists `oldPosition.positionMs` -- the position being *left* -- so a single
+   * `seekTo(1_000)` from a standing start writes **0**, which is the value an empty row would also
+   * carry. The second seek is what makes the number decisive: it leaves 1 000, so 1 000 is a value
+   * only a listener that is really attached could have produced.
+   *
+   * `start()` and `attach` share one main-thread block, so the ticker's first `delay(TICK_MS)`
+   * cannot elapse between them; and from `attach` onwards the ticker reads the *joined* player, so
+   * no tick can write the left player's row at any timing. Both positions stay inside the
+   * five-second fixtures, so neither seek can run the track to its end.
+   */
+  @Test
+  fun attachMovesTheListenerOfARunningWriterOffTheOldPlayerAndOntoTheNew() {
+    val left = preparedButNotPlaying(songs[0], mediaId = "left-behind")
+    val joined = preparedButNotPlaying(songs[1], mediaId = "joined")
+    val subject = ProgressWriter(left.player, dao, clock, scope)
+
+    left.onMain {
+      subject.start()
+      subject.attach(joined.player)
+    }
+
+    // The player it left. Either seek reaching the writer writes a `left-behind` row.
+    left.onMain { left.player.seekTo(1_000L) }
+    left.onMain { left.player.seekTo(3_000L) }
+    // The player it joined.
+    joined.onMain { joined.player.seekTo(1_000L) }
+    joined.onMain { joined.player.seekTo(3_000L) }
+
+    assertThat(awaitRow("joined") { it.positionMs == 1_000L }.positionMs).isEqualTo(1_000L)
+    assertThat(find("left-behind")).isNull()
+  }
+
   // ---- the wiring: real audio, real player -----------------------------------------------------
 
   /**
@@ -670,7 +772,15 @@ class ProgressWriterTest {
   private fun parkedPlayerAndWriter(
     mediaId: String,
     positionMs: Long,
-  ): Pair<PlayerHarness, ProgressWriter> {
+  ): Pair<PlayerHarness, ProgressWriter> =
+    parkedPlayer(mediaId, positionMs).let { it to ProgressWriter(it.player, dao, clock, scope) }
+
+  /**
+   * The player half of [parkedPlayerAndWriter], for the one test that needs a **second** parked
+   * player and no second writer with it -- two writers on one row is the race
+   * [ProgressWriter.attach] exists to avoid, so the attach test must not build one.
+   */
+  private fun parkedPlayer(mediaId: String, positionMs: Long): PlayerHarness {
     val harness = rawHarness()
     harness.onMain {
       harness.player.setMediaItems(
@@ -679,7 +789,7 @@ class ProgressWriterTest {
         positionMs,
       )
     }
-    return harness to ProgressWriter(harness.player, dao, clock, scope)
+    return harness
   }
 
   private fun positionInfoFor(item: MediaItem, positionMs: Long) = Player.PositionInfo(
@@ -819,12 +929,15 @@ class ProgressWriterTest {
   }
 
   /** Prepared so the timeline is real, never played, so the position it reports cannot move. */
-  private fun preparedButNotPlaying(song: Song): PlayerHarness {
+  private fun preparedButNotPlaying(song: Song, mediaId: String = "ticked"): PlayerHarness {
     val built = rawHarness()
     built.onMain {
       built.player.setMediaItem(
         MediaItem.Builder()
-          .setMediaId("ticked")
+          .setMediaId(mediaId)
+          // The cache key stays the **song's** id and does not follow [mediaId]: it keys bytes, and
+          // two players reading one track must share one cache entry. See `MediaCacheTest`; a
+          // request that reaches `MuPlayDataSourceFactory` with no key throws outright.
           .setUri(RealTrackBytes.rawStreamUrl(song))
           .setCustomCacheKey(song.id)
           .build(),

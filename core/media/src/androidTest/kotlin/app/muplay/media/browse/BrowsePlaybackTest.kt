@@ -248,6 +248,89 @@ class BrowsePlaybackTest {
     assertThat(setMediaItem("no-such-song").mediaIds).isEmpty()
   }
 
+  // ---- the Assistant, reaching an app that is already connected ---------------------------------
+
+  /**
+   * `onSetMediaItems` carrying a **search query** instead of a usable id.
+   *
+   * This is what Media3 turns a legacy `playFromSearch` into when the Assistant reaches an app that
+   * is already connected: one item, a placeholder media id, and the spoken words on
+   * `requestMetadata`. `VoiceSearchJourneyTest` drives the *cold* half of the same feature (an
+   * `ACTION_MEDIA_PLAY_FROM_SEARCH` intent into `MuPlaybackService.onStartCommand`) and
+   * `BrowseSearchBrowserTest` calls `spokenQueue` directly -- neither reaches this branch, and
+   * measured, **nothing in the repository did**: `MuPlayLibraryCallback$onSetMediaItems$2` read LINE
+   * 10/12 = 0.8333 against a 0.90 floor and these were the two missing lines.
+   *
+   * The media id here is a real, expandable album row, and the query names a *different* thing. So
+   * this pins the precedence the source comment claims -- the query is read **before** the browse-id
+   * expansion, because that id is a placeholder -- rather than merely that a query is read at all.
+   * Expanding the id instead would answer with Hunky Dory, and that is a different assertion.
+   *
+   * The expectation is read back out of the mirror rather than written down, so a corpus change
+   * moves it instead of breaking it.
+   */
+  @Test
+  fun aSpokenQueryBeatsThePlaceholderIdItArrivesWith() {
+    val spoken = MediaItem.Builder()
+      .setMediaId("muplay/album/al-hunky")
+      .setRequestMetadata(
+        MediaItem.RequestMetadata.Builder().setSearchQuery("Tail Book").build(),
+      )
+      .build()
+
+    val played = onSetMediaItems(listOf(spoken), startIndex = 0)
+
+    assertThat(played.mediaIds).containsExactlyElementsOf(songsOf("bk-tail").map { it.id })
+    assertThat(played.mediaIds).doesNotContainAnyElementsOf(songsOf("al-hunky").map { it.id })
+    // Like every other queue this class answers with: `MuPlayer` discards it and asks the resume
+    // policy, which is why *"play my book"* said out loud resumes.
+    assertThat(played.startPositionMs).isEqualTo(C.TIME_UNSET)
+  }
+
+  /**
+   * The other arm of that answer: a spoken query the library cannot satisfy **at all**.
+   *
+   * `spokenQueue` falls back to "play something rather than nothing" whenever any playable row
+   * exists (`BrowseSearchBrowserTest.aSpokenQueryThatMatchesNothingStillProducesAQueue`), so the
+   * only way to make it return `null` is a library with nothing in it -- which is a real state, and
+   * the one a listener reaches by asking the Assistant for music before the first sync has
+   * finished. An empty queue is the answer; an exception on the future is rendered by Media3 as a
+   * blank screen with no explanation.
+   *
+   * Builds its own graph rather than reusing the seeded one, and closes it here: the class fixture
+   * is deliberately full, and emptying it would change every other test in this file.
+   */
+  @Test
+  fun aSpokenQueryAnEmptyLibraryCannotAnswerIsAnEmptyQueueAndNotAnError() {
+    val empty = BrowseGraph.create(
+      context,
+      withProgress = false,
+      withAudiobooks = false,
+      withMusic = false,
+    )
+    val emptyCallback = empty.callback(context)
+    try {
+      // No media id at all, which is what a placeholder really looks like on the wire.
+      val spoken = MediaItem.Builder()
+        .setRequestMetadata(
+          MediaItem.RequestMetadata.Builder().setSearchQuery("anything at all").build(),
+        )
+        .build()
+
+      val played = played(
+        emptyCallback.onSetMediaItems(session, controller(), listOf(spoken), 0, 0L)
+          .get(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+      )
+
+      assertThat(played.mediaIds).isEmpty()
+      assertThat(played.startIndex).isZero
+      assertThat(played.startPositionMs).isEqualTo(C.TIME_UNSET)
+    } finally {
+      emptyCallback.release()
+      empty.close()
+    }
+  }
+
   // ---- the app's own queue passes through untouched -----------------------------------------------
 
   @Test

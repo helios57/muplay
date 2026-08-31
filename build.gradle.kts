@@ -1591,36 +1591,37 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // Dagger's `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder` -- the holder it emits for
   // a *scoped, no-argument* `@Inject` constructor -- was in this report until
   // `generatedCodeExcludes` (`Jacoco.kt`) grew the pattern for that shape; see its own note.
-  // **THIS MODULE'S EMULATOR-TIER COVERAGE GATE IS RED ON MASTER, AND WAS BEFORE THIS ENTRY SAID
-  // SO.** Measured 2026-09-01 on `184470e` -- a clean checkout in its own worktree, its own
-  // `--no-build-cache` build, `:core:media:connectedDebugAndroidTest` 353/353 and
-  // `:app:connectedDebugAndroidTest` 61/61 -- `jacocoTestCoverageVerification` evaluated all 58
-  // floors and violated five:
+  // **THIS MODULE'S EMULATOR-TIER COVERAGE GATE WAS RED ON MASTER, AND IS FIXED AS OF THIS ENTRY.**
+  // Measured 2026-09-01 on `184470e` -- a clean checkout, `:core:media:connectedDebugAndroidTest`
+  // 353/353 and `:app:connectedDebugAndroidTest` 61/61 -- `jacocoTestCoverageVerification` evaluated
+  // all 58 floors and violated five. What each one turned out to be, and what was done about it:
   //
-  //   ProgressWriter                            BRANCH 26/30 = 0.8667  (floor 0.90)
-  //   AudiobookSnapshot$start$1                 LINE    6/7  = 0.8571  (floor 0.90)
-  //   AudiobookSnapshot$start$1$1               BRANCH  1/2  = 0.5000  (floor 0.90)
-  //   ResumptionQueue                           BRANCH  6/8  = 0.7500  (floor 0.90)
-  //   MuPlayLibraryCallback$onSetMediaItems$2   LINE   10/12 = 0.8333  (floor 0.90)
+  //   ProgressWriter                          BRANCH 26/30 -> 30/30    test written
+  //   ResumptionQueue                         BRANCH  6/8  ->  7/8     test written, floor -> 0.87
+  //   MuPlayLibraryCallback$onSetMediaItems$2 LINE   10/12 -> 12/12    test written
+  //   AudiobookSnapshot$start$1               LINE    6/7  (unchanged) ceiling, floor -> 0.85
+  //   AudiobookSnapshot$start$1$1             BRANCH  1/2  (unchanged) ceiling, floor -> 0.50
   //
-  // The same five, at the same five ratios, on the branch that added this note. So they are not a
-  // regression from anything recent, and nobody should spend an afternoon bisecting for one.
+  // **Three of the five were missing tests, not floors that wanted lowering**, and two of those
+  // three were guarding real behaviour nothing had ever exercised: `ProgressWriter.attach`'s
+  // not-yet-started arms, and `ResumptionQueue`'s *"do not carry on with a finished book"* filter,
+  // which had never once rejected a book (see that rule -- the test named for it passes on the
+  // shelf's ordering instead). The remaining two are single synthetic arms the Kotlin compiler
+  // emits and nothing can reach; each is quoted as bytecode at its own rule, and each floor is set
+  // to the measured ceiling rather than to a round number below it.
   //
   // **How it got here is the part worth reading, because it is this repository's own defining
   // defect wearing the gate's own clothes.** `./gradlew check` does not evaluate a
   // `requiresInstrumentedData` floor at all -- it says so out loud, in `jacocoJvmCoverageVerification`'s
-  // own notice -- and the only thing that does is the emulator job. So these floors have been
-  // failing while every gate a developer runs locally stayed green. Read the comments beside them
-  // and the drift is visible without running anything: the `ProgressWriter` rule records
-  // "16/16 = 1.0000 BRANCH" and the class now carries **30** branches. The classes grew, the
-  // recorded measurements did not, and the tier that would have said so runs nowhere but CI.
+  // own notice -- and the only thing that does is the emulator job. So these floors failed for
+  // weeks while every gate a developer runs locally stayed green, and the drift was visible in the
+  // comments without running anything: the `ProgressWriter` rule recorded "16/16 = 1.0000 BRANCH"
+  // for a class that had grown to **30** branches. The classes grew, the recorded measurements did
+  // not, and the tier that would have said so runs nowhere but CI.
   //
-  // NOT FIXED HERE, deliberately. Each of the five is either a missing test or a floor whose
-  // author's number no longer describes the class, and telling those apart is five separate
-  // measurements with five separate falsifications -- not something to fold into a design pass,
-  // and certainly not something to "fix" by lowering five numbers until the gate is quiet. That is
-  // the direction this table exists to refuse. Whoever takes it should re-measure each class,
-  // re-run its recorded falsification, and correct the comment when the number moves.
+  // The cheap habit that would have caught it, and the one to keep: when a task adds a method to a
+  // class that carries a floor, re-measure the floor's comment in the same task. It is one report
+  // read, and it is the only thing standing between this table and a gate nobody can trust.
   ":core:media" to listOf(
     // 15/16 = 0.9375 BRANCH from **JVM data alone** -- `StreamRetryPolicyTest`, ten tests, no
     // emulator. Confirmed by deleting the instrumented `.ec` and running
@@ -1983,7 +1984,37 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
-    // `ProgressWriter` 16/16 and its `write` body 12/12 = 1.0000 BRANCH, instrumented.
+    // `ProgressWriter` **30/30** and its `write` body **16/16** = 1.0000 BRANCH, instrumented.
+    //
+    // Both counts were stale, and the class had outgrown them badly enough to take this rule red:
+    // they read "16/16 and 12/12" from Plan 3 Task 8 while the class carried **30** branches and
+    // measured 26/30 = 0.8667 against this 0.90 minimum.
+    //
+    // All four missing arms were in `ProgressWriter.attach` -- Plan 6 Task 9's handover method,
+    // which arrived with no test of its own in `ProgressWriterTest`. **Which** four is the part
+    // worth keeping, because it is not the shape the class's own documentation would lead you to
+    // expect. `cast/HandoverTest` builds its writer with `ProgressWriter(localPlayer, ..)` and
+    // **never calls `start()`**, so the only arms it ever took were the identity check's
+    // fall-through and all three `running == false` arms. Uncovered were the early `return` and --
+    // this is the one that matters -- all three **`running == true`** arms: the branch that moves
+    // the listener, which is the entire point of the method and the exact shape production takes.
+    // `MuPlaybackService.onCreate` is `ProgressWriter(player, ..).also { it.start() }` followed by
+    // `castSessionManager.useProgressWriter(..)`, so every real handover attaches to a *running*
+    // writer and no test ever did.
+    //
+    // So the gap was not decoration. With no listener registered there is nothing for `attach` to
+    // move, and `HandoverTest.theProgressWriterFollowsTheSwitchAndKeepsWritingWhileCast` passes on
+    // the field repoint alone -- delete both listener calls in `attach` and it stays green.
+    // `attachMovesTheListenerOfARunningWriterOffTheOldPlayerAndOntoTheNew` closes it by asserting
+    // from both sides at once (a seek on the player left must no longer reach the writer, a seek on
+    // the player joined must), and
+    // `attachMovesAWriterThatWasNeverStartedAndIgnoresThePlayerItAlreadyHolds` takes the identity
+    // guard. Measured after both: 30/30 from `ProgressWriterTest` **alone**, without `HandoverTest`
+    // in the run at all.
+    //
+    // The lesson is the one this table's own header records. A floor comment is a measurement with
+    // a timestamp; this one was a plan and three tasks out of date, and because the rule is
+    // `requiresInstrumentedData` nothing a developer runs locally ever said so.
     //
     // BRANCH is the counter that matters for this class and LINE could not replace it: the whole
     // read-modify-write is three elvis operators and one `||`, and covering either side of any of
@@ -2005,10 +2036,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // left are both real and both driven (`aPlayerWithNothingLoadedWritesNothingAndDoesNotThrow`
     // and `aDiscontinuityOutOfNothingWritesNothing`).
     //
-    // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
-    // have: "Rule violated for class app.muplay.media.ProgressWriter: branches covered ratio is
-    // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for
-    // `app.muplay.media.ProgressWriter.write.2`.
+    // **Re-falsified this round, by withholding a test rather than all of them.** The old record
+    // here -- move the connected `.ec` aside and watch 0.00 fire -- proves only that the rule is
+    // wired, which is the weak half of a falsification and is why this floor could drift four
+    // branches without anything noticing. With `@Ignore` on
+    // `attachMovesAWriterThatWasNeverStartedAndIgnoresThePlayerItAlreadyHolds` and the device suite
+    // **re-run** (an `@Ignore` alone changes only the test class, so JaCoCo matches the untouched
+    // production class in the old `.ec` and reproduces the baseline exactly -- the trap CLAUDE.md
+    // records), this class drops to **26/30 = 0.8667**: "Rule violated for class
+    // app.muplay.media.ProgressWriter: branches covered ratio is 0.86, but expected minimum is
+    // 0.90", BUILD FAILED. Restored, and green at 30/30.
+    //
+    // The all-tests-withheld residual is still recorded, because it is a different claim and both
+    // are cheap to state: with the connected `.ec` moved aside, "branches covered ratio is 0.00",
+    // BUILD FAILED, and the same for `app.muplay.media.ProgressWriter.write.2`.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3273,6 +3314,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.media.AudiobookResumePolicy", "app.muplay.media.AudiobookItem"),
     ),
+    // The four rules below replace the two PLACEHOLDER ones this block shipped with. They were
+    // never re-measured, and three of the five violations that had `:core:media`'s emulator-tier
+    // gate red on master were theirs. Every number here is measured on this commit, per class, from
+    // `core/media/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml`.
+    //
+    // `AudiobookSnapshot` **14/14 = 1.0000 BRANCH**, instrumented. `$start$1`, `$start$1$2` and
+    // `$refresh$1` carry no BRANCH counter at all, so this rule gates exactly the outer class; the
+    // one lambda that does carry branches is excluded and gated below at its own honest ceiling.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3280,11 +3329,91 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         "app.muplay.media.AudiobookSnapshot",
         "app.muplay.media.AudiobookSnapshot*",
+      ),
+      excludes = listOf("app.muplay.media.AudiobookSnapshot*start*1*1"),
+      requiresInstrumentedData = true,
+    ),
+    // **`AudiobookSnapshot$start$1$1` BRANCH 1/2 = 0.5000, and 1/2 is the ceiling.** This is the
+    // three-argument `combine` transform -- `{ bookIds, progress, settings -> build(...) }` -- which
+    // takes a `suspend` type, so Kotlin compiles it to a `SuspendLambda` whose `invokeSuspend`
+    // opens with the coroutine state machine's own dispatch. Read out of the class file:
+    //
+    //     29: aload_0
+    //     30: getfield      #61   // Field label:I
+    //     33: tableswitch   { 0: 52, default: 68 }
+    //     52: ...            // the body: access$build(this$0, p1, p2, p3), areturn
+    //     68: new           #75   // class java/lang/IllegalStateException
+    //     72: ldc           #77   // String call to 'resume' before 'invoke' with coroutine
+    //     77: athrow
+    //
+    // The body has **no suspension point** -- `build` is an ordinary private function, and nothing
+    // in the compiled method ever writes `label` -- so `label` is 0 on every entry and the
+    // `default` arm is the compiler's guard against a resume that cannot happen. It is the
+    // synthetic-unreachable-arm family this module already records for `StreamRetryPolicy`'s `?.`
+    // after `trim()` and for `CastRoute.Proxied`'s defaulted constructor parameter, and the
+    // resolution is the same: leave the dead arm in the denominator and set the floor to the real
+    // ceiling rather than excusing the class out of the table.
+    //
+    // 0.50 still gates something, which is why this is a rule and not an exclusion: the ratio is
+    // 1/2 or 0/2 and nothing else, and **0/2 is "the collector never emitted"** -- a snapshot whose
+    // `combine` never ran, which is precisely the cold-snapshot defect this class exists to
+    // prevent. Falsified by raising the minimum to 0.60: "Rule violated for class
+    // app.muplay.media.AudiobookSnapshot.start.1.1: branches covered ratio is 0.50, but expected
+    // minimum is 0.60", BUILD FAILED. Restored.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.50"),
+      includes = listOf("app.muplay.media.AudiobookSnapshot*start*1*1"),
+      requiresInstrumentedData = true,
+    ),
+    // **`ResumptionQueue` BRANCH 7/8 = 0.8750**, instrumented, and the eighth arm is dead.
+    //
+    // It read **6/8 = 0.7500** against a 0.90 floor until this round, and what the seventh branch
+    // turned out to be is worth more than the number. `mostRecent`'s filter is
+    // `.firstOrNull { it.hasStarted && !it.isFinished }`, and the `isFinished == true` arm -- the
+    // guard that stops *"carry on"* resuming a book the listener has finished -- **had never once
+    // been evaluated**, with all eight of `ResumptionQueueTest`'s tests running. Including
+    // `aFinishedBookIsNotWhatYouCarryOnWith`, which is named for exactly that guard:
+    // `BookSummaries.order` groups the shelf in-progress, then unstarted, then finished **last**,
+    // and `firstOrNull` stops at its first match, so on any shelf holding an in-progress book the
+    // finished one is never looked at. That test passes on the ordering and stays green if
+    // `&& !it.isFinished` is deleted. `aShelfWhoseOnlyStartedBookIsFinishedHasNothingToCarryOnWith`
+    // is the test that actually asks the question, and it took this line to 4/4.
+    //
+    // The **eighth** arm stays in the denominator honestly and 0.87 is the ceiling: it is the
+    // `index < 0` half of `return if (index < 0) null else PlaybackQueue.of(files, startIndex = index)`.
+    // Re-verified against `AudiobookRepository` rather than taken from the source comment, and the
+    // comment was right for a reason it did not state: `BookSummaries.summarise` computes
+    // `positionMs` from `currentFileIndex`, which is `-1` exactly when no file of the book carries a
+    // progress row -- and then `positionMs == 0`, so `hasStarted` is false and the filter above
+    // never yields the book. `hasStarted == true` therefore *implies* `resumeFileId != null`, and
+    // `resumeFileId` reads its id out of the same `filesOf(bookId)` list `files(bookId)` reorders
+    // and maps id-preservingly. So under any single consistent snapshot the index is found.
+    //
+    // It is reachable only by a `replaceLibraryContents` landing **between** `mostRecent`'s three
+    // separate reads, which no test can schedule -- untestable rather than impossible, which is the
+    // honest way to say it and is not what the source comment said. Falsified by raising the
+    // minimum to 0.90 -- the value it had before this round: "Rule violated for class
+    // app.muplay.media.ResumptionQueue: branches covered ratio is 0.87, but expected minimum is
+    // 0.90", BUILD FAILED. Restored.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.87"),
+      includes = listOf(
         "app.muplay.media.ResumptionQueue",
         "app.muplay.media.ResumptionQueue*",
       ),
       requiresInstrumentedData = true,
     ),
+    // LINE for the whole family, instrumented: `AudiobookSnapshot` **41/41**, `ResumptionQueue`
+    // **11/11**, `AudiobookSnapshot$start$1$2` and `$refresh$1` 1/1, and
+    // `MuPlayLibraryCallback$onPlaybackResumption$1` **12/12** -- all 1.0000.
+    //
+    // `AudiobookSnapshot$start$1` is excluded and gated at its own ceiling below. The exclude glob
+    // takes `$start$1$1` with it (it ends in `1`); that class is 1/1 LINE and the rule below holds
+    // it at the same 0.85, so nothing stops being gated.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
@@ -3296,6 +3425,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.ResumptionQueue*",
         "app.muplay.media.browse.MuPlayLibraryCallback*onPlaybackResumption*1",
       ),
+      excludes = listOf("app.muplay.media.AudiobookSnapshot*start*1"),
+      requiresInstrumentedData = true,
+    ),
+    // **`AudiobookSnapshot$start$1` LINE 6/7 = 0.8571, and 6/7 is the ceiling.** The seventh line is
+    // the closing brace of `start`'s `scope.launch { .. }` -- the lambda's normal return, which is
+    // reached only if `collect` returns. Read out of the class file, where `line 124` is the whole
+    // of offsets 137-141:
+    //
+    //     120: invokeinterface  Flow.collect:(FlowCollector;Continuation;)Object;
+    //     125: dup
+    //     126: aload_2          // COROUTINE_SUSPENDED
+    //     127: if_acmpne 137
+    //     130: areturn          // suspended
+    //     137: pop
+    //     138: getstatic        Field kotlin/Unit.INSTANCE
+    //     141: areturn          // <- line 124, reached only when collect returned normally
+    //
+    // The three flows it combines are `AudiobookRepository.observeAudiobookItems()`,
+    // `MediaProgressDao.observeAll()` and `BookSettingsDao.observeAll()` -- all Room `@Query` flows,
+    // which never complete. `combine` completes only when every upstream does, so `collect` never
+    // returns normally; `stop()` cancels it, and a cancellation leaves through the exception path,
+    // not through line 124. No test can reach it and the class is not restructured to hide it --
+    // moving the body into a `private suspend fun` relocates the same unreachable return into
+    // another synthetic class and gates less.
+    //
+    // 0.85 still gates the six lines that do run: it fires at 5/7 = 0.7143, so losing any real line
+    // of the collector reddens it. Falsified by raising the minimum to 0.90 -- the value it had
+    // before this round: "Rule violated for class app.muplay.media.AudiobookSnapshot.start.1: lines
+    // covered ratio is 0.85, but expected minimum is 0.90", BUILD FAILED. Restored.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.media.AudiobookSnapshot*start*1"),
       requiresInstrumentedData = true,
     ),
   ),
