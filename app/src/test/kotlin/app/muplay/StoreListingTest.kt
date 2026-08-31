@@ -14,17 +14,27 @@ import org.junit.jupiter.api.Test
  * therefore the same shape as the rest of this project's gates — hold the written thing against the
  * discoverable thing, and make the scan fail loudly when it finds nothing to scan.
  *
- * Six rules, and what each one is falsified by:
+ * Seven rules, and what each one is falsified by:
  *
  * 1. the copy fits Play's limits — lengthen the short description past 80 characters
  * 2. the fixed-size assets are the exact sizes Play mandates — regenerate the feature graphic at a
  *    different size, or delete it
  * 3. the screenshots, the capture test and the table are one set — add a `capture(...)` call
- * 4. the declared form factors match the build — flip `androidAuto` in `app/build.gradle.kts`
+ * 4. the declared form factors match the build — flip `androidAuto` in `app/build.gradle.kts`, or
+ *    add a `wearApp(...)` dependency to it
  * 5. every claim names code that still exists — rename a cited file or symbol
  * 6. the description claims nothing this build cannot do — put "sleep timer" in the feature copy
+ * 7. what the description disclaims is still absent — name `SleepTimerController` in
+ *    `MuPlaybackService`, or add a `:wear:` task to the release workflow
  *
- * All six were run red before being committed; the measurements are in this task's report.
+ * **Rules 4 and 7 were rewritten after they were caught being wrong**, and the way they were wrong
+ * is the point. Rule 4 asked whether `settings.gradle.kts` includes a `:wear` module; it does, over
+ * a placeholder that renders one word, and obeying it would have put "Wear OS: Yes" into a
+ * published listing. Rule 7's silence-skipping probe was `\.setSkipSilenceEnabled\(`, which Kotlin
+ * never writes for a Java setter — so a shipped feature with a switch on the book screen sat behind
+ * a probe reporting it absent, and the listing went on disclaiming it. Both are the
+ * assertion-that-cannot-fail, aimed at the gate rather than at the product. When you add a probe
+ * here, write the line that would make it fire and check that it does.
  */
 class StoreListingTest {
 
@@ -203,16 +213,30 @@ class StoreListingTest {
   @Test
   fun `the listing declares exactly the form factors the build declares`() {
     val root = repoRoot()
+    // Comments stripped from both, and that direction matters here: a *false* "the build declares
+    // this" forces the document to claim a surface the app does not have, which is the expensive
+    // way round. `VerifyMergedManifestTask`'s required half strips them for the same reason, and
+    // this repository has been bitten four times by a check reading prose.
+    val appBuildFile = withoutComments(File(root, "app/build.gradle.kts").readText())
+    val releaseWorkflow = withoutYamlComments(File(root, RELEASE_WORKFLOW).readText())
     val declaredByTheBuild = mapOf(
       // Task 1's own opt-in, and the line `ConventionTest` already holds against the descriptor it
       // promises. Declaring Auto opens a second review surface with its own screenshot slot, which
       // is why the listing has to say so out loud.
-      "Android Auto" to Regex("""androidAuto\s*=\s*true""")
-        .containsMatchIn(File(root, "app/build.gradle.kts").readText()),
-      // A Wear app is a module, not a flag. The roadmap's `:wear` does not exist yet, and every
-      // mention of Wear in the tree is a forward-looking comment.
-      "Wear OS" to Regex("""include\("[^"]*:wear""")
-        .containsMatchIn(File(root, "settings.gradle.kts").readText()),
+      "Android Auto" to Regex("""androidAuto\s*=\s*true""").containsMatchIn(appBuildFile),
+      // **A Wear app is an artifact, not a directory**, and this rule has been wrong about that
+      // once. It used to probe `include(":wear")` in `settings.gradle.kts`, which is true today --
+      // `:wear` is a real application module with `android.hardware.type.watch`, the phone's own
+      // applicationId and its own version ledger -- and it puts no watch app in front of any user.
+      // `WearApp` renders the single word "MuPlay" behind a KDoc saying a later task replaces it,
+      // nothing declares `wearApp(...)`, `release.yml` assembles and signs `:app` and only `:app`,
+      // and `:core:watchlink` is named by no build file at all. That rule would have pushed a false
+      // "Yes" into a published listing. What Play actually needs is a watch APK, so this asks
+      // whether one is embedded in the phone app or built by the release workflow.
+      "Wear OS" to (
+        Regex("""wearApp\s*\(""").containsMatchIn(appBuildFile) ||
+          Regex(""":wear:\w""").containsMatchIn(releaseWorkflow)
+        ),
       "Android TV" to sourceManifests().any { it.readText().contains("android.software.leanback") },
     )
 
@@ -263,22 +287,14 @@ class StoreListingTest {
     // (the class exists and nothing constructs it, or no module declares it) rather than assumed.
     val banned = listOf(
       Regex("""\bsleep timer\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bSonos\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bDLNA\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bUPnP\b""", RegexOption.IGNORE_CASE),
+      Regex("""\bshake\b""", RegexOption.IGNORE_CASE),
       Regex("""\bChromecast\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bcast(s|ing)?\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bplayback speed\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bchapters?\b""", RegexOption.IGNORE_CASE),
       Regex("""\bdownload\w*\b""", RegexOption.IGNORE_CASE),
       Regex("""\boffline\b""", RegexOption.IGNORE_CASE),
       Regex("""\bWear OS\b""", RegexOption.IGNORE_CASE),
       Regex("""\bMaterial You\b""", RegexOption.IGNORE_CASE),
       Regex("""\bdynamic colou?r\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bLidarr\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bBindery\b""", RegexOption.IGNORE_CASE),
       Regex("""\bscrobbl\w*\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bsilence\b""", RegexOption.IGNORE_CASE),
     )
 
     // The vacuity guard, and it is a strong one: every pattern above must match somewhere in this
@@ -348,13 +364,10 @@ class StoreListingTest {
       .describedAs("the positive control ${PRODUCTION_CONTROL.pattern} -- if this stops matching, every probe below is scanning nothing")
       .isEqualTo(1)
 
-    val settings = File(repoRoot(), "settings.gradle.kts").readText()
     val reachable = ABSENCE_PROBES.filter { (_, probe) ->
       production.any { probe.containsMatchIn(withoutComments(it.readText())) }
-    }.map { it.first } + MODULE_PROBES.filter { (_, include) ->
-      settings.contains(include)
-    }.map { it.first } + PRESENCE_PROBES.filterNot { (_, path, token) ->
-      File(repoRoot(), path).let { it.isFile && it.readText().contains(token) }
+    }.map { it.first } + SCOPED_ABSENCE_PROBES.filter { (_, path, probe) ->
+      probe.containsMatchIn(withoutComments(scopedProbeFile(path).readText()))
     }.map { it.first }
 
     assertThat(reachable)
@@ -369,8 +382,7 @@ class StoreListingTest {
     // the document and a disclaimer cannot arrive without one.
     val disclaimed = tableRows(section(NOT_YET_HEADING)).map { it[NAME_CELL] }
     assertThat(disclaimed).describedAs("rows of $NOT_YET_HEADING").isNotEmpty()
-    val probed = ABSENCE_PROBES.map { it.first } + MODULE_PROBES.map { it.first } +
-      PRESENCE_PROBES.map { it.first }
+    val probed = ABSENCE_PROBES.map { it.first } + SCOPED_ABSENCE_PROBES.map { it.first }
     assertThat(probed.filterNot { name -> disclaimed.any { it.startsWith(name) } })
       .describedAs("probes naming no row of $NOT_YET_HEADING")
       .isEmpty()
@@ -403,6 +415,23 @@ class StoreListingTest {
   private fun withoutComments(text: String): String =
     text.replace(BLOCK_COMMENT, " ").replace(LINE_COMMENT, " ")
 
+  /** `text` with whole-line `#` comments removed, for the YAML the form-factor rule reads. */
+  private fun withoutYamlComments(text: String): String =
+    text.lineSequence().filterNot { it.trimStart().startsWith("#") }.joinToString("\n")
+
+  /**
+   * The file a scoped probe reads, asserted to exist first.
+   *
+   * A probe over a file that is not there reports "absent" for the wrong reason, which is the
+   * scan-that-finds-nothing failure every other rule in this class guards against.
+   */
+  private fun scopedProbeFile(path: String): File =
+    File(repoRoot(), path).also {
+      assertThat(it)
+        .describedAs("$path, which a scoped absence probe reads")
+        .exists()
+    }
+
   /** Every `src/main` Kotlin file in the project. */
   private fun productionSources(): List<File> =
     repoRoot().walkTopDown()
@@ -422,6 +451,7 @@ class StoreListingTest {
     const val LISTING_PATH = "docs/STORE-LISTING.md"
     const val CAPTURE_TEST_PATH = "app/src/androidTest/kotlin/app/muplay/StoreScreenshotsTest.kt"
     const val SCREENSHOT_DIRECTORY = "play/screenshots/phone"
+    const val RELEASE_WORKFLOW = ".github/workflows/release.yml"
 
     const val FIXED_ASSETS_HEADING = "### Fixed-size assets"
     const val SCREENSHOTS_HEADING = "### Phone screenshots"
@@ -464,54 +494,69 @@ class StoreListingTest {
     )
 
     /**
-     * One probe per disclaimed capability, over `src/main` sources only. Each is a *call or type
-     * position*, never a bare name, so the class's own declaration and any comment that mentions it
-     * do not count as a wiring -- which matters, because `MuPlaybackService`'s own comment names
-     * `SleepTimerController.attach` as future work.
+     * Probes over every `src/main` source, one per disclaimed capability. Each is a *call or type
+     * position*, never a bare name, so a class's own declaration and any comment that mentions it
+     * do not count as a wiring.
      *
-     * Measured at the time of writing, against `641ff1c`: `.castTo(` has exactly one caller in the
-     * whole tree and it is `core/media/src/androidTest/.../HandoverTest.kt`; every other pattern
-     * here matches nothing anywhere outside its own declaration.
+     * **Two of the probes this list used to carry could not fire, and both were measured.** A
+     * lane wired the capability, this rule stayed green, and the listing went on disclaiming
+     * something that shipped:
+     *
+     * - `Playback speed` probed `\.setPlaybackSpeed\(`, which *did* fire -- correctly.
+     * - `Silence skipping` probed `\.setSkipSilenceEnabled\(`. `ExoPlayer` exposes that as a Java
+     *   setter, so Kotlin addresses it as the synthetic property `player.skipSilenceEnabled = ...`,
+     *   which is exactly what `BookSpeedController` writes. The regex could never have matched this
+     *   codebase, and silence skipping has been shipping, with a switch on the book screen, behind
+     *   a probe reporting it absent.
+     * - `Sleep timer` probed `SleepTimerController\(`. The class is `internal constructor` and is
+     *   Hilt-injected, so nothing ever writes that. It reported the right answer for the wrong
+     *   reason and would have gone on reporting it after somebody wired the timer up.
+     *
+     * That is this repository's own defining defect aimed at its own gate, so: when you add a
+     * probe, write the line that would make it fire and check that it does.
      */
     val ABSENCE_PROBES = listOf(
-      "Casting" to Regex("""\.castTo\("""),
-      "Sleep timer" to Regex("""SleepTimerController\("""),
       "Shake to extend the sleep timer" to Regex(""": ShakeSensor\b"""),
-      "Playback speed" to Regex("""\.setPlaybackSpeed\("""),
-      "Silence skipping" to Regex("""\.setSkipSilenceEnabled\("""),
-      "Chapter list" to Regex(""": ChapterRepository\b"""),
-      "Downloads" to Regex("""\bDownloadManager\b"""),
+      // Google Cast's own entry points. `core/cast` is SSDP + UPnP `AVTransport` and touches none
+      // of these; a Chromecast implementation could not avoid them.
+      "Casting to Chromecast" to Regex("""\bCastContext\b|\bCastPlayer\b|\bMediaRouteButton\b"""),
+      "Downloads" to Regex("""\bDownloadManager\b|\bDownloadRequest\b|exoplayer\.offline"""),
       // Also the privacy claim from the other side: the listing says MuPlay never reports back what
-      // you played, and `docs/PRIVACY.md` names these three endpoints as deliberately not called.
+      // you played, and `core/network`'s `LocalOnlyProgressTest` fails the build if an endpoint for
+      // it is declared.
       "Scrobbling" to Regex("""\b(scrobble|nowPlaying|savePlayQueue)\b"""),
       "Material You" to Regex("""\bdynamic(Light|Dark)ColorScheme\b"""),
     )
 
     /**
-     * Capabilities whose arrival is a whole module, so `settings.gradle.kts` is the probe.
+     * Absences that are about **one named file**, because a tree-wide scan cannot express them.
      *
-     * `:requests`, not `:feature:requests`: the plan named the latter, and the lane actually
-     * building it is running `:integrations:requests:connectedDebugAndroidTest`. A probe pinned to
-     * the plan's guess at a module path would have watched a name nobody was going to use and
-     * reported absence forever.
+     * Three of these are shapes the tree-wide form gets wrong in opposite directions. The sleep
+     * timer's controller is *already* named by two production files (the book player and its view
+     * model) and the thing that is missing is the one line in the service that binds it to a
+     * player -- so a tree-wide `SleepTimerController` probe fires today and says nothing. Wear OS
+     * is a question about an artifact, and the two files that decide it are a build script and a
+     * workflow, neither of which is a Kotlin source. And "a book cannot be sent to a speaker" is a
+     * statement about one screen, not about the tree.
+     *
+     * `MODULE_PROBES` and `PRESENCE_PROBES` used to live here and are gone. `MODULE_PROBES` asked
+     * whether `settings.gradle.kts` includes a module, which is the question that would have put
+     * "Wear OS: Yes" in a published listing over a placeholder that renders one word.
+     * `PRESENCE_PROBES` held one entry, for a resume policy that now ships.
      */
-    val MODULE_PROBES = listOf(
-      "Lidarr / Bindery requests" to ":requests",
-      "Wear OS app" to ":wear",
-    )
-
-    /**
-     * The one disclaimer that is an absence of *behaviour* rather than of code, so it is probed by
-     * what must still be present: the graph's undecorated `ResumePolicy` is `NeverResume`, which is
-     * why a book's file resumes and its offset does not. The lane swapping that in deletes this
-     * string, and this rule then says so.
-     */
-    val PRESENCE_PROBES = listOf(
+    val SCOPED_ABSENCE_PROBES = listOf(
       Triple(
-        "Exact-second book resume",
-        "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt",
-        "ResumePolicy = NeverResume",
+        "Sleep timer",
+        "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt",
+        Regex("""\bSleepTimerController\b"""),
       ),
+      Triple(
+        "Casting an audiobook",
+        "feature/book/src/main/kotlin/app/muplay/book/BookPlayerScreen.kt",
+        Regex("""[Cc]ast[A-Z]|\bcastTo\b|CastButton"""),
+      ),
+      Triple("Wear OS app", "app/build.gradle.kts", Regex("""wearApp\s*\(""")),
+      Triple("Wear OS app", RELEASE_WORKFLOW, Regex(""":wear:\w""")),
     )
 
     /** Must match exactly one production file. See the rule that uses it. */

@@ -35,63 +35,79 @@ Music and audiobooks from the Navidrome or Subsonic server you run yourself.
 ```text
 MuPlay plays the music and audiobooks that are already on your own server.
 
-It is a client, not a service. There is no MuPlay catalogue, no MuPlay account and no MuPlay
-subscription — it plays what is on the Navidrome server (or any Subsonic / OpenSubsonic compatible
-server) that you run. If you do not already run one, MuPlay will have nothing to play. Start at
-navidrome.org, then come back.
+It is a client, not a service: no catalogue, no account, no subscription. It plays what is on the
+Navidrome server — or any Subsonic / OpenSubsonic compatible server — that you run. If you do not
+run one, MuPlay has nothing to play. Start at navidrome.org, then come back.
 
 MUSIC AND AUDIOBOOKS, KEPT APART
 
 Tell MuPlay once which of your server's libraries hold music and which hold audiobooks. After that,
 Shuffle means "shuffle this library" — shuffling your music can never pull an audiobook into the
-middle of it. Anything the server hands back that is not from the library you asked for is thrown
-away before it reaches the queue, and MuPlay says so rather than quietly playing it.
+middle of it. Tracks from another library are dropped before they reach the queue, and MuPlay says
+so rather than quietly playing them.
 
 BROWSING THAT DOES NOT WAIT FOR THE NETWORK
 
-Your library's names are mirrored onto the phone, so opening a library, scrolling it and searching
-it are immediate rather than a round trip to the server. Browse albums with their cover art, open
-one, and start from any track. Refresh pulls in whatever changed on the server, when you ask it to.
+Your library is mirrored onto the phone, so opening it, scrolling and searching are immediate
+rather than a round trip. Browse albums with their cover art, open one, start from any track.
+Refresh pulls in what changed on the server.
 
 MADE FOR LISTENING WITH THE SCREEN OFF
 
-- A media notification and lock-screen controls
-- Headset and Bluetooth buttons; playback pauses when your headphones come out
-- Quiets for navigation prompts and pauses for calls
-- Albums play through without gaps between tracks
-- Volume levelling taken from your own files' ReplayGain tags, automatically
-- The seek bar works even on formats your server has to re-encode on the fly
+- Media notification and lock-screen controls
+- Headset and Bluetooth buttons; pauses when your headphones come out
+- Quiets for navigation prompts, pauses for calls
+- Albums play through without gaps
+- Volume levelling from your files' ReplayGain tags
+- The seek bar works even on formats your server re-encodes on the fly
+
+AUDIOBOOKS ARE A DIFFERENT INSTRUMENT
+
+A book opens in its own player, not the music one. Next and Previous move a chapter at a time,
+there is a chapter list to jump around in, and a thirty-second nudge for the sentence you missed.
+Every book comes back to the right position inside the right file, kept across days of music in
+between, winding back a few seconds in proportion to how long you were away. Each book keeps its own
+speed, 0.5x to 3.0x, and its own silence skipping; neither follows you into music.
 
 IN THE CAR
 
 MuPlay is an Android Auto media app. The car screen offers Continue, Books, Albums and Artists.
-Books you have started show how much of them is left, and a book in several parts opens at the part
-you had reached. One tap on the first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay" works
-even with the app closed.
+Books you have started show how much is left, and a book in several parts opens at the part you had
+reached. The first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay"
+works with the app closed.
+
+ON YOUR SPEAKERS
+
+Send music to a Sonos speaker, or any DLNA/UPnP renderer on your network. MuPlay finds them while
+the picker is open and, by default, relays the audio through your phone, so the speaker never gets
+your server's address or your password. The button is on the music player; an audiobook cannot be
+sent to a speaker yet.
+
+ASK FOR WHAT IS NOT THERE YET
+
+If you run Lidarr or Bindery, MuPlay will talk to them: search both at once, ask for an album or an
+audiobook, and watch it turn up in your library. Each needs an https address — MuPlay will not send
+an API key over plain http.
 
 WHAT YOU LISTEN TO STAYS YOURS
 
-- No account, no sign-up, no telemetry, no analytics, no advertising, no crash reporting
+- No account, no sign-up, no telemetry, no analytics, no ads, no crash reporting
 - The only computer MuPlay talks to is the server whose address you typed in
-- It never reports back to your server what you played. The Subsonic protocol has endpoints for
-  exactly that, and MuPlay deliberately does not call them
-- Where you are in each book is written to your phone and is never uploaded anywhere
-- Your server password is sealed with a key held in the Android Keystore, and is excluded from
-  device backups
+- It never reports back what you played. The Subsonic protocol has endpoints for exactly that, and
+  MuPlay does not call them
+- Where you are in each book is written to your phone and uploaded nowhere
+- Your server password is sealed with an Android Keystore key and kept out of device backups
 - Free software, MIT licence, whole source public
 
 NOT IN THIS VERSION
 
-MuPlay is young, and this listing claims only what it does today. There is no sleep timer, no
-playback speed control, no chapter list, no downloading for offline listening (recently played audio
-is cached, which is a different and much weaker thing), no casting to Sonos, DLNA or Chromecast
-speakers, and no Wear OS app. Those are planned. They are not in this build, and nothing above
-pretends otherwise.
+MuPlay is young and claims only what it does today. The sleep timer's controls are drawn but
+nothing binds them to the player, so setting one does nothing. There is no shake gesture, no
+Chromecast support (Sonos and DLNA/UPnP only), no Wear OS app, no Material You or dynamic colour,
+and no downloading for offline listening — recently played audio is cached, which is much weaker.
+Nothing you listen to is ever scrobbled back to your server, and that is a promise, not a gap.
 
-WHAT YOU NEED
-
-Android 8.0 or newer, and a Navidrome or Subsonic-compatible server you can reach from your phone.
-
+Needs Android 8.0 or newer and a server you can reach from your phone.
 Source, issue tracker and privacy policy: github.com/helios57/muplay
 ```
 
@@ -175,7 +191,7 @@ that the password field is masked in every frame either way.
 | Android Auto screenshots | **Yes, because this app declares Android Auto.** Play's Auto listing has its own screenshot slot and its own review checklist. | An Auto screenshot needs the Desktop Head Unit or a real head unit, which needs the Android Auto app and Play services — neither is on this emulator. |
 | 7-inch and 10-inch tablet screenshots | Optional, but Play marks the listing as not optimised for large screens without them | Needs a tablet AVD; `ci/store-screenshots.sh` would take them unchanged against one, and the output directory would need a second folder. |
 | Promo video (YouTube URL) | Optional | Not something a build produces. |
-| Wear OS screenshots | Not applicable — no Wear app is declared | See the form-factor table below. |
+| Wear OS screenshots | Not applicable — **no watch artifact ships**, so there is no Wear listing to illustrate. See the form-factor table below. | — |
 | Android TV banner and screenshots | Not applicable — no TV support is declared | See the form-factor table below. |
 
 ---
@@ -189,11 +205,23 @@ without declaring it here (or the reverse) fails `check`.
 |---|---|---|
 | Phone | Yes | the application module itself |
 | Android Auto | Yes | `androidAuto = true` in `app/build.gradle.kts` |
-| Wear OS | No | no `:wear` module in `settings.gradle.kts` |
+| Wear OS | No | no watch artifact is built or signed by `.github/workflows/release.yml`, and `:app` declares no `wearApp(...)` |
 | Android TV | No | no `android.software.leanback` in any source manifest |
 
 Declaring Android Auto is not free: it opens a separate review surface with its own quality
 checklist and its own rejection path. Plan 8 Task 10 owns walking that checklist.
+
+**Wear OS is the row most likely to be got wrong, so read what decides it.** `settings.gradle.kts`
+*does* include a `:wear` module, and it is a real application module: `android.hardware.type.watch`,
+`com.google.android.wearable.standalone`, `:app`'s own `applicationId`, its own version ledger. None
+of that puts a watch app in front of a user. `.github/workflows/release.yml` assembles, signs and
+verifies `:app` and only `:app`; nothing declares `wearApp(project(":wear"))`; `wear/WearApp.kt` is
+a placeholder whose own KDoc says a later task replaces it entirely and which renders the single
+word "MuPlay"; and `:core:watchlink`, the sync engine, is named by no build file at all and is
+therefore in no APK. So the honest answer to "does this listing declare Wear OS" is **No**, and the
+rule that decides it asks whether an artifact ships rather than whether a directory exists — the
+first version of that rule asked the second question and would have pushed a false Yes into a
+published listing.
 
 ---
 
@@ -228,6 +256,22 @@ symbol. It is deliberately a weak check of a strong discipline: it cannot tell y
 | Excluded from device backups | `app/src/main/AndroidManifest.xml` | `android:allowBackup="false"` |
 | MIT licence | `LICENSE` | `MIT` |
 | Android 8.0 or newer | `build-logic/convention/src/main/kotlin/KotlinAndroid.kt` | `minSdk = 26` |
+| A book opens in its own player, not the music one | `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` | `BookPlayerRoute` |
+| Next and Previous move a chapter at a time | `feature/book/src/main/kotlin/app/muplay/book/BookPlayerScreen.kt` | `onPreviousChapter` |
+| A tappable chapter list | `feature/book/src/main/kotlin/app/muplay/book/BookScreen.kt` | `onPlayChapter` |
+| Chapters are read from the files' own tags and remembered | `core/media/src/main/kotlin/app/muplay/media/ChapterRepository.kt` | `class ChapterRepository` |
+| A book resumes at the position inside the file, not just the right file | `core/media/src/main/kotlin/app/muplay/media/AudiobookResumePolicy.kt` | `class AudiobookResumePolicy` |
+| ...and that is the policy the shipping player is given | `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | `OneShotResumePolicy` |
+| Resume winds back in proportion to how long you were away | `core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt` | `object SmartRewind` |
+| Per-book speed, 0.5x to 3.0x | `core/model/src/main/kotlin/app/muplay/model/BookSettings.kt` | `MAX_SPEED` |
+| Speed and silence skipping reach the real player, per book | `core/media/src/main/kotlin/app/muplay/media/BookSpeedController.kt` | `player.skipSilenceEnabled` |
+| Playing to Sonos and generic DLNA/UPnP renderers | `core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt` | `SetAVTransportURI` |
+| Renderers are found on the network, by SSDP | `core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt` | `TARGET_MEDIA_RENDERER` |
+| The phone relays the audio, so the speaker gets no credential | `core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt` | `class MediaProxyServer` |
+| The picker is reachable — from the music player | `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` | `CastPickerSheet` |
+| Requests really reach Lidarr and Bindery — albums to one, audiobooks to the other | `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestsRepository.kt` | `BinderyMediaType.AUDIOBOOK` |
+| Setting an integration up is reachable with none configured | `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationsSection.kt` | `settings:integrations` |
+| An integration API key is never sent over plain http in a release build | `app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt` | `CleartextPolicy.Forbidden` |
 
 ### Not in this version
 
@@ -237,18 +281,15 @@ audit that produced this list.
 
 | Capability | Status in this build |
 |---|---|
-| Sleep timer | `SleepTimerController` exists and is attached to nothing. `MuPlaybackService` says attaching it is future work. |
-| Shake to extend the sleep timer | `ShakeSensor` is never injected and never started. |
-| Casting to Sonos, DLNA/UPnP or Chromecast | `core/cast` is complete and unreachable: `CastSessionManager.castTo` is called from one file, and it is a test. There is no device picker, and SSDP discovery is never started. The README's status paragraph still says the app *"streams to Sonos and generic DLNA renderers"*; its own roadmap row ("the picker UI ... remain") is the accurate one. |
-| Playback speed | Stored, never set on a player, and no control anywhere. |
-| Silence skipping | Stored, never enabled. |
-| Chapter list / jump to chapter | `ChapterRepository` has no production caller. Android Auto lists a book's *files* ("Part 2 of 5"), not chapters. |
-| Exact-second book resume | The right file resumes; the position inside it is always 0, because `MediaModule` binds `NeverResume`. |
-| Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. |
-| Lidarr / Bindery requests | No requests module in `settings.gradle.kts` at all; `:app` depends on neither integration, so their code is not in the APK. |
-| Scrobbling / play counts sent back to the server | Never. `ProgressWriter` writes locally and the Subsonic write endpoints are deliberately not declared. |
-| Wear OS app | No module, no declaration. |
-| Material You / dynamic colour | Light and dark only, from a fixed palette. |
+| Sleep timer | **Worse than absent: a visible control that does nothing.** `BookPlayerScreen` draws the presets and the End-of-chapter button, and `BookPlayerViewModel` injects `SleepTimerController` and calls `start` — but nothing in any `src/main` calls `attach(player, scope)`, and `start` opens with `val attached = attachment ?: return`. `MuPlaybackService`'s own comment says the attach "goes here". Fix or hide it before shipping; a reviewer can find this. |
+| Shake to extend the sleep timer | `ShakeSensor` is injected by nothing and `start` is called by nothing. |
+| Casting to Chromecast | `core/cast` speaks SSDP and UPnP `AVTransport`, and only those. There is no Google Cast dependency in `gradle/libs.versions.toml` and no `CastContext` anywhere in the tree. Sonos is reached *as* a DLNA renderer, not through SMAPI. |
+| Casting an audiobook | The cast button is in `PlayerScreen`'s slot and `:app` routes a book to `BookPlayerScreen`, which has no cast anything. So the capability exists and a book cannot reach it. |
+| Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. No selection, no pinning, no queue. |
+| Scrobbling / play counts sent back to the server | Never, and structurally: `SubsonicApi` declares eight read endpoints and no write one, and `core/network`'s own `LocalOnlyProgressTest` fails the build if one is added. |
+| Wear OS app | `:wear` is a module, not an artifact. Nothing declares `wearApp(...)`, `.github/workflows/release.yml` assembles and signs `:app` and only `:app`, `WearApp` renders the single word "MuPlay" behind a KDoc saying a later task replaces it, and `:core:watchlink` — the sync engine — is named by no build file and is therefore in no APK. |
+| Material You / dynamic colour | Light and dark only, from a fixed palette that follows the system setting. |
+
 
 ---
 
@@ -265,8 +306,10 @@ Plan 8's own list, plus what this task found on top of it.
 5. Supply a contact email address.
 6. Answer the Data safety form from `docs/PLAY-DATA-SAFETY.md` and the content rating questionnaire.
 7. **Supply Android Auto screenshots** and walk Play's Auto quality checklist (Plan 8 Task 10).
-8. **Decide how a reviewer signs in** (Plan 8 Task 8). This is the listing's real risk: a reviewer
-   who opens MuPlay, sees a login box and has no Navidrome to point it at will reject the app as
+8. **Decide how a reviewer signs in.** This is the listing's real risk: a reviewer who opens
+   MuPlay, sees a login box and has no Navidrome to point it at will reject the app as
    non-functional. The short description and the first line of the full description exist to make
    that expectation unmissable *before* install, but they do not substitute for giving the reviewer
-   working credentials in App access.
+   working credentials in App access. `docs/REVIEWER-ACCESS.md` is that decision made real — the
+   options, what each costs, the exact text to paste into Play Console, and the measured trap that
+   a reviewer account with no library grants dead-ends the app silently.
