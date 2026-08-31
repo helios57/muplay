@@ -1345,3 +1345,54 @@ for the wrong reason, and the wrong answer on a host where the emulator is up.
 
 Filter the shell out explicitly, and sanity-check any process probe by running it
 once when you know the answer is "alive".
+
+## A JVM test that reads a data file is `FROM-CACHE` when only that file changes
+
+`StoreListingTest` holds `docs/STORE-LISTING.md` against the tree. Gradle does not know the
+document is an input of `:app:testDebugUnitTest`, so editing it changes nothing Gradle can see:
+
+    $ sed -i 's/.../There is a sleep timer. .../' docs/STORE-LISTING.md
+    $ ./gradlew :app:testDebugUnitTest --tests '*StoreListingTest*'
+    > Task :app:testDebugUnitTest FROM-CACHE
+    BUILD SUCCESSFUL in 4s
+
+That claim is one the same test's banned list forbids. The gate over the one artefact in this
+repository that strangers read did not run when that artefact changed — it runs only on a cold
+cache, in CI, or when an unrelated Kotlin edit drags it along.
+
+Two consequences, and the second is what cost the time:
+
+- **A falsification harness that mutates only a data file measures nothing** and reports every rule
+  as unfalsifiable. Three mutations came back NOT CAUGHT and the rules were innocent; re-running
+  with `--rerun` on the test task caught all three. If a mutation is "not caught", check the task
+  actually ran before you go looking at the rule.
+- **Declare the files as task inputs.** `app/build.gradle.kts` now does, for the listing, the
+  release workflow and `play/`. Falsified both ways on one tree: unchanged → `UP-TO-DATE`, listing
+  edited → the task re-runs and goes red.
+
+`ConventionTest` has the same shape — it walks the repository root and none of what it reads is a
+declared input. Any new gate of this kind owes the same declaration.
+
+## An absence probe written as a Java setter call can never match Kotlin
+
+`StoreListingTest` disclaimed silence skipping behind
+
+    "Silence skipping" to Regex("""\.setSkipSilenceEnabled\(""")
+
+and the feature had been shipping for weeks, with a switch on the book screen. `ExoPlayer` exposes
+it as a Java setter, so Kotlin addresses it as a synthetic property and `BookSpeedController`
+writes `player.skipSilenceEnabled = settings.skipSilence`. The regex could not match this codebase
+and never could. A second probe in the same list, `SleepTimerController\(`, was equally blind: the
+class is `internal constructor` and Hilt-injected, so nothing writes that either — right answer,
+wrong reason, and it would have kept saying "absent" after somebody wired the timer up.
+
+So when you write a probe for the *absence* of a wiring, write the line that would make it fire and
+run it. A probe nobody has seen go red is a probe nobody has seen work — and this file already
+records three liveness checks that returned the same falsey value for "dead" and "I cannot tell".
+
+Related, from the same rule set: **a module existing is not a capability shipping.** The
+form-factor rule derived "this build declares Wear OS" from `include(":wear")` in
+`settings.gradle.kts`. That is true, and obeying it would have published *"Wear OS: Yes"* over a
+`WearApp` that renders the single word "MuPlay", with nothing declaring `wearApp(...)`,
+`release.yml` assembling and signing `:app` and only `:app`, and `:core:watchlink` named by no build
+file at all. Probe for the artifact, not the directory.
