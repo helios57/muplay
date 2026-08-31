@@ -1591,6 +1591,36 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // Dagger's `NavidromeLoadErrorHandlingPolicy_Factory$InstanceHolder` -- the holder it emits for
   // a *scoped, no-argument* `@Inject` constructor -- was in this report until
   // `generatedCodeExcludes` (`Jacoco.kt`) grew the pattern for that shape; see its own note.
+  // **THIS MODULE'S EMULATOR-TIER COVERAGE GATE IS RED ON MASTER, AND WAS BEFORE THIS ENTRY SAID
+  // SO.** Measured 2026-09-01 on `184470e` -- a clean checkout in its own worktree, its own
+  // `--no-build-cache` build, `:core:media:connectedDebugAndroidTest` 353/353 and
+  // `:app:connectedDebugAndroidTest` 61/61 -- `jacocoTestCoverageVerification` evaluated all 58
+  // floors and violated five:
+  //
+  //   ProgressWriter                            BRANCH 26/30 = 0.8667  (floor 0.90)
+  //   AudiobookSnapshot$start$1                 LINE    6/7  = 0.8571  (floor 0.90)
+  //   AudiobookSnapshot$start$1$1               BRANCH  1/2  = 0.5000  (floor 0.90)
+  //   ResumptionQueue                           BRANCH  6/8  = 0.7500  (floor 0.90)
+  //   MuPlayLibraryCallback$onSetMediaItems$2   LINE   10/12 = 0.8333  (floor 0.90)
+  //
+  // The same five, at the same five ratios, on the branch that added this note. So they are not a
+  // regression from anything recent, and nobody should spend an afternoon bisecting for one.
+  //
+  // **How it got here is the part worth reading, because it is this repository's own defining
+  // defect wearing the gate's own clothes.** `./gradlew check` does not evaluate a
+  // `requiresInstrumentedData` floor at all -- it says so out loud, in `jacocoJvmCoverageVerification`'s
+  // own notice -- and the only thing that does is the emulator job. So these floors have been
+  // failing while every gate a developer runs locally stayed green. Read the comments beside them
+  // and the drift is visible without running anything: the `ProgressWriter` rule records
+  // "16/16 = 1.0000 BRANCH" and the class now carries **30** branches. The classes grew, the
+  // recorded measurements did not, and the tier that would have said so runs nowhere but CI.
+  //
+  // NOT FIXED HERE, deliberately. Each of the five is either a missing test or a floor whose
+  // author's number no longer describes the class, and telling those apart is five separate
+  // measurements with five separate falsifications -- not something to fold into a design pass,
+  // and certainly not something to "fix" by lowering five numbers until the gate is quiet. That is
+  // the direction this table exists to refuse. Whoever takes it should re-measure each class,
+  // re-run its recorded falsification, and correct the comment when the number moves.
   ":core:media" to listOf(
     // 15/16 = 0.9375 BRANCH from **JVM data alone** -- `StreamRetryPolicyTest`, ten tests, no
     // emulator. Confirmed by deleting the instrumented `.ec` and running
