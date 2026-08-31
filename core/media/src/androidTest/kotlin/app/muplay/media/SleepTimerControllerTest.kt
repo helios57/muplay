@@ -523,6 +523,53 @@ class SleepTimerControllerTest {
   }
 
   @Test
+  fun aCountdownInFlightFollowsTheHandoverToTheNewActivePlayer() {
+    // `MuPlaybackService`'s `activePlayer` collector calls `attach` again when audio moves to a
+    // speaker, and this is why it has to: a countdown left bound to the outgoing player ramps a
+    // phone nobody is listening to down to zero and pauses something already paused, while the
+    // speaker plays all night. Nothing throws and nothing logs, which is why it needs a test rather
+    // than a comment.
+    //
+    // Two real Media3 players, the second standing in for the cast one. Audio focus is
+    // `MuPlayerFactory`'s and is not this test's subject: whichever of them holds it, the two
+    // assertions below are about `volume`, which focus does not touch.
+    val outgoing = startBook()
+    val incoming = startQueue(listOf(book))
+    val subject = timer(outgoing, fadeMs = 2_000L)
+
+    outgoing.onMain { subject.start(SleepTimerRequest.Duration(2_500L)) }
+    outgoing.await("the fade to start", timeoutMs = FIRE_TIMEOUT_MS) {
+      outgoing.player.volume < 0.9f
+    }
+    // Read in the **same main-thread turn** as the handover, for the reason
+    // `extendingPushesTheDeadlineOut` records: `begin` restarts the ticker with `launch`, so a
+    // separate turn would land after a tick had already written a volume.
+    val (fadedBefore, restoredOnOutgoing) = incoming.onMain {
+      val faded = outgoing.player.volume
+      subject.attach(incoming.player, scope)
+      faded to outgoing.player.volume
+    }
+
+    assertThat(fadedBefore)
+      .describedAs("mid-fade when the handover arrived, or the restore has nothing to restore")
+      .isLessThan(FULL_VOLUME)
+    assertThat(restoredOnOutgoing)
+      .describedAs("the player the listener is no longer hearing must not be left part-faded")
+      .isEqualTo(FULL_VOLUME)
+    // The ramp moved: it is the **incoming** player being faded now.
+    incoming.await("the fade to reach the incoming player", timeoutMs = FIRE_TIMEOUT_MS) {
+      incoming.player.volume < 0.9f
+    }
+    // ...and it is the incoming player the timer pauses.
+    incoming.await("the incoming player to pause", timeoutMs = FIRE_TIMEOUT_MS) {
+      !incoming.player.playWhenReady
+    }
+    assertThat(outgoing.onMain { outgoing.player.volume })
+      .describedAs("a timer that has moved on must never touch the outgoing player again")
+      .isEqualTo(FULL_VOLUME)
+  }
+
+  @Test
   fun aTimerWithNoPlayerAttachedIsInertRatherThanACrash() {
     // `MuPlaybackService` builds this before it builds the player, and a `@Singleton` outlives the
     // session it was attached to. Every entry point has to survive being called with nothing there.

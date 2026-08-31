@@ -100,8 +100,36 @@ class SleepTimerController internal constructor(
   private var countdown: Countdown? = null
   private var firedAtEpochMs: Long? = null
 
+  /**
+   * Bind to [player], and bring any countdown already in flight with it.
+   *
+   * **Called on every emission of `PlaybackOutputSwitch.activePlayer`**, which is the same
+   * collector that re-points the media session when audio moves to a speaker. Attaching once at
+   * startup is not enough and the failure is silent: this class's whole mechanism is
+   * `player.volume` and `player.pause()` on *one* player, so a timer left behind ramps the phone
+   * it is no longer driving down to zero and pauses something that is already paused, while the
+   * speaker plays all night. Nothing throws and nothing logs.
+   *
+   * Two things therefore happen here rather than one field assignment:
+   *
+   * - **the outgoing player's volume goes back to [FULL_VOLUME]**, because a handover that lands
+   *   mid-fade would otherwise leave it at whatever the ramp had reached -- the "fade that never
+   *   fades back" this class's header is built around, arriving by a route that has nothing to do
+   *   with the timer ending;
+   * - **a running countdown is restarted against the incoming player**, so the deadline the
+   *   listener set survives the handover and the ramp lands on the thing making the sound.
+   *
+   * Unlike `ProgressWriter`, this has **no ordering constraint against `setMediaItems`**: it reads
+   * no history off the player and writes nothing that a later item transition would invalidate, so
+   * arriving a dispatch after the handover costs at most one tick against the outgoing player --
+   * whose volume the line above then puts back anyway. That is why the service can move it from a
+   * coroutine and has to move the writer synchronously.
+   */
   fun attach(player: Player, scope: CoroutineScope) {
-    attachment = Attachment(player, scope)
+    attachment?.let { it.player.volume = FULL_VOLUME }
+    val attached = Attachment(player, scope)
+    attachment = attached
+    countdown?.let { begin(attached, it) }
   }
 
   fun detach() {
