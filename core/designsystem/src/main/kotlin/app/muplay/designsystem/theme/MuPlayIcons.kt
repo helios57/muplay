@@ -117,6 +117,24 @@ object MuPlayIcons {
     circle(17.5f, 7.5f, 7.6f)
   }
 
+  /**
+   * Sending audio somewhere else: a screen open at the corner the waves arrive from.
+   *
+   * The source dot is a zero-length segment with a round cap rather than a filled circle, so the
+   * whole glyph stays one stroked path and matches the rest of the utility set.
+   */
+  val Cast: ImageVector = stroked("MuPlayCast") {
+    moveTo(4f, 9.5f)
+    lineTo(4f, 5f)
+    lineTo(20f, 5f)
+    lineTo(20f, 19f)
+    lineTo(10f, 19f)
+    polyline(CAST_ORIGIN_X, CAST_ORIGIN_Y, CAST_INNER_WAVE, QUARTER_START_DEG, QUARTER_SWEEP_DEG)
+    polyline(CAST_ORIGIN_X, CAST_ORIGIN_Y, CAST_OUTER_WAVE, QUARTER_START_DEG, QUARTER_SWEEP_DEG)
+    moveTo(CAST_ORIGIN_X, CAST_ORIGIN_Y)
+    lineTo(CAST_ORIGIN_X + DOT_NUDGE, CAST_ORIGIN_Y)
+  }
+
   /** Dismisses the sleep timer. */
   val Close: ImageVector = stroked("MuPlayClose") {
     moveTo(6.8f, 6.8f)
@@ -232,4 +250,15 @@ object MuPlayIcons {
   private const val GAP_END_DEG = 290f
   private const val RING_SWEEP_DEG = FULL_TURN - (GAP_END_DEG - GAP_START_DEG)
   private const val HEAD_SIZE = 2.7f
+
+  /** [Cast]'s waves: a quarter turn out of the bottom-left corner the screen is open at. */
+  private const val CAST_ORIGIN_X = 4f
+  private const val CAST_ORIGIN_Y = 19f
+  private const val CAST_INNER_WAVE = 3.2f
+  private const val CAST_OUTER_WAVE = 6.4f
+  private const val QUARTER_START_DEG = 270f
+  private const val QUARTER_SWEEP_DEG = 90f
+
+  /** Long enough to be a segment, short enough that a round cap renders it as a dot. */
+  private const val DOT_NUDGE = 0.01f
 }

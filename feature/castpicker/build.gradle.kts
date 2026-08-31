@@ -22,6 +22,8 @@ dependencies {
   // feature cannot reach it. What *is* reachable is `media3-session`'s `Player`, which is `api`
   // there, and this module uses exactly one method of it -- `setDeviceVolume`.
   implementation(project(":core:media"))
+  // `MuPlayIcons.Cast`. A `:core:` module, the same edge `:feature:player` and `:feature:book` take.
+  implementation(project(":core:designsystem"))
 
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)
