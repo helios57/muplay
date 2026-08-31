@@ -293,7 +293,7 @@ data class LidarrAlbumProgress(val trackFileCount: Int, val totalTrackCount: Int
 /**
  * How a [LidarrSource] is made from credentials.
  *
- * A `fun interface` so that Task 9's tests can hand [LidarrSourceProvider] a factory returning a
+ * A `fun interface` so that a test can hand `RequestsRepository` a factory returning a
  * hand-written fake, without either of them knowing that the real one builds an OkHttp stack.
  */
 fun interface LidarrSourceFactory {

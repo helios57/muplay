@@ -9,7 +9,7 @@ android {
 }
 
 dependencies {
-  // `api`, not `implementation`: `LidarrSourceProvider.current()` returns a `LidarrSource` built
+  // `api`, not `implementation`: `LidarrSourceFactory.create()` returns a `LidarrSource` built
   // from an `IntegrationCredentials.Lidarr`, and `LidarrSourceFactory.create` takes one. Both
   // types are declared in `:integrations:core`, so a consumer of this module cannot call either
   // method without them on its own compile classpath.
@@ -38,22 +38,11 @@ dependencies {
   testImplementation(libs.mockwebserver3)
   testImplementation(libs.coroutines.test)
 
-  // The instrumented tier exists for exactly one class: `LidarrSourceProvider`, whose collaborator
-  // `IntegrationCredentialStore` is backed by DataStore and the Android Keystore and therefore has
-  // no JVM tier at all. See `LidarrSourceProviderTest`.
-  androidTestImplementation(libs.androidx.test.core)
-  androidTestImplementation(libs.androidx.test.ext)
-  androidTestImplementation(libs.androidx.test.runner)
-  androidTestImplementation(libs.coroutines.test)
-  androidTestImplementation(libs.datastore.preferences)
-  // `KeystoreCipher` and `KeystoreKeys`, needed only to *plant* a stored entry that
-  // `IntegrationCredentials` has no member to produce -- a Bindery blob, and a cleartext URL.
-  // `:integrations:core` declares `:core:database` with `implementation`, so neither type is on
-  // this module's compile classpath transitively, and neither is on its *main* classpath at all:
-  // this module ships no code that touches the Keystore.
-  androidTestImplementation(project(":core:database"))
-  // AssertJ is added explicitly because `configureJUnit5` only puts it on `testImplementation`.
-  // Byte Buddy -- which assertj-core drags in at compile scope and AGP cannot dex -- is stripped
-  // from every androidTest configuration project-wide by `excludeByteBuddyFromInstrumentedTests`.
-  androidTestImplementation(libs.assertj)
+  // **This module has no instrumented tier.** It had exactly one class that needed a device --
+  // `LidarrSourceProvider`, whose collaborator `IntegrationCredentialStore` is DataStore over the
+  // Android Keystore -- and Plan 8 deleted that class as unreachable: nothing in any `src/main`
+  // injected it, because `RequestsRepository` takes `LidarrSourceFactory` directly. Its eight
+  // instrumented tests, the whole `androidTest` source set and its five test-only dependencies
+  // went with it, and so did this module's two `requiresInstrumentedData` coverage floors and its
+  // entries in `e2e.yml` and `pr.yml`. Everything this module still ships is gated on the JVM tier.
 }

@@ -5600,39 +5600,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.lidarr.LidarrAlbumProgress",
       ),
     ),
-    // 3 and 4. `LidarrSourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
-    // emulator's execution data, and **0/4 and 0/6 without it**. That is a measurement, taken by
-    // moving the `.ec` aside and regenerating the report, not a judgement: the provider's one
-    // collaborator is `IntegrationCredentialStore`, which is DataStore over the Android Keystore
-    // and has no JVM tier at all, and this project ships no mock framework to stand in for it.
-    //
-    // Its own rules rather than a ride-along, because "returns `null` when nothing is configured"
-    // is the single most important behaviour in this module: it is the state a real user with no
-    // Lidarr is in permanently, and the plan's severability contract names a not-configured path
-    // that every test configures around as this plan's most likely defect.
-    CoverageFloor(
-      counter = "BRANCH",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.lidarr.LidarrSourceProvider"),
-      requiresInstrumentedData = true,
-    ),
-    // The BRANCH rule above is falsifiable by withholding tests and the LINE rule below is not,
-    // which is worth writing down rather than leaving for the next person to rediscover.
-    // Withholding the four `LidarrSourceProviderTest` methods that reach `?.let(factory::create)`
-    // drops BRANCH to **2/4 = 0.50** and the full gate fails; the same withholding leaves LINE at
-    // **6/6**, because `?.let` compiles onto the same lines as the `as?` before it. The only
-    // falsification the LINE rule has is the absence of instrumented data altogether (0/6), which
-    // is what makes it worth keeping -- it is the rule that would fire if this class stopped being
-    // exercised on a device at all, and it is what keeps `warnUngatedClasses` quiet about
-    // `current$1`.
-    CoverageFloor(
-      counter = "LINE",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.lidarr.LidarrSourceProvider*"),
-      requiresInstrumentedData = true,
-    ),
+    // **`LidarrSourceProvider`'s two rules were here, and the class is gone.** Plan 8's
+    // reachability audit found it injected by nothing in any `src/main`: the shipped path is
+    // `RequestsRepository` taking `LidarrSourceFactory` directly, which that class's own header
+    // explains it chose so that "configured" and "the client we poll with" come from one read of
+    // the store. The provider was the plan's design and the factory is the built one; keeping both
+    // meant a class, an eight-test instrumented suite and two coverage floors measuring a path no
+    // user could reach. Deleting it took this module's only `src/androidTest` source set with it,
+    // which is why `:integrations:lidarr` no longer appears in `e2e.yml`'s emulator script or in
+    // `pr.yml`'s androidTest compile list -- and why this module now has no
+    // `requiresInstrumentedData` rule at all.
     // 5. The four wire DTOs, gated **low rather than not at all** -- the identical trade
     // `:integrations:core` makes for `IntegrationCredentialStore*`'s coroutine machinery, and made
     // here for the identical reason: leaving them ungated would print `warnUngatedClasses` lines
@@ -5812,12 +5789,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // **`"CLASS"` rules, not the one `"BUNDLE"` BRANCH rule the plan proposed at 0.90, and that is a
   // measurement rather than a preference.** The plan's placeholder rested on the same argument
   // Task 4's did -- plain Kotlin over Retrofit, so Tier-1 enforceable like `:core:network` -- and
-  // it fails for the same reason: `BinderySourceProvider`'s only collaborator is
+  // it failed for the same reason: `BinderySourceProvider`'s only collaborator was
   // `IntegrationCredentialStore`, DataStore over the Android Keystore, which has no JVM tier at
-  // all. Measured, that class is **0/4 BRANCH and 0/6 LINE without instrumented data**, so a
+  // all. Measured, that class was **0/4 BRANCH and 0/6 LINE without instrumented data**, so a
   // BUNDLE rule would have had to be marked `requiresInstrumentedData` and would have dragged
-  // every branch in the client into the 45-minute tier to accommodate one class that needs a
+  // every branch in the client into the 45-minute tier to accommodate one class that needed a
   // device. The `"CLASS"` form puts each class in the tier that can actually see it.
+  //
+  // Past tense, because Plan 8 deleted that provider as unreachable (see rule 3's note below) --
+  // and the `"CLASS"` shape is what made the deletion cheap: two rules came out and every other
+  // number in this block is unchanged, where a BUNDLE rule would have had to be re-measured.
   ":integrations:bindery" to listOf(
     // 1. The **fast tier's** BRANCH rule: the three classes with author-written branches.
     //
@@ -5935,37 +5916,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.integrations.bindery.di.BinderyModule",
       ),
     ),
-    // 3 and 4. `BinderySourceProvider`, **instrumented only** -- 4/4 BRANCH and 6/6 LINE with the
-    // emulator's execution data, and **0/4 and 0/6 without it**. That is a measurement, taken by
-    // reading the JVM tier's own report, not a judgement: the provider's one collaborator is
-    // `IntegrationCredentialStore`, which is DataStore over the Android Keystore and has no JVM
-    // tier at all, and this project ships no mock framework to stand in for it.
+    // **`BinderySourceProvider`'s two rules were here, and the class is gone** -- deleted for the
+    // reason its Lidarr mirror was, and recorded there: injected by nothing in any `src/main`,
+    // because `RequestsRepository` takes `BinderySourceFactory` directly. It was this module's
+    // only instrumented test, so `:integrations:bindery` has left `e2e.yml`'s emulator script and
+    // `pr.yml`'s androidTest compile list too.
     //
-    // Its own rules rather than a ride-along, because "returns `null` when nothing is configured"
-    // is the single most important behaviour in this module: it is the state a real user with no
-    // Bindery is in permanently, and the plan's severability contract names a not-configured path
-    // that every test configures around as this plan's most likely defect.
-    //
-    // **These floors are only enforced by the emulator job, so `:integrations:bindery` has to be
-    // on that job's command line** in `.github/workflows/e2e.yml`. `ConventionTest`'s
-    // `every module with instrumented tests is run by the emulator job` is what checks that -- and
-    // note the failure mode it exists for: a module missing from that line has its instrumented
-    // tests skipped *and* its `requiresInstrumentedData` floors skipped, by the same omission, so
-    // the gate and the thing it gates fail together and silently.
-    CoverageFloor(
-      counter = "BRANCH",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.bindery.BinderySourceProvider"),
-      requiresInstrumentedData = true,
-    ),
-    CoverageFloor(
-      counter = "LINE",
-      element = "CLASS",
-      minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.bindery.BinderySourceProvider*"),
-      requiresInstrumentedData = true,
-    ),
+    // The paragraph that stood here about a module missing from the emulator job losing its
+    // `requiresInstrumentedData` floors *and* its tests by the same omission is still true and
+    // still worth knowing; it now lives where it can still fire, in `ConventionTest`'s
+    // `every module with instrumented tests is run by the emulator job`.
     // 5. The five wire DTOs, gated **low rather than not at all** -- the identical trade
     // `:integrations:core` makes for `IntegrationCredentialStore*`'s coroutine machinery and
     // `:integrations:lidarr` makes for its own six, and made here for the identical reason:

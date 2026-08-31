@@ -70,13 +70,19 @@ data class RefreshReport(
  *
  * **This takes the two `…SourceFactory` interfaces rather than the two `…SourceProvider` classes
  * the plan's Interfaces block named, and that is what keeps `RequestsRepositoryTest` in Tier 1.**
- * Both providers are concrete classes whose one collaborator is `IntegrationCredentialStore`,
+ * Both providers were concrete classes whose one collaborator was `IntegrationCredentialStore`,
  * which is DataStore over the Android Keystore — inject either and this whole class becomes
  * instrumented-only, including the four-configuration-combination test the severability contract
  * demands. Both factories are already `fun interface`s, declared as such by Tasks 4 and 8 for
- * exactly this ("so that Task 9's tests can hand [the provider] a factory returning a hand-written
- * fake"). The second gain is that "configured" and "the client we poll with" then come from one
- * read of the store and cannot disagree.
+ * exactly this. The second gain is that "configured" and "the client we poll with" then come from
+ * one read of the store and cannot disagree.
+ *
+ * **Those two providers no longer exist.** Choosing the factories here left them injected by
+ * nothing in any `src/main`, which is the state Plan 8's reachability audit found them in: two
+ * `@Singleton` classes and sixteen instrumented tests measuring a path no user could reach, and
+ * two coverage floors gating it. They were deleted rather than wired, because this class is the
+ * intended path and its reasoning above is why. Recorded here rather than only in the commit,
+ * because this paragraph is the decision that orphaned them.
  */
 @Singleton
 class RequestsRepository @Inject constructor(

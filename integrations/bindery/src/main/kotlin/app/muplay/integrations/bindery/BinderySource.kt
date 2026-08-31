@@ -258,7 +258,7 @@ enum class BinderyMediaType(val wireValue: String) {
 /**
  * How a [BinderySource] is made from credentials.
  *
- * A `fun interface` so that Task 9's tests can hand [BinderySourceProvider] a factory returning a
+ * A `fun interface` so that a test can hand `RequestsRepository` a factory returning a
  * hand-written fake, without either of them knowing that the real one builds an OkHttp stack.
  */
 fun interface BinderySourceFactory {

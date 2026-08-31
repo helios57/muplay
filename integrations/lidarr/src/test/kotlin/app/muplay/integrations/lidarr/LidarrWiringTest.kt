@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * The two one-line pieces of wiring between `LidarrSourceProvider` and a real HTTP client.
+ * The two one-line pieces of wiring between `LidarrSourceFactory` and a real HTTP client.
  *
  * Neither has any logic, and that is exactly why they are here. `DefaultLidarrSourceFactory` and
  * `LidarrModule.provideLidarrSourceFactory` were both measured at **LINE 0/1** — exercised by
@@ -45,7 +45,7 @@ class LidarrWiringTest {
    *
    * Asserted through the wire rather than with `isInstanceOf(LidarrClient::class.java)`: the type
    * would be satisfied by a client built from *different* credentials, which is the defect that
-   * matters here — `LidarrSourceProvider` hands this factory the user's credentials and never
+   * matters here — `RequestsRepository` hands this factory the user's credentials and never
    * looks at what came back.
    */
   @Test

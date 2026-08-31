@@ -4690,20 +4690,16 @@ JVM_TEST_RESULT_DIRS = {
     # this module rather than inside either service client.
     "integrations/core": "testDebugUnitTest",
     # `:integrations:lidarr` joined in Plan 7 Task 4. An Android library, so `testDebugUnitTest`.
-    # Its JVM tier reaches every class in the module except one: `LidarrSourceProvider`'s single
-    # collaborator is `IntegrationCredentialStore`, which is DataStore over the Android Keystore,
-    # so the provider is instrumented-only and no probe here can see it. The severability
-    # behaviour it owns -- "not configured yields null" -- is proved by `LidarrSourceProviderTest`
-    # on the emulator and recorded in task-4-report.md, the same way `LiveNavidromeTest`'s
-    # test-side probes already are.
+    # **Its JVM tier now reaches every class in the module.** It used to reach all but one --
+    # `LidarrSourceProvider`, whose single collaborator is DataStore over the Android Keystore, so
+    # it was instrumented-only and invisible to any probe here. Plan 8 deleted that class as
+    # unreachable from any `src/main` (the shipped path is `RequestsRepository` taking
+    # `LidarrSourceFactory` directly), and the module has no `androidTest` source set at all now.
     "integrations/lidarr": "testDebugUnitTest",
     # `:integrations:bindery` joined in Plan 7 Task 8. An Android library, so `testDebugUnitTest`.
-    # Its JVM tier reaches every class in the module except one, for the same reason
-    # `:integrations:lidarr`'s does: `BinderySourceProvider`'s single collaborator is
-    # `IntegrationCredentialStore`, which is DataStore over the Android Keystore, so the provider is
-    # instrumented-only and no probe here can see it. The severability behaviour it owns -- "not
-    # configured yields null", and "only Lidarr configured yields null" -- is proved by
-    # `BinderySourceProviderTest` on the emulator and recorded in task-8-report.md.
+    # Its JVM tier now reaches every class in the module, for the same reason
+    # `:integrations:lidarr`'s does: `BinderySourceProvider` was the one instrumented-only class
+    # here, and Plan 8 deleted it as injected by nothing in any `src/main`.
     "integrations/bindery": "testDebugUnitTest",
     # `:integrations:requests` joined in Plan 7 Task 9. An Android library, so `testDebugUnitTest`.
     # Its JVM tier reaches every class in the module except one: `di.RequestsModule`, whose four

@@ -17,7 +17,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * The two one-line pieces of wiring between `BinderySourceProvider` and a real HTTP client.
+ * The two one-line pieces of wiring between `BinderySourceFactory` and a real HTTP client.
  *
  * Neither has any logic, and that is exactly why they are here. Their `:integrations:lidarr`
  * counterparts were both measured at **LINE 0/1** — exercised by nothing at all — while every
@@ -46,7 +46,7 @@ class BinderyWiringTest {
    *
    * Asserted through the wire rather than with `isInstanceOf(BinderyClient::class.java)`: the type
    * would be satisfied by a client built from *different* credentials, which is the defect that
-   * matters here — `BinderySourceProvider` hands this factory the user's credentials and never
+   * matters here — `RequestsRepository` hands this factory the user's credentials and never
    * looks at what came back.
    */
   @Test

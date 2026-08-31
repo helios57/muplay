@@ -10,7 +10,7 @@ android {
 
 dependencies {
   // `api`, not `implementation`, for the same reason `:integrations:lidarr` declares it that way:
-  // `BinderySourceProvider.current()` returns a `BinderySource` built from an
+  // `BinderySourceFactory.create()` returns a `BinderySource` built from an
   // `IntegrationCredentials.Bindery`, and `BinderySourceFactory.create` takes one. Both types are
   // declared in `:integrations:core`, so a consumer of this module cannot call either method
   // without them on its own compile classpath.
@@ -36,22 +36,11 @@ dependencies {
   testImplementation(libs.mockwebserver3)
   testImplementation(libs.coroutines.test)
 
-  // The instrumented tier exists for exactly one class: `BinderySourceProvider`, whose collaborator
-  // `IntegrationCredentialStore` is backed by DataStore and the Android Keystore and therefore has
-  // no JVM tier at all. See `BinderySourceProviderTest`.
-  androidTestImplementation(libs.androidx.test.core)
-  androidTestImplementation(libs.androidx.test.ext)
-  androidTestImplementation(libs.androidx.test.runner)
-  androidTestImplementation(libs.coroutines.test)
-  androidTestImplementation(libs.datastore.preferences)
-  // `KeystoreCipher` and `KeystoreKeys`, needed only to *plant* a stored entry this module's own
-  // API cannot produce -- a Lidarr blob, and a cleartext URL. `:integrations:core` declares
-  // `:core:database` with `implementation`, so neither type is on this module's compile classpath
-  // transitively, and neither is on its *main* classpath at all: this module ships no code that
-  // touches the Keystore.
-  androidTestImplementation(project(":core:database"))
-  // AssertJ is added explicitly because `configureJUnit5` only puts it on `testImplementation`.
-  // Byte Buddy -- which assertj-core drags in at compile scope and AGP cannot dex -- is stripped
-  // from every androidTest configuration project-wide by `excludeByteBuddyFromInstrumentedTests`.
-  androidTestImplementation(libs.assertj)
+  // **This module has no instrumented tier.** It had exactly one class that needed a device --
+  // `BinderySourceProvider`, whose collaborator `IntegrationCredentialStore` is DataStore over the
+  // Android Keystore -- and Plan 8 deleted that class as unreachable: nothing in any `src/main`
+  // injected it, because `RequestsRepository` takes `BinderySourceFactory` directly. Its eight
+  // instrumented tests, the whole `androidTest` source set and its five test-only dependencies
+  // went with it, and so did this module's two `requiresInstrumentedData` coverage floors and its
+  // entries in `e2e.yml` and `pr.yml`. Everything this module still ships is gated on the JVM tier.
 }
