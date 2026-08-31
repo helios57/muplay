@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.PathSensitivity
+
 plugins {
   id("muplay.android.application")
   id("muplay.android.compose")
@@ -31,6 +33,34 @@ android {
 // would be a wrong claim in a shipped manifest.
 muplayApplication {
   androidAuto = true
+}
+
+/**
+ * The files `StoreListingTest` reads that Gradle would otherwise not know this task depends on.
+ *
+ * **Measured, and it is the defect this repository exists to keep out.** Edit
+ * `docs/STORE-LISTING.md` to claim a sleep timer -- which that test's banned list forbids -- and
+ * `./gradlew :app:testDebugUnitTest` answers `Task :app:testDebugUnitTest FROM-CACHE`,
+ * `BUILD SUCCESSFUL`, in four seconds. The gate over the one document in this repository that is
+ * read by strangers does not run when that document changes; only an unrelated Kotlin edit, or a
+ * cold cache, makes it run at all. A falsification of that test that forgets `--rerun` therefore
+ * reports every rule as unfalsifiable, which is how this was found.
+ *
+ * Only the inputs a human edits are listed. The test also walks every `src/main` source, and
+ * declaring the whole tree would make the unit-test task depend on files it has no business
+ * rebuilding for -- the Kotlin sources are already inputs by another route, and a source edit is
+ * not the change that silently skips this gate.
+ */
+tasks.withType<Test>().configureEach {
+  inputs.files(
+    rootProject.file("docs/STORE-LISTING.md"),
+    rootProject.file(".github/workflows/release.yml"),
+  )
+    .withPropertyName("storeListingDocuments")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+  inputs.dir(rootProject.file("play"))
+    .withPropertyName("storeListingAssets")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {
