@@ -47,11 +47,6 @@ include(":feature:book")
 // both include lines. Gradle accepts a duplicate include in silence. `ConventionTest`'s
 // `settings.gradle.kts never includes one module twice` now refuses it.
 include(":feature:castpicker")
-
-// Plan 5 Task 8. The second APPLICATION module in this build, and the only module whose `minSdk` is
-// not 26 -- Wear OS 3 is API 30 and Compose for Wear OS supports nothing earlier. That floor is set
-// in `muplay.android.wear` (build-logic), never in this module's own `android { }` block.
-include(":wear")
 // Plan 6 Task 12. The settings **slot**: a screen that renders whatever `SettingsSection`
 // implementations the Hilt graph contains and names none of them. It depends on no other feature
 // and on no `:core:` module, which is what makes `git rm -r core/cast feature/castpicker` a
@@ -82,11 +77,3 @@ include(":integrations:requests")
 // depends on an integration` names it explicitly as the second and last permitted consumer --
 // dropping Plan 7 is `git rm -r integrations feature/requests` plus these five include lines.
 include(":feature:requests")
-
-// Plan 5 Task 10. The wire between the phone app and the watch app: `SubsonicCredentials` and
-// `media_progress` rows, replicated both ways over the Wearable Data Layer. An Android library and
-// not a JVM one, because exactly one file in it (`DataLayerWatchLink`) touches
-// `play-services-wearable` and Hilt's `@ApplicationContext`; everything that *decides* anything is
-// pure and gated on the JVM tier. It depends on `:core:database` and `:core:model` and on no
-// feature module.
-include(":core:watchlink")

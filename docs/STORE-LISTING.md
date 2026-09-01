@@ -206,23 +206,30 @@ without declaring it here (or the reverse) fails `check`.
 |---|---|---|
 | Phone | Yes | the application module itself |
 | Android Auto | Yes | `androidAuto = true` in `app/build.gradle.kts` |
-| Wear OS | No | no watch artifact is built or signed by `.github/workflows/release.yml`, and `:app` declares no `wearApp(...)` |
+| Wear OS | No | no watch module exists, no watch artifact is built or signed by `.github/workflows/release.yml`, and `:app` declares no `wearApp(...)` |
 | Android TV | No | no `android.software.leanback` in any source manifest |
 
 Declaring Android Auto is not free: it opens a separate review surface with its own quality
 checklist and its own rejection path. Plan 8 Task 10 owns walking that checklist.
 
-**Wear OS is the row most likely to be got wrong, so read what decides it.** `settings.gradle.kts`
-*does* include a `:wear` module, and it is a real application module: `android.hardware.type.watch`,
-`com.google.android.wearable.standalone`, `:app`'s own `applicationId`, its own version ledger. None
-of that puts a watch app in front of a user. `.github/workflows/release.yml` assembles, signs and
-verifies `:app` and only `:app`; nothing declares `wearApp(project(":wear"))`; `wear/WearApp.kt` is
-a placeholder whose own KDoc says a later task replaces it entirely and which renders the single
-word "MuPlay"; and `:core:watchlink`, the sync engine, is named by no build file at all and is
-therefore in no APK. So the honest answer to "does this listing declare Wear OS" is **No**, and the
-rule that decides it asks whether an artifact ships rather than whether a directory exists — the
-first version of that rule asked the second question and would have pushed a false Yes into a
-published listing.
+**Wear OS is the row most likely to be got wrong, so read what decides it.** This repository used
+to contain a `:wear` application module and a `:core:watchlink` sync engine. Both were **deleted**:
+a paired watch controls MuPlay through Wear OS's own notification bridging — a `MediaStyle`
+notification backed by a `MediaSession`, which the watch renders as a media card with transport
+buttons — and that is a platform feature needing no watch app, no Data Layer and no Play services.
+Spotify and Symfonium ship no watch APK for the same reason.
+
+So the answer is **No**, and it is now No for the simplest possible reason: there is no watch
+module, nothing declares `wearApp(...)`, and `.github/workflows/release.yml` assembles and signs
+`:app` and only `:app`. Declaring the Wear form factor pulls in its own review checklist and its own
+rejection path, and this app has no watch artifact to put through it.
+
+Note what is deliberately NOT claimed here. Controlling playback from a watch very likely works
+today — `ConventionTest`'s `nothing marks a notification local-only, which would stop a watch
+controlling playback` protects the one flag that would switch it off, and
+`MuPlaybackServiceTest.theSessionOffersTheTransportCommandsALockScreenNeeds` pins the command set
+such a controller needs. It is not claimed because nobody has yet run it against a physical paired
+watch, and no emulator pair fakes that. Verify it on real hardware before adding the claim.
 
 ---
 
@@ -288,7 +295,7 @@ audit that produced this list.
 | Casting an audiobook | The cast button is in `PlayerScreen`'s slot and `:app` routes a book to `BookPlayerScreen`, which has no cast anything. So the capability exists and a book cannot reach it. |
 | Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. No selection, no pinning, no queue. |
 | Scrobbling / play counts sent back to the server | Never, and structurally: `SubsonicApi` declares eight read endpoints and no write one, and `core/network`'s own `LocalOnlyProgressTest` fails the build if one is added. |
-| Wear OS app | `:wear` is a module, not an artifact. Nothing declares `wearApp(...)`, `.github/workflows/release.yml` assembles and signs `:app` and only `:app`, `WearApp` renders the single word "MuPlay" behind a KDoc saying a later task replaces it, and `:core:watchlink` — the sync engine — is named by no build file and is therefore in no APK. |
+| Wear OS app | There is no watch module at all: `:wear` and `:core:watchlink` were deleted, nothing declares `wearApp(...)`, and `release.yml` assembles and signs `:app` and only `:app`. A watch controls playback through Wear OS notification bridging, which ships no APK. |
 | Material You / dynamic colour | Light and dark only, from a fixed palette that follows the system setting. |
 
 

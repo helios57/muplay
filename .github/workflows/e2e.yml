@@ -55,18 +55,11 @@ jobs:
     # this remains evidence that the *test* half is nowhere near the budget rather than a
     # measurement of the job. Nothing measurable here justifies moving the limit; the first real
     # CI run is what should be read before anyone does.
-    # **Raised from 60 to 90 at Plan 5 Task 8**, which adds a SECOND emulator to this job: a Wear
-    # OS image, downloaded and booted after the phone one has been torn down, plus `:wear`'s own
-    # debug and androidTest assemblies. The wear suite itself is four tests, one of which plays a
-    # second of real audio; what the extra thirty minutes is for is the second ~2 GB system-image
-    # pull and the second cold boot, which are the two largest costs in this job and the two least
-    # related to what is being tested. Neither has been measured on a runner -- read the first real
-    # CI run before moving this again, exactly as the paragraph above asks.
-    #
-    # Why a second emulator STEP and not a second JOB: `Jacoco.kt` merges execution data from one
-    # workspace, so a separate job's `.ec` files would simply not be there when the coverage gate
-    # below runs -- and `:wear`'s floors are all `requiresInstrumentedData`. A split job would cost
-    # the coverage gate its data; two steps cost wall-clock time. Quality outranks gate speed.
+    # 90 minutes. It was raised from 60 when this job briefly ran a SECOND emulator for a Wear OS
+    # image; that step is gone (see the descope commit -- a watch controls MuPlay through Wear OS's
+    # notification bridging, which needs no watch app), and the budget is deliberately NOT lowered
+    # back: what actually consumes it is the phone suites, which have roughly doubled since, and a
+    # timeout tuned to the minute is a flake generator on a shared runner.
     timeout-minutes: 90
     # The AVD coordinates, written once. Every step below reads them from here, and
     # `ConventionTest`'s "the emulator coordinates cannot drift" asserts they equal
@@ -80,20 +73,6 @@ jobs:
       # `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator 37.1.11.
       EMULATOR_BUILD: "15917651"
       # The watch. A different SDK package, a different device profile and a different AVD from the
-      # phone image above - see ci/prepare-wear-emulator.sh's header, which also records why the
-      # target is `android-wear-signed` rather than the `android-wear` a reader would expect (there
-      # is no `system-images;android-36;android-wear;x86_64`; Google renamed the tag when the images
-      # became Google-signed). Held equal to that script's own `readonly` declarations by
-      # `ConventionTest`'s "the wear emulator coordinates ... cannot drift apart".
-      #
-      # No EMULATOR_BUILD counterpart, deliberately: the phone image is pinned to emulator 37.1.11
-      # because a *measured* gralloc workaround depends on that pairing, and this repository has no
-      # such measurement for any Wear image. Pinning a build id here would be a number nobody could
-      # justify, and the preflight says so where it reports gralloc instead of asserting it.
-      WEAR_API_LEVEL: "36"
-      WEAR_TARGET: android-wear-signed
-      WEAR_ARCH: x86_64
-      WEAR_PROFILE: wearos_small_round
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -166,12 +145,9 @@ jobs:
           platform="platforms;android-$EMULATOR_API_LEVEL"
           image="system-images;android-$EMULATOR_API_LEVEL;$EMULATOR_TARGET;$EMULATOR_ARCH"
           # The watch's own two, resolved here for exactly the reason the phone's are: the plan for
-          # this task named `system-images;android-36;android-wear;x86_64`, which Google does not
           # publish, and that would have failed deep inside the emulator action at AVD creation with
           # an error naming no string.
-          wear_platform="platforms;android-$WEAR_API_LEVEL"
-          wear_image="system-images;android-$WEAR_API_LEVEL;$WEAR_TARGET;$WEAR_ARCH"
-          for pkg in "$platform" "$image" "$wear_platform" "$wear_image"; do
+          for pkg in "$platform" "$image"; do
             # An exact match on the whole first column, not `grep -F`: `sdkmanager --list` prints
             # `  <package> | <rev> | <description> | <path>`, and a substring test passes
             # `platforms;android-37` against the line for `platforms;android-37.0` -- i.e. it
@@ -188,7 +164,7 @@ jobs:
             else
               echo "::error::'$pkg' is not a package Google publishes. Check api-level/target/arch"
               echo "::error::in this workflow and the matching declarations in"
-              echo "::error::ci/prepare-emulator.sh or ci/prepare-wear-emulator.sh"
+              echo "::error::ci/prepare-emulator.sh"
               status=1
             fi
           done
@@ -306,41 +282,6 @@ jobs:
             ./ci/prepare-emulator.sh
             ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
-      # The watch, on a watch. A second emulator inside the SAME job -- see this job's
-      # `timeout-minutes` comment for why not a second job (the coverage gate reads one workspace's
-      # execution data, and every `:wear` floor is `requiresInstrumentedData`).
-      #
-      # The phone emulator is already gone by the time this runs: `android-emulator-runner` tears
-      # its own emulator down as its step ends, so `connectedDebugAndroidTest` here sees exactly one
-      # device, the watch. That is not a nicety -- `:wear` and `:app` share the applicationId
-      # `app.muplay`, so installing this APK on the phone image would replace the phone app.
-      #
-      # Only `:wear` runs here. The phone suites ran on the phone image; running them again on a
-      # watch would prove nothing new and cost fifteen minutes. `ConventionTest`'s `a watch module's
-      # instrumented suite runs on the watch emulator and only there` holds both halves of that
-      # against the tree, deriving which modules are watch modules from their own manifests.
-      #
-      # No `-feature Minigbm -prop qemu.hardware.gralloc=minigbm` in the options below, unlike the
-      # phone step: that pair is a workaround for a measured emulator/system-image mismatch on the
-      # API 37 *phone* image, and this repository has no measurement for any Wear image. Adding it
-      # here on the strength of the other image's evidence would be a setting nobody could justify.
-      # `ci/prepare-wear-emulator.sh` reports `ro.hardware.gralloc` rather than asserting it, and
-      # its header says exactly what to do if a run dies with "System has crashed".
-      - name: Wear journey
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ env.WEAR_API_LEVEL }}
-          system-image-api-level: ${{ env.WEAR_API_LEVEL }}
-          target: ${{ env.WEAR_TARGET }}
-          arch: ${{ env.WEAR_ARCH }}
-          profile: ${{ env.WEAR_PROFILE }}
-          emulator-options: >-
-            -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
-            -camera-back none -camera-front none
-          script: |
-            ./ci/prepare-wear-emulator.sh
-            ./gradlew :wear:connectedDebugAndroidTest || { adb logcat -d > wear-logcat.txt; exit 1; }
-
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
       # needs no device (`jacocoJvmCoverageVerification`, see pr.yml); this task is a superset of
@@ -373,4 +314,3 @@ jobs:
             **/build/reports/androidTests/**
             **/build/reports/jacoco/**
             emulator-logcat.txt
-            wear-logcat.txt

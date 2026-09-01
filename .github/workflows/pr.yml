@@ -111,7 +111,7 @@ jobs:
       # sources at all. It proves they compile and nothing more; it does not and cannot prove that
       # a single assertion in them is true.
       - name: Compile the gates check does not
-        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:book:compileDebugAndroidTestKotlin :feature:castpicker:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :feature:requests:compileDebugAndroidTestKotlin :feature:settings:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:requests:compileDebugAndroidTestKotlin :wear:compileDebugAndroidTestKotlin
+        run: ./gradlew :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :core:database:compileDebugAndroidTestKotlin :core:media:compileDebugAndroidTestKotlin :feature:book:compileDebugAndroidTestKotlin :feature:castpicker:compileDebugAndroidTestKotlin :feature:player:compileDebugAndroidTestKotlin :feature:requests:compileDebugAndroidTestKotlin :feature:settings:compileDebugAndroidTestKotlin :integrations:core:compileDebugAndroidTestKotlin :integrations:requests:compileDebugAndroidTestKotlin
 
       - name: No destructive migration without a named exemption
         # DataModule.provideDatabase's fallbackToDestructiveMigration call must never reach a

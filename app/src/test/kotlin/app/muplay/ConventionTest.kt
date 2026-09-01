@@ -508,153 +508,6 @@ class ConventionTest {
       .isEmpty()
   }
 
-  /**
-   * The wear AVD is declared twice - in `.github/workflows/e2e.yml`'s job `env:` and in
-   * `ci/prepare-wear-emulator.sh` - for the same reason the phone AVD is: the workflow launches it
-   * and the script validates the device it is handed, and neither can import from the other. If
-   * they disagree, the script's own "wrong system image" check fires on a correct emulator, or
-   * worse, passes on a wrong one.
-   *
-   * Four values rather than the phone's three, because a Wear AVD also needs a device `profile`
-   * (`wearos_small_round`); `android-emulator-runner` defaults that to a phone profile, and a Wear
-   * system image on a phone profile does not boot to a usable watch.
-   *
-   * Falsified by hand while it was written, in both halves: changing `WEAR_API_LEVEL` in the
-   * workflow alone fails with
-   * `WEAR_API_LEVEL: e2e.yml vs ci/prepare-wear-emulator.sh expected: "36" but was: "35"`, and
-   * replacing `api-level: ${'$'}{{ env.WEAR_API_LEVEL }}` with the literal `36` fails with
-   * `e2e.yml must pass `api-level:` as ${'$'}{{ env.WEAR_API_LEVEL }}, not a literal`.
-   */
-  @Test
-  fun `the wear emulator coordinates in e2e yml and prepare-wear-emulator sh cannot drift apart`() {
-    val workflow = File(repoRoot(), ".github/workflows/e2e.yml").readText()
-    val scriptFile = File(repoRoot(), "ci/prepare-wear-emulator.sh")
-    assertThat(scriptFile).exists()
-    val script = scriptFile.readText()
-
-    listOf("WEAR_API_LEVEL", "WEAR_TARGET", "WEAR_ARCH", "WEAR_PROFILE").forEach { name ->
-      val fromWorkflow = Regex("""^\s*$name:\s*"?([^"\s#]+)"?\s*$""", RegexOption.MULTILINE)
-        .find(workflow)?.groupValues?.get(1)
-      val fromScript = Regex("""^readonly $name=([^\s#]+)\s*$""", RegexOption.MULTILINE)
-        .find(script)?.groupValues?.get(1)
-
-      // A pattern that stops matching either declaration must fail here too, not silently compare
-      // two nulls as equal -- the same principle as the very first test in this class.
-      assertThat(fromWorkflow).describedAs("$name in .github/workflows/e2e.yml").isNotNull()
-      assertThat(fromScript).describedAs("$name in ci/prepare-wear-emulator.sh").isNotNull()
-      assertThat(fromWorkflow).describedAs("$name: e2e.yml vs ci/prepare-wear-emulator.sh")
-        .isEqualTo(fromScript)
-    }
-
-    // ...and the action's own inputs must actually read those variables, or the `env:` block could
-    // agree with the script perfectly while the step it feeds passed a hardcoded literal. Whole-line
-    // matches, not `contains`: `system-image-api-level: ...` *contains*
-    // `api-level: ...` as a substring, which is how the phone version of this
-    // assertion was once satisfied by a workflow whose `api-level:` had been replaced.
-    mapOf(
-      "api-level" to "WEAR_API_LEVEL",
-      "system-image-api-level" to "WEAR_API_LEVEL",
-      "target" to "WEAR_TARGET",
-      "arch" to "WEAR_ARCH",
-      "profile" to "WEAR_PROFILE",
-    ).forEach { (input, variable) ->
-      val line = Regex(
-        """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",
-        RegexOption.MULTILINE,
-      )
-      assertThat(line.containsMatchIn(workflow))
-        .describedAs("e2e.yml must pass `$input:` as \${'$'}{{ env.$variable }}, not a literal")
-        .isTrue()
-    }
-  }
-
-  /**
-   * **A watch module's instrumented suite runs on the watch emulator, and nothing else does.**
-   *
-   * The rule above proves every module with a `src/androidTest` is *named somewhere* in the
-   * emulator job. That was enough while the job had one emulator. It is not enough now: `:wear`
-   * named on the **phone** step's command line would satisfy it completely, and that run would be
-   * the exact defect `ci/prepare-wear-emulator.sh` exists to prevent - a wear suite on a phone
-   * image is green and proves nothing, and because `:wear` and `:app` share the applicationId
-   * `app.muplay` it would also reinstall the phone app underneath itself mid-job.
-   *
-   * The other direction matters too and is cheaper to get wrong: a phone module added to the wear
-   * step would run its suite on a 45 mm round screen with a different API level, which is a slower,
-   * flakier, less meaningful copy of a run that already happened.
-   *
-   * **Which modules are watch modules is derived from the tree, never listed here.** A module is
-   * one iff its own `src/main/AndroidManifest.xml` declares `android.hardware.type.watch` - the
-   * declaration Play routes APKs by, so it is the module's own statement of what it is rather than
-   * a second opinion about it. That is this repository's standing answer to the hand-written list
-   * that drifts, which has now cost it four gates.
-   *
-   * Falsified by hand: moving `:wear:connectedDebugAndroidTest` onto the phone step's line fails
-   * with `these WATCH modules run on a step that is not the wear emulator's: [:wear]`.
-   */
-  @Test
-  fun `a watch module's instrumented suite runs on the watch emulator and only there`() {
-    val root = repoRoot()
-    val workflowFile = File(root, ".github/workflows/e2e.yml")
-    val workflow = workflowFile.readText()
-
-    val watchModules = moduleBuildFiles()
-      .map { it.parentFile }
-      .filter { module ->
-        File(module, "src/main/AndroidManifest.xml")
-          .takeIf { it.isFile }
-          ?.readText()
-          ?.contains("android.hardware.type.watch") == true
-      }
-      .map { ":" + it.relativeTo(root).path.replace(File.separatorChar, ':') }
-      .sorted()
-
-    // Vacuity. A scan that found no watch module would satisfy every assertion below by having
-    // nothing to contradict them -- the failure mode every rule in this class guards against.
-    assertThat(watchModules)
-      .describedAs("modules whose own manifest declares android.hardware.type.watch")
-      .isNotEmpty()
-
-    // The workflow's steps, split on their own `- name:` lines. A step is "the wear one" if its
-    // script runs the wear preflight, which is the thing that makes the device a watch as far as
-    // this job is concerned -- not its name, which anyone may edit.
-    val steps = workflow.split(Regex("""(?=^ {6}- name:)""", RegexOption.MULTILINE))
-    val taskPattern = Regex("""((?::[A-Za-z0-9_.-]+)+):connectedDebugAndroidTest""")
-
-    val onWear = mutableListOf<String>()
-    val onPhone = mutableListOf<String>()
-    steps.forEach { step ->
-      val body = step.lines().filterNot { it.trimStart().startsWith("#") }.joinToString("\n")
-      if (!body.contains("connectedDebugAndroidTest")) return@forEach
-      val modules = taskPattern.findAll(body).map { it.groupValues[1] }.toList()
-      if (body.contains("prepare-wear-emulator.sh")) onWear += modules else onPhone += modules
-    }
-
-    // Both lists non-empty: with one of them empty the two assertions below are each satisfied by
-    // an absence, and a job that had lost its wear step entirely would read as compliant.
-    assertThat(onWear).describedAs("modules run by ${workflowFile.path}'s wear emulator step").isNotEmpty()
-    assertThat(onPhone).describedAs("modules run by ${workflowFile.path}'s phone emulator step").isNotEmpty()
-
-    assertThat(onPhone.filter { it in watchModules })
-      .describedAs(
-        "these WATCH modules run on a step that is not the wear emulator's: a wear suite on a " +
-          "phone image is green and proves nothing, and :wear shares :app's applicationId so it " +
-          "would replace the phone app mid-job -- see ci/prepare-wear-emulator.sh",
-      )
-      .isEmpty()
-    assertThat(onWear.filterNot { it in watchModules })
-      .describedAs(
-        "these non-watch modules run on the wear emulator step: their suites already ran on the " +
-          "phone image, and running them again on a watch is slower and proves nothing new",
-      )
-      .isEmpty()
-    assertThat(watchModules.filterNot { it in onWear })
-      .describedAs(
-        "these watch modules are never run by the wear emulator step, so their instrumented " +
-          "tests exist and execute nowhere",
-      )
-      .isEmpty()
-  }
-
 
   /**
    * **Every module with instrumented tests has those sources compiled by the fast tier.**
@@ -1350,81 +1203,64 @@ class ConventionTest {
   }
 
   /**
-   * Google Play services' containment, as a check rather than a promise.
+   * Google Play services must not enter this build at all.
    *
-   * Plan 5 Task 10 admits `play-services-wearable` because there is no other API for phone-to-watch
-   * messaging, and the entire argument for admitting it is that it is contained: **one module
-   * declares it and one file imports it**, so everything that decides anything stays behind
-   * `WatchLink` where a JVM test can reach it. A second importer would move a decision into the one
-   * place no gate in this repository can run -- it needs a Bluetooth bond and two Play services
-   * installs -- and it would do so silently, with `check` green.
+   * This rule used to say "exactly one module declares `play-services-wearable`", and that was the
+   * right rule while `:core:watchlink` existed: Plan 5 Task 10 admitted the dependency because
+   * there is no other API for phone-to-watch messaging, and the whole argument for admitting it was
+   * that it stayed contained behind `WatchLink` where a JVM test could reach the decisions.
    *
-   * Both halves are derived rather than written down. The catalogue alias is found from the Maven
-   * coordinate, so renaming the alias moves the rule with it; the declaring module is read out of
-   * the build files rather than asserted against a hardcoded name.
+   * That module is gone. A paired watch controls MuPlay through **Wear OS's notification
+   * bridging** -- a `MediaStyle` notification backed by a `MediaSession`, rendered on the watch as
+   * a media card -- which is a platform feature needing no watch app, no Data Layer and no Play
+   * services. So the containment argument no longer has anything to contain, and the honest rule is
+   * the stronger one: nothing here may depend on Play services.
    *
-   * **Matches a declaration, not a mention**, for the reason this file has now paid for four times:
-   * comments are stripped from the build files, and the source half matches an `import` line rather
-   * than any occurrence of the package. `core/model`'s `BrowseSurface` names
-   * `com.google.android.gms.car` as a *string literal* -- an Android Auto manifest key -- and a
-   * `contains` over the package would report it as an offender. This test also scans `src/main`
-   * source sets only, which is what keeps it from reporting its own KDoc.
+   * That is worth enforcing rather than merely observing. MuPlay's privacy claim is that it talks
+   * only to the server its user names; Play services is a large closed dependency that talks to
+   * Google, and adding it would quietly falsify the store listing's own data-safety answers while
+   * every test stayed green.
    *
-   * FALSIFIED in both halves. Adding `implementation(libs.play.services.wearable)` to
-   * `wear/build.gradle.kts` fails with `Expecting actual: ["core/watchlink", "wear"]`; adding
-   * `import com.google.android.gms.wearable.Wearable` to `MuPlayWearApplication.kt` fails naming
-   * that file.
+   * **Matches a declaration, not a mention.** Comments are stripped from build files and the source
+   * half matches an `import` line rather than any occurrence of the package, because
+   * `core/model`'s `BrowseSurface` names `com.google.android.gms.car` as a *string literal* -- an
+   * Android Auto manifest key -- and a `contains` over the package would report it as an offender.
+   * `src/main` only, which is also what stops it reporting its own KDoc.
    *
-   * **The second half needed `--rerun` to fail at all, and that is worth knowing about every rule in
-   * this class.** Nothing under `wear`'s main source set is a declared input of
-   * `:app:testDebugUnitTest`, so with the
-   * violating import in the tree Gradle reported `> Task :app:testDebugUnitTest UP-TO-DATE` and
-   * `BUILD SUCCESSFUL` -- a repo-wide scan skipped entirely because the file it scans is invisible to
-   * the task's up-to-date check. CI is a fresh checkout and is unaffected; a local gate run is not.
-   * Falsify a rule in this class with `./gradlew :app:testDebugUnitTest --rerun --tests
-   * '*ConventionTest*'`.
+   * FALSIFIED: adding `implementation("com.google.android.gms:play-services-wearable:20.0.1")` to
+   * `core/media/build.gradle.kts` fails naming that module; adding
+   * `import com.google.android.gms.wearable.Wearable` to a `src/main` file fails naming that file.
+   *
+   * **Falsify any rule in this class with `--rerun`.** A file outside `:app`'s own source sets is
+   * not a declared input of `:app:testDebugUnitTest`, so a violating edit elsewhere can leave the
+   * task `UP-TO-DATE` and the whole repo-wide scan skipped, reporting `BUILD SUCCESSFUL`. CI is a
+   * fresh checkout and is unaffected; a local falsification is not.
    */
   @Test
-  fun `only one module declares play services and only one file imports it`() {
-    val coordinate = "com.google.android.gms:play-services-wearable"
-    val catalogue = File(repoRoot(), "gradle/libs.versions.toml")
-    val alias = Regex("""^([\w-]+)\s*=\s*\{\s*module\s*=\s*"${Regex.escape(coordinate)}"""", RegexOption.MULTILINE)
-      .find(catalogue.readText())?.groupValues?.get(1)
-
-    // A scan that finds nothing is the failure mode every rule in this class guards against.
-    assertThat(alias)
-      .describedAs("${catalogue.path} must declare a library alias for $coordinate")
-      .isNotNull()
-
-    // `play-services-wearable` is reached from a build file as `libs.play.services.wearable`.
-    val accessor = "libs." + checkNotNull(alias).replace('-', '.')
-    val declaringModules = moduleBuildFiles()
-      .filter { withoutComments(it.readText()).contains(accessor) || withoutComments(it.readText()).contains(coordinate) }
+  fun `nothing in this build depends on Google Play services`() {
+    val offendingModules = moduleBuildFiles()
+      .filter { withoutComments(it.readText()).contains("com.google.android.gms") }
       .map { it.parentFile.relativeTo(repoRoot()).path }
       .sorted()
 
-    assertThat(declaringModules)
+    assertThat(offendingModules)
       .describedAs(
-        "exactly one module may declare $coordinate -- that containment is the whole argument " +
-          "for admitting a dependency no gate in this repository can exercise",
+        "no module may depend on Google Play services: a watch reaches MuPlay through Wear OS " +
+          "notification bridging, which needs no such dependency, and this app's privacy claim is " +
+          "that it talks only to the server its user names",
       )
-      .containsExactly("core/watchlink")
+      .isEmpty()
 
-    val importers = repoRoot().walkTopDown()
+    val importing = repoRoot().walkTopDown()
       .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
-      .filter { it.extension == "kt" && it.path.contains("${File.separator}src${File.separator}main${File.separator}") }
-      .filter { Regex("""^\s*import\s+com\.google\.android\.gms\.""", RegexOption.MULTILINE).containsMatchIn(it.readText()) }
+      .filter { it.isFile && it.extension == "kt" && it.path.contains("/src/main/") }
+      .filter { Regex("""^import\s+com\.google\.android\.gms\.""", RegexOption.MULTILINE).containsMatchIn(it.readText()) }
       .map { it.relativeTo(repoRoot()).path }
-      .sorted()
       .toList()
 
-    assertThat(importers)
-      .describedAs(
-        "only DataLayerWatchLink may import Google Play services: it is the one file in this " +
-          "repository that no gate covers in either tier, and it is kept decision-free so that " +
-          "is honest",
-      )
-      .containsExactly("core/watchlink/src/main/kotlin/app/muplay/watchlink/DataLayerWatchLink.kt")
+    assertThat(importing)
+      .describedAs("no production source may import Google Play services")
+      .isEmpty()
   }
 
   /**
