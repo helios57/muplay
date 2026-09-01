@@ -740,6 +740,58 @@ class ConventionTest {
    * -- as the offender. Same self-matching failure as the `pgrep` that matched its own command
    * line, the nav-entry rule above, and `VerifyMergedManifestTask`'s required half.
    */
+  /**
+   * Controlling playback from a paired watch is a PLATFORM feature, and this rule protects the one
+   * line that would silently switch it off.
+   *
+   * Spotify and Symfonium do not install anything on a Galaxy Watch to be controllable from it.
+   * Wear OS bridges the phone's notifications to the watch, and a `MediaStyle` notification backed
+   * by a `MediaSession` is rendered there as a media card with real transport buttons. MuPlay gets
+   * this for free: `MuPlaybackService` installs Media3's `DefaultMediaNotificationProvider`, and
+   * `MuPlaybackServiceTest.theSessionOffersTheTransportCommandsALockScreenNeeds` pins the exact
+   * command set such a controller needs -- the same set a lock screen needs, which is why one test
+   * covers both surfaces.
+   *
+   * `NotificationCompat.Builder.setLocalOnly(true)` is the switch. It marks a notification as not
+   * for bridging, Wear then never shows it, and **nothing anywhere goes red**: the phone behaves
+   * identically, every test here passes, and the only symptom is a watch that stopped offering
+   * controls. It is also a plausible thing to add by accident -- it reads like a privacy or
+   * tidiness improvement.
+   *
+   * This is deliberately a source scan and not a behavioural test, because the behaviour needs two
+   * physically paired devices and there is no emulator pair that fakes it. A cheap rule that names
+   * the trap beats an expensive one nobody can run. If a future change genuinely needs a local-only
+   * notification, it will not be the media one -- carve that case out by name here, with the
+   * measurement that shows the media notification still bridges.
+   */
+  @Test
+  fun `nothing marks a notification local-only, which would stop a watch controlling playback`() {
+    val offenders = mutableListOf<String>()
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.isFile && it.extension == "kt" }
+      .forEach { file ->
+        // Comments stripped, because this rule's own KDoc names the call it forbids -- the
+        // self-matching failure this file has now recorded four times.
+        val source = file.readText()
+          .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+          .replace(Regex("""//[^\n]*"""), "")
+        if (Regex("""setLocalOnly\s*\(\s*true\s*\)""").containsMatchIn(source)) {
+          offenders += file.relativeTo(repoRoot()).path
+        }
+      }
+
+    assertThat(offenders)
+      .`as`(
+        "Marking a notification local-only stops Wear OS bridging it, so a paired watch silently " +
+          "loses its transport controls while every test here stays green. See this rule's own " +
+          "documentation before adding a carve-out. (The message deliberately does not spell the " +
+          "call: a string literal is code, not a comment, so quoting it here would make this rule " +
+          "its own only offender -- which is what the first run of it did.)",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `settings gradle kts never includes one module twice`() {
     val settings = File(repoRoot(), "settings.gradle.kts")
