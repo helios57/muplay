@@ -138,11 +138,32 @@ class MuPlaybackServiceTest {
     controller = runBlocking { connection.controller() }
   }
 
+  /**
+   * Guarded on `isInitialized`, because an un-guarded `@After` **replaces the real failure with its
+   * own**. Both properties are assigned on the last two lines of [setUp], and `connection.controller()`
+   * is a bind to a service another class may just have destroyed -- so a failure there leaves
+   * `controller` unset and this method throwing
+   * `UninitializedPropertyAccessException: lateinit property controller has not been initialized`,
+   * which is then the **only** message in the report.
+   *
+   * Measured here on 2026-09-01, in a full ten-module emulator run:
+   * `theSleepTimerTurnsOnTheShakeSensorThatMakesTheGestureReachable` reported exactly that and
+   * nothing else, and the class was 18/18 when re-run alone. So the flake is order-dependent and
+   * survives -- but whatever really went wrong in `setUp` was unreportable, which is the part that
+   * cost time. `GaplessTest.tearDown` is the run that first put this rule in `CLAUDE.md`; this is
+   * the same defect in `:app`.
+   *
+   * `connection.release()` still runs whenever there is a connection to release: a leaked binding is
+   * what poisons the *next* class, so the guard must not skip it just because `controller` is unset.
+   */
   @After
   fun tearDown() {
+    if (!::connection.isInitialized) return
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      controller.stop()
-      controller.clearMediaItems()
+      if (::controller.isInitialized) {
+        controller.stop()
+        controller.clearMediaItems()
+      }
       connection.release()
     }
   }
