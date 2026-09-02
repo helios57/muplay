@@ -1,5 +1,6 @@
 package app.muplay.cast.proxy
 
+import java.io.ByteArrayOutputStream
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -84,11 +85,22 @@ object ProxyRetry {
 }
 
 /**
+ * A whole small resource and the type the **origin** declared for it.
+ *
+ * Not a `data class`: the only field worth comparing is a `ByteArray`, whose generated `equals`
+ * compares identity, and a value type whose equality silently means identity is the kind of thing
+ * an assertion later reads the wrong way.
+ *
+ * [contentType] is `null` when the origin sent none. The caller decides what to serve then; this
+ * type reports what was said, including "nothing".
+ */
+class UpstreamBody(val bytes: ByteArray, val contentType: String?)
+
+/**
  * Where the proxy gets the bytes.
  *
- * An interface with exactly two operations, so the server's status and header logic is testable
- * without a network -- and so that the one implementation that *does* use the network is small
- * enough to read.
+ * A small interface, so the server's status and header logic is testable without a network -- and
+ * so that the one implementation that *does* use the network is small enough to read.
  */
 interface ProxyUpstream {
 
@@ -105,6 +117,23 @@ interface ProxyUpstream {
 
   /** Exactly the bytes in [range]. The caller closes the stream. */
   fun open(url: String, range: ByteRange): InputStream
+
+  /**
+   * The **whole** resource, or `null` when it is longer than [maxBytes] or the origin refused.
+   *
+   * For cover art, and only for cover art. Navidrome's `/rest/getCoverArt` was measured to answer
+   * `200` with `Transfer-Encoding: chunked`, no `Content-Length`, and to ignore `Range` outright --
+   * so [totalLength] cannot learn its size and [open] cannot ask for part of it. Reading it whole
+   * is the only way to serve a renderer an accurate `Content-Length`, which is what a renderer
+   * needs to display an image at all. See [PublishedArtwork].
+   *
+   * `null` rather than a throw for an over-long body, because the caller's answer to both is the
+   * same status and neither is exceptional: an origin serving a 50 MB "cover" is a configuration,
+   * not a fault. [maxBytes] exists because this reads into the heap of a phone.
+   *
+   * @throws UpstreamThrottledException when the origin answered 429 until this client gave up.
+   */
+  fun readFully(url: String, maxBytes: Int): UpstreamBody?
 }
 
 /**
@@ -150,6 +179,30 @@ class OkHttpProxyUpstream(
       contentRange.substringAfterLast('/').toLongOrNull()
     }
 
+  /**
+   * No `Range` header at all, which is the point: the origins this is used against ignore one, and
+   * sending a header a peer ignores makes the request look like something it is not to anyone
+   * reading a capture. The body is read with a **hard cap and one byte of headroom**, so "exactly
+   * at the limit" and "over it" are distinguishable rather than both truncating silently.
+   */
+  override fun readFully(url: String, maxBytes: Int): UpstreamBody? =
+    fetch(url, range = null).use { response ->
+      if (!response.isSuccessful) return@use null
+      val source = response.body.byteStream()
+      val buffer = ByteArrayOutputStream()
+      // `DEFAULT_BUFFER_SIZE` rather than a constant of this file's own: a new top-level `const`
+      // compiles to a `ProxyUpstreamKt` facade class that would then appear, empty, in every
+      // coverage report this module produces.
+      val chunk = ByteArray(DEFAULT_BUFFER_SIZE)
+      while (buffer.size() <= maxBytes) {
+        val read = source.read(chunk)
+        if (read <= 0) break
+        buffer.write(chunk, 0, read)
+      }
+      if (buffer.size() > maxBytes) null
+      else UpstreamBody(buffer.toByteArray(), response.header("Content-Type"))
+    }
+
   override fun open(url: String, range: ByteRange): InputStream {
     val response = fetch(url, "bytes=${range.firstByte}-${range.lastByte}")
     // The response is NOT closed here: the caller streams the body and closes it. Closing the
@@ -172,10 +225,12 @@ class OkHttpProxyUpstream(
    * proxy passes on to the renderer -- an interceptor would have to throw the same thing anyway,
    * from further away from the header it read.
    */
-  private fun fetch(url: String, range: String): Response {
+  private fun fetch(url: String, range: String?): Response {
     var attempt = 1
     while (true) {
-      val request = Request.Builder().url(url).header("Range", range).build()
+      val request = Request.Builder().url(url)
+        .apply { range?.let { header("Range", it) } }
+        .build()
       val response = client.newCall(request).execute()
       if (response.code != ProxyRetry.TOO_MANY_REQUESTS) return response
       val retryAfter = response.header("Retry-After")

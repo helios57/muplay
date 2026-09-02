@@ -12,6 +12,7 @@ import app.muplay.cast.proxy.ByteRange
 import app.muplay.cast.proxy.MediaProxyServer
 import app.muplay.cast.proxy.ProxyRegistry
 import app.muplay.cast.proxy.ProxyUpstream
+import app.muplay.cast.proxy.UpstreamBody
 import app.muplay.cast.route.CastRouter
 import app.muplay.cast.soap.SoapClient
 import app.muplay.cast.soap.UpnpError
@@ -860,6 +861,10 @@ class CastSessionTest {
 
     override fun open(url: String, range: ByteRange): InputStream =
       content.copyOfRange(range.firstByte.toInt(), range.lastByte.toInt() + 1).inputStream()
+
+    /** Artwork bytes, so a session that publishes a cover can be fetched as well as minted. */
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+      UpstreamBody(content, "image/webp")
   }
 
   private companion object {

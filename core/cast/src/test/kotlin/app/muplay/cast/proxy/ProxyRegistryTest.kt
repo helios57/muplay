@@ -72,8 +72,11 @@ class ProxyRegistryTest {
     val asMp3 = registry.publish(UPSTREAM, ServedMedia.of("mp3", StreamFormat.Raw))
     val asFlac = registry.publish(UPSTREAM, ServedMedia.of("flac", StreamFormat.Raw))
 
-    assertThat(registry.resolve(asMp3.path)!!.served.mimeType).isEqualTo("audio/mpeg")
-    assertThat(registry.resolve(asFlac.path)!!.served.mimeType).isEqualTo("audio/flac")
+    // Cast, not read off `Published`: `resolve` answers the sealed supertype now that artwork is
+    // publishable too, and `served` is the track leg's field. A `resolve` that started answering
+    // artwork for a media path would fail here rather than quietly comparing something else.
+    assertThat((registry.resolve(asMp3.path) as PublishedMedia).served.mimeType).isEqualTo("audio/mpeg")
+    assertThat((registry.resolve(asFlac.path) as PublishedMedia).served.mimeType).isEqualTo("audio/flac")
   }
 
   @Test
