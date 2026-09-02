@@ -255,7 +255,7 @@ class ProgressWriterTest {
     val item = MediaItems.of(
       song = gainSong("album-tagged").copy(replayGain = ReplayGain(null, -7.5f, null)),
       streamUri = "https://host/album-tagged",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )
@@ -279,7 +279,7 @@ class ProgressWriterTest {
     val untagged = MediaItems.of(
       song = gainSong("untagged"),
       streamUri = "https://host/untagged",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )
@@ -293,7 +293,7 @@ class ProgressWriterTest {
     val untagged = MediaItems.of(
       song = gainSong("untagged-new"),
       streamUri = "https://host/untagged-new",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )
@@ -809,7 +809,7 @@ class ProgressWriterTest {
     MediaItems.of(
       song = gainSong(mediaId).copy(replayGain = ReplayGain(trackGainDb, null, null)),
       streamUri = "https://host/$mediaId",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )

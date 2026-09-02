@@ -79,4 +79,17 @@ interface PlaybackEntryPoint {
    * test is the object the app has.
    */
   fun shakeSensor(): ShakeSensor
+
+  /**
+   * The **application's own** singleton [ArtworkUrls].
+   *
+   * `:app`'s journeys build `PlaybackConnection`s of their own, and a connection without this
+   * publishes no `PlaybackState.artworkUri` at all -- a `MediaItem` carries `muplay-art:<coverArtId>`
+   * now, and this is what turns one back into a URL an image loader can fetch (see [ArtworkUri]).
+   * Reaching for the real one rather than building a second keeps those journeys asserting about
+   * the credentials the app actually has, and keeps them off a second `CredentialStore` over the
+   * same DataStore file -- which the platform refuses per process, at *use* rather than at
+   * construction.
+   */
+  fun artworkUrls(): ArtworkUrls
 }

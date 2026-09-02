@@ -75,7 +75,7 @@ class AudiobookChapterJourneyTest {
   /** Leaves nothing playing — no `lateinit` is read, so this cannot replace a real failure. */
   @After
   fun tearDown() {
-    val open = connection ?: onMain { PlaybackConnection(context) }
+    val open = connection ?: onMain { PlaybackConnection(context, appArtworkUrls()) }
     connection = null
     val controller = runBlocking { open.controller() }
     onMain {
@@ -265,7 +265,7 @@ class AudiobookChapterJourneyTest {
   }
 
   private fun connectController(): MediaController {
-    val open = connection ?: onMain { PlaybackConnection(context) }.also { connection = it }
+    val open = connection ?: onMain { PlaybackConnection(context, appArtworkUrls()) }.also { connection = it }
     // From the test thread: `controller()` hops to the main Looper itself, and a `runBlocking`
     // there would block the very Looper it is waiting on.
     return runBlocking { open.controller() }

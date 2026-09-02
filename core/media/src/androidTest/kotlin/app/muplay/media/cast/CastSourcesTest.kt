@@ -6,6 +6,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.MediaMetadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.cast.didl.ServedMedia
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +23,9 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class CastSourcesTest {
 
+  /** What the artwork resolver answers when a case is not about artwork. */
+  private val NO_ARTWORK: String? = null
+
   @Test
   fun aMediaItemWithNoPlayableUrlIsSkippedRatherThanCastAsNothing() {
     // What a `MediaController` sends when it asks the session to play something from the browse
@@ -33,8 +37,8 @@ class CastSourcesTest {
     assertThat(CastSources.of(noUrl)).isNull()
     // ...and the rest of the queue still casts. A queue with one unplayable item in it must cast
     // the others, not fail.
-    assertThat(CastSources.of(listOf(noUrl, item("track-1"))).map { it.mediaId })
-      .containsExactly("track-1")
+    val cast = runBlocking { CastSources.of(listOf(noUrl, item("track-1"))) { NO_ARTWORK } }
+    assertThat(cast.map { it.mediaId }).containsExactly("track-1")
   }
 
   @Test
@@ -89,8 +93,14 @@ class CastSourcesTest {
     assertThat(CastSources.of(titled)!!.artist).isEqualTo("A Narrator")
     // The artwork a renderer's display shows, and its absence, at two values -- the null arm is
     // what a book with no cover art in the mirror produces.
+    // The artwork URL is the **caller's**, not the item's: an item carries `muplay-art:<id>`, which
+    // names nothing a renderer could fetch, and the resolved URL never leaves this phone -- the
+    // renderer is handed a proxy token minted from it. See `ArtworkUri` and `CastSource.artworkUri`.
     assertThat(CastSources.of(titled)!!.artworkUri).isNull()
-    assertThat(CastSources.of(withArtwork())!!.artworkUri).isEqualTo("https://host/art.jpg")
+    assertThat(CastSources.of(withArtwork(), "https://host/art.jpg")!!.artworkUri)
+      .isEqualTo("https://host/art.jpg")
+    // ...and what the item itself carries is never copied across, whatever it is.
+    assertThat(CastSources.of(withArtwork())!!.artworkUri).isNull()
     assertThat(CastSources.of(untitled)!!.title).isEmpty()
     assertThat(CastSources.of(untitled)!!.artist).isNull()
   }

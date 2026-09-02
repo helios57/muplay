@@ -19,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import app.muplay.database.CredentialStoreEntryPoint
 import app.muplay.media.PlaybackConnection
+import app.muplay.media.ArtworkUri
 import app.muplay.media.PlaybackEntryPoint
 import app.muplay.media.PlaybackLauncher
 import app.muplay.media.PlaybackNotification
@@ -133,7 +134,7 @@ class MuPlaybackServiceTest {
     }
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context)
+      connection = PlaybackConnection(context, appArtworkUrls())
     }
     controller = runBlocking { connection.controller() }
   }
@@ -276,10 +277,24 @@ class MuPlaybackServiceTest {
     assertThat(state.title).isEqualTo(songs[0].title)
     assertThat(state.artist).isEqualTo(songs[0].artistName)
     assertThat(state.albumTitle).isEqualTo(songs[0].albumName)
+    // **The two sides deliberately disagree now, and the disagreement is the fix.** The item
+    // carries `muplay-art:<coverArtId>`: everything on a `MediaItem` is mirrored onto the platform
+    // media session, which any app with notification-listener access reads without ever meeting
+    // `ControllerAccessPolicy`'s gate, and a Subsonic cover URL there is a non-expiring password
+    // equivalent. The state carries a URL an image loader can fetch, resolved in-process by
+    // `PlaybackConnection`. Both halves are asserted, because either alone is satisfied by a
+    // regression: the item alone by a UI that lost its artwork, the state alone by the leak coming
+    // back.
+    val itemArtwork = items[0].mediaMetadata.artworkUri?.toString()
+    val coverArtId = ArtworkUri.coverArtIdOf(itemArtwork)
+    assertThat(coverArtId).isNotNull
     // Redacted before it is asserted: a cover-art URL carries the same auth token and salt a
     // stream URL does, and an AssertJ failure message prints the value it saw.
-    assertThat(artworkEndpoint(state.artworkUri))
-      .isEqualTo(artworkEndpoint(items[0].mediaMetadata.artworkUri?.toString()))
+    assertThat(artworkEndpoint(state.artworkUri)).endsWith("/rest/getCoverArt")
+    // ...and it is *this* item's cover, not a constant: the id the item names is the id the URL asks
+    // for. Asserted on the parameter rather than by substring, so a URL that merely happened to
+    // contain the id somewhere else would not pass.
+    assertThat(state.artworkUri).contains("id=$coverArtId")
     assertThat(state.positionMs).isGreaterThan(0L)
     // A real number, which is all this assertion can claim: on this fixture the extractor and the
     // mirror agree to within a few milliseconds, so it does not say *which* source supplied it.
@@ -488,7 +503,7 @@ class MuPlaybackServiceTest {
   fun releasingAConnectionThatNeverConnectedIsSafeAndLeavesNothingPlaying() {
     var fresh: PlaybackConnection? = null
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      fresh = PlaybackConnection(context).also { it.release() }
+      fresh = PlaybackConnection(context, appArtworkUrls()).also { it.release() }
     }
 
     assertThat(checkNotNull(fresh).state.value).isEqualTo(PlaybackState.NOTHING_PLAYING)
@@ -524,7 +539,7 @@ class MuPlaybackServiceTest {
     context.stopService(Intent(context, MuPlaybackService::class.java))
 
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context)
+      connection = PlaybackConnection(context, appArtworkUrls())
     }
     controller = runBlocking { connection.controller() }
     setQueueAndPlay(listOf(songs[1]))
@@ -832,7 +847,7 @@ class MuPlaybackServiceTest {
    */
   private fun newConnection(): PlaybackConnection {
     lateinit var fresh: PlaybackConnection
-    InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh = PlaybackConnection(context) }
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { fresh = PlaybackConnection(context, appArtworkUrls()) }
     return fresh
   }
 

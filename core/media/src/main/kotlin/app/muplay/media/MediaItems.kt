@@ -45,13 +45,28 @@ import app.muplay.model.StreamFormat
  *   collapsed seek bar -- while the mirror knew the length the whole time. This is the last place
  *   that number is in scope.
  *
- * [artworkUri] is passed in rather than derived, because building it needs credentials and this
- * function is pure. [QueueRepository] is where the two are joined.
+ * ### [artworkId], not an artwork URL, and that is a security fix
  *
- * A note on artwork and the salt: like the stream URL, a cover-art URL carries a fresh salt, so
- * the same art gets a different URI in a later session. Media3's session bitmap loader caches by
- * URI, so that costs **one artwork fetch per session per item** and never a wrong image. Within a
- * queue the URI is fixed, because it is built once here.
+ * This parameter used to be the finished `SubsonicClient.coverArtUrl` string, which appends
+ * `authParams()`: `u`, `s=<salt>` and `t=md5(password + salt)` -- a **non-expiring password
+ * equivalent** granting the whole Subsonic API. `MediaSessionLegacyStub` mirrors
+ * `MediaMetadata.artworkUri` onto the **platform** session as `ART_URI`, `ALBUM_ART_URI` and
+ * `DISPLAY_ICON_URI`, and mirrors each queue item's the same way; the platform session is readable
+ * by any app the user has granted notification-listener access, without ever connecting to
+ * [MuPlaybackService] and therefore without ever meeting [ControllerAccessPolicy]'s gate. That gate
+ * closed the Media3 controller surface and its own KDoc named this as the part it could not close.
+ *
+ * The item now carries `muplay-art:<coverArtId>` ([ArtworkUri]). A cover-art id grants nothing to
+ * anyone who cannot already authenticate. The picture survives because none of those surfaces fetch
+ * the URI: they ask the session's `BitmapLoader` for a **Bitmap**, and [MuPlayBitmapLoader] resolves
+ * the scheme in this process. See [ArtworkUri] for the bytecode this was read off rather than
+ * assumed -- including that `MediaMetadata.extras` is copied onto the platform session too, so
+ * hiding the URL in an extra would have been no fix at all.
+ *
+ * A note on artwork and the salt, which this change also settles: a cover-art URL carries a fresh
+ * salt, so the same art used to get a different URI in a later session and Media3's URI-keyed
+ * bitmap cache paid one fetch per session per item. `muplay-art:<coverArtId>` is stable, so the
+ * cache now hits across sessions.
  */
 // `androidx.annotation.OptIn`, not `kotlin.OptIn`, and on the object rather than propagated as an
 // `@UnstableApi` of our own -- the same argument `NavidromeLoadErrorHandlingPolicy` records, for
@@ -133,6 +148,8 @@ object MediaItems {
   const val KEY_TIME_OFFSET_MS = "app.muplay.timeOffsetMs"
 
   /**
+   * @param artworkId the server's cover-art id for this song (`Song.coverArtId`), or `null`. **Not
+   *   a URL**: see this object's own note for what putting one here disclosed and to whom.
    * @param isAudiobook whether the user tagged this song's library **Audiobooks** in setup. Not
    *   inferable from anything the server sends -- see this object's own note above for why the
    *   library id plus the user's own `LibraryRole` is the only mechanism there is.
@@ -154,7 +171,7 @@ object MediaItems {
   fun of(
     song: Song,
     streamUri: String,
-    artworkUri: String?,
+    artworkId: String?,
     isAudiobook: Boolean,
     format: StreamFormat,
   ): MediaItem =
@@ -183,7 +200,8 @@ object MediaItems {
           // `takeIf { it > 0 }` would add a BRANCH counter to a mapping whose two branches are both
           // the cover-art decision, which is a fact `coverageFloors[":core:media"]` states out loud.
           .setDurationMs(song.durationSeconds * 1000L)
-          .setArtworkUri(artworkUri?.toUri())
+          // `muplay-art:<coverArtId>`, never a credential-bearing URL. See this object's own note.
+          .setArtworkUri(ArtworkUri.of(artworkId)?.toUri())
           .setIsPlayable(true)
           // Android Auto (Plan 5) renders its browse tree from these flags; an item marked
           // browsable becomes a folder that opens onto nothing.

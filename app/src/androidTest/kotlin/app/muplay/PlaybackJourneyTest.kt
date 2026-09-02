@@ -114,7 +114,7 @@ class PlaybackJourneyTest {
    */
   @After
   fun tearDown() {
-    val open = connection ?: onMain { PlaybackConnection(context) }
+    val open = connection ?: onMain { PlaybackConnection(context, appArtworkUrls()) }
     connection = null
     // `controller()` hops to the main thread itself, so it must be called from *this* thread: a
     // `runBlocking` on the main thread would block the very Looper it is waiting on.
@@ -712,7 +712,7 @@ class PlaybackJourneyTest {
    * point to. Released in [tearDown].
    */
   private fun connectController(): MediaController {
-    val open = connection ?: onMain { PlaybackConnection(context) }.also { connection = it }
+    val open = connection ?: onMain { PlaybackConnection(context, appArtworkUrls()) }.also { connection = it }
     // From the test thread, never from inside `runOnMainSync`: `controller()` hops to the main
     // Looper itself and a `runBlocking` there would deadlock against it.
     return runBlocking { open.controller() }

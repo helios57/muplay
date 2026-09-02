@@ -453,7 +453,7 @@ class BookSpeedControllerTest {
     MediaItems.of(
       song = song,
       streamUri = RealTrackBytes.rawStreamUrl(song),
-      artworkUri = null,
+      artworkId = null,
       // Every queue item here is built the way the shipping queue builds a book file, because the
       // audio attributes a book gets are what `ContentTypeSwitcher` chooses from -- and whether an
       // item is *treated* as a book by this class is decided by `items`, not by this flag.

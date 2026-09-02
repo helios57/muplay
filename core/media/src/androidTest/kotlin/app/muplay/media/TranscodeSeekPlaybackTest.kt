@@ -862,7 +862,7 @@ class TranscodeSeekPlaybackTest {
     return MediaItems.of(
       song = song,
       streamUri = client.streamUrl(song.id, format),
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = format,
     )

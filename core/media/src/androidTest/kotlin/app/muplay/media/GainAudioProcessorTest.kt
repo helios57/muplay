@@ -484,7 +484,7 @@ class GainAudioProcessorTest {
     MediaItems.of(
       song = songs[0].copy(replayGain = replayGain),
       streamUri = "https://host/stream",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )
@@ -548,7 +548,7 @@ class GainAudioProcessorTest {
     MediaItems.of(
       song = song.copy(replayGain = replayGain),
       streamUri = RealTrackBytes.rawStreamUrl(song),
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )

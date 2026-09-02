@@ -29,6 +29,15 @@ class ProxyUpstreamTest {
   private val content = ByteArray(4000) { (it % 251).toByte() }
   private val closeables = mutableListOf<Closeable>()
 
+  /**
+   * How long the "cover image" the `readFully` cases fetch is.
+   *
+   * A slice of [content] rather than a run of one byte, so a fetch that returned the right *number*
+   * of wrong bytes is still visible; smaller than [content] so the cap cases have somewhere above
+   * and below the boundary to stand.
+   */
+  private val IMAGE_BYTES = 512
+
   /** Every delay [OkHttpProxyUpstream] asked to wait, instead of waiting it. */
   private val slept = CopyOnWriteArrayList<Long>()
 
@@ -205,6 +214,80 @@ class ProxyUpstreamTest {
     assertThat(ProxyRetry.retryDelayMs(429, "-5", attempt = 1)).isEqualTo(0L)
   }
 
+  // ---- readFully, which is how a cover image is fetched ----------------------------------------
+
+  @Test
+  fun `a whole small resource comes back with the type the origin declared`() {
+    // Cover art, and only cover art. `/rest/getCoverArt` sends no `Content-Length` and ignores
+    // `Range` (measured against the real container in `LiveNavidromeProxyTest`), so neither
+    // `totalLength` nor `open` can be used for it -- and a renderer with no `Content-Length` shows
+    // no picture. Reading it whole is what lets the proxy declare an accurate one.
+    val origin = start { _, _ -> whole("image/webp") }
+
+    val body = upstream().readFully(origin.url, maxBytes = 1_000_000)
+
+    assertThat(body).isNotNull
+    assertThat(body!!.bytes).isEqualTo(content.copyOfRange(0, IMAGE_BYTES))
+    assertThat(body.contentType).isEqualTo("image/webp")
+  }
+
+  @Test
+  fun `no Range header is sent, because the origins this is used against ignore one`() {
+    // Sending a header the peer ignores makes the request look like something it is not to anyone
+    // reading a capture, and it would be the only place in this class that asked for a range it
+    // then did not check.
+    val heads = mutableListOf<HttpRequestHead>()
+    val origin = start { _, head -> heads += head; whole("image/webp") }
+
+    upstream().readFully(origin.url, maxBytes = 1_000_000)
+
+    assertThat(heads).hasSize(1)
+    assertThat(heads.single().headers["Range"]).isNull()
+  }
+
+  @Test
+  fun `a resource the origin declares no type for comes back with a null type, not a guess`() {
+    // The caller decides what a typeless body deserves -- `MediaProxyServer` answers `image/jpeg`,
+    // which is a decision about renderers rather than about HTTP, and it does not belong here.
+    val origin = start { _, _ -> whole(contentType = null) }
+
+    assertThat(upstream().readFully(origin.url, maxBytes = 1_000_000)!!.contentType).isNull()
+  }
+
+  @Test
+  fun `a body larger than the cap is refused rather than held`() {
+    // This reads into the heap of a phone, at whatever size an origin chooses to answer. The two
+    // cases below are the boundary from both sides, and the boundary is the whole question: a `>=`
+    // where a `>` belongs would refuse an image that is exactly the size it is allowed to be.
+    val origin = start { _, _ -> whole("image/webp") }
+
+    assertThat(upstream().readFully(origin.url, maxBytes = IMAGE_BYTES - 1)).isNull()
+    assertThat(upstream().readFully(origin.url, maxBytes = IMAGE_BYTES)!!.bytes.size)
+      .isEqualTo(IMAGE_BYTES)
+  }
+
+  @Test
+  fun `an origin that refuses answers null rather than an empty image`() {
+    // A 404 is not transient and is not retried; `null` is what `MediaProxyServer` turns into a 502.
+    // Zero bytes returned as a success would be a renderer rendering nothing, forever, in silence.
+    val origin = start { _, _ -> notFound() }
+
+    assertThat(upstream().readFully(origin.url, maxBytes = 1_000_000)).isNull()
+  }
+
+  @Test
+  fun `a throttled origin still gives up as an exception, not as a missing image`() {
+    // The same policy the ranged fetch has, reached through the same loop: a 429 is retried, and
+    // when the retries run out it is an `UpstreamThrottledException` carrying the server's own
+    // `Retry-After` -- which the proxy passes on as a 503. A `null` here would be indistinguishable
+    // from "there is no cover", and the renderer would stop asking.
+    val origin = start { _, _ -> throttled("9") }
+
+    assertThatExceptionOfType(UpstreamThrottledException::class.java)
+      .isThrownBy { upstream().readFully(origin.url, maxBytes = 1_000_000) }
+      .satisfies({ assertThat(it.retryAfterSeconds).isEqualTo(9L) })
+  }
+
   // ---- helpers -----------------------------------------------------------------------------------
 
   private fun upstream() = OkHttpProxyUpstream(OkHttpClient(), sleep = { slept += it })
@@ -232,6 +315,32 @@ class ProxyUpstreamTest {
       ),
     ) + body
   }
+
+  /**
+   * A whole small body, the way `/rest/getCoverArt` really answers: `200`, chunked, **no
+   * `Content-Length`**, whatever `Range` was asked for.
+   *
+   * Chunked rather than length-declared on purpose: a fixture that sent a length would let a
+   * `readFully` that trusted one pass, and the origin this exists to model sends none.
+   */
+  private fun whole(contentType: String?): ByteArray =
+    HttpWire.renderResponseHead(
+      200,
+      "OK",
+      HttpHeaders(
+        buildList {
+          contentType?.let { add("Content-Type" to it) }
+          add("Transfer-Encoding" to "chunked")
+          add("Connection" to "close")
+        },
+      ),
+    ) + chunked(content.copyOfRange(0, IMAGE_BYTES))
+
+  /** [body] as one HTTP/1.1 chunk followed by the terminator. */
+  private fun chunked(body: ByteArray): ByteArray =
+    "${body.size.toString(16)}\r\n".toByteArray(Charsets.US_ASCII) +
+      body +
+      "\r\n0\r\n\r\n".toByteArray(Charsets.US_ASCII)
 
   /** What a live Navidrome transcode answers: 200, unseekable, and no length at all. */
   private fun lengthless(): ByteArray =

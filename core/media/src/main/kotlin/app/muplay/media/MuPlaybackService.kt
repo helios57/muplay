@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -19,6 +20,7 @@ import app.muplay.database.AudiobookRepository
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.media.browse.MuPlayLibraryCallback
 import app.muplay.media.cast.CastSessionManager
+import app.muplay.media.di.MediaHttpClient
 import app.muplay.model.SleepTimerState
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.Clock
@@ -32,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import okhttp3.Call
 
 /**
  * The service that owns playback.
@@ -156,6 +159,20 @@ class MuPlaybackService : MediaLibraryService() {
    */
   @Inject lateinit var shakeSensor: ShakeSensor
 
+  /**
+   * What turns a credential-free `muplay-art:` URI back into a picture, in this process.
+   *
+   * See [ArtworkUri]: the item carries a cover-art **id** so that the platform media session -- read
+   * by any app with notification-listener access, without ever meeting [ControllerAccessPolicy]'s
+   * gate -- carries no password equivalent. Nothing renders a URI directly; the notification, the
+   * lock screen, Android Auto and Wear all ask the session's `BitmapLoader` for a `Bitmap`, so
+   * installing one below is what keeps every one of them showing artwork.
+   */
+  @Inject lateinit var artworkUrls: ArtworkUrls
+
+  /** The streaming HTTP client, used here for one small `GET` per cover. */
+  @Inject @MediaHttpClient lateinit var callFactory: Call.Factory
+
   private var session: MediaLibrarySession? = null
 
   /**
@@ -229,6 +246,20 @@ class MuPlaybackService : MediaLibraryService() {
     )
 
     session = MediaLibrarySession.Builder(this, player, libraryCallback)
+      // **Without this, no surface shows cover art at all**, because the item's `artworkUri` is a
+      // `muplay-art:` URI no general-purpose loader can dereference -- which is exactly the point
+      // of it (see `ArtworkUri`). Media3 wraps whatever loader it is given in
+      // `SizeLimitedBitmapLoader` and `CacheBitmapLoader`, so size limiting and caching stay
+      // Media3's policy and not a second one of ours; the delegate below is what Media3 would have
+      // built for itself, and it still handles any URI that is not ours.
+      .setBitmapLoader(
+        MuPlayBitmapLoader(
+          artworkUrls = artworkUrls,
+          callFactory = callFactory,
+          delegate = DataSourceBitmapLoader(this),
+          scope = serviceScope,
+        ),
+      )
       // Tapping the notification opens the app. Resolved through the package manager rather than
       // by referencing MainActivity: :core:media must not depend on :app, and a launch intent is
       // exactly what "open the app" means.

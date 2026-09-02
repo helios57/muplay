@@ -12,6 +12,7 @@ import app.muplay.cast.route.CastRouter
 import app.muplay.cast.session.CastSession
 import app.muplay.cast.session.CastSessionState
 import app.muplay.cast.soap.SoapClient
+import app.muplay.media.ArtworkUrls
 import app.muplay.media.MuPlayer
 import app.muplay.media.PlaybackOutputSwitch
 import app.muplay.media.ProgressWriter
@@ -76,6 +77,11 @@ class CastSessionManager @Inject constructor(
   private val soap: SoapClient,
   private val http: CastHttpClient,
   private val clock: Clock,
+  /**
+   * Resolves an item's credential-free `muplay-art:` URI into the URL this phone fetches a cover
+   * from. See [app.muplay.media.ArtworkUri] for why the item does not carry one.
+   */
+  private val artworkUrls: ArtworkUrls,
   @CastCommands private val scope: CoroutineScope,
 ) {
 
@@ -149,6 +155,11 @@ class CastSessionManager @Inject constructor(
       looper = Looper.getMainLooper(),
       scope = scope,
       nowMs = clock::millis,
+      // A `MediaItem` carries `muplay-art:<coverArtId>` so that nothing on the platform media
+      // session carries a credential (see `ArtworkUri`). The cast proxy still has to fetch the real
+      // bytes from Navidrome, so this is where the credential goes back on -- in this process, for
+      // a URL that reaches `ProxyRegistry.publishArtwork` and stops there.
+      artworkUrl = artworkUrls::urlFor,
     ) { onPlaybackChanged ->
       CastSession(
         device = device,

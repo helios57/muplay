@@ -305,7 +305,7 @@ class SleepTimerFadeAudioTest {
     MediaItems.of(
       song = song,
       streamUri = RealTrackBytes.rawStreamUrl(song),
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = true,
       format = StreamFormat.Raw,
     )
