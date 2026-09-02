@@ -2,13 +2,18 @@ package app.muplay.setup
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -17,13 +22,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.LibraryRole
+import app.muplay.model.MusicLibrary
 
 /**
  * The first-run setup screen: a server URL, username and password, and a Connect button that
@@ -87,10 +94,35 @@ private fun SetupScreen(
   val isConnecting = uiState is SetupUiState.Connecting
 
   Column(
-    modifier = modifier.padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    // **Scrollable, and it was not before.** Every other state fits, but `Tagging` grows by one
+    // block per library the server returns and the form above it never goes away (see below for
+    // why it must not) -- so on a server with four libraries the `Continue` button used to be laid
+    // out past the bottom of the screen with no way to reach it. Nothing in the fixture set has
+    // more than two, which is exactly the shape of defect a two-library emulator cannot see.
+    modifier = modifier
+      .fillMaxWidth()
+      .verticalScroll(rememberScrollState())
+      .padding(horizontal = MuPlaySpacing.gutter, vertical = MuPlaySpacing.xl),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
   ) {
-    Text(text = "Connect to your server", style = MaterialTheme.typography.headlineSmall)
+    Text(
+      text = "Connect to your server",
+      style = MaterialTheme.typography.headlineMedium,
+      modifier = Modifier.semantics { heading() },
+    )
+
+    // The product's whole thesis, said once, on the only screen where the user is being asked to
+    // hand over a server address and a password -- which is the moment the question "where does
+    // this go?" is actually being asked. Hidden once connected: by then it has been answered, and
+    // the tagging step needs the height (this column scrolls, but a `Continue` button below the
+    // fold is still a worse screen than one above it).
+    if (uiState !is SetupUiState.Tagging) {
+      Text(
+        text = "The only computer MuPlay talks to is the one whose address you type here.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
 
     OutlinedTextField(
       value = serverUrl,
@@ -121,7 +153,7 @@ private fun SetupScreen(
     Button(
       onClick = { onConnect(serverUrl, username, password) },
       enabled = !isConnecting,
-      modifier = Modifier.fillMaxWidth(),
+      modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
     ) {
       Text(if (isConnecting) "Connecting…" else "Connect")
     }
@@ -131,6 +163,7 @@ private fun SetupScreen(
       is SetupUiState.Tagging -> {
         Text(
           text = "Connected to ${uiState.serverInfo.type} ${uiState.serverInfo.serverVersion}",
+          style = MaterialTheme.typography.labelLarge,
           color = MaterialTheme.colorScheme.primary,
         )
         // The server cannot tell us what a library holds -- Navidrome reports every file as
@@ -138,46 +171,106 @@ private fun SetupScreen(
         // is not "Audiobooks", and a wrong guess silently poisons shuffle scope.
         // The empty-library case says something instead of asking about libraries that are not
         // there -- see SetupUiState.Tagging.prompt for what a server actually returns then.
-        Text(text = uiState.prompt, style = MaterialTheme.typography.titleMedium)
-        // Labelled "Tag as Music"/"Tag as Audiobooks", not the bare "Music"/"Audiobooks" a first
-        // draft used: every row also renders the library's own name, so a bare-word chip label is
-        // indistinguishable, to both a screen reader and a black-box UI test, from the name of a
-        // library that happens to be called "Music" or "Audiobooks". A distinct label is what lets
-        // `FirstRunJourneyTest` assert on the library *name* -- its actual documented contract on
-        // server state -- without accidentally matching a chip instead (see that test's own doc).
+        Text(
+          text = uiState.prompt,
+          style = MaterialTheme.typography.titleMedium,
+          modifier = Modifier.semantics { heading() },
+        )
         uiState.libraries.forEach { library ->
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(text = library.name, modifier = Modifier.weight(1f))
-            FilterChip(
-              selected = library.role == LibraryRole.MUSIC,
-              onClick = { onRoleChosen(library.id, LibraryRole.MUSIC) },
-              label = { Text("Tag as Music") },
-            )
-            FilterChip(
-              selected = library.role == LibraryRole.AUDIOBOOKS,
-              onClick = { onRoleChosen(library.id, LibraryRole.AUDIOBOOKS) },
-              label = { Text("Tag as Audiobooks") },
-            )
-          }
+          LibraryTagCard(library = library, onRoleChosen = onRoleChosen)
         }
         Button(
           onClick = onContinue,
           enabled = uiState.canContinue,
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
         ) {
           Text("Continue")
         }
       }
       is SetupUiState.Ready -> Text(text = "Setup complete")
       is SetupUiState.Failure ->
-        Text(
-          text = uiState.reason.toMessage(),
-          color = MaterialTheme.colorScheme.error,
+        // A tonal card in `errorContainer` rather than a line of red text under the button. Red
+        // body text on the app's own background is the one colour combination this palette does
+        // not check for contrast (see `Color.kt`'s table, which pairs `error` with
+        // `onErrorContainer`), and a container is also what makes the message read as the answer
+        // to the button that was just pressed rather than as more of the form.
+        Surface(
+          shape = MaterialTheme.shapes.medium,
+          color = MaterialTheme.colorScheme.errorContainer,
+          contentColor = MaterialTheme.colorScheme.onErrorContainer,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(
+            text = uiState.reason.toMessage(),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(MuPlaySpacing.lg),
+          )
+        }
+    }
+  }
+}
+
+/**
+ * One library, and the single most under-used moment in this app.
+ *
+ * **The two chips are where the palette is taught.** `Color.kt` spends itself on one idea -- cold
+ * teal is the music voice, warm amber is the audiobook voice, and the chassis is shared -- and
+ * every screen that acts on it (`PlayerScreen`, `BookshelfScreen`, `BookPlayerScreen`) is one a
+ * user reaches minutes later, by which time the two colours are decoration they have to work out.
+ * Here they are the *answer to the question on screen*: selecting `Tag as Audiobooks` turns that
+ * chip amber, and the shelf it produces is amber for the same reason. It costs two colour
+ * arguments and it is the only place in the flow where the language can be shown rather than
+ * relied on.
+ *
+ * **The labels and the node structure are contractual.** `FirstRunJourneyTest` finds these chips
+ * with `onAllNodesWithText("Tag as Music")[n]`, where `n` is a *row* index -- so each library must
+ * render exactly one chip per role, and the rows must stay in `uiState.libraries` order. A card
+ * per library keeps both true while fixing what a `Row` could not: a `FlowRow` **wraps**, so a
+ * library called "Hörbücher und Podcasts" pushes the second chip onto a second line instead of
+ * off the right edge. `SleepTimerRow` in `:feature:book` records the same fix for the same reason.
+ */
+@Composable
+private fun LibraryTagCard(library: MusicLibrary, onRoleChosen: (Int, LibraryRole) -> Unit) {
+  Surface(
+    shape = MaterialTheme.shapes.medium,
+    color = MaterialTheme.colorScheme.surfaceContainerLow,
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(
+      modifier = Modifier.padding(MuPlaySpacing.lg),
+      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+    ) {
+      Text(text = library.name, style = MaterialTheme.typography.titleMedium)
+      FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        // Labelled "Tag as Music"/"Tag as Audiobooks", not the bare "Music"/"Audiobooks" a first
+        // draft used: every card also renders the library's own name, so a bare-word chip label is
+        // indistinguishable, to both a screen reader and a black-box UI test, from the name of a
+        // library that happens to be called "Music" or "Audiobooks". A distinct label is what lets
+        // `FirstRunJourneyTest` assert on the library *name* -- its actual documented contract on
+        // server state -- without accidentally matching a chip instead (see that test's own doc).
+        FilterChip(
+          selected = library.role == LibraryRole.MUSIC,
+          onClick = { onRoleChosen(library.id, LibraryRole.MUSIC) },
+          label = { Text("Tag as Music") },
+          colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+          ),
         )
+        FilterChip(
+          selected = library.role == LibraryRole.AUDIOBOOKS,
+          onClick = { onRoleChosen(library.id, LibraryRole.AUDIOBOOKS) },
+          label = { Text("Tag as Audiobooks") },
+          colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+          ),
+        )
+      }
     }
   }
 }

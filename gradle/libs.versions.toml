@@ -77,6 +77,11 @@ playServicesWearable = "20.0.1"
 [libraries]
 compose-bom            = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui             = { module = "androidx.compose.ui:ui" }
+# `Modifier.animateContentSize`. Version-less, resolved by the BOM like every Compose artifact
+# here. It arrives transitively through `foundation` anyway -- so this alias buys no class that was
+# not already on the classpath, only the declaration: `:feature:book` names it in prose in its own
+# build file, and a dependency you use is one you declare.
+compose-animation      = { module = "androidx.compose.animation:animation" }
 compose-ui-tooling     = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 # Version-less like `compose-ui-test-junit4` above: resolved by the Compose BOM. It contributes

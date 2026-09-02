@@ -11,9 +11,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation3.runtime.NavKey
+import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.theme.MuPlaySpacing
 
 /** The heading, and what a screen with nothing in it says. Asserted by `SettingsScreenTest`. */
 const val SETTINGS_TITLE: String = "Settings"
@@ -60,17 +63,27 @@ fun SettingsScreen(
       // modules in the build, and a `LazyColumn` would only compose the visible ones -- which is
       // wrong for a screen whose sections each own a subscription to their own preference.
       .verticalScroll(rememberScrollState())
-      .padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+      .padding(horizontal = MuPlaySpacing.gutter, vertical = MuPlaySpacing.lg),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
   ) {
-    Text(text = SETTINGS_TITLE, style = MaterialTheme.typography.headlineSmall)
+    Text(
+      text = SETTINGS_TITLE,
+      style = MaterialTheme.typography.headlineSmall,
+      modifier = Modifier.semantics { heading() },
+    )
 
+    // The shared component rather than a top-left `Text`, which is what this was. A sentence
+    // pinned to the top-left corner of an otherwise blank screen reads as a rendering accident;
+    // `Message` centres it with room around it, which reads as the app answering. Same sentence,
+    // and `SettingsScreenTest` still finds it by exactly that string.
     if (sections.isEmpty()) {
-      Text(text = SETTINGS_EMPTY, style = MaterialTheme.typography.bodyMedium)
+      Message(text = SETTINGS_EMPTY)
     }
 
     sections.forEachIndexed { index, section ->
-      if (index > 0) HorizontalDivider()
+      // `outlineVariant`, the palette's quietest rule: a section boundary is structure, and a
+      // divider dark enough to read as a line of its own competes with the sections either side.
+      if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
       // Passed through untouched. This screen never inspects a key, never holds one, and has no
       // list of the ones that exist -- see `SettingsSection`'s own note on why that is the point.
       section.Content(onNavigate)

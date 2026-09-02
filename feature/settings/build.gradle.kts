@@ -8,7 +8,7 @@ android {
   namespace = "app.muplay.settings"
 }
 
-// **This module names no other feature and no `:core:` module at all, and that is the point of it.**
+// **This module names no other feature, and the only `:core:` module it names is the theme.**
 //
 // The settings screen is a *slot*: it renders whatever `SettingsSection` implementations the Hilt
 // graph happens to contain, sorted, and it knows nothing about any of them. The dependency arrow
@@ -21,7 +21,18 @@ android {
 // `ConventionTest`'s `the settings slot never learns what is in it` holds that against the tree,
 // because a single `implementation(project(":core:cast"))` added here later would compile, work,
 // and quietly turn a severable feature into a load-bearing one.
+//
+// The one edge below is `:core:designsystem`, and it is not that: see its own note.
 dependencies {
+  // `MuPlaySpacing` and the shared `Message`. **This is not a hole in the rule above.**
+  // `:core:designsystem` is the theme -- a palette, a type scale, a spacing grid and one empty/
+  // loading/error component -- and it holds no feature, no setting and no `SettingsSection`. The
+  // rule this module keeps is that it must not learn *what is in its own slot*; every module in
+  // the build already draws through this one, so an edge to it says nothing about which features
+  // exist. `ConventionTest`'s `the settings slot never learns what is in it` is unchanged and
+  // still passes: it forbids `:core:cast` and `:feature:castpicker` by name.
+  implementation(project(":core:designsystem"))
+
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)
   implementation(libs.hilt.navigation.compose)

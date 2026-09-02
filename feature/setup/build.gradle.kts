@@ -10,6 +10,11 @@ android {
 
 dependencies {
   implementation(project(":core:model"))
+  // `MuPlaySpacing` and, through the theme, `MuPlayShapes`/`MuPlayTypography`. The first-run
+  // screen is the one screen every user sees, and it was the last one still writing `16.dp` by
+  // hand -- see `SetupScreen`'s `LibraryTagCard` for the one place the palette is actually taught
+  // rather than merely applied.
+  implementation(project(":core:designsystem"))
   implementation(project(":core:network"))
   implementation(project(":core:database"))
 
