@@ -48,6 +48,25 @@ data class IntegrationSetupUiState(
   val canTest: Boolean get() = urlError == null && urlText.isNotBlank() && keyText.isNotBlank() && !saving
 
   /**
+   * Redacts the key, for the same reason `IntegrationCredentials.Bindery.toString` does and with
+   * the same thing at stake: [keyText] holds an API key a user has just typed, and Bindery's is
+   * instance-wide and always admin.
+   *
+   * A `data class` generates a `toString` that prints every property. That output reaches anywhere
+   * a UI state is printed -- a crash dump, a debugger, a stray log line, a test failure message --
+   * and this project's promise is that a key is sealed in the AndroidKeystore and never rendered.
+   * `IntegrationCredentials` already keeps that promise on the *storage* side; this is the same
+   * promise on the side where the key is still plain text in memory.
+   *
+   * Found by a security review, and it had hidden in an unusual way: all three `ConventionTest`
+   * rules that police credential handling scan `File(repoRoot(), "integrations")` only, and this
+   * class lives in `feature/requests`. The rule beside them now closes that gap.
+   */
+  override fun toString(): String =
+    "IntegrationSetupUiState(service=$service, urlText=$urlText, keyText=<redacted>, " +
+      "urlError=$urlError, check=$check, saving=$saving)"
+
+  /**
    * Whether "Save" can be pressed.
    *
    * **A successful connection check is required, not merely a well-formed URL.** That is the plan's

@@ -1236,6 +1236,58 @@ class ConventionTest {
    * task `UP-TO-DATE` and the whole repo-wide scan skipped, reporting `BUILD SUCCESSFUL`. CI is a
    * fresh checkout and is unaffected; a local falsification is not.
    */
+  /**
+   * A class that holds a secret must not let the compiler write its `toString`.
+   *
+   * Kotlin generates a `toString` for every `data class` that prints every property. For a class
+   * holding an API key or a password that output reaches a crash dump, a debugger, a stray log
+   * line or a test failure message -- and this project's promise is that a credential is sealed in
+   * the AndroidKeystore and never rendered. `IntegrationCredentials.Bindery` keeps that promise by
+   * overriding `toString`; the rule here is that everything holding the same kind of value must.
+   *
+   * **Written because the three rules that police credential handling all scan
+   * `File(repoRoot(), "integrations")` and missed one.** `IntegrationSetupUiState` lives in
+   * `feature/requests`, holds the API key a user has just typed, and was a plain `data class` --
+   * so its generated `toString` printed a Bindery admin key in full. A security review found it;
+   * no gate could have, because the class sat outside every scan root. A rule whose reach is a
+   * hardcoded directory is a rule with a blind spot the size of everything else.
+   *
+   * Scoped to `src/main`, which is both correct (a test fixture holding a fake key is not a leak)
+   * and what stops this rule reporting itself: this file is `src/test`, so the property names
+   * spelled in this very sentence are out of its own reach. That mattered -- five checks in this
+   * repository have matched their own text.
+   */
+  @Test
+  fun `no data class prints a credential in its generated toString`() {
+    val secretish = Regex("""\bval\s+\w*(apiKey|keyText|password|secret|token|credential)\w*\s*:""",
+      RegexOption.IGNORE_CASE)
+    val offenders = mutableListOf<String>()
+
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.isFile && it.extension == "kt" && it.path.contains("${File.separator}src${File.separator}main${File.separator}") }
+      .forEach { file ->
+        val source = withoutComments(file.readText())
+        // Each `data class` body, from its declaration to the next top-level declaration.
+        Regex("""(?m)^\s*(?:internal\s+|public\s+)?data class\s+(\w+)[\s\S]*?(?=^\s*(?:internal\s+|public\s+)?(?:data class|class|object|interface|fun|enum)\s|\z)""")
+          .findAll(source)
+          .forEach { match ->
+            val body = match.value
+            if (secretish.containsMatchIn(body) && !body.contains("override fun toString")) {
+              offenders += "${file.relativeTo(repoRoot()).path}: ${match.groupValues[1]}"
+            }
+          }
+      }
+
+    assertThat(offenders)
+      .`as`(
+        "a data class holding a credential-shaped property must override toString and redact it. " +
+          "The compiler-generated one prints every property, and that output reaches crash dumps, " +
+          "debuggers and test failure messages. See IntegrationCredentials.Bindery for the shape.",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `nothing in this build depends on Google Play services`() {
     val offendingModules = moduleBuildFiles()

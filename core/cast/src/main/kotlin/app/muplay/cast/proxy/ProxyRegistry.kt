@@ -27,7 +27,19 @@ data class PublishedMedia(
   override val path: String,
   override val upstreamUrl: String,
   val served: ServedMedia,
-) : Published
+) : Published {
+  /**
+   * Both secrets redacted, for the same reason `CastSource.toString` redacts them.
+   *
+   * [upstreamUrl] is a Navidrome URL carrying `u`, `t` and `s` -- a non-expiring password
+   * equivalent -- and [token] is the capability that lets a renderer fetch it. A `data class`
+   * prints every property, so the generated `toString` put both into any crash dump, debugger view
+   * or failing-test message. `CastSource` was fixed for exactly this; these two were missed,
+   * because the rule that polices credential handling scanned only `integrations/`.
+   */
+  override fun toString(): String =
+    "PublishedMedia(token=<redacted>, path=$path, upstreamUrl=<redacted>, served=$served)"
+}
 
 /**
  * One **cover image** the proxy is willing to serve.
@@ -62,7 +74,11 @@ data class PublishedArtwork(
   override val token: String,
   override val path: String,
   override val upstreamUrl: String,
-) : Published
+) : Published {
+  /** Redacted for the reason [PublishedMedia.toString] gives; the cover URL carries the same auth. */
+  override fun toString(): String =
+    "PublishedArtwork(token=<redacted>, path=$path, upstreamUrl=<redacted>)"
+}
 
 /**
  * What the proxy will serve, and under what path.

@@ -25,7 +25,16 @@ import kotlin.concurrent.thread
  *
  * Task 7's routing proof reads this.
  */
-data class ProxyRequest(val method: String, val token: String?, val rangeHeader: String?, val status: Int)
+data class ProxyRequest(val method: String, val token: String?, val rangeHeader: String?, val status: Int) {
+  /**
+   * The token is the capability that fetches a track's bytes, so it is redacted here for the same
+   * reason `PublishedMedia` redacts it -- this type exists to be *recorded*, which is precisely
+   * where a printed secret ends up somewhere it outlives the request.
+   */
+  override fun toString(): String =
+    "ProxyRequest(method=$method, token=${if (token == null) "null" else "<redacted>"}, " +
+      "rangeHeader=$rangeHeader, status=$status)"
+}
 
 /**
  * **The phone's HTTP server**, so a renderer can fetch media it could not otherwise reach.
