@@ -5284,9 +5284,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // `BaseUrlResult`'s five members and `CleartextPolicy`'s two contribute no branches for any rule
   // to gate, and `IntegrationService` contributes none either. Measured:
   //
-  //   IntegrationBaseUrl$Companion   BRANCH 16/16   LINE 19/19
+  //   IntegrationBaseUrl$Companion   BRANCH 16/16   LINE 20/20
   //   IntegrationBaseUrlKt           BRANCH  8/8    LINE 11/11
-  //   IntegrationBaseUrl             BRANCH  6/6    LINE  5/5
+  //   IntegrationBaseUrl             BRANCH 12/12   LINE  7/7
   //   IntegrationService             BRANCH  n/a    LINE  3/3
   //   BaseUrlResult$Valid            BRANCH  n/a    LINE  1/1
   //   BaseUrlResult$CleartextForbidden BRANCH n/a   LINE  1/1
@@ -5298,8 +5298,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // project target and rounded down from the measurement, and a floor at the measured 1.00 would
   // go red on a refactor that changed nothing. Falsified rather than assumed, twice, both recorded
   // in task-1-report.md: withholding `a url equals only itself and another url with the same
-  // value` alone drops `IntegrationBaseUrl` to 4/6 = 0.6667 and this floor fails at its real
-  // minimum; withholding the three tests that name an `IntegrationService` drops
+  // value` alone drops `IntegrationBaseUrl` to 10/12 = 0.8333 and this floor fails at its real
+  // minimum -- **re-measured 2026-09-02, not carried forward**: `isSameOrigin` added six branches
+  // when the cross-origin redirect leak was fixed, so the class went 6/6 to 12/12 and the recorded
+  // 4/6 = 0.6667 became a number describing a tree that no longer exists. The withholding still
+  // fires, which is the only reason this sentence survives rather than being deleted; withholding the three tests that name an `IntegrationService` drops
   // `IntegrationBaseUrlKt` to 0/8 and `IntegrationService` to LINE 0/3, failing one rule each.
   //
   // The LINE rule names `IntegrationService` and `BaseUrlResult*` explicitly rather than widening
