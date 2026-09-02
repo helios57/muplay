@@ -69,6 +69,17 @@ import java.util.Locale
  *
  * The three-way check belongs where the document exists, which is the `SetAVTransportURI` path.
  *
+ * ### Artwork is routed too, and only ever through the proxy
+ *
+ * [candidate] publishes a second capability token for the item's cover image and returns the URL
+ * for it on [CastRoute.Proxied.artwork]. That is a security fix: the cover URL this app builds is a
+ * Navidrome `getCoverArt` URL carrying `u`, `t` and `s`, and it used to be handed to the speaker
+ * verbatim inside `<upnp:albumArtURI>` -- on the **default** route, with `allowRendererDirect`
+ * false, defeating the whole point of the token design one element away from where that design was
+ * being applied.
+ *
+ * A cover is never sent on a [CastRoute.RendererDirect] route; see that type for both reasons.
+ *
  * @param allowRendererDirect whether the user has said a speaker may be handed the Navidrome URL
  *   itself. **A lambda, and read inside [confirm] rather than captured at construction.** The
  *   value behind it is a stored setting a user can change at any moment (`CastSettings` in
@@ -109,7 +120,12 @@ class CastRouter(
    * has to stay below it, and the order is asserted rather than commented -- see
    * `a renderer with no route from this phone is Unroutable before anything is published`.
    */
-  fun candidate(device: CastDevice, upstreamUrl: String, served: ServedMedia): CastRoute {
+  fun candidate(
+    device: CastDevice,
+    upstreamUrl: String,
+    served: ServedMedia,
+    artworkUrl: String? = null,
+  ): CastRoute {
     val rendererHost = device.avTransportControlUrl.host
       ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "its control URL names no host")
     val rendererAddress = runCatching { InetAddress.getByName(rendererHost) }.getOrNull()
@@ -118,9 +134,14 @@ class CastRouter(
       ?: return unroutable(device, UnroutableReason.NO_ROUTE_TO_RENDERER, "this phone has no route to it")
 
     val media = registry.publish(upstreamUrl, served)
+    val host = urlHost(phoneAddress)
     return CastRoute.Proxied(
-      url = proxy.urlFor(media, urlHost(phoneAddress)),
+      url = proxy.urlFor(media, host),
       media = media,
+      artwork = artworkUrl?.let { url ->
+        val published = registry.publishArtwork(url)
+        ProxiedArtwork(url = proxy.urlFor(published, host), media = published)
+      },
       deviceName = device.friendlyName,
       // Asked with the phone's address first and the renderer's second. Passing either one twice
       // would make `SubnetMatch` answer `true` for every device on earth, which switches the proof
@@ -145,8 +166,11 @@ class CastRouter(
     if (!route.proofRequired) return route
     if (proxy.awaitRequest(route.media.token, proofTimeoutMs)) return route
 
-    // It did not fetch. Whatever happens next, this token is no longer wanted.
+    // It did not fetch. Whatever happens next, these tokens are no longer wanted -- the cover's as
+    // well as the track's. A cover token left published for a renderer that has just been declared
+    // unable to reach this phone is a capability lying on the LAN with nothing to fetch it.
     registry.revoke(route.media.token)
+    route.artwork?.let { registry.revoke(it.media.token) }
 
     return if (allowRendererDirect()) {
       CastRoute.RendererDirect(upstreamUrl)

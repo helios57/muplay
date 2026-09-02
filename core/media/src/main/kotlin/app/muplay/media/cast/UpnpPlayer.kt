@@ -69,6 +69,18 @@ class UpnpPlayer(
   looper: Looper,
   private val scope: CoroutineScope,
   private val nowMs: () -> Long,
+  /**
+   * Turns an item's `muplay-art:<coverArtId>` into the URL **this phone** will fetch the cover
+   * from, so the cast proxy can publish it as a capability token.
+   *
+   * A parameter rather than an injected `ArtworkUrls`, for the reason every other seam on this
+   * class is one: this module's cast layer is constructed by `CastSessionManager`, and a `Player`
+   * that reached into a credential store would be a `Player` no test could build.
+   *
+   * `suspend`, because resolving it reads DataStore. It is called inside the same coroutine that
+   * sets the queue, which is the only place in this class that can wait for anything.
+   */
+  private val artworkUrl: suspend (String?) -> String? = { null },
   newSession: (onPlaybackChanged: () -> Unit) -> CastSession,
 ) : SimpleBasePlayer(looper) {
 
@@ -181,13 +193,24 @@ class UpnpPlayer(
     // Set on the looper, before anything is launched: `getState()` can run at any time from here on
     // and a playlist that lagged the session's queue would report the wrong current item.
     items = mediaItems.toList()
-    val sources = CastSources.of(items)
     // `C.INDEX_UNSET` / `C.TIME_UNSET` are what Media3 passes for "the default position", which is
     // the start. `MuPlayer` always names both, so these arms are for the overloads that do not --
     // `setMediaItems(items, resetPosition)` and everything a `MediaController` can send.
     val index = if (startIndex == C.INDEX_UNSET) 0 else startIndex
     val position = if (startPositionMs == C.TIME_UNSET) 0L else startPositionMs
-    return command { session.setQueue(sources, startIndex = index, startPositionMs = position) }
+    // The extraction moved **inside** the command, because resolving each item's cover URL reads
+    // the credential store and this method runs on the player's application thread. `items` is
+    // still assigned above, on the looper and before anything is launched, because `getState()` can
+    // run at any moment from here on and a playlist lagging the session's queue would report the
+    // wrong current item.
+    val queue = items
+    return command {
+      session.setQueue(
+        CastSources.of(queue, artworkUrl),
+        startIndex = index,
+        startPositionMs = position,
+      )
+    }
   }
 
   /**

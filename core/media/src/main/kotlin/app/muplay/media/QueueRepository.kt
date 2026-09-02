@@ -52,7 +52,11 @@ class QueueRepository @Inject constructor(
     return MediaItems.of(
       song = song,
       streamUri = source.streamUrl(song.id, format),
-      artworkUri = song.coverArtId?.let { source.coverArtUrl(it, ARTWORK_SIZE_PX) },
+      // The **id**, not a URL built from it. `source.coverArtUrl` appends the Subsonic `u`, `t` and
+      // `s`, and everything on a `MediaItem` reaches the platform media session -- a surface any
+      // notification listener reads. `ArtworkUrls` is where the credential goes back on, in this
+      // process, for the three consumers that actually fetch bytes. See `MediaItems`.
+      artworkId = song.coverArtId,
       isAudiobook = isAudiobook,
       // The same value the URL was built from, passed rather than recomputed: the served MIME
       // type and the `format` query parameter are two statements of one decision, and deciding

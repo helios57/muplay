@@ -248,18 +248,25 @@ class QueueRepositoryTest {
    * this task's own audit went looking for, and it was standing here the whole time. A literal is
    * the only thing that can disagree with the constant.
    *
-   * Asserted once, on both sides of the same call: what was requested (`coverArtCalls`) and what
-   * came back on the item.
+   * Asserted on both sides: that nothing was requested of the server at all (`coverArtCalls`), and
+   * what came back on the item.
    */
   @Test
-  fun aSongWithCoverArtGetsAnArtworkUriAtTheSizeThisAppAsksFor() = runTest {
+  fun aSongWithCoverArtGetsAnArtworkIdRatherThanAnAuthenticatedUrl() = runTest {
+    // **This assertion inverted, and the inversion is the fix.** It used to require the finished
+    // `coverArtUrl` string on the item, and that string carries the Subsonic `u`, `t` and `s` -- a
+    // non-expiring password equivalent -- which `MediaSessionLegacyStub` then mirrors onto the
+    // platform media session as `ART_URI`, where any notification-listener app reads it. The item
+    // carries the id now; `ArtworkUrls` is where the credential goes back on, in-process, for the
+    // three consumers that fetch bytes. See `ArtworkUri`.
     val source = RecordingSource()
 
     val items = repository(source).mediaItems(PlaybackQueue.of(listOf(song("a", "mp3", "art-1"))))
 
-    assertThat(source.coverArtCalls).containsExactly("art-1" to 512)
-    assertThat(items.single().mediaMetadata.artworkUri.toString())
-      .isEqualTo("https://host/rest/getCoverArt?id=art-1&size=512")
+    // Nothing asks the server to build a cover URL at queue time any more, which is the mechanical
+    // form of "the credential is not on the item".
+    assertThat(source.coverArtCalls).isEmpty()
+    assertThat(items.single().mediaMetadata.artworkUri.toString()).isEqualTo("muplay-art:art-1")
   }
 
   @Test
@@ -277,9 +284,9 @@ class QueueRepositoryTest {
    *
    * The stream half has always been here. The artwork half was not, and its absence was invisible
    * rather than benign: exactly one test in this file used a non-null `coverArtId` and its queue
-   * held **one song**, so `artworkUri = queue.songs.first().coverArtId?.let { … }` -- and hoisting
-   * the `coverArtUrl` call out of `map` entirely -- were green across the whole suite. That is the
-   * same shape as the stream URL's own probe, left unwritten for the other URL.
+   * held **one song**, so `artworkId = queue.songs.first().coverArtId` would have been green across
+   * the whole suite. That is the same shape as the stream URL's own probe, left unwritten for the
+   * other URL.
    *
    * `MediaItemsTest` does prove the pure mapper carries two distinct artwork strings, and that is
    * not the same claim: it is the layer where the value is *placed*, not the layer where it is
@@ -306,12 +313,14 @@ class QueueRepositoryTest {
       "https://host/rest/stream?id=a&format=raw",
     )
     assertThat(items.map { it.mediaMetadata.artworkUri?.toString() }).containsExactly(
-      "https://host/rest/getCoverArt?id=art-b&size=512",
-      "https://host/rest/getCoverArt?id=art-a&size=512",
+      "muplay-art:art-b",
+      "muplay-art:art-a",
     )
-    // The requests, not just the results: this is the observation that a single hoisted
-    // `coverArtUrl` call fails on, and it fails on the *count* rather than on a value.
-    assertThat(source.coverArtCalls).containsExactly("art-b" to 512, "art-a" to 512)
+    // The count assertion this used to make -- that `coverArtUrl` was called once per song -- went
+    // with the call itself. What replaces it is the two *different* artwork URIs above, in queue
+    // order: a repository that took `queue.songs.first().coverArtId` for every item still fails
+    // here, which is the defect that assertion existed to catch.
+    assertThat(source.coverArtCalls).isEmpty()
   }
 
   /**

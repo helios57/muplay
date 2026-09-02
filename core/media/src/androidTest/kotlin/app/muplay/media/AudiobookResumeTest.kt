@@ -152,7 +152,7 @@ class AudiobookResumeTest {
     return MediaItems.of(
       song = s,
       streamUri = RealTrackBytes.rawStreamUrl(s),
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = s.libraryId == RealTrackBytes.AUDIOBOOK_LIBRARY_ID,
       format = StreamFormat.Raw,
     )

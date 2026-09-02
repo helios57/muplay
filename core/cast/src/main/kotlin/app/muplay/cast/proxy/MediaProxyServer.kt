@@ -89,7 +89,7 @@ class MediaProxyServer(
   }
 
   /** The URL to hand a renderer. [host] is the address **the renderer** can reach this phone at. */
-  fun urlFor(media: PublishedMedia, host: String): String = "http://$host:$port${media.path}"
+  fun urlFor(media: Published, host: String): String = "http://$host:$port${media.path}"
 
   /**
    * Blocks until a renderer has fetched [token], or the timeout expires.
@@ -133,7 +133,7 @@ class MediaProxyServer(
     output.flush()
   }
 
-  private fun respond(head: HttpRequestHead, media: PublishedMedia?, output: OutputStream): Int {
+  private fun respond(head: HttpRequestHead, media: Published?, output: OutputStream): Int {
     if (head.method !in BODY_METHODS) {
       output.write(
         HttpWire.renderResponseHead(
@@ -156,25 +156,31 @@ class MediaProxyServer(
       return 404
     }
 
+    // The two kinds are fetched differently and cannot be merged -- see `PublishedArtwork` for the
+    // measurement that forces it. Everything downstream of the fetch (the range arithmetic, the
+    // statuses, the headers) is [respondRanged]'s and is shared, so a change to what a 206 looks
+    // like cannot apply to a track and not to its cover.
+    return when (media) {
+      is PublishedMedia -> respondTrack(head, media, output)
+      is PublishedArtwork -> respondArtwork(head, media, output)
+    }
+  }
+
+  /**
+   * A track: length probed, then relayed a buffer at a time.
+   *
+   * Never buffered whole. A FLAC track is 30-40 MB and holding one would be a third of a modest
+   * heap, per concurrent renderer -- which is exactly why [respondArtwork] may do the opposite and
+   * this may not.
+   */
+  private fun respondTrack(head: HttpRequestHead, media: PublishedMedia, output: OutputStream): Int {
     val totalLength = try {
       upstream.totalLength(media.upstreamUrl)
     } catch (throttled: UpstreamThrottledException) {
       // 503, not 502. "Try again" is something a renderer can act on; "this is broken" is not, and
       // a renderer that believes the second one stops. Spec section 4 names the unhandled version
       // of this as looking like "random playback failure".
-      output.write(
-        HttpWire.renderResponseHead(
-          503,
-          "Service Unavailable",
-          HttpHeaders(
-            buildList {
-              throttled.retryAfterSeconds?.let { add("Retry-After" to it.toString()) }
-              add("Content-Length" to "0")
-              add("Connection" to "close")
-            },
-          ),
-        ),
-      )
+      output.write(HttpWire.renderResponseHead(503, "Service Unavailable", throttledHeaders(throttled)))
       return 503
     } ?: run {
       // A live transcode has no length (spec section 4). Serving it as a 200 with no Content-Length
@@ -184,7 +190,73 @@ class MediaProxyServer(
       return 502
     }
 
-    return when (val resolution = RangeHeader.resolve(RangeHeader.parse(head.headers[RANGE]), totalLength)) {
+    return respondRanged(head, totalLength, media.served.mimeType, output) { range, sink ->
+      stream(media, range, sink)
+    }
+  }
+
+  /**
+   * A cover image: fetched whole, then served from memory with an accurate `Content-Length`.
+   *
+   * **This is the credential fix, and its shape is forced by the origin rather than chosen.** Cover
+   * art used to reach a renderer as the Navidrome `getCoverArt` URL itself -- carrying `u`, `t` and
+   * `s`, i.e. a non-expiring password equivalent -- inside `<upnp:albumArtURI>`, over plain HTTP, to
+   * a device with no authentication of any kind. Publishing it as a second capability token is what
+   * removes the credential while keeping the picture.
+   *
+   * It cannot go through [respondTrack]: `getCoverArt` sends no `Content-Length` and ignores
+   * `Range`, so the length probe answers `null` and a renderer would receive 502 for every image.
+   * See [PublishedArtwork] for the measurement.
+   *
+   * The `Content-Type` is **the origin's own**, not a guess. Navidrome answers `image/webp` for a
+   * sized request whatever the source file was, so a fixed `image/jpeg` here would be a statement
+   * about the bytes that is wrong most of the time.
+   *
+   * `Range` is still answered, out of the buffer, because the arithmetic is already written and a
+   * renderer that asks then gets a correct answer for free.
+   */
+  private fun respondArtwork(head: HttpRequestHead, media: PublishedArtwork, output: OutputStream): Int {
+    val body = try {
+      upstream.readFully(media.upstreamUrl, MAX_ARTWORK_BYTES)
+    } catch (throttled: UpstreamThrottledException) {
+      output.write(HttpWire.renderResponseHead(503, "Service Unavailable", throttledHeaders(throttled)))
+      return 503
+    } ?: run {
+      // The origin refused, or sent something larger than a cover image has any business being.
+      // 502 rather than a truncated picture: half an image is a renderer retrying forever.
+      output.write(HttpWire.renderResponseHead(502, "Bad Gateway", closeHeaders()))
+      return 502
+    }
+
+    val contentType = body.contentType ?: FALLBACK_IMAGE_TYPE
+    return respondRanged(head, body.bytes.size.toLong(), contentType, output) { range, sink ->
+      // `runCatching` for the same reason the relay has one: a renderer that gives up mid-image
+      // closes its socket and this write throws, which is ordinary rather than an error.
+      runCatching {
+        sink.write(body.bytes, range.firstByte.toInt(), range.length.toInt())
+        sink.flush()
+      }
+    }
+  }
+
+  /**
+   * The statuses, the ranges and the headers -- one copy, whatever is being served.
+   *
+   * Shared rather than duplicated per kind because the failure worth guarding against is the two
+   * copies disagreeing: a 206 whose `Content-Range` counts one way for a track and another for its
+   * cover is a defect no single-kind test can see.
+   *
+   * @param writeBody called only for a `GET`, with the range to write. A `HEAD` gets the identical
+   *   head and no body, which is the whole point of a `HEAD`.
+   */
+  private fun respondRanged(
+    head: HttpRequestHead,
+    totalLength: Long,
+    contentType: String,
+    output: OutputStream,
+    writeBody: (ByteRange, OutputStream) -> Unit,
+  ): Int =
+    when (val resolution = RangeHeader.resolve(RangeHeader.parse(head.headers[RANGE]), totalLength)) {
       RangeResolution.Unsatisfiable -> {
         output.write(
           HttpWire.renderResponseHead(
@@ -195,7 +267,7 @@ class MediaProxyServer(
               // resource really is, so the next request can be a valid one.
               "Content-Range" to "$BYTES_UNIT */$totalLength",
               "Accept-Ranges" to BYTES_UNIT,
-              "Content-Type" to media.served.mimeType,
+              "Content-Type" to contentType,
               "Content-Length" to "0",
               "Connection" to "close",
             ),
@@ -207,9 +279,9 @@ class MediaProxyServer(
       RangeResolution.Whole -> {
         val range = ByteRange(0, totalLength - 1)
         output.write(
-          HttpWire.renderResponseHead(200, "OK", bodyHeaders(media, range.length, contentRange = null)),
+          HttpWire.renderResponseHead(200, "OK", bodyHeaders(contentType, range.length, contentRange = null)),
         )
-        if (head.method == "GET") stream(media, range, output)
+        if (head.method == "GET") writeBody(range, output)
         200
       }
 
@@ -220,17 +292,16 @@ class MediaProxyServer(
             206,
             "Partial Content",
             bodyHeaders(
-              media,
+              contentType,
               range.length,
               contentRange = "$BYTES_UNIT ${range.firstByte}-${range.lastByte}/$totalLength",
             ),
           ),
         )
-        if (head.method == "GET") stream(media, range, output)
+        if (head.method == "GET") writeBody(range, output)
         206
       }
     }
-  }
 
   /**
    * Identical for `GET` and `HEAD`, which is the point of a `HEAD`: a renderer probes for the
@@ -239,9 +310,9 @@ class MediaProxyServer(
    * `Accept-Ranges: bytes` is a promise `ServedMedia.protocolInfo` already made to the renderer
    * with `DLNA.ORG_OP=01`. The two are asserted against each other in this task's test.
    */
-  private fun bodyHeaders(media: PublishedMedia, length: Long, contentRange: String?) = HttpHeaders(
+  private fun bodyHeaders(contentType: String, length: Long, contentRange: String?) = HttpHeaders(
     buildList {
-      add("Content-Type" to media.served.mimeType)
+      add("Content-Type" to contentType)
       add("Accept-Ranges" to BYTES_UNIT)
       contentRange?.let { add("Content-Range" to it) }
       add("Content-Length" to length.toString())
@@ -251,6 +322,21 @@ class MediaProxyServer(
 
   private fun closeHeaders() =
     HttpHeaders.of("Content-Length" to "0", "Connection" to "close")
+
+  /**
+   * The 503 head, including the origin's own `Retry-After` when it sent one.
+   *
+   * One builder because both kinds meet a throttle and a renderer must be told the same thing
+   * either way -- and because the header is conditional, which is exactly the sort of thing that
+   * gets written once and forgotten in the copy.
+   */
+  private fun throttledHeaders(throttled: UpstreamThrottledException) = HttpHeaders(
+    buildList {
+      throttled.retryAfterSeconds?.let { add("Retry-After" to it.toString()) }
+      add("Content-Length" to "0")
+      add("Connection" to "close")
+    },
+  )
 
   /**
    * Relays the bytes, one buffer at a time.
@@ -296,5 +382,26 @@ class MediaProxyServer(
 
     /** 64 KiB: large enough that the syscall count is irrelevant, small enough to be free. */
     private const val RELAY_BUFFER_BYTES = 64 * 1024
+
+    /**
+     * The most cover art this server will hold in memory for one request.
+     *
+     * The seeded fixtures come back around 70 KB at `QueueRepository.ARTWORK_SIZE_PX`, and a
+     * full-resolution scan of a gatefold sleeve is a few megabytes; 8 MiB is generous for a real
+     * cover and small enough that a hostile or misconfigured origin cannot exhaust a phone's heap
+     * by answering a request this app itself made. Over it, the renderer gets a 502 and shows its
+     * own placeholder -- the correct trade for a picture, and not one that would be correct for a
+     * track.
+     */
+    const val MAX_ARTWORK_BYTES: Int = 8 * 1024 * 1024
+
+    /**
+     * What a cover image is served as when the origin declared nothing at all.
+     *
+     * JPEG rather than `application/octet-stream`, which several renderers refuse outright, and
+     * rather than WebP, which older ones cannot decode: this arm is reached only when the origin
+     * said nothing, and the guess most likely to render is the right one there.
+     */
+    const val FALLBACK_IMAGE_TYPE: String = "image/jpeg"
   }
 }

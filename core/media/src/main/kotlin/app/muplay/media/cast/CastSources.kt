@@ -15,13 +15,20 @@ import app.muplay.cast.session.CastSource
  * the media type from the `Song` and the `StreamFormat`, and a second decision here would be free
  * to drift from the URL the item is carrying.
  *
- * ### The upstream URL is credential-bearing and this object is the last place that is obvious
+ * ### Two credential-bearing URLs pass through here, and neither reaches a renderer
  *
  * `localConfiguration.uri` is a Subsonic `/rest/stream` URL complete with `u`, `t` and `s`. It goes
  * into [CastSource.upstreamUrl], whose `toString` redacts it, and from there into
  * `ProxyRegistry.publish`, which mints a token so the renderer never sees it. Nothing here logs,
  * prints or shortens it -- and a `require`/`check` message naming the item would print it, which is
  * why the failures below are `null`s and not exceptions.
+ *
+ * The **cover** URL is the same story, learned later and at some cost. It used to be read straight
+ * off `metadata.artworkUri` and copied into the DIDL document as `<upnp:albumArtURI>`, which handed
+ * every speaker on the LAN the same password equivalent the stream URL was being so carefully kept
+ * from. The item no longer carries one at all -- it carries `muplay-art:<coverArtId>` -- so the URL
+ * is resolved by the caller and, like the stream URL, is published as a capability token rather than
+ * sent.
  */
 object CastSources {
 
@@ -33,7 +40,7 @@ object CastSources {
    * from a media id alone, which is what a `MediaController` sends when it asks the session to play
    * something from the browse tree.
    */
-  fun of(item: MediaItem): CastSource? {
+  fun of(item: MediaItem, artworkUrl: String? = null): CastSource? {
     val configuration = item.localConfiguration ?: return null
     val metadata = item.mediaMetadata
     return CastSource(
@@ -44,7 +51,11 @@ object CastSources {
       title = metadata.title?.toString().orEmpty(),
       artist = metadata.artist?.toString(),
       albumTitle = metadata.albumTitle?.toString(),
-      artworkUri = metadata.artworkUri?.toString(),
+      // The **resolved** URL, supplied by the caller, not `metadata.artworkUri` -- which is
+      // `muplay-art:<coverArtId>` and names nothing a renderer could fetch. `CastSession` publishes
+      // this through `ProxyRegistry.publishArtwork` and hands the renderer a capability token, so
+      // the credential stops here. See `ArtworkUri`, and `CastRoute.Proxied.artwork`.
+      artworkUri = artworkUrl,
       // `C.TIME_UNSET` is `Long.MIN_VALUE + 1`. `CastItems.of` normalises a negative duration to
       // zero -- "length unknown, play it anyway" -- so this hands the sentinel straight through
       // rather than making a second decision about it here.
@@ -58,8 +69,19 @@ object CastSources {
     )
   }
 
-  /** Every item that can be cast, in queue order. */
-  fun of(items: List<MediaItem>): List<CastSource> = items.mapNotNull(::of)
+  /**
+   * Every item that can be cast, in queue order.
+   *
+   * @param artworkUrl resolves an item's `muplay-art:` URI into the credential-bearing URL the
+   *   phone will fetch the cover from. `suspend`, because reading the credentials is a DataStore
+   *   read -- see `ArtworkUrls`. It is called once per item and its result never reaches a
+   *   renderer.
+   */
+  suspend fun of(
+    items: List<MediaItem>,
+    artworkUrl: suspend (String?) -> String?,
+  ): List<CastSource> =
+    items.mapNotNull { item -> of(item, artworkUrl(item.mediaMetadata.artworkUri?.toString())) }
 
   /**
    * What the renderer will be told these bytes are.

@@ -23,8 +23,10 @@ import app.muplay.cast.session.CastSessionState
 import app.muplay.cast.soap.SoapClient
 import app.muplay.cast.soap.UpnpTime
 import app.muplay.database.MuPlayDatabase
+import app.muplay.database.SubsonicSourceProvider
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.entity.MediaProgressEntity
+import app.muplay.media.ArtworkUrls
 import app.muplay.media.MediaCache
 import app.muplay.media.MediaItems
 import app.muplay.media.MuPlayDataSourceFactory
@@ -34,11 +36,14 @@ import app.muplay.media.NavidromeLoadErrorHandlingPolicy
 import app.muplay.media.PlaybackOutputSwitch
 import app.muplay.media.ProgressWriter
 import app.muplay.media.RealTrackBytes
+import app.muplay.media.fixedSubsonicSourceProvider
 import app.muplay.media.ResumePolicy
 import app.muplay.media.ResumeTarget
 import app.muplay.media.di.MediaModule
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
+import app.muplay.model.SubsonicCredentials
+import app.muplay.network.SubsonicClient
 import java.io.File
 import java.net.InetAddress
 import java.time.Clock
@@ -120,6 +125,17 @@ class HandoverTest {
 
   private var session: MediaSession? = null
 
+  /**
+   * A real credential store behind a real `SubsonicClient`, so `CastSessionManager` is built the
+   * way the app builds it.
+   *
+   * These fixtures carry no cover art, so nothing resolves through it here -- and wiring it anyway
+   * rather than stubbing it is the point: a cast that could not construct its artwork resolver
+   * would fail in this suite instead of on a phone. The store's file is deleted in `tearDown`,
+   * because DataStore refuses a second instance over one path in a process.
+   */
+  private lateinit var artworkStoreFile: File
+
   @Before
   fun setUp() {
     context = ApplicationProvider.getApplicationContext()
@@ -140,7 +156,7 @@ class HandoverTest {
       }
     }
     items = songs.map {
-      MediaItems.of(it, RealTrackBytes.rawStreamUrl(it), artworkUri = null, isAudiobook = true, format = StreamFormat.Raw)
+      MediaItems.of(it, RealTrackBytes.rawStreamUrl(it), artworkId = null, isAudiobook = true, format = StreamFormat.Raw)
     }
 
     registry = ProxyRegistry()
@@ -174,6 +190,18 @@ class HandoverTest {
     if (::proxy.isInitialized) runCatching { proxy.close() }
     if (::db.isInitialized) db.close()
     if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
+    if (::artworkStoreFile.isInitialized) artworkStoreFile.delete()
+  }
+
+  private fun artworkSourceProvider(): SubsonicSourceProvider {
+    val (provider, file) = fixedSubsonicSourceProvider(
+      context,
+      SubsonicClient(
+        SubsonicCredentials(baseUrl = "http://localhost:4533", username = "admin", password = "testpass"),
+      ),
+    )
+    artworkStoreFile = file
+    return provider
   }
 
   // ---- the headline: the position transfers ---------------------------------------------------
@@ -467,6 +495,11 @@ class HandoverTest {
         soap = SoapClient(http),
         http = http,
         clock = Clock.systemUTC(),
+        // A real `ArtworkUrls` over the real credential store, wired the way the app wires it.
+        // These fixtures carry no cover art, so it resolves to nothing here -- which is the point
+        // of wiring it rather than stubbing it: this suite proves the handover, and a cast that
+        // could not even construct its artwork resolver would fail here rather than on a phone.
+        artworkUrls = ArtworkUrls(artworkSourceProvider()),
         scope = castScope,
       )
       manager.useProgressWriter(writer)

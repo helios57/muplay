@@ -43,6 +43,9 @@ class MediaProxyServerTest {
   /** Not a constant byte: a slice of this is checkable, and a slice of `ByteArray(1000)` is not. */
   private val content = ByteArray(1000) { (it % 251).toByte() }
 
+  /** Likewise for a cover: a slice of it is checkable, and a slice of a constant byte is not. */
+  private val image = ByteArray(512) { ((it * 7) % 251).toByte() }
+
   private val closeables = mutableListOf<Closeable>()
   private val registry = ProxyRegistry()
   private val upstream = SliceUpstream(content)
@@ -245,6 +248,8 @@ class MediaProxyServerTest {
     val throttled = object : ProxyUpstream {
       override fun totalLength(url: String): Long = throw UpstreamThrottledException(retryAfterSeconds = 7)
       override fun open(url: String, range: ByteRange): InputStream = throw UpstreamThrottledException(null)
+      override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+        throw UpstreamThrottledException(retryAfterSeconds = 7)
     }
 
     val response = get(published.path, null, start(throttled))
@@ -259,6 +264,8 @@ class MediaProxyServerTest {
     val throttled = object : ProxyUpstream {
       override fun totalLength(url: String): Long = throw UpstreamThrottledException(retryAfterSeconds = null)
       override fun open(url: String, range: ByteRange): InputStream = throw UpstreamThrottledException(null)
+      override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+        throw UpstreamThrottledException(retryAfterSeconds = null)
     }
 
     val response = get(published.path, null, start(throttled))
@@ -274,6 +281,7 @@ class MediaProxyServerTest {
     val lengthless = object : ProxyUpstream {
       override fun totalLength(url: String): Long? = null
       override fun open(url: String, range: ByteRange): InputStream = ByteArray(0).inputStream()
+      override fun readFully(url: String, maxBytes: Int): UpstreamBody? = null
     }
 
     assertThat(get(published.path, null, start(lengthless)).code).isEqualTo(502)
@@ -289,6 +297,8 @@ class MediaProxyServerTest {
       override fun totalLength(url: String): Long = content.size.toLong()
       override fun open(url: String, range: ByteRange): InputStream =
         content.copyOfRange(0, 10).inputStream()
+      override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+        error("this double serves tracks; artwork has its own, beside the artwork tests")
     }
 
     val response = get(published.path, null, start(truncating))
@@ -412,6 +422,104 @@ class MediaProxyServerTest {
     }
   }
 
+  // ---- artwork ---------------------------------------------------------------------------------
+
+  @Test
+  fun `a published cover is served whole, with an accurate length and the origin's own type`() {
+    // The fix for the credential leak, at the layer that has to make it work. A cover used to reach
+    // a renderer as Navidrome's own `getCoverArt` URL -- `u`, `t` and `s` included -- inside
+    // `<upnp:albumArtURI>`. It now reaches it as a capability token on this phone, and this is what
+    // the renderer gets when it follows one.
+    val server = start(ArtworkUpstream(image, "image/webp"))
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    val response = get(cover.path, null, server)
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(response.body).isEqualTo(image)
+    assertThat(response.head.headers["Content-Type"]).isEqualTo("image/webp")
+    // The whole reason this cannot go down the track path: `getCoverArt` declares no length at all,
+    // so the length has to come from the bytes. A renderer with no `Content-Length` shows nothing.
+    assertThat(response.head.headers.contentLength()).isEqualTo(image.size.toLong())
+    assertThat(response.head.headers["Accept-Ranges"]).isEqualTo("bytes")
+  }
+
+  @Test
+  fun `a cover path is a different namespace from a track path, and neither resolves the other's`() {
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    assertThat(cover.path).startsWith(ProxyRegistry.ART_PATH_PREFIX)
+    assertThat(published.path).startsWith(ProxyRegistry.PATH_PREFIX)
+    // Distinct tokens, so an artwork fetch cannot stand in for the route proof and a fallback can
+    // revoke one without the other.
+    assertThat(cover.token).isNotEqualTo(published.token)
+    assertThat(registry.resolve(cover.path)).isInstanceOf(PublishedArtwork::class.java)
+    assertThat(registry.resolve(published.path)).isInstanceOf(PublishedMedia::class.java)
+  }
+
+  @Test
+  fun `a cover answers a range request out of the bytes it already has`() {
+    // Not the point of the feature, and asserted anyway: the range arithmetic is shared with the
+    // track path, so a renderer that asks gets a correct answer rather than a plausible one.
+    val server = start(ArtworkUpstream(image, "image/webp"))
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    val response = get(cover.path, "bytes=10-19", server)
+
+    assertThat(response.code).isEqualTo(206)
+    assertThat(response.head.headers["Content-Range"]).isEqualTo("bytes 10-19/${image.size}")
+    assertThat(response.body).isEqualTo(image.copyOfRange(10, 20))
+  }
+
+  @Test
+  fun `a HEAD for a cover answers the same head and no body`() {
+    val server = start(ArtworkUpstream(image, "image/webp"))
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    val response = request("HEAD", cover.path, null, server)
+
+    assertThat(response.code).isEqualTo(200)
+    assertThat(response.head.headers.contentLength()).isEqualTo(image.size.toLong())
+    assertThat(response.body).isEmpty()
+  }
+
+  @Test
+  fun `a cover the origin declared no type for is served as jpeg rather than as nothing`() {
+    // `Content-Type` on a body with none would be absent, and several renderers refuse a typeless
+    // image outright. JPEG is the guess most likely to render, and this arm is reached only when
+    // the origin said nothing at all.
+    val server = start(ArtworkUpstream(image, contentType = null))
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    assertThat(get(cover.path, null, server).head.headers["Content-Type"])
+      .isEqualTo(MediaProxyServer.FALLBACK_IMAGE_TYPE)
+  }
+
+  @Test
+  fun `a cover larger than the cap is refused rather than held in memory`() {
+    // This reads into the heap of a phone, at whatever size an origin chooses to answer. 502 and a
+    // renderer's own placeholder is the correct trade for a picture -- and it is a trade that would
+    // NOT be correct one type up, which is why the two paths are separate.
+    val server = start(OversizedArtworkUpstream)
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    assertThat(get(cover.path, null, server).code).isEqualTo(502)
+  }
+
+  @Test
+  fun `a throttled cover fetch is 503 with the origin's own retry-after, like a throttled track`() {
+    // The same answer for the same reason: 503 tells a renderer to try again, 502 tells it the
+    // resource is broken and a renderer that believes that stops. Asserted for artwork as well
+    // because the two paths each write their own 503 and a divergence would be invisible.
+    val server = start(ThrottledArtworkUpstream)
+    val cover = registry.publishArtwork(ART_UPSTREAM)
+
+    val response = get(cover.path, null, server)
+
+    assertThat(response.code).isEqualTo(503)
+    assertThat(response.head.headers["Retry-After"]).isEqualTo("11")
+  }
+
   // ---- helpers ---------------------------------------------------------------------------------
 
   private fun start(source: ProxyUpstream): MediaProxyServer =
@@ -464,6 +572,33 @@ class MediaProxyServerTest {
    * assertion in this class pass against a proxy that ignored `Range` as well -- the two defects
    * would cancel, and the suite would be green with a seek bar that does nothing.
    */
+  /** An origin that behaves the way Navidrome's `getCoverArt` was measured to: whole body, no range. */
+  private class ArtworkUpstream(
+    private val image: ByteArray,
+    private val contentType: String?,
+  ) : ProxyUpstream {
+    override fun totalLength(url: String): Long? = null
+
+    override fun open(url: String, range: ByteRange): InputStream =
+      error("artwork is never streamed: the origin declares no length to range over")
+
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody = UpstreamBody(image, contentType)
+  }
+
+  /** An origin whose "cover" is over the cap. Reports it the way `OkHttpProxyUpstream` does. */
+  private object OversizedArtworkUpstream : ProxyUpstream {
+    override fun totalLength(url: String): Long? = null
+    override fun open(url: String, range: ByteRange): InputStream = error("not streamed")
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody? = null
+  }
+
+  private object ThrottledArtworkUpstream : ProxyUpstream {
+    override fun totalLength(url: String): Long? = null
+    override fun open(url: String, range: ByteRange): InputStream = error("not streamed")
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+      throw UpstreamThrottledException(retryAfterSeconds = 11)
+  }
+
   private class SliceUpstream(private val content: ByteArray) : ProxyUpstream {
     val opened = CopyOnWriteArrayList<ByteRange>()
 
@@ -473,6 +608,9 @@ class MediaProxyServerTest {
       opened += range
       return content.copyOfRange(range.firstByte.toInt(), range.lastByte.toInt() + 1).inputStream()
     }
+
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+      error("this double serves tracks; artwork has its own, beside the artwork tests")
   }
 
   /** [SliceUpstream] that will not hand out any bytes until [parties] reads are inside it at once. */
@@ -489,10 +627,21 @@ class MediaProxyServerTest {
       }
       return content.copyOfRange(range.firstByte.toInt(), range.lastByte.toInt() + 1).inputStream()
     }
+
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+      error("this double serves tracks; artwork has its own, beside the artwork tests")
   }
 
   private companion object {
     const val UPSTREAM = "https://nav.example/rest/stream?id=1&format=raw"
+
+    /**
+     * The credential-bearing cover URL, as `SubsonicClient.coverArtUrl` really builds one.
+     *
+     * It stays on this side of the proxy and never reaches a renderer, which is the entire point:
+     * every assertion above is about what a renderer is given *instead*.
+     */
+    const val ART_UPSTREAM = "https://nav.example/rest/getCoverArt?id=al-1&size=512&u=me&t=abc&s=xyz"
     const val AWAIT_TIMEOUT_MS = 2_000L
     const val BARRIER_TIMEOUT_S = 5L
   }

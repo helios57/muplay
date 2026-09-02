@@ -314,7 +314,11 @@ class CastSession(
     // `null` when the device has no RenderingControl service. The slider is then absent, not inert.
     renderer.volume()?.let { volumePercent = it }
 
-    val candidate = router.candidate(device, source.upstreamUrl, source.served)
+    // The artwork URL goes to the **router**, not to the item: what the renderer is told to fetch
+    // for a cover is a capability token on this phone, exactly as the track is. Handing
+    // `source.artworkUri` to `CastItems.of` is the credential leak this argument closes -- see
+    // `CastRoute.Proxied.artwork`.
+    val candidate = router.candidate(device, source.upstreamUrl, source.served, source.artworkUri)
     val url = when (candidate) {
       is CastRoute.Proxied -> candidate.url
       is CastRoute.RendererDirect -> candidate.url
@@ -323,7 +327,11 @@ class CastSession(
         return
       }
     }
-    val item = CastItems.of(source, resourceUrl = url)
+    val item = CastItems.of(
+      source,
+      resourceUrl = url,
+      artworkUrl = (candidate as? CastRoute.Proxied)?.artwork?.url,
+    )
     send(item)
 
     val loaded = LoadedItem(candidate, item, source.upstreamUrl)
@@ -412,8 +420,13 @@ class CastSession(
         return false
       }
       // `confirm` answers this only as a fallback: the renderer never fetched from the proxy and
-      // renderer-direct is switched on. The item has to be re-issued against the new URL.
-      is CastRoute.RendererDirect -> send(loaded.item.copy(resourceUrl = confirmed.url))
+      // renderer-direct is switched on. The item has to be re-issued against the new URL -- and
+      // **without the cover**, whose token `confirm` has just revoked along with the track's. A
+      // renderer that cannot reach this phone cannot fetch a picture from it either, so keeping the
+      // element would be a broken image; putting Navidrome's own URL there instead would be the
+      // credential leak arriving by the back door. See `CastRoute.RendererDirect`.
+      is CastRoute.RendererDirect ->
+        send(loaded.item.copy(resourceUrl = confirmed.url, artworkUri = null))
       // Proved, or on a subnet the fast path vouched for. Nothing to re-issue.
       is CastRoute.Proxied -> Unit
     }

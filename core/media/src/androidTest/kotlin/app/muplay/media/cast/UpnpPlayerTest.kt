@@ -87,7 +87,7 @@ class UpnpPlayerTest {
     songs = runBlocking { RealTrackBytes.audiobookFiles() }.take(2)
     check(songs.size == 2) { "expected at least two seeded audiobook files, found ${songs.size}" }
     items = songs.map {
-      MediaItems.of(it, RealTrackBytes.rawStreamUrl(it), artworkUri = null, isAudiobook = true, format = StreamFormat.Raw)
+      MediaItems.of(it, RealTrackBytes.rawStreamUrl(it), artworkId = null, isAudiobook = true, format = StreamFormat.Raw)
     }
     startRenderer(FakeRenderer.Strictness())
   }

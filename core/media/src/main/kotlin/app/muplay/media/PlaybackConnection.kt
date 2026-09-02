@@ -79,9 +79,26 @@ import kotlinx.coroutines.withContext
  * surest way never to leak one into a log, a crash report or a screenshot is not to hand it to the
  * layer whose job is to display things. [PlaybackState.artworkUri] is the one URL that does cross,
  * because an image loader needs it, and it is subject to the same rule about not being logged.
+ *
+ * That URL is now **built here** rather than read off the item, and the difference is the point:
+ * the `MediaItem` carries `muplay-art:<coverArtId>` so that the platform media session -- which any
+ * notification-listener app reads -- carries no credential, and this adapter is the in-process
+ * boundary where a credentialed URL is legitimate. See [ArtworkUri] and [ArtworkUrls].
  */
 @Singleton
-class PlaybackConnection @Inject constructor(@ApplicationContext private val context: Context) {
+class PlaybackConnection @Inject constructor(
+  @ApplicationContext private val context: Context,
+  /**
+   * Where the credential goes back onto a cover URL, for this app's own UI and nowhere else.
+   *
+   * A `MediaItem`'s `artworkUri` is `muplay-art:<coverArtId>` now, because everything on an item
+   * reaches the platform media session and a Subsonic cover URL is a password equivalent (see
+   * [ArtworkUri]). Coil cannot fetch that scheme, so this adapter -- which is in-process by
+   * definition, it is the app's own `MediaController` -- resolves it before it reaches
+   * [PlaybackState]. `feature/player` is unchanged and unaware.
+   */
+  private val artworkUrls: ArtworkUrls,
+) {
 
   private val mainHandler = Handler(Looper.getMainLooper())
   private val mainExecutor = Executor { command -> mainHandler.post(command) }
@@ -210,6 +227,11 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
     }
     controller = connected
     connected.addListener(listener)
+    // Read the credentials **before** the first publish, so the first frame this app draws already
+    // has artwork rather than a placeholder that fills in a tick later. `warm` is the only reason
+    // `ArtworkUrls` has a synchronous accessor at all -- see its own note on why `publish` cannot
+    // suspend.
+    artworkUrls.warm()
     publish(connected)
     startTicker(connected)
     return connected
@@ -245,7 +267,10 @@ class PlaybackConnection @Inject constructor(@ApplicationContext private val con
       title = metadata.title?.toString(),
       artist = metadata.artist?.toString(),
       albumTitle = metadata.albumTitle?.toString(),
-      artworkUri = metadata.artworkUri?.toString(),
+      // Resolved, not copied: what the item carries is `muplay-art:<coverArtId>`, and what an image
+      // loader needs is a URL it can fetch. `null` until the credentials have been read, which is
+      // at most one 250 ms tick and never a wrong image.
+      artworkUri = artworkUrls.cachedUrlFor(metadata.artworkUri?.toString()),
       positionMs = player.currentPosition.coerceAtLeast(0L),
       // `C.TIME_UNSET` until the extractor has read the container -- and for a stream the server
       // transcodes on the fly, forever. Recognising that sentinel is this adapter's job; what to do

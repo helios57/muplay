@@ -8,6 +8,7 @@ import app.muplay.cast.proxy.ByteRange
 import app.muplay.cast.proxy.MediaProxyServer
 import app.muplay.cast.proxy.ProxyRegistry
 import app.muplay.cast.proxy.ProxyUpstream
+import app.muplay.cast.proxy.UpstreamBody
 import app.muplay.cast.route.CastRoute
 import app.muplay.cast.route.CastRouter
 import app.muplay.cast.session.CastSessionState
@@ -316,6 +317,11 @@ class CastUiStateTest {
         CastRoute.Proxied(
           url = proxy.urlFor(published, "127.0.0.1"),
           media = published,
+          // No cover on this route, which is what a queue item with no artwork produces. This case
+          // is about the *failure message* a renderer that never fetched turns into, and artwork
+          // has no part in that -- but the field carries no default, deliberately, so that adding
+          // one is a decision at every construction site rather than an omission at one.
+          artwork = null,
           deviceName = "Küche",
           proofRequired = true,
         ),
@@ -377,6 +383,15 @@ class CastUiStateTest {
   private object NoUpstream : ProxyUpstream {
     override fun totalLength(url: String): Long? = null
     override fun open(url: String, range: ByteRange): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    /**
+     * Artwork is fetched whole rather than ranged, because Navidrome's `getCoverArt` declares no
+     * length and ignores `Range`. Nothing in this module's tests reaches it -- they are about the
+     * strings a picker shows -- so it refuses rather than answering something plausible that a
+     * later case would then be quietly asserting about.
+     */
+    override fun readFully(url: String, maxBytes: Int): UpstreamBody =
+      error("no cast picker test fetches artwork through this upstream")
   }
 
   private companion object {

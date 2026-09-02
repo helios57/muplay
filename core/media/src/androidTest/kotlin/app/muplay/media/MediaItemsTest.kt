@@ -58,9 +58,9 @@ class MediaItemsTest {
   )
 
   private val firstItem =
-    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "https://host/art-1", isAudiobook = false, format = StreamFormat.Raw)
+    MediaItems.of(first, "https://host/rest/stream?id=song-1&s=aaa", "art-1", isAudiobook = false, format = StreamFormat.Raw)
   private val secondItem =
-    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "https://host/art-2", isAudiobook = false, format = StreamFormat.Raw)
+    MediaItems.of(second, "https://host/rest/stream?id=chapter-14&s=bbb", "art-2", isAudiobook = false, format = StreamFormat.Raw)
 
   private fun <T> pair(select: (MediaItem) -> T): List<T> = listOf(select(firstItem), select(secondItem))
 
@@ -223,8 +223,11 @@ class MediaItemsTest {
 
   @Test
   fun theArtworkUriIsTheOneItWasGiven() {
+    // The cover-art **id**, wrapped in this app's own scheme -- never a URL, and never the
+    // authenticated one this used to carry. See `ArtworkUri` for the surface that made the
+    // difference matter, and `PlatformSessionCredentialTest` for the rule over the whole item.
     assertThat(pair { it.mediaMetadata.artworkUri?.toString() })
-      .containsExactly("https://host/art-1", "https://host/art-2")
+      .containsExactly("muplay-art:art-1", "muplay-art:art-2")
   }
 
   @Test
@@ -232,7 +235,7 @@ class MediaItemsTest {
     val item = MediaItems.of(
       first.copy(coverArtId = null),
       "https://host/stream",
-      artworkUri = null,
+      artworkId = null,
       isAudiobook = false,
       format = StreamFormat.Raw,
     )

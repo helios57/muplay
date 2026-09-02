@@ -70,7 +70,7 @@ class TranscodeSeekSessionTest {
         .single { it.suffix.equals(OPUS_SUFFIX, ignoreCase = true) }
     }
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      connection = PlaybackConnection(context)
+      connection = PlaybackConnection(context, appArtworkUrls())
     }
     controller = runBlocking { connection.controller() }
   }

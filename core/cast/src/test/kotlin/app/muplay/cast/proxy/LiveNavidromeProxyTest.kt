@@ -4,6 +4,7 @@ import app.muplay.cast.didl.ServedMedia
 import app.muplay.cast.http.CastHttpClient
 import app.muplay.cast.http.CastHttpResponse
 import app.muplay.cast.http.HttpHeaders
+import app.muplay.cast.net.CredentialQuery
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
@@ -90,6 +91,18 @@ class LiveNavidromeProxyTest {
   private val streamUrl = client.streamUrl(song.id, StreamFormat.Raw)
 
   private val published = registry.publish(streamUrl, ServedMedia.of(song.suffix, StreamFormat.Raw))
+
+  /**
+   * A real, credential-bearing cover URL for a real seeded album.
+   *
+   * `coverArtUrl` appends the very same `authParams()` the stream URL gets -- which is the fact
+   * that made handing this to a speaker a password disclosure. It is never asserted on, printed or
+   * put into a message; only what the proxy serves in its place is.
+   */
+  private val coverUrl = client.coverArtUrl(
+    checkNotNull(song.coverArtId) { "the seeded music fixtures are expected to carry cover art" },
+    sizePx = ARTWORK_SIZE_PX,
+  )
 
   @AfterEach
   fun tearDown() {
@@ -261,6 +274,64 @@ class LiveNavidromeProxyTest {
    * A plain `OkHttpClient` rather than anything in this module: the point of comparing against it
    * is that it shares no code with the thing under test.
    */
+  // ---- artwork -------------------------------------------------------------------------------
+
+  @Test
+  fun `the real getCoverArt declares no length and ignores Range, which is why artwork is buffered`() {
+    // **The measurement the whole artwork design rests on.** `/rest/stream` honours RFC 7233, so a
+    // track's length is learned with a one-byte range probe. `/rest/getCoverArt` does neither: it
+    // answers 200 with `Transfer-Encoding: chunked`, no `Content-Length`, and it returns the WHOLE
+    // image for a `Range` request rather than a 206.
+    //
+    // So routing a cover through the streaming path would give a renderer a 502 for every image --
+    // `totalLength` would correctly answer `null` and `MediaProxyServer` correctly turns that into
+    // "this proxy cannot serve what the origin will not measure". The buffered path exists because
+    // of this, and if a future Navidrome starts answering ranges here, this test is what says the
+    // reason has expired.
+    val probe = OkHttpClient().newCall(
+      Request.Builder().url(coverUrl).header("Range", "bytes=0-0").build(),
+    ).execute()
+
+    val bytes = probe.use { response ->
+      assertThat(response.code).isEqualTo(200)
+      assertThat(response.header("Content-Range")).isNull()
+      assertThat(response.header("Content-Length")).isNull()
+      response.body.bytes()
+    }
+    // ...and "ignores Range" rather than "answers a one-byte 200": the whole image came back.
+    assertThat(bytes.size).isGreaterThan(1000)
+  }
+
+  @Test
+  fun `a real cover reaches a renderer through the proxy, byte for byte and with a length`() {
+    // The end of the chain, against the real server: the renderer is given a token URL on this
+    // phone, and what comes back is the same image Navidrome would have served -- with the
+    // `Content-Length` Navidrome would not have supplied.
+    val direct = fetchDirect(coverUrl)
+    assertThat(direct.size).isGreaterThan(1000)
+    val cover = registry.publishArtwork(coverUrl)
+
+    val throughProxy = get(cover.path, null)
+
+    assertThat(throughProxy.code).isEqualTo(200)
+    assertThat(throughProxy.body).isEqualTo(direct)
+    assertThat(throughProxy.head.headers.contentLength()).isEqualTo(direct.size.toLong())
+    // Navidrome re-encodes a sized cover, so the type is read off the response rather than guessed
+    // -- which is why the proxy carries no extension in an artwork path and no `ServedMedia`.
+    assertThat(throughProxy.head.headers["Content-Type"]).isEqualTo("image/webp")
+  }
+
+  @Test
+  fun `the url the renderer is given for a real cover carries no credential`() {
+    // The property the whole change exists for, stated against a real credentialed URL rather than
+    // a fabricated one: what Navidrome mints carries `u`, `t` and `s`; what the renderer is told to
+    // fetch carries nothing at all.
+    val cover = registry.publishArtwork(coverUrl)
+
+    assertThat(CredentialQuery.carries(coverUrl)).isTrue()
+    assertThat(CredentialQuery.carries(server.urlFor(cover, "127.0.0.1"))).isFalse()
+  }
+
   private fun fetchDirect(url: String): ByteArray =
     OkHttpClient().newCall(Request.Builder().url(url).build()).execute()
       .use { it.body.bytes() }
@@ -273,5 +344,8 @@ class LiveNavidromeProxyTest {
 
     /** A seeded fixture is ~40 KB; this is headroom, not a measurement. */
     const val MAX_TRACK_BYTES = 8 * 1024 * 1024
+
+    /** `QueueRepository.ARTWORK_SIZE_PX`, written out because this module cannot see it. */
+    const val ARTWORK_SIZE_PX = 512
   }
 }
