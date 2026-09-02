@@ -6,9 +6,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -20,6 +24,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.designsystem.theme.MuPlaySpacing
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within
 import org.junit.Rule
@@ -108,6 +113,12 @@ class PlayerScreenTest {
 
   private fun leftOfControl(description: String): Float =
     composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.left
+
+  private fun centreXOf(description: String): Float =
+    composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.center.x
+
+  /** The compose root, which `PlayerScreen`'s `fillMaxSize` fills exactly. */
+  private fun screen() = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
 
   @Test
   fun nothingPlayingSaysSoAndOffersNoTransportControls() {
@@ -439,6 +450,98 @@ class PlayerScreenTest {
     composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(CAST_SLOT_LABEL).assertDoesNotExist()
     composeRule.onNodeWithText(PLAYING_ON_PREFIX, substring = true).assertDoesNotExist()
+  }
+
+
+  // ---- the design review's fixes ---------------------------------------------------------------
+
+  /**
+   * **The play button is on the screen's vertical axis, with or without a cast slot in the row.**
+   *
+   * This is the defect that was visible in `play/screenshots/phone/06-now-playing.png`: the slot
+   * was appended *inside* an `Arrangement.Center` row, so the row's own midpoint moved left by half
+   * the slot's width and the one control a thumb finds without looking no longer lined up with the
+   * artwork above it or with the slider's travel.
+   *
+   * Measured against the compose root rather than against a neighbour, because "centred" is a claim
+   * about the screen. `:app` supplies an `IconButton` here and this suite a `TextButton`; both are
+   * wider than [SAME_ROW_TOLERANCE_PX], so a regression cannot slip through on slot width.
+   */
+  @Test
+  fun thePlayButtonSitsOnTheScreensCentreLineWithACastSlotInTheRow() {
+    showWithCast(content(PLAYING.copy(isPlaying = false)), castDeviceName = null)
+
+    val axis = screen().center.x
+    assertThat(centreXOf(PLAY_LABEL)).isCloseTo(axis, within(SAME_ROW_TOLERANCE_PX))
+    // The other half of "on the axis": the artwork it is supposed to line up with.
+    assertThat(centreXOf(ARTWORK_DESCRIPTION)).isCloseTo(axis, within(SAME_ROW_TOLERANCE_PX))
+    // ...and the slot is still in the row, and still to the right of Next. Both are asserted by
+    // `theCastSlotSitsInTheTransportRowAndIsTappable`; repeated here only as the guard that this
+    // test is not passing because the slot stopped being rendered.
+    composeRule.onNodeWithText(CAST_SLOT_LABEL).assertIsDisplayed()
+  }
+
+  /**
+   * **The artwork is at the top of the screen, and the slack is below it.**
+   *
+   * A weighted box that *centres* its child splits the leftover height into two dead bands, so the
+   * art floats and the title sits as far from the picture it belongs to as the picture sits from
+   * the status bar. Asserted as a distance rather than as an ordering: the two bands were roughly
+   * 310px and 320px on `muplay37`, so "above is less than below" was already true of the layout
+   * this replaces and would have been a test that could not fail.
+   */
+  @Test
+  fun theArtworkIsAtTheTopOfTheScreenAndTheSlackIsBelowIt() {
+    show(content())
+
+    val artwork = composeRule.onNodeWithContentDescription(ARTWORK_DESCRIPTION)
+      .fetchSemanticsNode().boundsInRoot
+    val above = artwork.top - screen().top
+    val below = topOf(TRACK_TITLE) - artwork.bottom
+
+    // The gap above the art is the screen's own vertical padding and nothing else.
+    val padding = with(composeRule.density) { MuPlaySpacing.xl.toPx() }
+    assertThat(above).isCloseTo(padding, within(SAME_ROW_TOLERANCE_PX))
+    // ...and the metadata block gets the room, which is the point of moving it.
+    assertThat(below).isGreaterThan(above)
+  }
+
+  /**
+   * The track name is a heading, so TalkBack's headings gesture lands on "what is this screen
+   * about" instead of walking the transport row first.
+   *
+   * The artist and album deliberately are **not**: three headings stacked in a column is the same
+   * as none, and the assertion below is what stops a later pass from marking all three.
+   */
+  @Test
+  fun theTrackTitleIsAHeadingAndTheTwoLinesUnderItAreNot() {
+    show(content())
+
+    composeRule.onNodeWithText(TRACK_TITLE)
+      .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+    for (line in listOf(TRACK_ARTIST, TRACK_ALBUM)) {
+      val heading = composeRule.onNodeWithText(line)
+        .fetchSemanticsNode().config.getOrNull(SemanticsProperties.Heading)
+      assertThat(heading).describedAs("\"%s\" is marked as a heading", line).isNull()
+    }
+  }
+
+  /**
+   * Every transport control is at least [MuPlaySpacing.minTouchTarget] in both directions.
+   *
+   * `IconButton`'s own container is 40dp and it relies on `minimumInteractiveComponentSize` to pad
+   * the *touch* area out to 48; that is hittable but it measures as 40, so this asserts the size
+   * the screen actually asks for rather than the padding a default happens to add.
+   */
+  @Test
+  fun everyTransportControlIsAtLeastAThumbAcross() {
+    show(content(PLAYING.copy(hasPrevious = true, hasNext = true, isPlaying = false)))
+
+    for (label in listOf(PREVIOUS_LABEL, PLAY_LABEL, NEXT_LABEL)) {
+      composeRule.onNodeWithContentDescription(label)
+        .assertWidthIsAtLeast(MuPlaySpacing.minTouchTarget)
+        .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+    }
   }
 
   private companion object {

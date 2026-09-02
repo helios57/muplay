@@ -26,12 +26,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
@@ -47,15 +50,22 @@ import app.muplay.designsystem.theme.MuPlayTimecode
  * `onNodeWithContentDescription` rather than `onNodeWithText`, which is a change of *finder*, not
  * of contract. `:feature:castpicker`'s `CastButton` is the pattern this follows.
  *
- * What is deliberately **not** an icon: `NOTHING_PLAYING_LABEL`, `BUFFERING_LABEL` and the
- * "playing on" line are sentences a user reads, not controls a thumb finds, and the timecodes are
- * numbers no glyph can carry.
+ * What is deliberately **not** an icon: `BUFFERING_LABEL` and the "playing on" line are sentences a
+ * user reads, not controls a thumb finds, and the timecodes are numbers no glyph can carry.
+ * `NOTHING_PLAYING_LABEL` is an empty state, so it is rendered by `:core:designsystem`'s shared
+ * [Message] rather than by a `Text` this file styles for itself.
  *
- * The hierarchy is artwork, then three lines of type that differ by *scale* rather than by
- * repetition: title at `headlineSmall`, artist at `titleMedium` in the app's music colour, album at
- * `bodySmall` in the muted one. Before this pass all three were the same `Text` in three sizes that
- * happened to be near each other, and a now-playing screen where nothing dominates is one a user
- * has to read rather than glance at.
+ * **The screen has one vertical axis and everything sits on it.** Artwork, slider and the play
+ * button share a centre line; the cast slot hangs off the trailing edge in its own box rather than
+ * joining the transport row, because a control appended to an `Arrangement.Center` row pushes the
+ * row's midpoint left by half its width — which is what put play/pause off the axis in
+ * `play/screenshots/phone/06-now-playing.png`.
+ *
+ * The hierarchy is artwork, then three lines of type that differ by *scale* rather than by colour:
+ * title at `headlineSmall`, artist at `titleMedium` (Medium weight), album at `bodySmall` in the
+ * muted role. The artist used to be `primary` teal, which on a screen with no other links reads as
+ * a hyperlink that does nothing when tapped — colour was doing a job that weight does better and
+ * without the false affordance.
  *
  * Split into a stateful entry point and a **stateless** overload, the same shape `LibraryScreen`
  * already uses in this codebase — and here it is what makes the screen testable at all: the
@@ -106,16 +116,13 @@ internal fun PlayerScreen(
   modifier: Modifier = Modifier,
 ) {
   when (uiState) {
+    // The app's one way of saying "nothing here". Before this it was a `Text` this file sized and
+    // coloured itself, which is how four screens ended up with four empty states.
     PlayerUiState.NothingPlaying -> Box(
-      modifier = modifier.fillMaxSize().padding(MuPlaySpacing.xxl),
+      modifier = modifier.fillMaxSize(),
       contentAlignment = Alignment.Center,
     ) {
-      Text(
-        text = NOTHING_PLAYING_LABEL,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        textAlign = TextAlign.Center,
-      )
+      Message(text = NOTHING_PLAYING_LABEL)
     }
 
     is PlayerUiState.Content -> Column(
@@ -129,9 +136,15 @@ internal fun PlayerScreen(
       // pushed the transport row off a small phone would be the wrong trade in the one place this
       // app cannot afford it. `aspectRatio` inside a bounded box takes the width unless the height
       // is the tighter constraint, so the art is square either way.
+      //
+      // **`TopCenter`, not `Center`.** A weighted box that centres its child splits the leftover
+      // height into two dead bands -- measured at roughly 310px above the art and 320px below it
+      // on `muplay37` -- so the art floats in the middle of the screen and the metadata block sits
+      // as far from its own title as the art does from the status bar. Top-aligning gives the
+      // whole of that slack to one gap, above the metadata, which is the block that wants room.
       Box(
         modifier = Modifier.weight(1f).fillMaxWidth().padding(bottom = MuPlaySpacing.xl),
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.TopCenter,
       ) {
         Artwork(
           uri = uiState.playback.artworkUri,
@@ -152,14 +165,19 @@ internal fun PlayerScreen(
           color = MaterialTheme.colorScheme.onSurface,
           maxLines = TITLE_LINES,
           overflow = TextOverflow.Ellipsis,
+          // What this screen is about, so a TalkBack user can jump straight to it with the
+          // headings navigation gesture instead of swiping through the transport row first.
+          modifier = Modifier.semantics { heading() },
         )
-        // The artist carries the app's music colour. It is the second thing a listener looks for
-        // and the only one of the three lines that is also a *place* -- naming it in the accent is
-        // what stops the block reading as one paragraph of metadata.
+        // `onSurface` at `titleMedium`, which Type.kt sets at `FontWeight.Medium` -- weight and
+        // scale carry the second line, not colour. It was `primary` (6.28:1 on the light surface,
+        // and perfectly legible), and legibility was never the problem: teal text on a screen
+        // whose only other teal is the play button reads as a link, and nothing happens when a
+        // user taps it. `onSurface` measures 16.29:1 light and 14.44:1 dark.
         Text(
           text = uiState.playback.artist.orEmpty(),
           style = MaterialTheme.typography.titleMedium,
-          color = MaterialTheme.colorScheme.primary,
+          color = MaterialTheme.colorScheme.onSurface,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -192,9 +210,7 @@ internal fun PlayerScreen(
         // A zero-width range makes Slider throw; a track whose duration is not yet known renders a
         // full-width bar rather than crashing.
         valueRange = 0f..uiState.playback.durationMs.coerceAtLeast(1L).toFloat(),
-        colors = SliderDefaults.colors(
-          inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        colors = SliderDefaults.colors(inactiveTrackColor = inactiveTrackColor()),
         modifier = Modifier.fillMaxWidth().padding(top = MuPlaySpacing.md),
       )
       Row(
@@ -205,31 +221,75 @@ internal fun PlayerScreen(
         Timecode(uiState.playback.durationMs)
       }
 
-      Row(
+      // **A `Box`, not a `Row`.** The three transport controls centre in the full width, so
+      // play/pause lands on the same vertical axis as the artwork and the slider thumb's travel;
+      // the cast slot is pinned to the trailing edge instead of being appended to the row. The old
+      // shape put the slot *inside* an `Arrangement.Center` row, which moved every control left by
+      // half the slot's width -- about 20dp -- and only when casting was in the build, so the
+      // primary control sat on the axis in one variant and off it in the other.
+      Box(
         modifier = Modifier.fillMaxWidth().padding(top = MuPlaySpacing.xl),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
       ) {
-        // Disabled, not hidden: a control that vanishes at the ends of a queue moves the two
-        // beside it under the user's thumb.
-        SecondaryTransport(
-          icon = MuPlayIcons.SkipPrevious,
-          label = PREVIOUS_LABEL,
-          enabled = uiState.playback.hasPrevious,
-          onClick = onPrevious,
-        )
-        PrimaryTransport(isPlaying = uiState.playback.isPlaying, onClick = onPlayPause)
-        SecondaryTransport(
-          icon = MuPlayIcons.SkipNext,
-          label = NEXT_LABEL,
-          enabled = uiState.playback.hasNext,
-          onClick = onNext,
-        )
-        castButton()
+        Row(
+          horizontalArrangement = Arrangement.Center,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          // Disabled, not hidden: a control that vanishes at the ends of a queue moves the two
+          // beside it under the user's thumb.
+          SecondaryTransport(
+            icon = MuPlayIcons.SkipPrevious,
+            label = PREVIOUS_LABEL,
+            enabled = uiState.playback.hasPrevious,
+            onClick = onPrevious,
+          )
+          PrimaryTransport(isPlaying = uiState.playback.isPlaying, onClick = onPlayPause)
+          SecondaryTransport(
+            icon = MuPlayIcons.SkipNext,
+            label = NEXT_LABEL,
+            enabled = uiState.playback.hasNext,
+            onClick = onNext,
+          )
+        }
+        Box(modifier = Modifier.align(Alignment.CenterEnd)) { castButton() }
       }
     }
   }
 }
+
+/**
+ * The colour of the part of the seek bar that has **not** been played, and the one colour on this
+ * screen chosen by measurement rather than by role name.
+ *
+ * It was `surfaceVariant`, and in **light** mode that is `#DBE5E1` on the `#FBF9F5` surface:
+ * **1.22:1**. A track a sighted user cannot find is a slider whose length -- and therefore how much
+ * of the track is left -- is invisible. `outlineVariant` (`#BFC9C5`) is **1.61:1** there.
+ *
+ * In **dark** mode this changes nothing at all, and that is worth saying rather than hiding:
+ * `MuPlayOutlineVariantDark` and `MuPlaySurfaceVariantDark` are the same `#3F4946`, so the dark
+ * track was already at its best available **2.00:1** and only the light scheme was broken.
+ *
+ * Neither value reaches WCAG 1.4.11's 3:1 against the page, and no role in this scheme does while
+ * still reading as a track rather than as a rule. What 1.4.11 actually governs on a slider is the
+ * boundary that *carries the value* -- the edge between played and unplayed -- and that stays well
+ * clear: `primary` against `outlineVariant` is **3.89:1** light and **5.52:1** dark. The change
+ * therefore trades 5.12:1 -> 3.89:1 on a boundary that had margin to spare for 1.22:1 -> 1.61:1 on
+ * one that had none.
+ *
+ * Two candidates were measured and rejected, and the rejections are the interesting half:
+ *
+ * - `secondaryContainer` (`#CCE8E1`) is **1.23:1** on the light surface -- one hundredth better
+ *   than the colour being replaced. It is the obvious fix and it fixes nothing.
+ * - `outline` (`#6F7976`) is **4.27:1** against the page and clears 1.4.11 outright, and it is the
+ *   wrong answer: `primary` against it is **1.47:1**, so the played portion vanishes into the
+ *   unplayed one and the bar stops reporting the position at all. A track that is easy to see and
+ *   impossible to read is a worse slider than a faint one.
+ *
+ * A composable function rather than a constant because `MaterialTheme` is only readable from one,
+ * and camelCase because it returns a value rather than emitting UI.
+ */
+@Composable
+private fun inactiveTrackColor(): Color = MaterialTheme.colorScheme.outlineVariant
 
 /**
  * The one heavy control on the screen: a filled circle, [MuPlaySpacing.transportPrimary] across,
@@ -255,8 +315,13 @@ private fun PrimaryTransport(isPlaying: Boolean, onClick: () -> Unit) {
 }
 
 /**
- * Skip, either direction. An unfilled button so the primary action keeps the row's only mass, and
- * `IconButton`'s own 48dp minimum touch target so the 40dp glyph is still comfortably hittable.
+ * Skip, either direction. An unfilled button so the primary action keeps the row's only mass.
+ *
+ * Sized to [MuPlaySpacing.minTouchTarget] **explicitly** rather than left to `IconButton`'s own
+ * default, which is 40dp of container relying on `minimumInteractiveComponentSize` to pad the touch
+ * area out to 48dp. The padded version is hittable and measures as a 40dp box, so a rule -- or a
+ * reviewer -- reading the layout cannot tell it from a genuinely undersized control. Saying 48
+ * here makes the guarantee the code's rather than a default's.
  */
 @Composable
 private fun SecondaryTransport(
@@ -271,6 +336,7 @@ private fun SecondaryTransport(
     colors = IconButtonDefaults.iconButtonColors(
       contentColor = MaterialTheme.colorScheme.onSurface,
     ),
+    modifier = Modifier.size(MuPlaySpacing.minTouchTarget),
   ) {
     Icon(
       imageVector = icon,
@@ -338,6 +404,11 @@ private const val SECONDARY_GLYPH_DP = 30
  * Drawn rather than composed from Material's own indicator because it must contribute **no**
  * semantics node: the bar it sits under already carries `MINI_PLAYER_LABEL`, and a second
  * describable child there is what makes a journey's `onNodeWithContentDescription` ambiguous.
+ *
+ * Its unplayed half takes the same `outlineVariant` the seek bar's does, and for the same measured
+ * reason: on the mini player's `surfaceContainer` the old `surfaceVariant` was **1.10:1** in light
+ * mode -- a rule that is simply not there -- against **1.45:1** now. Dark is `#3F4946` either way
+ * and stays at 1.76:1.
  */
 @Composable
 internal fun ProgressRule(fraction: Float, modifier: Modifier = Modifier) {
@@ -346,7 +417,7 @@ internal fun ProgressRule(fraction: Float, modifier: Modifier = Modifier) {
       .fillMaxWidth()
       .height(PROGRESS_RULE_DP.dp)
       .clip(RoundedCornerShape(PROGRESS_RULE_DP.dp))
-      .background(MaterialTheme.colorScheme.surfaceVariant),
+      .background(MaterialTheme.colorScheme.outlineVariant),
   ) {
     Box(
       modifier = Modifier

@@ -1,7 +1,15 @@
 package app.muplay.player
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -9,6 +17,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.designsystem.theme.MuPlaySpacing
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
 import org.junit.Test
@@ -166,5 +175,87 @@ class MiniPlayerTest {
     assertThat(tree).doesNotContain("getCoverArt")
     // The dump is real, so the three assertions above are not passing over nothing.
     assertThat(tree).contains(MINI_PLAYER_LABEL)
+  }
+
+  // ---- the design review's fixes ---------------------------------------------------------------
+
+  /**
+   * **A blind user can hear what is playing.**
+   *
+   * A `contentDescription` on a *merging* node replaces the text of everything beneath it, so this
+   * bar announced "Now playing, button" and stopped -- the title and the artist were on screen and
+   * unreachable, and the only way to find out what was playing was to open the full player. The fix
+   * is a `stateDescription`, which TalkBack reads *after* the name rather than instead of it, and
+   * which leaves [MINI_PLAYER_LABEL] untouched: `:app`'s journeys find this bar by that exact
+   * string and `PlaybackJourneyTest.notTheMiniPlayer` filters a text match on it.
+   *
+   * Both halves are asserted. A fix that had reached the track by rewriting the description would
+   * satisfy the second assertion and break every journey in another module.
+   */
+  @Test
+  fun theBarTellsAScreenReaderWhatIsPlayingAndNotOnlyThatSomethingIs() {
+    show(content())
+
+    val bar = composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).fetchSemanticsNode()
+
+    assertThat(bar.config[SemanticsProperties.ContentDescription]).containsExactly(MINI_PLAYER_LABEL)
+
+    val spoken = bar.config.getOrNull(SemanticsProperties.StateDescription)
+    assertThat(spoken).contains(TRACK_TITLE)
+    assertThat(spoken).contains(TRACK_ARTIST)
+    // Not the album. The bar does not show it -- `theBarDoesNotRepeatTheAlbum` -- so it must not
+    // claim it either; a read-out richer than the screen is its own kind of wrong.
+    assertThat(spoken).doesNotContain(TRACK_ALBUM)
+  }
+
+  /**
+   * **The bar leaves when playback stops**, and this is the guard on the machinery that lets it
+   * leave *gracefully*.
+   *
+   * The exit transition needs the track still drawn on the bar while it shrinks, and by then the
+   * state naming that track is already `NothingPlaying` -- so the composable holds the last content
+   * it saw. Hold it without also driving `visible` from the live state and the bar never goes away
+   * again for the life of the process, which no other case here can see:
+   * `nothingPlayingRendersNoBarAtAll` starts empty and never transitions.
+   *
+   * `waitUntil` rather than a bare assertion because the bar is animating out, and the assertion is
+   * "it is gone", not "it went instantly".
+   */
+  @Test
+  fun theBarLeavesWhenPlaybackStops() {
+    var uiState: PlayerUiState by mutableStateOf(content())
+    composeRule.setContent {
+      MiniPlayer(
+        uiState = uiState,
+        onOpenPlayer = { actions += "open" },
+        onPlayPause = { actions += "playPause" },
+      )
+    }
+
+    composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertIsDisplayed()
+
+    uiState = PlayerUiState.NothingPlaying
+
+    composeRule.waitUntil(5_000L) {
+      composeRule.onAllNodesWithContentDescription(MINI_PLAYER_LABEL).fetchSemanticsNodes().isEmpty()
+    }
+  }
+
+  /**
+   * The bar and its one button are both at least [MuPlaySpacing.minTouchTarget] tall.
+   *
+   * The bar is the app's most-tapped control that is not a list row -- it is how a user gets back to
+   * what is playing from anywhere -- and it sits at the very bottom edge of the screen, which is
+   * where a thumb is least accurate.
+   */
+  @Test
+  fun theBarAndItsButtonAreBothAtLeastAThumbAcross() {
+    show(content(PLAYING.copy(isPlaying = true)))
+
+    composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL)
+      .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+    composeRule.onNodeWithContentDescription(PAUSE_LABEL)
+      .assertWidthIsAtLeast(MuPlaySpacing.minTouchTarget)
+      .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
   }
 }
