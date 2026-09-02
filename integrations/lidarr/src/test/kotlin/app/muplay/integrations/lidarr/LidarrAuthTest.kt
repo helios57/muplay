@@ -72,8 +72,8 @@ class LidarrAuthTest {
    * exist to catch -- would hang the build rather than fail this test. Copied from
    * `:core:network`'s `SubsonicClientTest` for that reason.
    */
-  private fun nextRequest(): RecordedRequest {
-    val request = server.takeRequest(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+  private fun nextRequest(from: MockWebServer = server): RecordedRequest {
+    val request = from.takeRequest(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     assertThat(request)
       .describedAs("a request within %d s -- the client sent none", REQUEST_TIMEOUT_SECONDS)
       .isNotNull()
@@ -254,9 +254,19 @@ class LidarrAuthTest {
    * absolute, which is why this test enqueues a relative `Location` too rather than the absolute
    * one that would have been the easy thing to write.
    *
-   * OkHttp follows it and, because it is same-host, keeps the `X-Api-Key` header. But "OkHttp
+   * OkHttp follows it and, because it is same-origin, keeps the `X-Api-Key` header. But "OkHttp
    * keeps auth headers on same-host redirects" is a claim about OkHttp, and this project does not
    * ship claims about libraries it has not observed.
+   *
+   * **What this test does NOT cover, and what it must not be read as covering.** It pins the
+   * *same-origin* hop only. Until [LidarrAuthInterceptor] was scoped to the configured origin,
+   * OkHttp carried `X-Api-Key` to a **cross-origin** redirect target too, and this test stayed
+   * green through the whole of that: `RetryAndFollowUpInterceptor.buildRedirectRequest` strips
+   * `Authorization` and nothing else, so a server answering `302 Location: https://evil.example/`
+   * received the key. The test that covers that is
+   * `a cross-origin redirect does not carry the api key to the other server`, and this one is its
+   * other half -- the guard has to withhold the key off-origin *without* breaking the `urlBase`
+   * hop, and neither test alone says both.
    */
   @Test
   fun `a urlBase redirect is followed with the key and the path intact`() = runTest {
@@ -298,6 +308,116 @@ class LidarrAuthTest {
 
     assertThat(nextRequest().url.encodedPath).isEqualTo("/lidarr/api/v1/system/status")
   }
+
+  /**
+   * **The vulnerability this guard exists for.** A server the user configured -- or anyone able to
+   * answer as it -- replies `302 Location: <somewhere else>`, and the client follows.
+   *
+   * Measured against the OkHttp this project resolves (5.5.0):
+   * `RetryAndFollowUpInterceptor.buildRedirectRequest` strips exactly one header on a redirect
+   * whose connection it cannot reuse, `Authorization`. `X-Api-Key` is not a name it knows, so an
+   * application interceptor's copy of it is carried to the new origin verbatim. Lidarr's key is a
+   * standing credential for the whole instance; Bindery's, next door, is admin-equivalent.
+   *
+   * Two servers, and the second is addressed by the **other spelling of the loopback host** as
+   * well as on its own port, so the two origins differ by host and not only by port. Both halves
+   * are asserted rather than assumed -- a test that accidentally redirected to the *same* origin
+   * would pass this while proving nothing.
+   */
+  @Test
+  fun `a cross-origin redirect does not carry the api key to the other server`() = runTest {
+    val elsewhere = MockWebServer()
+    elsewhere.start()
+    try {
+      val target = crossHost(elsewhere, "/api/v1/system/status")
+      server.enqueue(
+        MockResponse.Builder().code(302).setHeader("Location", target.toString()).build(),
+      )
+      elsewhere.enqueue(
+        MockResponse.Builder()
+          .code(200)
+          .setHeader("Content-Type", "application/json")
+          .body(readFixture("lidarr/system-status.json"))
+          .build(),
+      )
+
+      clientWith(FIRST_KEY).status()
+
+      val first = nextRequest()
+      val second = nextRequest(elsewhere)
+
+      // Positive controls first. Without them, a client that never authenticated at all, or that
+      // never followed the redirect, would satisfy the negative below while proving nothing.
+      assertThat(first.headers["X-Api-Key"]).isEqualTo(FIRST_KEY)
+      assertThat(second.url.encodedPath).isEqualTo("/api/v1/system/status")
+      // ...and the redirect really did cross an origin, in both of the ways it can.
+      assertThat(second.url.host).isNotEqualTo(server.url("/").host)
+      assertThat(second.url.port).isNotEqualTo(server.url("/").port)
+
+      // The assertion this test exists for.
+      assertThat(second.headers["X-Api-Key"]).isNull()
+      // ...and it did not escape onto the URL on the way past either.
+      assertThat(second.url.toString()).doesNotContain(FIRST_KEY)
+    } finally {
+      elsewhere.close()
+    }
+  }
+
+  /**
+   * The same guarantee for a redirect that differs **only by port** on the identical host.
+   *
+   * Separate from the test above because an origin is a three-part tuple and a guard that compared
+   * only the host would pass that one: `https://host:8686` and `https://host:9999` are different
+   * servers, and on a machine hosting several self-hosted apps behind one name they are routinely
+   * *different people's* servers.
+   */
+  @Test
+  fun `a redirect to another port on the same host does not carry the api key`() = runTest {
+    val elsewhere = MockWebServer()
+    elsewhere.start()
+    try {
+      // `elsewhere.url(...)` verbatim: same host spelling as `server`, different port.
+      val target = elsewhere.url("/api/v1/system/status")
+      server.enqueue(
+        MockResponse.Builder().code(302).setHeader("Location", target.toString()).build(),
+      )
+      elsewhere.enqueue(
+        MockResponse.Builder()
+          .code(200)
+          .setHeader("Content-Type", "application/json")
+          .body(readFixture("lidarr/system-status.json"))
+          .build(),
+      )
+
+      clientWith(FIRST_KEY).status()
+
+      nextRequest()
+      val second = nextRequest(elsewhere)
+
+      // The positive control that makes this test different from the one above: the host really is
+      // the same, so only the port can have decided the outcome.
+      assertThat(second.url.host).isEqualTo(server.url("/").host)
+      assertThat(second.url.port).isNotEqualTo(server.url("/").port)
+
+      assertThat(second.headers["X-Api-Key"]).isNull()
+    } finally {
+      elsewhere.close()
+    }
+  }
+
+  /**
+   * A URL on [other] whose host is spelled the other way round from the one MockWebServer names
+   * itself with.
+   *
+   * MockWebServer reports `localhost` or `127.0.0.1` depending on the host's resolver, and both
+   * reach the same loopback socket, so neither spelling can be hardcoded. Whichever it chose, the
+   * other one is a different `HttpUrl.host` for a reachable server -- which is what makes the test
+   * above a cross-*host* redirect rather than only a cross-port one.
+   */
+  private fun crossHost(other: MockWebServer, path: String) =
+    other.url(path).newBuilder()
+      .host(if (other.url("/").host == "127.0.0.1") "localhost" else "127.0.0.1")
+      .build()
 
   private companion object {
     /**

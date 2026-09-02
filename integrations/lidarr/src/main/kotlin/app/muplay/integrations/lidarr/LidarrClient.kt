@@ -14,7 +14,9 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 /**
  * A typed Kotlin client over [LidarrApi].
  *
- * The OkHttp stack carries exactly one interceptor, [LidarrAuthInterceptor]. **No logging
+ * The OkHttp stack carries exactly one interceptor, [LidarrAuthInterceptor], installed as a
+ * **network** interceptor so that it sees every redirect hop and can withhold the API key from any
+ * hop that leaves the configured origin -- see that class for the whole argument. **No logging
  * interceptor is installed and none may be added**: it would print the `X-Api-Key` header on every
  * request, which is the same secret this app seals into the Android Keystore two modules away.
  * `ConventionTest`'s `nothing in integrations writes to a log` refuses the obvious form of that
@@ -318,7 +320,14 @@ class LidarrClient internal constructor(
 
     private fun buildApi(credentials: IntegrationCredentials.Lidarr): LidarrApi {
       val http = OkHttpClient.Builder()
-        .addInterceptor(LidarrAuthInterceptor(credentials.apiKey))
+        // `addNetworkInterceptor`, NOT `addInterceptor`, and `followRedirects` is left at its
+        // default `true`. Both halves of that are load-bearing and both are argued at
+        // [LidarrAuthInterceptor]: an application interceptor stamps the key once, before redirect
+        // handling, and OkHttp carries a custom header to a cross-origin redirect target verbatim
+        // -- it strips `Authorization` and nothing else. A network interceptor runs per hop, which
+        // is what lets the key be scoped to the configured origin while a `urlBase` install's
+        // same-origin 307 keeps working.
+        .addNetworkInterceptor(LidarrAuthInterceptor(credentials.baseUrl, credentials.apiKey))
         .build()
       return Retrofit.Builder()
         // `IntegrationBaseUrl.value` always ends in `/`, which Retrofit requires: without it,

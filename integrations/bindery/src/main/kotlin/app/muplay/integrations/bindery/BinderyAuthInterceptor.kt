@@ -1,5 +1,6 @@
 package app.muplay.integrations.bindery
 
+import app.muplay.integrations.IntegrationBaseUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 
@@ -36,6 +37,48 @@ import okhttp3.Response
  * column — verified here against a real database after all **75** migrations had applied, so the
  * README's "per-account API key" claim is false on the shipped schema and not merely in the source.
  *
+ * ### Why this is a NETWORK interceptor, and why the key is scoped to one origin
+ *
+ * This class is registered with `addNetworkInterceptor`, not `addInterceptor`, and the difference
+ * is a vulnerability rather than a preference. An **application** interceptor runs once, before
+ * redirect handling, so the header it stamps is carried by whatever OkHttp does next. Measured
+ * against the OkHttp this project resolves (5.5.0):
+ * `RetryAndFollowUpInterceptor.buildRedirectRequest` strips exactly one header name when it cannot
+ * reuse the connection, `Authorization` -- guarded by `canReuseConnectionFor`, which compares
+ * scheme, host and port. `X-Api-Key` is not a name it knows.
+ *
+ * So before this class was scoped, a Bindery answering
+ *
+ *     302 Location: https://evil.example/
+ *
+ * handed over the key described two paragraphs above: instance-wide, admin-equivalent, and scoped
+ * by `middleware.go` to nothing. The attacker need only be the host the user configured, or anyone
+ * able to answer as it. `:integrations:lidarr` had the identical defect and the identical fix; the
+ * two were written apart and acquired one bug twice, which is the argument for
+ * [IntegrationBaseUrl.isSameOrigin] living in `:integrations:core` where both call it.
+ *
+ * A **network** interceptor runs once per hop, so `chain.request().url` is the URL actually about
+ * to go on the wire, redirect target included, and [IntegrationBaseUrl.isSameOrigin] decides each
+ * hop on its own. The `Accept` header is set on every hop regardless -- it is not a secret, and a
+ * redirect target still has to be told what this client can parse.
+ *
+ * ### Why redirects are still followed
+ *
+ * `followRedirects` is left at OkHttp's default `true`, deliberately. A reverse-proxied Bindery is
+ * the deployment a release build pushes users towards -- `CleartextPolicy.Forbidden` refuses a
+ * plain `http://` base URL -- and a proxy that normalises a path answers a same-origin redirect;
+ * `BinderyAuthTest`'s `a same-origin redirect is followed with the key intact` holds that open.
+ * Turning redirects off instead means owning relative-`Location` resolution, `307`/`308` method
+ * and body preservation and a follow-up bound, in the one place where getting it wrong is a
+ * security bug. With the key withheld off-origin the secret can no longer leave the configured
+ * origin, which is the whole of the vulnerability; what remains is that the client deserialises a
+ * stranger's JSON into typed DTOs, with no credential attached and no code execution.
+ *
+ * Note the one case the origin rule refuses that a reader might expect it to allow: a same-host
+ * `http` -> `https` **upgrade** is cross-origin (the scheme and the default port both change), so
+ * the key is withheld. That is the fail-closed direction, and in a shipping build it cannot arise,
+ * because the configured origin is always `https` to begin with.
+ *
  * ### Why `Accept` is here too
  *
  * Bindery answers JSON regardless — measured, a request with no `Accept` header at all is answered
@@ -44,13 +87,24 @@ import okhttp3.Response
  * intermediary or a later `@Headers` annotation cannot move it, and it lives beside the key for
  * the same reason the key does: one place, so a new endpoint cannot forget it.
  */
-internal class BinderyAuthInterceptor(private val apiKey: String) : Interceptor {
+internal class BinderyAuthInterceptor(
+  private val baseUrl: IntegrationBaseUrl,
+  private val apiKey: String,
+) : Interceptor {
 
-  override fun intercept(chain: Interceptor.Chain): Response =
-    chain.proceed(
-      chain.request().newBuilder()
-        .header("X-Api-Key", apiKey)
-        .header("Accept", "application/json")
-        .build(),
-    )
+  override fun intercept(chain: Interceptor.Chain): Response {
+    val request = chain.request()
+    val builder = request.newBuilder()
+      // Unconditionally, and before the decision below: this class is the only thing entitled to
+      // put the key on a request, so a header that arrived from anywhere else -- a `@Headers`
+      // annotation on an endpoint a later task adds, an application interceptor somebody installs
+      // above this one -- loses its vote here rather than surviving to an origin this class did
+      // not approve. Removing a header that is not present is a no-op.
+      .removeHeader("X-Api-Key")
+      .header("Accept", "application/json")
+    if (baseUrl.isSameOrigin(request.url)) {
+      builder.header("X-Api-Key", apiKey)
+    }
+    return chain.proceed(builder.build())
+  }
 }
