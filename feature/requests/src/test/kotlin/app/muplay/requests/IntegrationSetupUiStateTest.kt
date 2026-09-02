@@ -120,4 +120,30 @@ class IntegrationSetupUiStateTest {
     assertThat(checkNotNull(credentials).baseUrl.value).isEqualTo("https://lidarr.example.com/lidarr/")
     assertThat(credentials.toString()).doesNotContain("abc123").doesNotContain("SECRET")
   }
+  /**
+   * What this state says when something prints it.
+   *
+   * [IntegrationSetupUiState.keyText] holds the API key the user has just typed, and Bindery's is
+   * instance-wide and always admin. A `data class` gets a compiler-generated `toString` that prints
+   * every property, and that output reaches crash dumps, debugger panes and failing-assertion
+   * messages -- so before the override this state printed an admin key in full.
+   *
+   * The assertion is on the key's *value*, not on the absence of the word "keyText". A field-name
+   * check would pass over a leak that spelled the secret somewhere else, which is exactly the
+   * mistake the sibling test for `PublishedMedia` caught in `:core:cast`: the token had been
+   * redacted under its own name and printed again inside the path.
+   */
+  @Test
+  fun `printing the form does not print the api key`() {
+    val printed = form(keyText = SECRET_KEY).toString()
+
+    assertThat(printed).doesNotContain(SECRET_KEY)
+    // Positive control: the redaction is not achieved by printing nothing a reader can use.
+    assertThat(printed).contains("IntegrationSetupUiState", "https://lidarr.example.com")
+  }
+
+  private companion object {
+    const val SECRET_KEY = "0123456789abcdef0123456789abcdef"
+  }
+
 }

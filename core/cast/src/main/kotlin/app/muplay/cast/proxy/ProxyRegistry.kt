@@ -36,9 +36,18 @@ data class PublishedMedia(
    * prints every property, so the generated `toString` put both into any crash dump, debugger view
    * or failing-test message. `CastSource` was fixed for exactly this; these two were missed,
    * because the rule that polices credential handling scanned only `integrations/`.
+   *
+   * **[path] is redacted too, and that is the part worth reading twice.** The path IS the
+   * capability -- `publish` builds it as `PATH_PREFIX + served.fileName(token)` and `publishArtwork`
+   * as `ART_PATH_PREFIX + token` -- so a `toString` that hides `token=` while printing `path=` has
+   * redacted nothing at all. The first version of this override did exactly that, and
+   * `PublishedRedactionTest` caught it: the token was still in the output, spelled once.
+   *
+   * That is why the test asserts on the token's *value* rather than on the absence of the word
+   * "token". A field-name check would have passed over the leak.
    */
   override fun toString(): String =
-    "PublishedMedia(token=<redacted>, path=$path, upstreamUrl=<redacted>, served=$served)"
+    "PublishedMedia(token=<redacted>, path=<redacted>, upstreamUrl=<redacted>, served=$served)"
 }
 
 /**
@@ -77,7 +86,7 @@ data class PublishedArtwork(
 ) : Published {
   /** Redacted for the reason [PublishedMedia.toString] gives; the cover URL carries the same auth. */
   override fun toString(): String =
-    "PublishedArtwork(token=<redacted>, path=$path, upstreamUrl=<redacted>)"
+    "PublishedArtwork(token=<redacted>, path=<redacted>, upstreamUrl=<redacted>)"
 }
 
 /**
