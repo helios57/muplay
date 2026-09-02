@@ -14,7 +14,9 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 /**
  * A typed Kotlin client over [BinderyApi].
  *
- * The OkHttp stack carries exactly one interceptor, [BinderyAuthInterceptor]. **No logging
+ * The OkHttp stack carries exactly one interceptor, [BinderyAuthInterceptor], installed as a
+ * **network** interceptor so that it sees every redirect hop and can withhold the API key from any
+ * hop that leaves the configured origin -- see that class for the whole argument. **No logging
  * interceptor is installed and none may be added**: it would print the `X-Api-Key` header on every
  * request, and that key is instance-wide and admin-equivalent. `ConventionTest`'s
  * `nothing in integrations writes to a log` refuses the obvious form of that mistake, and
@@ -216,7 +218,14 @@ class BinderyClient internal constructor(
 
     private fun buildApi(credentials: IntegrationCredentials.Bindery): BinderyApi {
       val http = OkHttpClient.Builder()
-        .addInterceptor(BinderyAuthInterceptor(credentials.apiKey))
+        // `addNetworkInterceptor`, NOT `addInterceptor`, and `followRedirects` is left at its
+        // default `true`. Both halves of that are load-bearing and both are argued at
+        // [BinderyAuthInterceptor]: an application interceptor stamps the key once, before
+        // redirect handling, and OkHttp carries a custom header to a cross-origin redirect target
+        // verbatim -- it strips `Authorization` and nothing else. A network interceptor runs per
+        // hop, which is what lets an admin-equivalent key be scoped to the configured origin while
+        // a proxied install's same-origin redirect keeps working.
+        .addNetworkInterceptor(BinderyAuthInterceptor(credentials.baseUrl, credentials.apiKey))
         .build()
       return Retrofit.Builder()
         // `IntegrationBaseUrl.value` always ends in `/`, which Retrofit requires: without it,

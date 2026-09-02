@@ -16,7 +16,39 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * which would let a plain `String` be passed where one of these is expected through any reflective
  * or generic path, and would make the private constructor much weaker than it looks.
  */
-class IntegrationBaseUrl private constructor(val value: String) {
+class IntegrationBaseUrl private constructor(private val parsed: HttpUrl) {
+
+  /**
+   * The normalised URL, in the form Retrofit's `baseUrl` and every log line want it.
+   *
+   * Held as a `String` rather than recomputed, because it is read on every request build and it is
+   * this type's `equals`, `hashCode` and `toString`. The `HttpUrl` behind it is kept private: it is
+   * what [isSameOrigin] compares against, and handing it out would let a caller reach
+   * `newBuilder()` and construct a base URL that never went through [parse].
+   */
+  val value: String = parsed.toString()
+
+  /**
+   * Whether [url] is on the **same origin** as this base URL: identical scheme, host and port.
+   *
+   * That tuple is RFC 6454's origin, and it is the unit an API key may be sent to. The reason this
+   * lives here rather than in each client is that it must be compared against the URL *as OkHttp
+   * canonicalised it* -- host lowercased and IDN-punycoded, port defaulted from the scheme -- and
+   * `parse` above already put this value through exactly that. A client re-deriving the comparison
+   * from `IntegrationCredentials.baseUrl.value` with string surgery would disagree with the parser
+   * that actually connects, on precisely the inputs an attacker chooses: `HOST` vs `host`,
+   * `https://host` vs `https://host:443`, a trailing dot, an IDN homograph.
+   *
+   * **Why this exists at all.** Both integration clients authenticate with `X-Api-Key`, and OkHttp
+   * does not strip that header across a redirect. Measured against the OkHttp this project
+   * resolves (5.5.0): `RetryAndFollowUpInterceptor.buildRedirectRequest` removes exactly one header
+   * when it cannot reuse the connection, `Authorization`. So a server answering
+   * `302 Location: https://evil.example/` was handed the user's key -- and Bindery's is
+   * instance-wide and always treated as admin. `LidarrAuthInterceptor` and `BinderyAuthInterceptor`
+   * are network interceptors that call this on every hop; see either for the whole argument.
+   */
+  fun isSameOrigin(url: HttpUrl): Boolean =
+    url.scheme == parsed.scheme && url.host == parsed.host && url.port == parsed.port
 
   override fun toString(): String = value
 
@@ -85,16 +117,28 @@ class IntegrationBaseUrl private constructor(val value: String) {
       CleartextPolicy.Forbidden -> false
     }
 
-    /** Strips every credential-bearing component, then guarantees the trailing slash. */
-    private fun normalise(parsed: HttpUrl): String {
+    /**
+     * Strips every credential-bearing component, then guarantees the trailing slash.
+     *
+     * Returns the `HttpUrl` rather than its string, so [IntegrationBaseUrl] can keep the parsed
+     * form for [IntegrationBaseUrl.isSameOrigin] instead of re-parsing a string it just built. The
+     * trailing slash is added as an empty **path segment** rather than by concatenating a
+     * character, for the same reason the rest of this file uses OkHttp's parser: the URL model
+     * decides what a URL looks like. The two agree -- `HttpUrl` canonicalises every `http`/`https`
+     * path to start with `/`, so the test below is for a trailing empty segment.
+     */
+    private fun normalise(parsed: HttpUrl): HttpUrl {
       val stripped = parsed.newBuilder()
         .username("")
         .password("")
         .query(null)
         .fragment(null)
         .build()
-        .toString()
-      return if (stripped.endsWith("/")) stripped else "$stripped/"
+      return if (stripped.encodedPath.endsWith("/")) {
+        stripped
+      } else {
+        stripped.newBuilder().addPathSegment("").build()
+      }
     }
   }
 }

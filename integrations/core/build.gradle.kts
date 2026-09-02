@@ -17,7 +17,16 @@ dependencies {
   // OkHttp's own URL parser, not a Regex: the string `IntegrationBaseUrl` produces is handed
   // straight to `Retrofit.Builder().baseUrl(...)`, which parses it with this same class. A
   // separate validator would eventually disagree with the thing that actually connects.
-  implementation(libs.okhttp)
+  //
+  // `api`, not `implementation`, and the promotion is deliberate rather than incidental:
+  // `IntegrationBaseUrl.isSameOrigin` takes an `okhttp3.HttpUrl`, so that type is now part of this
+  // module's public signature and every consumer needs it to call the method. Both clients already
+  // declare `libs.okhttp` themselves, so this changes no resolved artifact -- but leaving it at
+  // `implementation` would mean they compile only by accident of their own declaration, and the
+  // first consumer that did not declare okhttp would fail with an unresolvable parameter type
+  // rather than a missing dependency. The comparison is deliberately NOT re-derived per client;
+  // see `IntegrationBaseUrl.isSameOrigin` for why it has to be the parser's own canonical form.
+  api(libs.okhttp)
 
   // Task 2. `implementation`, not `api`: `KeystoreKeys` and `KeystoreCipher` are what seal the API
   // key, and neither appears in any public signature this module exposes -- `IntegrationCredentials`

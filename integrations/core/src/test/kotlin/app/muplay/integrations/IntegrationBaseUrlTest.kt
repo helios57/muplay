@@ -1,5 +1,6 @@
 package app.muplay.integrations
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -204,6 +205,114 @@ class IntegrationBaseUrlTest {
     assertThat(a).isEqualTo(b)
     assertThat(a.hashCode()).isEqualTo(b.hashCode())
     assertThat(a).isNotEqualTo(c)
+  }
+
+  /**
+   * **The origin comparison an API key's whole blast radius rests on.**
+   *
+   * `LidarrAuthInterceptor` and `BinderyAuthInterceptor` are network interceptors that ask this on
+   * every redirect hop and attach `X-Api-Key` only when the answer is `true`. Before they did,
+   * OkHttp carried that header to a cross-origin redirect target verbatim -- measured on 5.5.0,
+   * `RetryAndFollowUpInterceptor.buildRedirectRequest` strips `Authorization` and nothing else --
+   * so a server answering `302 Location: https://evil.example/` was given the key. Bindery's is
+   * instance-wide and admin-equivalent.
+   *
+   * The positive case is asserted at two different base URLs, because a method that returned a
+   * constant `true` would satisfy a single one and is the exact shape this file's other tests
+   * guard against everywhere else.
+   */
+  @Test
+  fun `a url on the same scheme, host and port is the same origin`() {
+    assertThat(url("https://lidarr.example.com").isSameOrigin("https://lidarr.example.com/api/v1/system/status".toHttpUrl()))
+      .isTrue()
+    assertThat(url("https://books.example.net:8787").isSameOrigin("https://books.example.net:8787/api/v1/health".toHttpUrl()))
+      .isTrue()
+  }
+
+  /**
+   * The path is deliberately **not** part of an origin, and this is the case that makes the whole
+   * guard usable rather than a ban on redirects.
+   *
+   * A Servarr `urlBase` install answers `/api/v1/...` with a `307` to `{urlBase}/api/v1/...`
+   * (`UrlBaseMiddleware.cs`), and a reverse proxy that normalises a path does the same. Those hops
+   * must keep the key or every proxied install breaks. A query and a fragment are on the same
+   * footing: neither changes who is being talked to.
+   */
+  @Test
+  fun `a different path, query or fragment on the same server is still the same origin`() {
+    val base = url("https://home.example.com/lidarr")
+
+    assertThat(base.isSameOrigin("https://home.example.com/lidarr/api/v1/system/status".toHttpUrl())).isTrue()
+    // Above the configured path prefix, not merely under it -- which is what a `urlBase` redirect
+    // from a base URL configured at the host root actually looks like.
+    assertThat(base.isSameOrigin("https://home.example.com/somewhere/else".toHttpUrl())).isTrue()
+    assertThat(base.isSameOrigin("https://home.example.com/lidarr/x?y=z#f".toHttpUrl())).isTrue()
+  }
+
+  /**
+   * A **scheme** change is a different origin, including the `https` -> `http` downgrade an
+   * attacker would prefer and the `http` -> `https` upgrade a well-meaning proxy might answer.
+   *
+   * Both are refused, and the upgrade being refused is a deliberate false positive rather than an
+   * oversight: withholding a secret is the fail-closed direction, and in a shipping build it
+   * cannot arise at all, because [CleartextPolicy.Forbidden] refuses an `http://` base URL at
+   * [IntegrationBaseUrl.parse] and the configured origin is therefore always `https`.
+   */
+  @Test
+  fun `a different scheme is a different origin`() {
+    assertThat(url("https://lidarr.example.com").isSameOrigin("http://lidarr.example.com/x".toHttpUrl()))
+      .isFalse()
+    assertThat(
+      url("http://nas.local:8686", CleartextPolicy.Allowed)
+        .isSameOrigin("https://nas.local:8686/x".toHttpUrl()),
+    ).isFalse()
+  }
+
+  /**
+   * A **host** change is a different origin. This is the one the vulnerability was reported for:
+   * `302 Location: https://evil.example/` and the key goes with it.
+   */
+  @Test
+  fun `a different host is a different origin`() {
+    val base = url("https://lidarr.example.com")
+
+    assertThat(base.isSameOrigin("https://evil.example.com/x".toHttpUrl())).isFalse()
+    // A subdomain is a different host, not a related one. Cookies have a domain rule; an API key
+    // header has none, and inventing one here would be inventing a way to leak the key.
+    assertThat(base.isSameOrigin("https://evil.lidarr.example.com/x".toHttpUrl())).isFalse()
+    // ...and a prefix of the configured host, which a naive `startsWith` would accept.
+    assertThat(base.isSameOrigin("https://lidarr.example.com.evil.test/x".toHttpUrl())).isFalse()
+  }
+
+  /**
+   * A **port** change is a different origin, on the identical host.
+   *
+   * Not a hypothetical distinction: a machine hosting several self-hosted apps behind one name
+   * separates them by port, and on a shared box those are routinely *different people's* servers.
+   */
+  @Test
+  fun `a different port on the same host is a different origin`() {
+    assertThat(url("https://nas.local:8686").isSameOrigin("https://nas.local:9090/x".toHttpUrl()))
+      .isFalse()
+  }
+
+  /**
+   * The reason this comparison lives on this type rather than in each client: it is made against
+   * the URL **as OkHttp canonicalised it**, and a client re-deriving it from the stored string
+   * would disagree with the parser that actually connects -- on exactly the inputs an attacker
+   * picks.
+   *
+   * Both halves here would fail a hand-rolled comparison. An uppercase host is the same host
+   * (`HttpUrl` lowercases it), and an explicit `:443` on `https` is the same port (`HttpUrl`
+   * defaults it from the scheme), so a `String`-equality guard would withhold the key from the
+   * user's own server and produce a bug report about authentication rather than about redirects.
+   */
+  @Test
+  fun `the comparison uses OkHttp's canonical host and port, not the raw text`() {
+    val base = url("https://lidarr.example.com")
+
+    assertThat(base.isSameOrigin("https://LIDARR.EXAMPLE.COM/api/v1/system/status".toHttpUrl())).isTrue()
+    assertThat(base.isSameOrigin("https://lidarr.example.com:443/api/v1/system/status".toHttpUrl())).isTrue()
   }
 
   /**

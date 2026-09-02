@@ -248,6 +248,134 @@ class BinderyAuthTest {
     assertThat(nextRequest().url.encodedPath).isEqualTo("/bindery/api/v1/health")
   }
 
+  /**
+   * **The vulnerability this guard exists for, and it is worse here than next door.** A server the
+   * user configured -- or anyone able to answer as it -- replies `302 Location: <somewhere else>`,
+   * and the client follows. Bindery's key is instance-wide and always treated as admin, so what
+   * leaks is not "read access to a music library" but the whole instance.
+   *
+   * Measured against the OkHttp this project resolves (5.5.0):
+   * `RetryAndFollowUpInterceptor.buildRedirectRequest` strips exactly one header on a redirect
+   * whose connection it cannot reuse, `Authorization`. `X-Api-Key` is not a name it knows, so an
+   * application interceptor's copy of it is carried to the new origin verbatim.
+   *
+   * Two servers, and the second is addressed by the **other spelling of the loopback host** as
+   * well as on its own port, so the two origins differ by host and not only by port. Both halves
+   * are asserted rather than assumed -- a test that accidentally redirected to the *same* origin
+   * would pass this while proving nothing.
+   */
+  @Test
+  fun `a cross-origin redirect does not carry the api key to the other server`() = runTest {
+    val elsewhere = MockWebServer()
+    elsewhere.start()
+    try {
+      val target = crossHost(elsewhere, "/api/v1/health")
+      server.enqueue(
+        MockResponse.Builder().code(302).setHeader("Location", target.toString()).build(),
+      )
+      elsewhere.enqueue(fixture("bindery/health.json"))
+
+      client(server, FIRST_KEY).health()
+
+      val first = nextRequest()
+      val second = next(elsewhere)
+
+      // Positive controls first. Without them, a client that never authenticated at all, or that
+      // never followed the redirect, would satisfy the negative below while proving nothing.
+      assertThat(first.headers["X-Api-Key"]).isEqualTo(FIRST_KEY)
+      assertThat(second.url.encodedPath).isEqualTo("/api/v1/health")
+      // ...and the redirect really did cross an origin, in both of the ways it can.
+      assertThat(second.url.host).isNotEqualTo(server.url("/").host)
+      assertThat(second.url.port).isNotEqualTo(server.url("/").port)
+
+      // The assertion this test exists for.
+      assertThat(second.headers["X-Api-Key"]).isNull()
+      // ...and it did not escape onto the URL on the way past either.
+      assertThat(second.url.toString()).doesNotContain(FIRST_KEY)
+    } finally {
+      elsewhere.close()
+    }
+  }
+
+  /**
+   * The same guarantee for a redirect that differs **only by port** on the identical host.
+   *
+   * Separate from the test above because an origin is a three-part tuple and a guard that compared
+   * only the host would pass that one: `https://host:8787` and `https://host:9999` are different
+   * servers, and on a machine hosting several self-hosted apps behind one name they are routinely
+   * *different people's* servers.
+   */
+  @Test
+  fun `a redirect to another port on the same host does not carry the api key`() = runTest {
+    val elsewhere = MockWebServer()
+    elsewhere.start()
+    try {
+      // `elsewhere.url(...)` verbatim: same host spelling as `server`, different port.
+      val target = elsewhere.url("/api/v1/health")
+      server.enqueue(
+        MockResponse.Builder().code(302).setHeader("Location", target.toString()).build(),
+      )
+      elsewhere.enqueue(fixture("bindery/health.json"))
+
+      client(server, FIRST_KEY).health()
+
+      nextRequest()
+      val second = next(elsewhere)
+
+      // The positive control that makes this test different from the one above: the host really is
+      // the same, so only the port can have decided the outcome.
+      assertThat(second.url.host).isEqualTo(server.url("/").host)
+      assertThat(second.url.port).isNotEqualTo(server.url("/").port)
+
+      assertThat(second.headers["X-Api-Key"]).isNull()
+    } finally {
+      elsewhere.close()
+    }
+  }
+
+  /**
+   * The other half of the guard, and the half that makes it a *scoping* rule rather than a ban:
+   * a redirect that stays on the configured origin still carries the key.
+   *
+   * This is not hypothetical here. `IntegrationBaseUrl` keeps a `urlBase` path verbatim because a
+   * reverse-proxied Bindery is the deployment a release build pushes users towards, and a proxy
+   * that normalises a path answers a **relative** `Location` on the same origin -- which is why
+   * this test enqueues a relative one rather than the absolute URL that would have been easier to
+   * write. A guard that dropped the key here would break every proxied install.
+   */
+  @Test
+  fun `a same-origin redirect is followed with the key intact`() = runTest {
+    server.enqueue(
+      MockResponse.Builder().code(307).setHeader("Location", "/bindery/api/v1/health").build(),
+    )
+    server.enqueue(fixture("bindery/health.json"))
+
+    client(server, SECOND_KEY).health()
+
+    val first = nextRequest()
+    val second = nextRequest()
+    assertThat(first.url.encodedPath).isEqualTo("/api/v1/health")
+    assertThat(second.url.encodedPath).isEqualTo("/bindery/api/v1/health")
+    assertThat(second.headers["X-Api-Key"]).isEqualTo(SECOND_KEY)
+    // ...and the redirected request still carries the key nowhere else. A redirect is exactly
+    // where a query parameter would survive unnoticed.
+    assertThat(second.url.toString()).doesNotContain(SECOND_KEY)
+  }
+
+  /**
+   * A URL on [other] whose host is spelled the other way round from the one MockWebServer names
+   * itself with.
+   *
+   * MockWebServer reports `localhost` or `127.0.0.1` depending on the host's resolver, and both
+   * reach the same loopback socket, so neither spelling can be hardcoded. Whichever it chose, the
+   * other one is a different `HttpUrl.host` for a reachable server -- which is what makes the
+   * cross-origin test above a cross-*host* redirect rather than only a cross-port one.
+   */
+  private fun crossHost(other: MockWebServer, path: String) =
+    other.url(path).newBuilder()
+      .host(if (other.url("/").host == "127.0.0.1") "localhost" else "127.0.0.1")
+      .build()
+
   private fun candidate(foreignBookId: String) = BinderyBookCandidate(
     foreignBookId = foreignBookId,
     title = "Project Hail Mary",
