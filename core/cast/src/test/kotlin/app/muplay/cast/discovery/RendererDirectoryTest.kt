@@ -637,6 +637,46 @@ class RendererDirectoryTest {
 
   // ---- scaffolding -------------------------------------------------------------------------
 
+  /**
+   * The store-poisoning path, which is worse than the impostor problem it sits beside.
+   *
+   * Deduplication reads the UDN off the ANNOUNCEMENT; identity used to be read off the DESCRIPTION
+   * DOCUMENT. Nothing made the two agree, so a device could announce one UDN and describe another
+   * -- and because `discover` persists what it found, an impostor announcing junk while describing
+   * `uuid:real-sonos` wrote `{udn: real-sonos, descriptionUrl: attacker}` into the remembered
+   * store. That entry outlives the attacker's presence on the network and is preferred by
+   * `recover()` on every later open, so a transient impostor became a permanent one.
+   *
+   * This is deliberately NOT a test of M4. An impostor that copies the real UDN into both halves
+   * still passes, because unauthenticated SSDP cannot tell them apart on a first encounter. What
+   * is asserted here is that the two halves must AGREE, which is the check `recover()` and
+   * `unicastSearch` have always made and this path did not.
+   */
+  @Test
+  fun `a device whose description claims a different udn than it announced is refused`() = runTest {
+    val serving = startDescriptions(
+      // Announced as the attacker's own id, but describing itself as somebody else's speaker.
+      "/impostor.xml" to genericDescription("uuid:real-sonos", "Kitchen"),
+    )
+    val remembered = FakeRememberedRenderers(emptyList())
+    val ssdp = startResponder(
+      FakeSsdpResponder.Responder(
+        serving.url("/impostor.xml"), "uuid:attacker", listOf(SsdpSearch.TARGET_MEDIA_RENDERER),
+      ),
+    )
+
+    val result = directory(ssdp.endpoint, serving, remembered).discover(mxSeconds = null)
+
+    assertThat(result.devices).isEmpty()
+    // The assertion that matters: nothing claiming to be the real speaker was written to disk
+    // pointing at the impostor's URL.
+    assertThat(remembered.saved.map { it.udn }).doesNotContain("uuid:real-sonos")
+    assertThat(remembered.saved).isEmpty()
+    // It really did fetch the description rather than rejecting before asking -- otherwise this
+    // test would pass against a directory that had simply stopped discovering.
+    assertThat(serving.requests).containsExactly("/impostor.xml")
+  }
+
   private fun startResponder(vararg devices: FakeSsdpResponder.Responder) =
     FakeSsdpResponder(devices.toList()).also { responders += it; it.start() }
 

@@ -67,7 +67,23 @@ class RendererDirectory(
     // twice.
     val found = announcements
       .distinctBy { it.udn }
-      .mapNotNull { describe(it.location) }
+      // The `takeIf` is a trust check, not a tidy-up. Without it, identity comes from the
+      // DESCRIPTION DOCUMENT while deduplication came from the ANNOUNCEMENT, so a device may
+      // announce one UDN and describe another -- and since `remember()` below persists what
+      // `found` says, an impostor announcing junk and describing `uuid:REAL-SONOS` writes
+      // `{udn: REAL_SONOS, descriptionUrl: attacker}` into the store. That entry then survives the
+      // attacker leaving the network and is preferred by `recover()` on every later open. A
+      // transient impostor becomes a permanent one.
+      //
+      // Both other layers already do exactly this -- `recover()` compares against the remembered
+      // UDN before returning, and `unicastSearch` ends in the same `takeIf` -- and their comments
+      // give the same reason. This path was the one that did not.
+      //
+      // It does not fix M4: an impostor that copies the real UDN into both the announcement and
+      // the description still passes here, because nothing in unauthenticated SSDP can tell the
+      // two apart on a first encounter. What it fixes is the *persistence*, which is strictly
+      // worse than M4 and was unmitigated.
+      .mapNotNull { announcement -> describe(announcement.location)?.takeIf { it.udn == announcement.udn } }
 
     val seen = found.map { it.udn }.toSet()
     val stale = remembered.load().filterNot { it.udn in seen }
