@@ -1204,8 +1204,18 @@ PROBES = [
     # The Retrofit invariant. Without the trailing slash, `baseUrl("https://host/lidarr")` resolved
     # against "api/v1/system/status" gives `https://host/api/v1/system/status` -- the urlBase
     # silently dropped, which is a 404 nobody reads backwards to this line.
+    # REALIGNED when the cross-origin API-key fix made `normalise` return an `HttpUrl` rather
+    # than a `String` -- `IntegrationBaseUrl` now keeps the parsed form so `isSameOrigin` can
+    # compare an origin against OkHttp's own canonical host and port instead of re-deriving it from
+    # text. The trailing slash is now an empty path segment rather than a concatenated character.
+    # Same defect, same mutation, same named test; only the search text moved. The staleness guard
+    # caught this, which is the fifth time this file's own comments record it doing so.
     ("baseurl/trailing-slash", BASE_URL,
-     'return if (stripped.endsWith("/")) stripped else "$stripped/"',
+     'return if (stripped.encodedPath.endsWith("/")) {\n'
+     '        stripped\n'
+     '      } else {\n'
+     '        stripped.newBuilder().addPathSegment("").build()\n'
+     '      }',
      'return stripped',
      "a url base path is preserved and terminated with a slash", 4),
     # Argument accepted and dropped, on the one argument that decides a security question.
@@ -3011,6 +3021,22 @@ PROBES = [
      # scan, its exact `encodedQuery` pair, and its no-query-value-is-the-key loop.
      "no request this client makes carries the key on its url", 7),
 
+    # 2b. THE CROSS-ORIGIN KEY LEAK, and the one-word edit that reintroduces it.
+    #
+    #    `addInterceptor` registers an APPLICATION interceptor, which runs once, before redirect
+    #    handling. OkHttp then carries whatever header it stamped to the redirect target: measured
+    #    on 5.5.0, `RetryAndFollowUpInterceptor.buildRedirectRequest` strips `Authorization` and
+    #    nothing else, so `X-Api-Key` goes to `302 Location: https://evil.example/` verbatim. That
+    #    shipped, and it is a one-word edit away from shipping again -- `addInterceptor` is the
+    #    spelling every other OkHttp example on the internet uses, and it compiles, and every
+    #    response assertion in this module still passes because same-origin requests are unchanged.
+    #
+    #    Note what the coverage gate says about this: nothing. `LidarrAuthInterceptor` is LINE-gated
+    #    and every line of it still runs on any request at all.
+    ("integrations/lidarr-app-interceptor", LIDARR_CLIENT,
+     ".addNetworkInterceptor(LidarrAuthInterceptor(", ".addInterceptor(LidarrAuthInterceptor(",
+     "a cross-origin redirect does not carry the api key to the other server", 2),
+
     # 3. Content negotiation. `Startup.cs` sets `ReturnHttpNotAcceptable = true`; measured on
     #    3.1.0.4875, `Accept: application/xml` really is answered 406 (while *no* Accept header is
     #    answered 200). One place, so an endpoint Tasks 5-7 add cannot forget it.
@@ -3302,6 +3328,15 @@ PROBES = [
      # exact-`encodedQuery` assertions -- every endpoint's query string is pinned exactly, so a
      # smuggled parameter lengthens all of them.
      6),
+
+    # 2b. The cross-origin key leak, same defect as `integrations/lidarr-app-interceptor` and
+    #    worse here, because this key is instance-wide and always treated as admin. The two clients
+    #    were written apart and acquired one bug twice, which is why the origin comparison itself
+    #    lives once in `:integrations:core` -- but the REGISTRATION is still per client, so it still
+    #    needs a probe per client.
+    ("integrations/bindery-app-interceptor", BINDERY_CLIENT,
+     ".addNetworkInterceptor(BinderyAuthInterceptor(", ".addInterceptor(BinderyAuthInterceptor(",
+     "a cross-origin redirect does not carry the api key to the other server", 2),
 
     # 3. Content negotiation, pinned in one place so an endpoint a later task adds cannot forget it.
     ("integrations/bindery-accept-json", BINDERY_INT,
@@ -4346,8 +4381,23 @@ PROBES = [
 
     # 9. A credential of the wrong type under a service's key is a corrupt store. Without the
     #    refusal, Lidarr is polled with Bindery's client.
+    # DISAMBIGUATED, and it was stale on master rather than broken by the change that found it.
+    # `search` acquired a textually identical guard after this probe was written, so the search text
+    # matched TWICE and the staleness guard refused to run the entire list -- for everyone, not just
+    # for whoever noticed. The probe means the one in `refresh`, which is what the named test is
+    # about ("polls nothing"), so the following line is carried along to pin which of the two this
+    # is. Prefer an anchor in code over one in a comment: this file has twice been bitten by prose.
     ("integrations/requests-credential-service", REQUESTS_REPO,
-     "if (credential.service != service) {", "if (false) {",
+     "if (credential.service != service) {\n"
+     "        failed += service\n"
+     "        continue\n"
+     "      }\n"
+     "      val pollable = stored.filter { it.service == service && isPollable(it) }",
+     "if (false) {\n"
+     "        failed += service\n"
+     "        continue\n"
+     "      }\n"
+     "      val pollable = stored.filter { it.service == service && isPollable(it) }",
      "a credential filed under the wrong service is reported failed and polls nothing", 2),
 
     # 10. A status that has not changed is not written back. An unconditional write moves
