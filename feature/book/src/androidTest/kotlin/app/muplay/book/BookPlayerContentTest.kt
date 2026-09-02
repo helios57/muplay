@@ -113,9 +113,7 @@ class BookPlayerContentTest {
    * would have contained the missing node -- and the sleep-timer presets live inside the same
    * `item { }` as the button that opens them, so composing one composes the other.
    */
-  private fun scrollTo(text: String) {
-    composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(text))
-  }
+  private fun scrollTo(text: String) = reveal(hasText(text))
 
   /**
    * The same, for a control whose accessible name is a `contentDescription` rather than its own
@@ -127,8 +125,28 @@ class BookPlayerContentTest {
    * would then be passing on a node that was never composed. That is the assertion-that-cannot-fail
    * shape, arriving by way of a helper.
    */
-  private fun scrollToControl(description: String) {
-    composeRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription(description))
+  private fun scrollToControl(description: String) = reveal(hasContentDescription(description))
+
+  /**
+   * Bring [matcher]'s node into view, whether it is pinned or inside the chapter list.
+   *
+   * Both helpers used to go straight to `performScrollToNode`, which was right when this screen was
+   * a single `LazyColumn`. It is not any more: the transport was pinned out of the list precisely
+   * so that scrolling to chapter 12 cannot carry play/pause off the screen, and a pinned node is
+   * **not in the scrollable container**, so the scroll throws
+   * `No node found that matches ... in scrollable container` -- which is what eight tests in this
+   * file did the first time they ran against the new layout. The product was right and the finders
+   * were stale.
+   *
+   * The `assertExists()` is the part that must not be dropped. It preserves exactly the property
+   * the old helper's comment existed to protect: a control that was never composed fails HERE and
+   * says so, rather than letting every later `assertDoesNotExist` / `countOf(..) == 0` pass
+   * vacuously on a node that was never there. The scroll is best-effort *after* that check, so it
+   * can be absent for pinned content without weakening anything.
+   */
+  private fun reveal(matcher: SemanticsMatcher) {
+    composeRule.onNode(matcher).assertExists()
+    runCatching { composeRule.onNode(hasScrollAction()).performScrollToNode(matcher) }
   }
 
   private fun topOf(text: String): Float =
