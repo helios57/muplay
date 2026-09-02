@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -26,16 +28,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
 import app.muplay.media.BookChapter
-import app.muplay.model.BookSettings
 
 /**
  * One book: what it is, how much is left, and the four things a listener can do to it.
@@ -53,6 +57,13 @@ import app.muplay.model.BookSettings
  * **[bookId] is an ordinary parameter, forwarded from a `LaunchedEffect`**, not a
  * `SavedStateHandle` argument. Navigation 3 populates nothing from a `NavKey`'s own properties;
  * `AlbumScreen` carries the device transcript of the crash that proved it.
+ *
+ * ### Spacing is per item rather than a list-wide `verticalArrangement`
+ *
+ * The `LazyColumn` used to space every child by `lg`, which is right for the five blocks at the top
+ * and wrong for a chapter list: with a 48dp row and 16dp between rows the list reads as fifty
+ * separate cards. The four blocks carry their own bottom padding instead, and the chapter rows sit
+ * directly on each other with their height doing the separating.
  */
 @Composable
 fun BookScreen(
@@ -97,70 +108,75 @@ internal fun BookContent(
   modifier: Modifier = Modifier,
 ) {
   when (state) {
-    BookUiState.Loading -> Message(LOADING_BOOK_LABEL, modifier)
-    BookUiState.NotFound -> Message(BOOK_NOT_FOUND_LABEL, modifier)
+    BookUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOK_LABEL, loading = true) }
+    BookUiState.NotFound -> Centred(modifier) { Message(text = BOOK_NOT_FOUND_LABEL) }
     is BookUiState.Content -> LazyColumn(
       modifier = modifier.fillMaxSize(),
       contentPadding = PaddingValues(
         horizontal = MuPlaySpacing.gutter,
         vertical = MuPlaySpacing.lg,
       ),
-      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
     ) {
       item {
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
-          verticalAlignment = Alignment.CenterVertically,
+        Column(
+          modifier = Modifier.padding(bottom = MuPlaySpacing.lg),
+          verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
         ) {
-          BookCover(
-            coverArtId = state.book.coverArtId,
-            sizePx = COVER_DETAIL_PX,
-            // Null, as on the shelf: the title is right beside it as text.
-            contentDescription = null,
-            urlProvider = coverArtUrl,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.size(COVER_DETAIL_DP.dp),
-          )
-          Column(verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs)) {
-            Text(
-              text = state.book.title,
-              style = MaterialTheme.typography.titleLarge,
-              maxLines = TITLE_LINES,
-              overflow = TextOverflow.Ellipsis,
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            BookCover(
+              coverArtId = state.book.coverArtId,
+              sizePx = COVER_DETAIL_PX,
+              // Null, as on the shelf: the title is right beside it as text.
+              contentDescription = null,
+              urlProvider = coverArtUrl,
+              shape = MaterialTheme.shapes.medium,
+              modifier = Modifier.size(COVER_DETAIL_DP.dp),
             )
-            Text(
-              text = state.book.author,
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-              text = formatRemaining(state.book.remainingMs),
-              style = MaterialTheme.typography.labelMedium,
+            Column(verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs)) {
+              Text(
+                text = state.book.title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = TITLE_LINES,
+                overflow = TextOverflow.Ellipsis,
+                // The screen's subject. TalkBack's heading navigation is how somebody using a
+                // screen reader skips the header and gets to the chapters.
+                modifier = Modifier.semantics { heading() },
+              )
+              Text(
+                text = state.book.author,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Text(
+                text = formatRemaining(state.book.remainingMs),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.tertiary,
+              )
+            }
+          }
+
+          // The same "where am I" the shelf draws, and conditional on the same flag for the same
+          // reason: a bar at zero on a book nobody has opened says nothing and looks broken.
+          if (state.book.hasStarted) {
+            LinearProgressIndicator(
+              progress = { state.book.progressFraction.toFloat() },
               color = MaterialTheme.colorScheme.tertiary,
+              trackColor = MaterialTheme.colorScheme.surfaceVariant,
+              modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
             )
           }
-        }
-      }
-
-      // The same "where am I" the shelf draws, and conditional on the same flag for the same
-      // reason: a bar at zero on a book nobody has opened says nothing and looks broken.
-      if (state.book.hasStarted) {
-        item {
-          LinearProgressIndicator(
-            progress = { state.book.progressFraction.toFloat() },
-            color = MaterialTheme.colorScheme.tertiary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
-          )
         }
       }
 
       item {
         Row(
           horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.lg),
         ) {
           Button(
             onClick = onResume,
@@ -199,19 +215,15 @@ internal fun BookContent(
         SpeedStepper(
           speed = state.settings.speed,
           onSpeed = onSpeed,
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.sm),
         )
       }
 
       item {
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-          verticalAlignment = Alignment.CenterVertically,
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Text(SKIP_SILENCE_LABEL, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-          Switch(checked = state.settings.skipSilence, onCheckedChange = onSkipSilence)
-        }
+        SkipSilenceRow(
+          checked = state.settings.skipSilence,
+          onCheckedChange = onSkipSilence,
+        )
       }
 
       item {
@@ -219,7 +231,9 @@ internal fun BookContent(
           text = CHAPTERS_HEADING,
           style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(top = MuPlaySpacing.sm),
+          modifier = Modifier
+            .padding(top = MuPlaySpacing.sm, bottom = MuPlaySpacing.xs)
+            .semantics { heading() },
         )
       }
 
@@ -237,47 +251,87 @@ internal fun BookContent(
         }
       } else {
         items(state.chapters, key = { it.index }) { chapter ->
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable { onPlayChapter(chapter) }
-              .padding(vertical = MuPlaySpacing.md),
-            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = chapterRowLabel(chapter),
-              style = MaterialTheme.typography.bodyMedium,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.weight(1f),
-            )
-            Text(
-              text = formatClock(chapter.durationMs),
-              style = MaterialTheme.typography.labelSmall.merge(MuPlayTimecode),
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
+          ChapterRow(chapter = chapter, onClick = { onPlayChapter(chapter) })
         }
       }
     }
   }
 }
 
-/** Loading, and "that book is gone": one sentence, centred, in the muted voice. */
+/**
+ * `Skip silence`, as **one** control rather than a label and a switch that happen to be adjacent.
+ *
+ * The word and the `Switch` used to be two sibling semantics nodes, so TalkBack read out an
+ * unlabelled switch and, separately, a piece of text -- with nothing saying they were the same
+ * thing. `Modifier.toggleable` on the row merges them, gives the setting the whole row as a target
+ * (rather than the 52dp of the switch), and states the [Role.Switch] the merged node then reports.
+ *
+ * The `Switch` takes `onCheckedChange = null` because the row owns the gesture now; two toggleables
+ * would be two nodes again, which is what `BookContentTest`'s `onNode(isToggleable())` would then
+ * fail on -- deliberately, since that finder is the thing pinning this shape.
+ */
 @Composable
-private fun Message(text: String, modifier: Modifier) {
-  Box(
-    modifier = modifier.fillMaxSize().padding(MuPlaySpacing.xxl),
-    contentAlignment = Alignment.Center,
+private fun SkipSilenceRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+  Row(
+    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(bottom = MuPlaySpacing.sm)
+      .heightIn(min = MuPlaySpacing.minTouchTarget)
+      .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+  ) {
+    Text(SKIP_SILENCE_LABEL, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    Switch(checked = checked, onCheckedChange = null)
+  }
+}
+
+/**
+ * One chapter and its own length, at least [MuPlaySpacing.minTouchTarget] tall.
+ *
+ * It measured about 44dp before this pass -- `bodyMedium`'s 20dp line box plus 12dp of padding
+ * either side -- which is under the 48dp Android's accessibility guidance and Material's
+ * `minimumInteractiveComponentSize` both name. `heightIn` sits outside `clickable`, so the row's
+ * ripple and hit rectangle are the tall ones rather than the text's own box.
+ */
+@Composable
+private fun ChapterRow(chapter: BookChapter, onClick: () -> Unit) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .heightIn(min = MuPlaySpacing.minTouchTarget)
+      .clickable(onClick = onClick)
+      .padding(vertical = MuPlaySpacing.xs),
+    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+    verticalAlignment = Alignment.CenterVertically,
   ) {
     Text(
-      text = text,
-      style = MaterialTheme.typography.bodyLarge,
+      text = chapterRowLabel(chapter),
+      style = MaterialTheme.typography.bodyMedium,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
+    Text(
+      text = formatClock(chapter.durationMs),
+      style = MaterialTheme.typography.labelSmall.merge(MuPlayTimecode),
       color = MaterialTheme.colorScheme.onSurfaceVariant,
-      textAlign = TextAlign.Center,
     )
   }
+}
+
+/**
+ * Loading, and "that book is gone", in the middle of an otherwise empty screen.
+ *
+ * The sentence itself is `:core:designsystem`'s [Message] now -- one component for every "nothing
+ * here", "still loading" and "that did not work" in the app, which is what stops four screens
+ * inventing four voices. What stays here is the *vertical* centring: `Message` centres its own
+ * content horizontally and deliberately takes no position on the page, so a caller that wants it in
+ * the middle of a full screen says so.
+ */
+@Composable
+private fun Centred(modifier: Modifier, content: @Composable () -> Unit) {
+  Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
 }
 
 /** What the book screen asks the server for. Bigger than the shelf's, smaller than the player's. */

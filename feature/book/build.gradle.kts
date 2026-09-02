@@ -35,6 +35,12 @@ dependencies {
   // the precedent for solving it locally.
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)
+  // `Modifier.animateContentSize`, on the sleep timer's presets -- the one place in this module
+  // where a control changes the height of the thing around it. `animation-core` (`animateFloatAsState`,
+  // `tween`, used by the play/pause glyph) already arrives with material3; this artifact is the
+  // layer above it and is the only Compose dependency this module names that the BOM did not
+  // already put in front of it transitively.
+  implementation(libs.compose.animation)
   implementation(libs.lifecycle.viewmodel.compose)
   implementation(libs.lifecycle.runtime.compose)
   implementation(libs.coroutines.core)

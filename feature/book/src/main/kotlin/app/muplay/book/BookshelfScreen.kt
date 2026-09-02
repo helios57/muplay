@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -23,11 +25,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.BookSummary
@@ -84,8 +89,8 @@ internal fun BookshelfContent(
   modifier: Modifier = Modifier,
 ) {
   when (state) {
-    BookshelfUiState.Loading -> Message(LOADING_BOOKS_LABEL, modifier)
-    BookshelfUiState.Empty -> Message(NO_BOOKS_LABEL, modifier)
+    BookshelfUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOKS_LABEL, loading = true) }
+    BookshelfUiState.Empty -> Centred(modifier) { Message(text = NO_BOOKS_LABEL) }
     is BookshelfUiState.Content -> LazyColumn(
       modifier = modifier.fillMaxSize(),
       contentPadding = PaddingValues(
@@ -113,34 +118,54 @@ internal fun BookshelfContent(
   }
 }
 
-/** Loading, and "no audiobooks yet": one sentence, centred, in the muted voice. */
+/**
+ * Loading, and "no audiobooks yet", in the middle of an otherwise empty screen.
+ *
+ * The sentence is `:core:designsystem`'s [Message] now -- one component for every "nothing here",
+ * "still loading" and "that did not work" in this app, rather than a bare `Text` per screen. What
+ * stays here is the *vertical* centring: `Message` centres its own content horizontally and takes
+ * no position on the page, so a caller that wants it in the middle of a full screen says so.
+ */
 @Composable
-private fun Message(text: String, modifier: Modifier) {
-  Box(
-    modifier = modifier.fillMaxSize().padding(MuPlaySpacing.xxl),
-    contentAlignment = Alignment.Center,
+private fun Centred(modifier: Modifier, content: @Composable () -> Unit) {
+  Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+}
+
+/**
+ * An eyebrow: sentence case, `labelMedium`'s wide tracking, muted -- **over the hairline rule this
+ * file's own header has always described.**
+ *
+ * The rule did not exist. The KDoc above said "over a hairline rule" through two passes while
+ * `SectionHeader` drew a `Text` and nothing else, which is exactly the drift this repository keeps
+ * catching in its own comments: prose describing something absent reads, to the next person, as
+ * something they have already got. Drawing it is the cheaper of the two fixes and the better one --
+ * it is what makes `Continue listening` read as a division of the shelf rather than as one more
+ * small grey line above a card.
+ *
+ * [Dp.Hairline] rather than `DividerDefaults.Thickness`: a true one-pixel line at any density, which
+ * at `outlineVariant` is a seam rather than a border. A 1dp rule here reads as a table.
+ */
+@Composable
+private fun SectionHeader(text: String) {
+  Column(
+    modifier = Modifier.padding(top = MuPlaySpacing.lg, bottom = MuPlaySpacing.sm),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
   ) {
     Text(
       text = text,
-      style = MaterialTheme.typography.bodyLarge,
+      style = MaterialTheme.typography.labelMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
-      textAlign = TextAlign.Center,
+      modifier = Modifier
+        .padding(start = MuPlaySpacing.xs)
+        // The two groups are what this screen is: a screen reader should be able to jump between
+        // them the way a sighted listener jumps between the two rules.
+        .semantics { heading() },
+    )
+    HorizontalDivider(
+      thickness = Dp.Hairline,
+      color = MaterialTheme.colorScheme.outlineVariant,
     )
   }
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-  Text(
-    text = text,
-    style = MaterialTheme.typography.labelMedium,
-    color = MaterialTheme.colorScheme.onSurfaceVariant,
-    modifier = Modifier.padding(
-      start = MuPlaySpacing.xs,
-      top = MuPlaySpacing.lg,
-      bottom = MuPlaySpacing.xs,
-    ),
-  )
 }
 
 @Composable
@@ -225,6 +250,14 @@ private fun BookRow(
         // glyph before. `RESUME_LABEL` is unchanged and is still this button's text.
         FilledTonalButton(
           onClick = { onResume(book.bookId) },
+          // `tertiaryContainer`, not `FilledTonalButton`'s default `secondaryContainer`. The
+          // palette's thesis is that `primary`/`secondary` are the music voice and `tertiary` the
+          // audiobook one; the most-pressed control on the audiobook shelf was speaking the wrong
+          // one, purely because nobody had named a colour.
+          colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+          ),
           contentPadding = PaddingValues(
             horizontal = MuPlaySpacing.md,
             vertical = MuPlaySpacing.sm,
