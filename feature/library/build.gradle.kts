@@ -10,6 +10,10 @@ android {
 
 dependencies {
   implementation(project(":core:model"))
+  // The design system: `MuPlaySpacing`/`MuPlayShapes`/`Type.kt` and the shared `Message`. Added in
+  // the design pass -- until then this screen wrote `16.dp` by hand and said "loading" with a bare
+  // top-left `Text`, which is exactly the drift a shared system exists to stop.
+  implementation(project(":core:designsystem"))
   implementation(project(":core:database"))
   // `PlaybackLauncher`. This module starts playback; it does not render it -- `:feature:player`
   // does that -- and it reaches Media3 through exactly one type, which is the whole reason that
