@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -127,46 +128,67 @@ private fun LibraryScreen(
   onOpenBookshelf: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Column(
+  // ONE `LazyColumn` for the whole screen, and this is a defect fix rather than a refactor.
+  //
+  // The header used to be a `Column` -- chips, search, Shuffle, Books, the maintenance row -- with
+  // the album `LazyColumn` nested at the bottom, and the shuffled tracks rendered into that outer
+  // `Column` with `forEachIndexed`. A shuffle draws up to `DEFAULT_SHUFFLE_SIZE` = 100 rows of
+  // ~48dp, so one tap on "Shuffle this library" pushed roughly ninety rows and every album off the
+  // bottom of a container that **could not scroll**. The library became unreachable until the user
+  // navigated away and back.
+  //
+  // Nothing saw it. The seeded corpus is four tracks, so a shuffle here draws four rows and fits --
+  // which is why no journey and no store screenshot has ever rendered the broken case. It is a
+  // defect that only exists on a real library.
+  //
+  // Everything is an `item` now, so the header scrolls away with the content. That is the second
+  // benefit: the primary action used to sit under ~300dp of always-visible furniture, at the far
+  // end of a thumb's reach on the one screen used while walking.
+  LazyColumn(
     modifier = modifier.padding(
       start = MuPlaySpacing.gutter,
       end = MuPlaySpacing.gutter,
       top = MuPlaySpacing.md,
     ),
     verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+    contentPadding = PaddingValues(bottom = MuPlaySpacing.lg),
   ) {
     when (uiState) {
-      LibraryUiState.Loading -> Message(text = LOADING_LABEL, loading = true)
+      LibraryUiState.Loading -> item { Message(text = LOADING_LABEL, loading = true) }
       LibraryUiState.NoLibraries ->
         // Distinct from "this library is empty": the fix is finishing setup, not syncing.
-        Message(text = NO_LIBRARIES_LABEL)
+        item { Message(text = NO_LIBRARIES_LABEL) }
       is LibraryUiState.Content -> {
         // `FlowRow`, not `Row`. A `Row` clips rather than wraps, and library names here are not
         // the app's to choose -- they are whatever the person who set the server up typed, and this
         // container's two seeded ones ("Music", "Audiobooks") are the short case rather than the
         // representative one. A clipped chip is a library the user cannot select at all, on the one
         // screen whose job is selecting one.
-        LibraryChips(uiState, onLibrarySelected)
+        item { LibraryChips(uiState, onLibrarySelected) }
 
-        OutlinedTextField(
-          value = uiState.query,
-          onValueChange = onQueryChanged,
-          label = { Text(SEARCH_LABEL) },
-          singleLine = true,
-          shape = MaterialTheme.shapes.medium,
-          modifier = Modifier.fillMaxWidth(),
-        )
+        item {
+          OutlinedTextField(
+            value = uiState.query,
+            onValueChange = onQueryChanged,
+            label = { Text(SEARCH_LABEL) },
+            singleLine = true,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
 
         // The primary action, and the only filled control on the screen: full width so its label
         // sets on one line. It used to be a third of a row, which is what wrapped
         // "Shuffle this library" onto two lines in the published store screenshot.
-        Button(
-          onClick = onShuffle,
-          shape = MaterialTheme.shapes.medium,
-          contentPadding = PaddingValues(vertical = MuPlaySpacing.md),
-          modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
-        ) {
-          Text(text = SHUFFLE_LABEL, style = MaterialTheme.typography.titleSmall)
+        item {
+          Button(
+            onClick = onShuffle,
+            shape = MaterialTheme.shapes.medium,
+            contentPadding = PaddingValues(vertical = MuPlaySpacing.md),
+            modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
+          ) {
+            Text(text = SHUFFLE_LABEL, style = MaterialTheme.typography.titleSmall)
+          }
         }
 
         // Plan 4 Task 9. The only route to the audiobook shelf, and therefore to the whole
@@ -176,32 +198,36 @@ private fun LibraryScreen(
         // a line this module's LINE floor then requires a *click* to cover, and no journey on the
         // browse screen clicks it. The card renders on every journey that reaches this screen, so
         // the lines it adds are covered lines.
-        Surface(
-          onClick = onOpenBookshelf,
-          shape = MaterialTheme.shapes.medium,
-          color = MaterialTheme.colorScheme.tertiaryContainer,
-          contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Column(
-            modifier = Modifier
-              .heightIn(min = MuPlaySpacing.minTouchTarget)
-              .padding(horizontal = MuPlaySpacing.lg, vertical = MuPlaySpacing.md),
-            verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
+        item {
+          Surface(
+            onClick = onOpenBookshelf,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.fillMaxWidth(),
           ) {
-            Text(text = BOOKS_LABEL, style = MaterialTheme.typography.titleMedium)
-            Text(text = BOOKS_SUPPORTING_LABEL, style = MaterialTheme.typography.bodySmall)
+            Column(
+              modifier = Modifier
+                .heightIn(min = MuPlaySpacing.minTouchTarget)
+                .padding(horizontal = MuPlaySpacing.lg, vertical = MuPlaySpacing.md),
+              verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
+            ) {
+              Text(text = BOOKS_LABEL, style = MaterialTheme.typography.titleMedium)
+              Text(text = BOOKS_SUPPORTING_LABEL, style = MaterialTheme.typography.bodySmall)
+            }
           }
         }
 
         // Maintenance, not navigation: the two things a user does to the app rather than to the
         // music. Text buttons, so they sit under the two doors above without competing with them.
-        Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
-          // The only way a user has to pick up a change made on the server after the app started.
-          TextButton(onClick = onRefresh) { Text(REFRESH_LABEL) }
-          // Plan 6 Task 12. The only route to the settings screen, and therefore the only way a
-          // user reaches the renderer-direct switch.
-          TextButton(onClick = onOpenSettings) { Text(SETTINGS_LABEL) }
+        item {
+          Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
+            // The only way a user has to pick up a change made on the server after the app started.
+            TextButton(onClick = onRefresh) { Text(REFRESH_LABEL) }
+            // Plan 6 Task 12. The only route to the settings screen, and therefore the only way a
+            // user reaches the renderer-direct switch.
+            TextButton(onClick = onOpenSettings) { Text(SETTINGS_LABEL) }
+          }
         }
 
         // `onSurfaceVariant`, not `error`. All four of this string's values are *states* -- checking,
@@ -209,41 +235,45 @@ private fun LibraryScreen(
         // are ordinary. Painting "the server is scanning" red tells the user something is broken
         // when nothing is.
         uiState.syncMessage?.let {
-          Text(
-            text = it,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-
-        if (uiState.shuffled.isNotEmpty()) {
-          SectionHeader(SHUFFLE_HEADING)
-          // `forEachIndexed`, and the index is the row's own position in the very list this
-          // screen is rendering -- so "the third row" and "the third song of the shuffle" cannot
-          // drift apart. Passing `song.id` and having the view model look it up again would be a
-          // second lookup to get wrong.
-          uiState.shuffled.forEachIndexed { index, song ->
-            ShuffledRow(song = song, onClick = { onShuffledSongClick(index) })
-          }
-          if (uiState.discardedOutOfScope > 0) {
+          item {
             Text(
-              text = "${uiState.discardedOutOfScope} tracks were outside this library and were skipped.",
+              text = it,
               style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.error,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
           }
         }
 
-        if (uiState.albums.isEmpty()) {
-          Text(text = EMPTY_LIBRARY_LABEL, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-          LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-            contentPadding = PaddingValues(bottom = MuPlaySpacing.lg),
-          ) {
-            items(uiState.albums, key = Album::id) { album ->
-              AlbumRow(album = album, coverArtUrl = coverArtUrl, onClick = { onAlbumClick(album.id) })
+        if (uiState.shuffled.isNotEmpty()) {
+          item { SectionHeader(SHUFFLE_HEADING) }
+          // `itemsIndexed`, and the index is the row's own position in the very list this screen
+          // is rendering -- so "the third row" and "the third song of the shuffle" cannot drift
+          // apart. Passing `song.id` and having the view model look it up again would be a second
+          // lookup to get wrong.
+          //
+          // Keyed on the id, and the key is prefixed. A `LazyColumn` key must be unique across the
+          // WHOLE list, and this list also renders albums; a bare id would collide the moment a
+          // track and an album shared one. That exact collision crashed the requests screen once
+          // (`Key "LIDARR:mb-album-1" was already used`), so the prefixes are not decoration.
+          itemsIndexed(uiState.shuffled, key = { _, song -> "shuffled:" + song.id }) { index, song ->
+            ShuffledRow(song = song, onClick = { onShuffledSongClick(index) })
+          }
+          if (uiState.discardedOutOfScope > 0) {
+            item {
+              Text(
+                text = "${uiState.discardedOutOfScope} tracks were outside this library and were skipped.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
             }
+          }
+        }
+
+        if (uiState.albums.isEmpty()) {
+          item { Text(text = EMPTY_LIBRARY_LABEL, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+          items(uiState.albums, key = { "album:" + it.id }) { album ->
+            AlbumRow(album = album, coverArtUrl = coverArtUrl, onClick = { onAlbumClick(album.id) })
           }
         }
       }

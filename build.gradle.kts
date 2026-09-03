@@ -3903,15 +3903,24 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `:feature:player`'s `PlaybackControls`. Every number below is MEASURED from
     // `./gradlew :feature:book:test :feature:book:jacocoTestReport` on this tree.
     //
-    // `BookViewModel` 4/4 BRANCH (21/24 LINE) and `BookPlayerViewModel` 4/4 BRANCH (47/51 LINE).
+    // `BookViewModel` 6/6 BRANCH (21/24 LINE) and `BookPlayerViewModel` 4/4 BRANCH (47/51 LINE).
     // No LINE rule over either, for the reason `:feature:library` gives for its own two: the
     // missed lines are the `@Inject` secondary constructor's own body, which only Hilt reaches.
     //
     // FALSIFIED, both, and each number was read back off the XML rather than predicted:
     //   - `BookViewModel`: `@Disabled` on `loading the same book twice never reads its chapters a
-    //     second time` -> 3/4 = 0.7500. Independently, `@Disabled` on `an action before a book is
-    //     loaded touches nothing rather than throwing` -> 3/4 = 0.7500. Two different tests, two
-    //     different branches, same ratio.
+    //     second time` -> 5/6 = 0.8333.
+    //
+    //     **The second falsification recorded here died, and this is what killed it.** It used to
+    //     read: `@Disabled` on `an action before a book is loaded touches nothing rather than
+    //     throwing` -> 3/4 = 0.7500. Re-measured after the chapter-failure fix added `if (retry)`:
+    //     that same withholding now reads **6/6 = 1.0000**, because the fix's own `a retry before
+    //     a book is loaded` test takes the identical `onBook` arm and covers the branch the
+    //     withheld test used to be the only cover for. Withholding *both* is 5/6.
+    //
+    //     Recorded rather than quietly rewritten, because it is this table's own warned-about
+    //     failure: a comment that predicts a red, left standing after a second caller appeared,
+    //     teaches the next reader nothing when they withhold the test and see green.
     //   - `BookPlayerViewModel`: `@Disabled` on the ELEVEN tests that publish a playing book ->
     //     3/4 = 0.7500 (LINE 43/51). **No single test moves it**, measured: withholding `a playing
     //     book resolves its own summary, chapters and settings` alone left 4/4. That is worth
