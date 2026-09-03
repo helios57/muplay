@@ -101,7 +101,22 @@ class ChapterReader @Inject constructor(
     /**
      * Generous, because a non-faststart file costs an extra Range round trip into the tail and a
      * cold container can be slow. A retriever that hangs forever would block a book screen with no
-     * way out; a `TimeoutException` at least surfaces as "chapters unavailable".
+     * way out, so the read is bounded and the bound throws.
+     *
+     * **What the throw reaches was, for a while, wrong here.** This comment used to say a
+     * `TimeoutException` "surfaces as chapters unavailable", and there was no such state anywhere:
+     * `BookViewModel` and `BookPlayerViewModel` both read the timeline inside a bare
+     * `viewModelScope.launch` with no `catch`, so an `ExecutionException` or `TimeoutException`
+     * out of this line reached the thread's default handler and **killed the process**. Opening a
+     * book with the server asleep crashed MuPlay. The comment described a design nobody had built.
+     *
+     * It is built now, and this is the chain, so that the claim is checkable rather than
+     * aspirational: this throws, [ChapterRepository] remembers the failure against the media id
+     * and rethrows, `BookViewModel` catches it and publishes `BookUiState.Chapters.Unavailable`,
+     * and `BookScreen` renders that as a sentence with a retry where the chapter list would be --
+     * leaving the cover, the position, both settings and `Resume` on screen and working, because
+     * none of them needs a chapter. The book player is the quieter half of the same fix: it falls
+     * back to an empty timeline, which it already renders as a transport with no chapter marks.
      */
     const val TIMEOUT_MS = 30_000L
   }
