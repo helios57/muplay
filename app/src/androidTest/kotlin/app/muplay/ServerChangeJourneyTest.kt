@@ -1,11 +1,16 @@
 package app.muplay
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -90,10 +95,15 @@ class ServerChangeJourneyTest {
 
     composeRule.onNodeWithText(SIGN_OUT_LABEL).performClick()
     composeRule.onNodeWithText(SIGN_OUT_CONFIRM_TITLE).assertIsDisplayed()
-    // The dialog's confirm button carries the same label as the row that opened it, and by then
-    // the row is behind a scrim -- so the dialog's copy is the one Compose finds. `onAllNodes`
-    // rather than `onNodeWithText` says that out loud instead of relying on it.
-    composeRule.onAllNodesWithText(SIGN_OUT_LABEL)[0].performClick()
+    // **Inside the dialog, by ancestry, and not by index.**
+    //
+    // The dialog's confirm button carries the same label as the row that opened it, so with the
+    // dialog up there are two nodes reading "Sign out". The first version of this line took
+    // `onAllNodesWithText(...)[0]` on the reasoning that the dialog is on top -- it is not: index 0
+    // is the row behind the scrim, and clicking it merely sets `confirming = true` again. The
+    // symptom was a 20-second `ComposeTimeoutException` on the wait below, which reads exactly like
+    // "sign-out is broken" and is not.
+    composeRule.onNode(hasText(SIGN_OUT_LABEL) and hasAnyAncestor(isDialog())).performClick()
 
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_URL_LABEL).fetchSemanticsNodes().isNotEmpty()
@@ -101,12 +111,38 @@ class ServerChangeJourneyTest {
     composeRule.onNodeWithText(SERVER_URL_LABEL).assertIsDisplayed()
     composeRule.onNodeWithText(PASSWORD_LABEL).assertIsDisplayed()
 
-    // **The back stack was reset, not pushed onto.** `:app` turns `SetupRoute` into a clear-and-add
-    // for exactly this: a back gesture here used to land on a settings screen sitting over a
-    // library built from credentials that no longer exist.
+    // **The back stack was reset, not pushed onto**, and the assertion is that back leaves the
+    // app rather than that some screen is on show.
+    //
+    // `:app` turns `SetupRoute` into a clear-and-add, so after a sign-out the stack holds exactly
+    // one entry and a back press pops it and finishes the activity -- the same thing back does on
+    // a first run, which is what this state *is*. Without the reset the stack would be
+    // [Library, Settings, Setup] and back would reveal the settings screen, sitting over a library
+    // built from credentials that no longer exist; `DESTROYED` is therefore a strictly stronger
+    // claim than "setup is still showing", and one that only the reset can satisfy.
+    //
+    // Back leaves the app, and that is the assertion.
+    //
+    // After the reset the stack holds exactly one entry, so Navigation 3 disables its own back
+    // handler and the gesture reaches the system, which finishes the activity -- the same thing
+    // back does on a first run, which is the state this *is*. Without the reset the stack would be
+    // [Library, Settings, Setup], the handler would be enabled, and back would reveal the settings
+    // screen over a library built from credentials that no longer exist. So `DESTROYED` is a
+    // strictly stronger claim than "setup is still showing", and only the reset can satisfy it.
+    //
+    // Two wrong versions of this assertion were measured before this one, and both misread the
+    // same evidence: asserting the setup screen still showed failed with
+    // `IllegalStateException: No compose hierarchies found` (no semantics owners, because the
+    // activity is going away), and reading `scenario.state` immediately after the press read
+    // `STARTED`, because `finish()` is asynchronous. Hence the poll rather than a bare read.
     composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-    composeRule.waitForIdle()
-    composeRule.onNodeWithText(SERVER_URL_LABEL).assertIsDisplayed()
+    val deadline = System.currentTimeMillis() + TIMEOUT_MILLIS
+    while (composeRule.activityRule.scenario.state != Lifecycle.State.DESTROYED &&
+      System.currentTimeMillis() < deadline
+    ) {
+      Thread.sleep(POLL_MILLIS)
+    }
+    assertThat(composeRule.activityRule.scenario.state).isEqualTo(Lifecycle.State.DESTROYED)
   }
 
   private companion object {
@@ -124,5 +160,8 @@ class ServerChangeJourneyTest {
     const val PASSWORD_LABEL = "Password"
 
     const val TIMEOUT_MILLIS = 20_000L
+
+    /** Lifecycle polling: `finish()` is asynchronous and no compose hierarchy survives to wait on. */
+    const val POLL_MILLIS = 50L
   }
 }
