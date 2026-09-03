@@ -292,6 +292,13 @@ class PlaybackConnection @Inject constructor(
       // readout does not freeze at whatever the speed was when the item changed. Checked rather
       // than assumed: there is no explicit event list in this class to add it to.
       speed = player.playbackParameters.speed,
+      // `player.playerError` rather than an `onPlayerError` override, and the difference is not
+      // stylistic. `onPlayerError` is an *event*: a screen that subscribes after it fires -- a
+      // player opened from the mini player after a track already failed, a process the system
+      // restarted -- never learns. `playerError` is *state*, held by the player until something
+      // calls `prepare()`, so every subscriber sees it whenever they arrive. `onEvents` already
+      // fires for `EVENT_PLAYER_ERROR`, so no new listener is needed to publish it promptly.
+      failure = PlaybackFailure.of(player.playerError?.errorCode),
     )
   }
 

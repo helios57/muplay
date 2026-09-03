@@ -31,6 +31,7 @@ import app.muplay.requests.IntegrationsScreen
 import app.muplay.requests.RequestsRoute
 import app.muplay.requests.RequestsScreen
 import app.muplay.settings.SettingsScreen
+import app.muplay.setup.SetupRoute
 import app.muplay.setup.SetupScreen
 import app.muplay.ui.navigation.AlbumRoute
 import app.muplay.ui.navigation.BookPlayerRoute
@@ -39,7 +40,6 @@ import app.muplay.ui.navigation.BookshelfRoute
 import app.muplay.ui.navigation.LibraryRoute
 import app.muplay.ui.navigation.PlayerRoute
 import app.muplay.ui.navigation.SettingsRoute
-import app.muplay.ui.navigation.SetupRoute
 
 /**
  * The app's root composable: it decides where the app opens from stored state, then hands that
@@ -236,7 +236,26 @@ private fun MuPlayNavigation(
         // Navigation 3 populates no `SavedStateHandle` argument from a key's own properties.
         entry<BookRoute> { route -> BookScreen(bookId = route.bookId, onOpenPlayer = { openPlayer() }) }
         entry<BookPlayerRoute> { BookPlayerScreen() }
-        entry<SettingsRoute> { SettingsScreen(onNavigate = { key -> backStack.add(key) }) }
+        entry<SettingsRoute> {
+          SettingsScreen(
+            onNavigate = { key ->
+              // **`SetupRoute` is a restart, not a push**, and `:app` is the only thing that can
+              // make it one -- a section composed inside `:feature:settings` is handed
+              // `(NavKey) -> Unit` and nothing else, which is the point of that slot.
+              //
+              // `ServerSection` reaches here after signing out, i.e. after the credentials the
+              // library and player screens underneath are built on have been destroyed. Pushing
+              // setup on top of them would leave a back gesture landing on a browse screen with no
+              // server, and a restored back stack would do the same without any gesture at all.
+              if (key == SetupRoute) {
+                backStack.clear()
+                backStack.add(SetupRoute)
+              } else {
+                backStack.add(key)
+              }
+            },
+          )
+        }
         // Plan 7 Task 10. Always registered: a user has to be able to turn the feature on, and this
         // screen is the only thing that can. It is reached from the one always-present settings row,
         // which `:feature:requests` contributes into `:feature:settings`'s slot -- so nothing here

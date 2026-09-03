@@ -1448,3 +1448,39 @@ form-factor rule derived "this build declares Wear OS" from `include(":wear")` i
 `WearApp` that renders the single word "MuPlay", with nothing declaring `wearApp(...)`,
 `release.yml` assembling and signing `:app` and only `:app`, and `:core:watchlink` named by no build
 file at all. Probe for the artifact, not the directory.
+
+## A Media3 `PlaybackException` cannot be constructed on the JVM tier
+
+Its constructor timestamps itself off `SystemClock.elapsedRealtime()`, so a pure-JVM test that
+builds one to feed a mapping function dies before the assertion:
+
+    java.lang.RuntimeException: Method elapsedRealtime in android.os.SystemClock not mocked.
+      at androidx.media3.common.PlaybackException.<init>(PlaybackException.java:492)
+
+Measured writing `PlaybackFailureTest`: **all seven tests failed**, none of them for a reason the
+test was about, and the message names `SystemClock` rather than Media3.
+
+The fix is the split this repository already states at `PlaybackState.durationMsOf` -- *"a plain
+function over two nullable `Long`s, with no Media3 type in its signature, so the fast tier can hold
+this decision to a floor"*. `PlaybackFailure.of` now takes an `Int?` error code, not the exception.
+The `ERROR_CODE_*` constants are `static final int`s and are inlined by the compiler, so naming
+them in either the production file or the test loads no Android class.
+
+So: **a decision that maps a framework value belongs behind a signature made of primitives.** The
+device tier is the only place the framework object itself has to appear, and that is one line in
+`PlaybackConnection` (`player.playerError?.errorCode`) rather than a whole test class.
+
+## Editing a file under a running `check` makes the result unreadable, so stop the run first
+
+A gate started, then a source file edited while it was still in its configuration phase, is a
+result you cannot act on: Gradle's up-to-date checks see the new bytes for tasks that have not
+started and the old ones for tasks that have, and nothing in the output says which. Twice now the
+cheaper move has been to `TaskStop` the run, finish the edit, and start once -- a `--no-build-cache
+check` here is under three minutes, and re-reading an ambiguous one costs more than that.
+
+Related, and the reason this comes up at all: **reviewing your own new code while its gate runs is
+worth doing, and it will find things.** One pass over the diff this session found a `scope.launch`
+on `Dispatchers.Default` that navigated a Compose back stack (a `SnapshotStateList` accepts a write
+from any thread, so it would have *appeared* to work and misbehaved once a week), a `remember` that
+should have been `rememberSaveable`, and a defaulted `onRetry = {}` that would have shipped a
+"Try again" button wired to nothing. None of the three is visible to any gate in this repository.

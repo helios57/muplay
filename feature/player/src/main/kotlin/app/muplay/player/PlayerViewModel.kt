@@ -52,6 +52,17 @@ interface PlaybackControls {
   suspend fun previous()
 
   suspend fun seekTo(positionMs: Long)
+
+  /**
+   * Re-prepares the player after a failure, and starts it again.
+   *
+   * A member of its own rather than something [play] does when it notices an error, because a
+   * player Media3 has moved to `STATE_IDLE` **ignores `play()` entirely** -- it sets
+   * `playWhenReady` and returns, and nothing happens, forever. That silence is the second half of
+   * the defect [app.muplay.media.PlaybackFailure] describes: the error was invisible, and the one
+   * control a user would reach for did nothing.
+   */
+  suspend fun retry()
 }
 
 /**
@@ -88,6 +99,15 @@ class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
       override suspend fun previous() = connection.controller().seekToPreviousMediaItem()
 
       override suspend fun seekTo(positionMs: Long) = connection.controller().seekTo(positionMs)
+
+      // `prepare()` then `play()`. `prepare()` alone is enough *if* `playWhenReady` survived the
+      // error -- it usually does -- but "usually" is not a contract, and a retry that leaves the
+      // player prepared and silent is the same complaint the user just made.
+      override suspend fun retry() {
+        val controller = connection.controller()
+        controller.prepare()
+        controller.play()
+      }
     },
   )
 
@@ -108,10 +128,26 @@ class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
     viewModelScope.launch { controls.connect() }
   }
 
+  /**
+   * The transport button, and **after a failure it retries rather than doing nothing**.
+   *
+   * Read from `controls.state` rather than asked of the player, unlike [PlaybackControls.isPlaying]
+   * one line below: `playerError` is state Media3 holds until `prepare()` clears it, so the 250 ms
+   * snapshot cannot be stale about it in the way `isPlaying` can.
+   */
   fun playPause() {
     viewModelScope.launch {
-      if (controls.isPlaying()) controls.pause() else controls.play()
+      when {
+        controls.state.value.failure != null -> controls.retry()
+        controls.isPlaying() -> controls.pause()
+        else -> controls.play()
+      }
     }
+  }
+
+  /** The error message's own action. Same call as a play tap on a failed player; see [playPause]. */
+  fun retry() {
+    viewModelScope.launch { controls.retry() }
   }
 
   fun next() {

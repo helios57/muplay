@@ -2,6 +2,7 @@ package app.muplay.book
 
 import androidx.media3.common.MediaMetadata
 import app.muplay.media.BookChapter
+import app.muplay.media.PlaybackFailure
 import app.muplay.media.PlaybackState
 import app.muplay.model.BookSettings
 import app.muplay.model.BookSummary
@@ -95,6 +96,10 @@ class BookPlayerViewModelTest {
 
     override suspend fun pause() {
       calls += "pause"
+    }
+
+    override suspend fun retry() {
+      calls += "retry"
     }
 
     override suspend fun currentMediaId(): String? = playerMediaId
@@ -330,6 +335,47 @@ class BookPlayerViewModelTest {
     // `containsExactly`: an implementation that called both would satisfy a `contains("pause")`
     // while making the button do nothing visible.
     assertThat(controls.calls).containsExactly("isPlaying", "pause")
+  }
+
+  /**
+   * **The transport button on a failed book re-prepares the player.**
+   *
+   * `play()` on a player Media3 has moved to `STATE_IDLE` sets `playWhenReady` and returns; nothing
+   * plays and nothing is reported. On this screen that is the worst version of the defect -- a book
+   * is what a listener has running for hours, and a chapter that fails halfway through is exactly
+   * the "the app just stopped" report.
+   *
+   * `containsExactly("retry")`, so nothing asks the player what it is doing first: that is a round
+   * trip whose answer cannot change the decision.
+   */
+  @Test
+  fun `play on a failed book re-prepares the player rather than doing nothing`() =
+    runTest(dispatcher) {
+      val controls = controls()
+      val viewModel = warm(controls)
+      controls.publish(
+        playing("m4b", 1_000).copy(isPlaying = false, failure = PlaybackFailure.Connection),
+      )
+      advanceUntilIdle()
+      controls.calls.clear()
+
+      viewModel.playPause()
+      advanceUntilIdle()
+
+      assertThat(controls.calls).containsExactly("retry")
+    }
+
+  /** The failure reaches the screen, which is the half a listener actually sees. */
+  @Test
+  fun `a failed book carries why onto the player screen`() = runTest(dispatcher) {
+    val controls = controls()
+    val viewModel = warm(controls)
+    controls.booksByMediaId = mapOf("m4b" to book.bookId)
+    controls.booksById = mapOf(book.bookId to book)
+    controls.publish(playing("m4b", 1_000).copy(failure = PlaybackFailure.Server))
+    advanceUntilIdle()
+
+    assertThat(viewModel.content().failure).isEqualTo(PlaybackFailure.Server)
   }
 
   @Test

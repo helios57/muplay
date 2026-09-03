@@ -53,6 +53,16 @@ interface BookPlayerControls {
 
   suspend fun pause()
 
+  /**
+   * Re-prepares the player after a failure, and starts it again.
+   *
+   * The same member `:feature:player`'s `PlaybackControls` grows, and for the same reason: a player
+   * Media3 has moved to `STATE_IDLE` ignores [play] entirely. It is declared here rather than
+   * shared because these two feature modules do not depend on each other -- see [BookPlayerControls]
+   * and `PlaybackControls` on why each screen owns its own seam.
+   */
+  suspend fun retry()
+
   /** What the player has loaded right now, not what was last sampled. */
   suspend fun currentMediaId(): String?
 
@@ -114,6 +124,14 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
       override suspend fun play() = playbackConnection.controller().play()
 
       override suspend fun pause() = playbackConnection.controller().pause()
+
+      // `prepare()` then `play()`; see `:feature:player`'s identical override for why not
+      // `prepare()` alone.
+      override suspend fun retry() {
+        val controller = playbackConnection.controller()
+        controller.prepare()
+        controller.play()
+      }
 
       override suspend fun currentMediaId(): String? =
         playbackConnection.controller().currentMediaItem?.mediaId
@@ -236,9 +254,21 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
     emptyList()
   }
 
+  /**
+   * The transport button, and **after a failure it retries rather than doing nothing**.
+   *
+   * The audiobook half of the same defect `:feature:player`'s `PlayerViewModel.playPause` carries,
+   * and worth fixing at both sites rather than one: this is the screen a listener is on for hours,
+   * and a book that fails halfway through a chapter is exactly when "the app just stopped" gets
+   * reported.
+   */
   fun playPause() {
     viewModelScope.launch {
-      if (controls.isPlaying()) controls.pause() else controls.play()
+      when {
+        controls.playback.value.failure != null -> controls.retry()
+        controls.isPlaying() -> controls.pause()
+        else -> controls.play()
+      }
     }
   }
 

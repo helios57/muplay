@@ -197,21 +197,49 @@ private fun MiniPlayerBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-          Text(
-            text = content.playback.artist.orEmpty(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+          // **The failure takes the artist's line**, rather than being added below it. The bar is
+          // 64dp and its height is what pushes the browse list up, so a third line would move the
+          // whole library whenever a track failed. The artist is the least load-bearing of the two
+          // strings, and "Couldn't reach your server." is what the user needs from a bar that has
+          // stopped making sound.
+          //
+          // `error`, and this is the one place in the app where that role is right: it is not a
+          // count, not a state, not a warning about a choice -- something the user asked for did
+          // not happen. See `LibraryScreen`'s own note for the three cases that are none of those.
+          val failure = content.playback.failure
+          if (failure == null) {
+            Text(
+              text = content.playback.artist.orEmpty(),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          } else {
+            Text(
+              text = failure.message(),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.error,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
+        // On a failed player this button **retries** -- `PlayerViewModel.playPause` re-prepares
+        // rather than calling `play()` into a `STATE_IDLE` player that ignores it -- so its
+        // accessible name says "Try again" and not "Play". A screen reader user who is told "Play"
+        // and hears nothing has been lied to twice.
         FilledTonalIconButton(
           onClick = onPlayPause,
           modifier = Modifier.size(MuPlaySpacing.minTouchTarget),
         ) {
           Icon(
             imageVector = if (content.playback.isPlaying) MuPlayIcons.Pause else MuPlayIcons.Play,
-            contentDescription = if (content.playback.isPlaying) PAUSE_LABEL else PLAY_LABEL,
+            contentDescription = when {
+              content.playback.failure != null -> RETRY_LABEL
+              content.playback.isPlaying -> PAUSE_LABEL
+              else -> PLAY_LABEL
+            },
             modifier = Modifier.size(GLYPH_DP.dp),
           )
         }

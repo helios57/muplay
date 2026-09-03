@@ -135,6 +135,12 @@ dependencies {
   implementation(libs.hilt.navigation.compose)
   implementation(libs.lifecycle.runtime.compose)
 
+  // `StartDestinationViewModelTest` drives `viewModelScope` -- which is `Dispatchers.Main` -- so it
+  // needs `Dispatchers.setMain` and a scheduler to advance. This is the first JVM test in `:app`
+  // that touches a coroutine at all; the other three (`ConventionTest`, `StoreListingTest`,
+  // `MuPlayApplicationTest`) are plain file and reflection scans.
+  testImplementation(libs.coroutines.test)
+
   // Tier 2 (.github/workflows/e2e.yml): FirstRunJourneyTest drives the real app on a real
   // emulator against a real Navidrome container. `compose-ui-test-junit4` supplies
   // `createAndroidComposeRule` and the finder/assertion API; `androidx-test-ext` supplies the

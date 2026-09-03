@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.designsystem.theme.MuPlaySpacing
+import app.muplay.media.PlaybackFailure
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
 import org.junit.Test
@@ -257,5 +258,49 @@ class MiniPlayerTest {
     composeRule.onNodeWithContentDescription(PAUSE_LABEL)
       .assertWidthIsAtLeast(MuPlaySpacing.minTouchTarget)
       .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+  }
+
+  /**
+   * **The bar is where a failure is actually seen**, because it is what is on screen when playback
+   * stops -- the full player is a place a user has to have navigated to.
+   *
+   * The message takes the artist's line rather than adding a third: this bar's height is what
+   * pushes the browse list up, so a track failing must not move the whole library.
+   */
+  @Test
+  fun aFailedTrackReplacesTheArtistLineWithWhatWentWrong() {
+    show(content(PLAYING.copy(isPlaying = false, failure = PlaybackFailure.Connection)))
+
+    composeRule.onNodeWithText(PlaybackFailure.Connection.message()).assertIsDisplayed()
+    // And the artist is gone rather than pushed off-screen: two lines, still 64dp.
+    composeRule.onAllNodesWithText(TRACK_ARTIST).fetchSemanticsNodes().let {
+      assertThat(it).isEmpty()
+    }
+  }
+
+  /**
+   * The button retries, so it must **say** it retries.
+   *
+   * A screen reader user told "Play" who then hears nothing has been misled twice -- once by the
+   * silence and once by the label. This is the assertion that makes the `contentDescription`
+   * branch load-bearing; without it, leaving the label at "Play" costs nothing.
+   */
+  @Test
+  fun theButtonOnAFailedTrackIsNamedForWhatItDoes() {
+    show(content(PLAYING.copy(isPlaying = false, failure = PlaybackFailure.Server)))
+
+    composeRule.onNodeWithContentDescription(RETRY_LABEL).assertIsDisplayed()
+    composeRule.onAllNodesWithContentDescription(PLAY_LABEL).fetchSemanticsNodes().let {
+      assertThat(it).isEmpty()
+    }
+  }
+
+  /** The healthy bar is unchanged: the artist is back and the button is a plain play. */
+  @Test
+  fun aHealthyTrackKeepsItsArtistLineAndItsPlayLabel() {
+    show(content(PLAYING.copy(isPlaying = false)))
+
+    composeRule.onNodeWithText(TRACK_ARTIST).assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
   }
 }

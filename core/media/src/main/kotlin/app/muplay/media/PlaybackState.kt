@@ -53,6 +53,19 @@ data class PlaybackState(
    * ever seeing the tap.
    */
   val speed: Float,
+  /**
+   * Why playback stopped, or `null` when nothing has gone wrong.
+   *
+   * **Defaulted, and this is the one field in this class that is.** Every production publisher
+   * (`PlaybackConnection.publish`) passes it; the default exists for the dozens of hand-built
+   * fixtures across `:feature:player`, `:feature:book` and `:core:media`, for which "no error" is
+   * the uninteresting case and spelling it out at each one would bury the field that the fixture
+   * is actually about.
+   *
+   * A [PlaybackFailure] and not the `PlaybackException`: the exception's message is developer text
+   * and can carry a URL, and in this app a stream URL carries the auth token. See that enum.
+   */
+  val failure: PlaybackFailure? = null,
 ) {
 
   /**
@@ -102,6 +115,7 @@ data class PlaybackState(
       // 1.0, because that is what a player with nothing loaded is set to. A zero here would render
       // as "0.0x" on a screen the moment it was shown, before anything had played.
       speed = 1.0f,
+      // `failure` is left at its default `null`: a player with nothing loaded has not failed.
     )
 
     /**

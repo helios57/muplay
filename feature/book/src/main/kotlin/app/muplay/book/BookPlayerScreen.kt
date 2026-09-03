@@ -162,6 +162,22 @@ internal fun BookPlayerContent(
           bottom = MuPlaySpacing.md,
         ),
       ) {
+        // **First in the list, above the speed stepper, and inside the scrolling region.**
+        //
+        // The transport row below is pinned outside this `LazyColumn`, so putting the message here
+        // costs it no height and cannot push it off a short screen -- the failure mode
+        // `LibraryScreen` was fixed for in this same batch. First rather than anywhere else
+        // because a listener whose book has stopped is looking at the top of the screen.
+        state.failure?.let { failure ->
+          item {
+            // **No `onRetry`.** `Message`'s retry parameter is nullable precisely so a caller
+            // can say "there is nothing useful to add here", and this is that case: the transport
+            // row three inches below is permanently on screen and its play button already
+            // re-prepares the player. A second "Try again" would be two affordances for one
+            // action, and the one further from the thumb.
+            Message(text = failure.message())
+          }
+        }
         item {
           SpeedStepper(
             speed = state.speed,
@@ -192,6 +208,7 @@ internal fun BookPlayerContent(
 
       Transport(
         isPlaying = state.isPlaying,
+        hasFailed = state.failure != null,
         onPlayPause = onPlayPause,
         onPreviousChapter = onPreviousChapter,
         onNextChapter = onNextChapter,
@@ -322,6 +339,7 @@ private fun NowReading(
 @Composable
 private fun Transport(
   isPlaying: Boolean,
+  hasFailed: Boolean,
   onPlayPause: () -> Unit,
   onPreviousChapter: () -> Unit,
   onNextChapter: () -> Unit,
@@ -337,7 +355,7 @@ private fun Transport(
     ) {
       ChapterButton(MuPlayIcons.SkipPrevious, PREVIOUS_CHAPTER_LABEL, onPreviousChapter)
       NudgeButton(MuPlayIcons.RotateBack, BACK_30_LABEL) { onNudge(-NUDGE_MS) }
-      PlayPauseButton(isPlaying = isPlaying, onClick = onPlayPause)
+      PlayPauseButton(isPlaying = isPlaying, hasFailed = hasFailed, onClick = onPlayPause)
       NudgeButton(MuPlayIcons.RotateForward, FORWARD_30_LABEL) { onNudge(NUDGE_MS) }
       ChapterButton(MuPlayIcons.SkipNext, NEXT_CHAPTER_LABEL, onNextChapter)
     }
@@ -360,7 +378,7 @@ private fun Transport(
  * mid-word.
  */
 @Composable
-private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
+private fun PlayPauseButton(isPlaying: Boolean, hasFailed: Boolean, onClick: () -> Unit) {
   val phase = if (motionEnabled()) {
     val animated by animateFloatAsState(
       targetValue = if (isPlaying) 1f else 0f,
@@ -388,7 +406,15 @@ private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
   ) {
     Icon(
       imageVector = if (isPlaying) MuPlayIcons.Pause else MuPlayIcons.Play,
-      contentDescription = if (isPlaying) PAUSE_LABEL else PLAY_LABEL,
+      // On a failed player this button **retries** -- `BookPlayerViewModel.playPause` re-prepares
+      // rather than calling `play()` into a `STATE_IDLE` player, which does nothing -- so its
+      // accessible name has to say so. A listener told "Play" who then hears silence has been
+      // misled by the label as well as by the app.
+      contentDescription = when {
+        hasFailed -> RETRY_PLAYBACK_LABEL
+        isPlaying -> PAUSE_LABEL
+        else -> PLAY_LABEL
+      },
       modifier = Modifier
         .size(PRIMARY_GLYPH_DP.dp)
         .graphicsLayer {

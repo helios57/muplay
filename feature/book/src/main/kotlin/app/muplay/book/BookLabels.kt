@@ -76,6 +76,18 @@ internal const val SKIP_SILENCE_LABEL = "Skip silence"
 internal const val NOTHING_PLAYING_LABEL = "Nothing playing"
 internal const val PLAY_LABEL = "Play"
 internal const val PAUSE_LABEL = "Pause"
+
+/**
+ * What the play button is called once playback has failed, because pressing it then **re-prepares**
+ * the player rather than playing -- see `BookPlayerViewModel.playPause`. A screen reader user told
+ * "Play" who hears nothing has been misled by the label as well as by the silence.
+ *
+ * The same words as [RETRY_CHAPTERS_LABEL] and a separate constant on purpose: they are two
+ * different contracts on two different screens (that one is the book screen's chapter list, this
+ * one is the player's transport), and folding them into one would mean a wording change on either
+ * screen silently changing the other.
+ */
+internal const val RETRY_PLAYBACK_LABEL = "Try again"
 internal const val PREVIOUS_CHAPTER_LABEL = "Previous chapter"
 internal const val NEXT_CHAPTER_LABEL = "Next chapter"
 internal const val BACK_30_LABEL = "Back 30 seconds"

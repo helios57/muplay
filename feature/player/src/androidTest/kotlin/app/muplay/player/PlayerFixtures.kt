@@ -107,4 +107,8 @@ internal class RecordingPlaybackControls : PlaybackControls {
   override suspend fun seekTo(positionMs: Long) {
     calls += "seekTo($positionMs)"
   }
+
+  override suspend fun retry() {
+    calls += "retry"
+  }
 }

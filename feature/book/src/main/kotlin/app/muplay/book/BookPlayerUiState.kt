@@ -2,6 +2,7 @@ package app.muplay.book
 
 import app.muplay.media.BookChapter
 import app.muplay.media.BookTimeline
+import app.muplay.media.PlaybackFailure
 import app.muplay.media.PlaybackState
 import app.muplay.model.BookSettings
 import app.muplay.model.BookSummary
@@ -34,6 +35,16 @@ sealed interface BookPlayerUiState {
     val skipSilence: Boolean,
     val sleepTimer: SleepTimerState,
     val chapters: List<BookChapter>,
+    /**
+     * Why playback stopped, or `null`. Carried onto this screen for the same reason the music
+     * player carries it: a failed book published `isPlaying = false` and nothing else, which is
+     * exactly what a pause looks like, and the play button then called `play()` into a
+     * `STATE_IDLE` player that ignores it.
+     *
+     * **Defaulted**, unlike every other property here, because the fixtures in this module build a
+     * `Content` by hand and "nothing has gone wrong" is the uninteresting case at all of them.
+     */
+    val failure: PlaybackFailure? = null,
   ) : BookPlayerUiState
 }
 
@@ -96,6 +107,7 @@ internal fun bookPlayerUiState(
     skipSilence = settings.skipSilence,
     sleepTimer = sleepTimer,
     chapters = timeline,
+    failure = playback.failure,
   )
 }
 

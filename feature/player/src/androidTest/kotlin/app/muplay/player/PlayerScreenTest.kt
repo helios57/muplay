@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -25,6 +26,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.designsystem.theme.MuPlaySpacing
+import app.muplay.media.PlaybackFailure
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within
 import org.junit.Rule
@@ -65,6 +67,7 @@ class PlayerScreenTest {
         onPrevious = { actions += "previous" },
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
+        onRetry = { actions += "retry" },
       )
     }
   }
@@ -79,6 +82,7 @@ class PlayerScreenTest {
         onPrevious = { actions += "previous" },
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
+        onRetry = { actions += "retry" },
         castDeviceName = castDeviceName,
         castButton = { TextButton(onClick = { actions += "cast" }) { Text(CAST_SLOT_LABEL) } },
       )
@@ -540,6 +544,63 @@ class PlayerScreenTest {
     for (label in listOf(PREVIOUS_LABEL, PLAY_LABEL, NEXT_LABEL)) {
       composeRule.onNodeWithContentDescription(label)
         .assertWidthIsAtLeast(MuPlaySpacing.minTouchTarget)
+        .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+    }
+  }
+
+  /**
+   * **A failed track says so, on the screen, above the transport row.**
+   *
+   * Before this the only signal was `isPlaying = false`, which is what a *pause* looks like. The
+   * assertion is on the sentence a user reads, not on a state field, because the defect was that
+   * the state existed and reached nobody.
+   */
+  @Test
+  fun aFailedTrackShowsWhyPlaybackStoppedAndOffersAWayBack() {
+    show(content(PLAYING.copy(isPlaying = false, failure = PlaybackFailure.Connection)))
+
+    composeRule.onNodeWithText(PlaybackFailure.Connection.message()).assertIsDisplayed()
+    composeRule.onNodeWithText(RETRY_LABEL).assertIsDisplayed()
+  }
+
+  /** The message is not decoration: its button reaches the caller's retry and nothing else. */
+  @Test
+  fun theRetryButtonReportsARetryRatherThanAPlay() {
+    show(content(PLAYING.copy(isPlaying = false, failure = PlaybackFailure.Server)))
+
+    composeRule.onNodeWithText(RETRY_LABEL).performClick()
+
+    assertThat(actions).containsExactly("retry")
+  }
+
+  /**
+   * The other side of it. A healthy screen must not grow an error, and it must not grow a second
+   * "Try again" button competing with the transport row -- which is what a `Message` rendered
+   * unconditionally would do.
+   */
+  @Test
+  fun aHealthyTrackShowsNoErrorAndNoRetryButton() {
+    show(content(PLAYING))
+
+    composeRule.onAllNodesWithText(RETRY_LABEL).assertCountEquals(0)
+    for (failure in PlaybackFailure.entries) {
+      composeRule.onAllNodesWithText(failure.message()).assertCountEquals(0)
+    }
+  }
+
+  /**
+   * The transport row stays reachable, because that is the thing the error's height could take.
+   * `Message` brings 32dp of padding above and below plus a button, and the screen absorbs it out
+   * of the artwork's `weight(1f)` -- but "absorbs it" is a claim about layout, so it is measured
+   * rather than asserted in a comment.
+   */
+  @Test
+  fun theTransportRowIsStillOnScreenUnderAnErrorMessage() {
+    show(content(PLAYING.copy(isPlaying = false, failure = PlaybackFailure.Unplayable)))
+
+    for (label in listOf(PREVIOUS_LABEL, PLAY_LABEL, NEXT_LABEL)) {
+      composeRule.onNodeWithContentDescription(label)
+        .assertIsDisplayed()
         .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
     }
   }

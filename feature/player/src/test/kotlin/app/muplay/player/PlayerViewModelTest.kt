@@ -1,6 +1,7 @@
 package app.muplay.player
 
 import androidx.media3.common.MediaMetadata
+import app.muplay.media.PlaybackFailure
 import app.muplay.media.PlaybackState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,6 +107,10 @@ class PlayerViewModelTest {
 
     override suspend fun seekTo(positionMs: Long) {
       calls += "seekTo($positionMs)"
+    }
+
+    override suspend fun retry() {
+      calls += "retry"
     }
   }
 
@@ -366,4 +371,82 @@ class PlayerViewModelTest {
 
     assertThat(controls.calls).containsExactly("seekTo(0)")
   }
+
+  /**
+   * **The transport button on a failed player retries.**
+   *
+   * `play()` on a player Media3 has moved to `STATE_IDLE` sets `playWhenReady` and returns; nothing
+   * plays, no error is raised, and the user is left tapping a button that does nothing. The old
+   * body called exactly that.
+   *
+   * Note what is asserted: `containsExactly("retry")` and not `contains`. The player is never
+   * asked what it is doing -- `isPlaying` would be a round trip to a player whose answer cannot
+   * change the decision -- and `play` must not be called after `retry`, because `retry` already
+   * ends in one.
+   */
+  @Test
+  fun `play on a failed player re-prepares it rather than doing nothing`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val viewModel = warm(controls)
+    controls.publish(playing.copy(isPlaying = false, failure = PlaybackFailure.Connection))
+    advanceUntilIdle()
+    controls.calls.clear()
+
+    viewModel.playPause()
+    advanceUntilIdle()
+
+    assertThat(controls.calls).containsExactly("retry")
+  }
+
+  /**
+   * The other half of the same conjunction. Without this, deleting the `failure != null` guard --
+   * i.e. always retrying -- leaves the test above green.
+   */
+  @Test
+  fun `play on a healthy paused player still plays rather than re-preparing`() =
+    runTest(dispatcher) {
+      val controls = FakePlaybackControls()
+      val viewModel = warm(controls)
+      controls.publish(playing.copy(isPlaying = false))
+      controls.playerIsPlaying = false
+      advanceUntilIdle()
+      controls.calls.clear()
+
+      viewModel.playPause()
+      advanceUntilIdle()
+
+      assertThat(controls.calls).containsExactly("isPlaying", "play")
+    }
+
+  /** The error message's own button, which is the same call by a different route. */
+  @Test
+  fun `the retry action re-prepares the player`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val viewModel = warm(controls)
+    controls.publish(playing.copy(isPlaying = false, failure = PlaybackFailure.Server))
+    advanceUntilIdle()
+    controls.calls.clear()
+
+    viewModel.retry()
+    advanceUntilIdle()
+
+    assertThat(controls.calls).containsExactly("retry")
+  }
+
+  /**
+   * A failure reaches the screen at all. `PlayerUiState.Content` carries the whole `PlaybackState`,
+   * so this would pass by construction -- except that it also pins the discriminator: a failed
+   * track keeps its `mediaId`, so the screen renders `Content` and not `NothingPlaying`, which is
+   * the only state that could show an error.
+   */
+  @Test
+  fun `a failed track is still content, so the error has somewhere to render`() =
+    runTest(dispatcher) {
+      val controls = FakePlaybackControls()
+      val viewModel = warm(controls)
+      controls.publish(playing.copy(isPlaying = false, failure = PlaybackFailure.Unplayable))
+      advanceUntilIdle()
+
+      assertThat(viewModel.content().playback.failure).isEqualTo(PlaybackFailure.Unplayable)
+    }
 }

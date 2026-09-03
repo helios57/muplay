@@ -2,6 +2,7 @@ package app.muplay.book
 
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.media.BookChapter
+import app.muplay.media.PlaybackFailure
 import app.muplay.media.SleepTimerController
 import app.muplay.model.BookSettings
 import app.muplay.model.SleepTimerState
@@ -83,6 +85,7 @@ class BookPlayerContentTest {
     sleepTimer: SleepTimerState = SleepTimerState.Off,
     coverArtId: String? = "cover-1",
     chapters: List<BookChapter> = chapters(),
+    failure: PlaybackFailure? = null,
   ) = BookPlayerUiState.Content(
     bookTitle = STARTED_TITLE,
     author = STARTED_AUTHOR,
@@ -100,6 +103,7 @@ class BookPlayerContentTest {
     skipSilence = false,
     sleepTimer = sleepTimer,
     chapters = chapters,
+    failure = failure,
   )
 
   /**
@@ -471,6 +475,64 @@ class BookPlayerContentTest {
 
     scrollTo(SLEEP_TIMER_LABEL)
     assertThat(countOfControl(CANCEL_TIMER_LABEL)).isZero()
+  }
+
+  /**
+   * **A book that stopped says why.**
+   *
+   * Before this it published `isPlaying = false` and nothing else, which is exactly what a pause
+   * looks like -- on the one screen a listener leaves running for hours.
+   *
+   * The message is the first item in the scrolling list, so it needs no scroll of its own; the
+   * assertion is written without one deliberately, because a message a listener has to scroll to
+   * find is not a message.
+   */
+  @Test
+  fun aBookThatFailedSaysWhyWithoutScrolling() {
+    show(content(isPlaying = false, failure = PlaybackFailure.Connection))
+
+    composeRule.onNodeWithText(PlaybackFailure.Connection.message()).assertIsDisplayed()
+  }
+
+  /**
+   * The transport button **retries**, so it must say so.
+   *
+   * `BookPlayerViewModel.playPause` re-prepares a failed player rather than calling `play()` into
+   * `STATE_IDLE`, where nothing happens. A listener told "Play" who then hears silence has been
+   * misled by the label as well as by the app -- and this assertion is what makes the label branch
+   * load-bearing rather than decorative.
+   */
+  @Test
+  fun theTransportButtonOnAFailedBookIsNamedForWhatItDoes() {
+    show(content(isPlaying = false, failure = PlaybackFailure.Server))
+
+    composeRule.onNodeWithContentDescription(RETRY_PLAYBACK_LABEL).assertIsDisplayed()
+    assertThat(countOfControl(PLAY_LABEL)).isZero()
+  }
+
+  /**
+   * **Only one "Try again" on this screen**, and that is a decision rather than an accident: the
+   * message deliberately passes no `onRetry`, because the transport row below it is permanently on
+   * screen and its play button already re-prepares the player. Two affordances for one action, the
+   * further of them from the thumb, is worse than one.
+   */
+  @Test
+  fun theMessageOffersNoSecondRetryBesideTheTransportButton() {
+    show(content(isPlaying = false, failure = PlaybackFailure.Unplayable))
+
+    composeRule.onAllNodesWithText(RETRY_PLAYBACK_LABEL).assertCountEquals(0)
+    assertThat(countOfControl(RETRY_PLAYBACK_LABEL)).isEqualTo(1)
+  }
+
+  /** The healthy screen grows no error and keeps its play label. */
+  @Test
+  fun aHealthyBookShowsNoErrorAndKeepsItsPlayLabel() {
+    show(content(isPlaying = false))
+
+    composeRule.onNodeWithContentDescription(PLAY_LABEL).assertIsDisplayed()
+    for (failure in PlaybackFailure.entries) {
+      composeRule.onAllNodesWithText(failure.message()).assertCountEquals(0)
+    }
   }
 
   private companion object {

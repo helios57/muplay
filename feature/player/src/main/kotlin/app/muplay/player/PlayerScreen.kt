@@ -88,6 +88,7 @@ fun PlayerScreen(
     onPrevious = viewModel::previous,
     onScrubTo = viewModel::scrubTo,
     onScrubFinished = viewModel::commitScrub,
+    onRetry = viewModel::retry,
     castDeviceName = castDeviceName,
     castButton = castButton,
     modifier = modifier,
@@ -111,6 +112,10 @@ internal fun PlayerScreen(
   onPrevious: () -> Unit,
   onScrubTo: (Long) -> Unit,
   onScrubFinished: () -> Unit,
+  // Required, with no default. A defaulted `{}` would let a caller forget it and get a "Try again"
+  // button that does nothing -- which `Message`'s own doc calls out as worse than no button at all,
+  // and is why that component's `onRetry` is nullable rather than a defaulted no-op.
+  onRetry: () -> Unit,
   castDeviceName: String? = null,
   castButton: @Composable () -> Unit = {},
   modifier: Modifier = Modifier,
@@ -201,6 +206,24 @@ internal fun PlayerScreen(
       // user reaches for the phone's own volume keys and hears nothing change.
       if (castDeviceName != null) {
         StatusLine(PLAYING_ON_PREFIX + castDeviceName)
+      }
+
+      // **Above the transport row, and it carries its own way out.**
+      //
+      // Nothing surfaced a playback error before this. A failed track published `isPlaying = false`
+      // and nothing else, so it was indistinguishable from a pause -- and the play button a user
+      // then pressed called `play()` on a player Media3 had already moved to `STATE_IDLE`, which
+      // does nothing at all. Two silences stacked: the app did not say what happened, and the one
+      // control that looked like it should help did not work.
+      //
+      // `Message`'s `onRetry`, which until now had **no caller anywhere in the app**. This is the
+      // component's whole reason for having the parameter: an error a user can act on.
+      uiState.playback.failure?.let { failure ->
+        // No padding modifier of its own: `Message` brings 32dp above and below, which is the
+        // point of using it rather than styling a `Text` here. The artwork above is `weight(1f)`,
+        // so the height this costs comes out of the cover art and never out of the transport row --
+        // and a smaller cover while playback is broken is the right way round.
+        Message(text = failure.message(), onRetry = onRetry, retryLabel = RETRY_LABEL)
       }
 
       Slider(
@@ -391,6 +414,12 @@ internal const val PREVIOUS_LABEL = "Previous"
  * Tier 2 cast journey asserts the concatenation verbatim.
  */
 internal const val PLAYING_ON_PREFIX = "Playing on "
+
+/**
+ * The error message's action. "Try again" rather than "Retry": it is what the user is doing, and
+ * it is the word `Message`'s own default already uses everywhere else the component appears.
+ */
+internal const val RETRY_LABEL = "Try again"
 
 /** Two lines of a long track name, then an ellipsis; three would crowd the transport row. */
 private const val TITLE_LINES = 2
