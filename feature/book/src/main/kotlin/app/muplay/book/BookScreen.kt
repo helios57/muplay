@@ -91,6 +91,7 @@ fun BookScreen(
     },
     onSpeed = viewModel::setSpeed,
     onSkipSilence = viewModel::setSkipSilence,
+    onRetryChapters = viewModel::retryChapters,
     coverArtUrl = viewModel::coverArtUrl,
     modifier = modifier,
   )
@@ -104,6 +105,7 @@ internal fun BookContent(
   onPlayChapter: (BookChapter) -> Unit,
   onSpeed: (Float) -> Unit,
   onSkipSilence: (Boolean) -> Unit,
+  onRetryChapters: () -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
@@ -237,20 +239,30 @@ internal fun BookContent(
         )
       }
 
-      // The chapter list is empty until extraction finishes -- an HTTP round trip per file -- and
-      // **the rest of the screen has already rendered by then**, which is why this says "reading
-      // chapters" rather than "loading". A screen that waited for the whole thing would be blank
-      // for a second every time a book was opened.
-      if (state.chapters.isEmpty()) {
-        item {
-          Text(
-            text = CHAPTERS_LOADING_LABEL,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+      // Three arms, and every one of them leaves the four blocks above on screen. Extraction is an
+      // HTTP round trip per file, so it is slow when it works and it fails for every ordinary
+      // reason a self-hosted server fails -- and **neither is a reason to take the book down**:
+      // `Resume`, the progress bar and both settings need no chapters at all.
+      //
+      // `Reading` says "reading chapters" rather than "loading" because the rest of the screen has
+      // already drawn by then, and "loading" over a fully drawn book reads as a stuck screen.
+      // `Unavailable` is the first caller of `Message`'s `onRetry` in this app: the read is a
+      // transport failure, so the same read a minute later usually works, and the button is how a
+      // listener says so without leaving the screen and coming back.
+      when (val chapters = state.chapters) {
+        BookUiState.Chapters.Reading -> item {
+          Message(text = CHAPTERS_LOADING_LABEL, loading = true)
+        }
+
+        BookUiState.Chapters.Unavailable -> item {
+          Message(
+            text = CHAPTERS_UNAVAILABLE_LABEL,
+            onRetry = onRetryChapters,
+            retryLabel = RETRY_CHAPTERS_LABEL,
           )
         }
-      } else {
-        items(state.chapters, key = { it.index }) { chapter ->
+
+        is BookUiState.Chapters.Ready -> items(chapters.chapters, key = { it.index }) { chapter ->
           ChapterRow(chapter = chapter, onClick = { onPlayChapter(chapter) })
         }
       }

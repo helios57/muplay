@@ -7,6 +7,7 @@ import app.muplay.model.BookSettings
 import app.muplay.model.BookSummary
 import app.muplay.model.SleepTimerRequest
 import app.muplay.model.SleepTimerState
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -124,7 +125,13 @@ class BookPlayerViewModelTest {
 
     override suspend fun book(bookId: String): BookSummary? = booksById[bookId]
 
-    override suspend fun timeline(bookId: String): List<BookChapter> = timelines[bookId].orEmpty()
+    /** Set it, and the chapter read throws, as it does against a server that is not answering. */
+    var timelineFails = false
+
+    override suspend fun timeline(bookId: String): List<BookChapter> {
+      if (timelineFails) throw IOException("the server is not reachable")
+      return timelines[bookId].orEmpty()
+    }
 
     override fun observeSettings(bookId: String): Flow<BookSettings> = settingsFor(bookId)
 
@@ -199,6 +206,41 @@ class BookPlayerViewModelTest {
     assertThat(content.skipSilence).isTrue
     assertThat(content.speed).isEqualTo(1.4f)
   }
+
+  @Test
+  fun `a chapter read that throws leaves the book playing instead of killing the app`() =
+    runTest(dispatcher) {
+      // The second half of the same defect as `BookViewModel`'s. This read happens inside the
+      // `collectLatest` in `init` -- a bare `viewModelScope.launch` -- so an `ExecutionException`
+      // out of `ChapterReader` reached the thread's default uncaught handler and killed the
+      // process, with the audio already playing.
+      //
+      // Measured with the `catch` removed, and the failure is not the one you would predict: it
+      // goes red at **`skipSilence`**, because the throw abandons `loadBookFor` before
+      // `observeSettings` is ever collected, so the book plays at the default speed with the
+      // listener's own settings never read. `runTest` does not report the throw itself -- see
+      // `BookViewModelTest`'s note for why -- so the settings that never arrive are what a
+      // fast-tier test can actually stand on.
+      val controls = controls()
+      controls.timelineFails = true
+      controls.settingsFor("book").value = BookSettings("book", 1.4f, skipSilence = true)
+      val viewModel = warm(controls)
+
+      controls.publish(playing("m4b", 5_000, speed = 1.4f))
+      advanceUntilIdle()
+
+      val content = viewModel.content()
+      // No chapters, and no state of its own for that: this screen already renders a book with an
+      // empty timeline as a transport with no chapter marks, which is everything a listener needs
+      // to keep listening.
+      assertThat(content.chapterCount).isZero
+      assertThat(content.bookTitle).isEqualTo("Second Book")
+      // And the settings collection still ran. The `catch` wraps the chapter read alone, so a
+      // listener's speed does not depend on their server being awake -- a `try` around the whole
+      // body would leave this at the default and pass every assertion above it.
+      assertThat(content.skipSilence).isTrue
+      assertThat(content.speed).isEqualTo(1.4f)
+    }
 
   @Test
   fun `a track that is not an audiobook leaves the book player with nothing to show`() =

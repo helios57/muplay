@@ -3,6 +3,7 @@ package app.muplay.book
 import app.muplay.media.BookChapter
 import app.muplay.model.BookSettings
 import app.muplay.model.BookSummary
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -41,11 +42,25 @@ class BookViewModelTest {
     BookChapter(1, "Two", "m4b", 1, 4_000, 9_000, 4_000),
   )
 
+  /**
+   * The seam, and -- for the chapter read alone -- a small working model of what is behind it.
+   *
+   * [serverDown] is the server; the private `remembered` field is `ChapterRepository`'s in-memory
+   * record of a probe that threw. The model is worth its six lines because the interesting
+   * property is not "does the view model catch" but **"does its retry actually reach the
+   * server"**: a `retryChapters` wired to [timeline] rather than [retryTimeline] is handed the
+   * remembered failure and cannot succeed however healthy the server is, and only a fake that
+   * remembers can fail that.
+   */
   private class FakeBookSource : BookSource {
     val calls = mutableListOf<String>()
     val shelf = MutableStateFlow<List<BookSummary>>(emptyList())
     val settings = mutableMapOf<String, MutableStateFlow<BookSettings>>()
     var timelines: Map<String, List<BookChapter>> = emptyMap()
+
+    /** Flip it, and every read of a file's `moov` atom fails, as an unreachable server does. */
+    var serverDown = false
+    private var remembered: Throwable? = null
 
     fun settingsFor(bookId: String): MutableStateFlow<BookSettings> =
       settings.getOrPut(bookId) { MutableStateFlow(BookSettings.default(bookId)) }
@@ -56,6 +71,23 @@ class BookViewModelTest {
 
     override suspend fun timeline(bookId: String): List<BookChapter> {
       calls += "timeline($bookId)"
+      remembered?.let { throw it }
+      return read(bookId)
+    }
+
+    override suspend fun retryTimeline(bookId: String): List<BookChapter> {
+      calls += "retryTimeline($bookId)"
+      // `ChapterRepository.forgetFailures()`, which is the entire difference between the two.
+      remembered = null
+      return read(bookId)
+    }
+
+    private fun read(bookId: String): List<BookChapter> {
+      if (serverDown) {
+        val failure = IOException("the server is not reachable")
+        remembered = failure
+        throw failure
+      }
       return timelines[bookId].orEmpty()
     }
 
@@ -128,7 +160,7 @@ class BookViewModelTest {
 
     val content = viewModel.uiState.value as BookUiState.Content
     assertThat(content.book.bookId).isEqualTo("wanted")
-    assertThat(content.chapters).isEqualTo(wantedChapters)
+    assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Ready(wantedChapters))
     assertThat(source.calls).containsExactly("timeline(wanted)")
   }
 
@@ -169,13 +201,14 @@ class BookViewModelTest {
 
       viewModel.load("wanted")
       advanceUntilIdle()
-      assertThat((viewModel.uiState.value as BookUiState.Content).chapters).isEqualTo(wantedChapters)
+      assertThat((viewModel.uiState.value as BookUiState.Content).chapters)
+        .isEqualTo(BookUiState.Chapters.Ready(wantedChapters))
 
       viewModel.load("other")
       advanceUntilIdle()
       val content = viewModel.uiState.value as BookUiState.Content
       assertThat(content.book.bookId).isEqualTo("other")
-      assertThat(content.chapters).isEmpty()
+      assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Ready(emptyList()))
     }
 
   @Test
@@ -284,6 +317,116 @@ class BookViewModelTest {
 
       assertThat(source.calls).isEmpty()
     }
+
+  @Test
+  fun `a chapter read that throws leaves the book on screen instead of killing the app`() =
+    runTest(dispatcher) {
+      // THE regression. `load` used to be `viewModelScope.launch { chapters.value =
+      // source.timeline(id) }` with no `catch`, and `ChapterReader.read` throws
+      // `ExecutionException`/`TimeoutException` whenever the server cannot be reached. An
+      // exception out of a bare `launch` reaches the thread's default uncaught handler --
+      // `viewModelScope`'s `SupervisorJob` keeps the *scope* alive, not the process -- so opening
+      // a book with the server asleep killed MuPlay.
+      //
+      // **What this test sees is the state, not the kill**, and that was measured rather than
+      // assumed: with the `catch` removed it goes red as `expected: Unavailable but was: Reading`,
+      // not as a reported uncaught exception. `runTest` never sees the throw at all, because
+      // `viewModelScope` is not a child of the test coroutine -- on the JVM the exception is
+      // printed and dropped, and the chapter state is simply never assigned. That is the same
+      // defect from the only side a fast-tier test can stand on: the assignment that does not
+      // happen is exactly what the process death interrupts.
+      val source = source()
+      source.serverDown = true
+      val viewModel = warm(source)
+
+      viewModel.load("wanted")
+      advanceUntilIdle()
+
+      val content = viewModel.uiState.value as BookUiState.Content
+      assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Unavailable)
+      // Everything that did not come from the chapter read is still there and still right.
+      assertThat(content.book.title).isEqualTo("Title of wanted")
+      assertThat(content.settings.speed).isEqualTo(1.0f)
+    }
+
+  @Test
+  fun `Resume still works while the chapters are unavailable`() = runTest(dispatcher) {
+    // The reason a failed chapter read is a sentence inside the screen rather than a screen: the
+    // one thing a listener came for needs no chapters at all. A fix that had published `NotFound`,
+    // or a screen-level error state, would take this away and pass every assertion above.
+    val source = source()
+    source.serverDown = true
+    val viewModel = warm(source)
+    viewModel.load("wanted")
+    advanceUntilIdle()
+    source.calls.clear()
+
+    viewModel.resume()
+    viewModel.playChapter(wantedChapters[1])
+    advanceUntilIdle()
+
+    assertThat(viewModel.uiState.value).isInstanceOf(BookUiState.Content::class.java)
+    assertThat(source.calls)
+      .containsExactly("resume(wanted)", "playFile(wanted, m4b)", "seekTo(1, 4000)")
+  }
+
+  @Test
+  fun `retrying after the server comes back reads the chapters through the retry path`() =
+    runTest(dispatcher) {
+      // Two assertions, and the second is the one with teeth. A retry that re-rendered without
+      // re-reading leaves `Unavailable`; a retry that called `timeline` re-reads but is handed the
+      // failure `ChapterRepository` remembered -- which is exactly why that memory exists -- and
+      // also leaves `Unavailable`. Only a retry that goes through `retryTimeline`, which forgets
+      // the remembered failure first, can reach a server that has come back.
+      val source = source()
+      source.serverDown = true
+      val viewModel = warm(source)
+      viewModel.load("wanted")
+      advanceUntilIdle()
+      assertThat((viewModel.uiState.value as BookUiState.Content).chapters)
+        .isEqualTo(BookUiState.Chapters.Unavailable)
+
+      source.serverDown = false
+      source.calls.clear()
+      viewModel.retryChapters()
+      advanceUntilIdle()
+
+      assertThat((viewModel.uiState.value as BookUiState.Content).chapters)
+        .isEqualTo(BookUiState.Chapters.Ready(wantedChapters))
+      assertThat(source.calls).containsExactly("retryTimeline(wanted)")
+    }
+
+  @Test
+  fun `a retry that fails again is unavailable again rather than a crash`() = runTest(dispatcher) {
+    // The retry runs in the same bare `launch` as the first read, so it needs the same `catch`;
+    // a fix that guarded only `load` crashes here instead, on the second press.
+    val source = source()
+    source.serverDown = true
+    val viewModel = warm(source)
+    viewModel.load("wanted")
+    advanceUntilIdle()
+    source.calls.clear()
+
+    viewModel.retryChapters()
+    advanceUntilIdle()
+
+    assertThat((viewModel.uiState.value as BookUiState.Content).chapters)
+      .isEqualTo(BookUiState.Chapters.Unavailable)
+    assertThat(source.calls).containsExactly("retryTimeline(wanted)")
+  }
+
+  @Test
+  fun `a retry before a book is loaded touches nothing`() = runTest(dispatcher) {
+    // Same window, same guard as the five actions above: `LaunchedEffect` runs after the first
+    // composition, and this screen is tappable in between.
+    val source = source()
+    val viewModel = warm(source)
+
+    viewModel.retryChapters()
+    advanceUntilIdle()
+
+    assertThat(source.calls).isEmpty()
+  }
 
   @Test
   fun `the cover art url is the source's, for the id and size asked for`() = runTest(dispatcher) {

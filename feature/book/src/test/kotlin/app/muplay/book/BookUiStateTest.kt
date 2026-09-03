@@ -22,7 +22,8 @@ class BookUiStateTest {
     lastPlayedAtEpochMs = 0L,
   )
 
-  private val chapters = listOf(BookChapter(0, "One", "p1", 0, 0, 4_000, 0))
+  private val chapterList = listOf(BookChapter(0, "One", "p1", 0, 0, 4_000, 0))
+  private val chapters = BookUiState.Chapters.Ready(chapterList)
   private val settings = BookSettings("wanted", speed = 1.4f, skipSilence = true)
 
   @Test
@@ -63,18 +64,51 @@ class BookUiStateTest {
     val content =
       bookUiState(listOf(book("wanted")), "wanted", chapters, settings) as BookUiState.Content
 
-    assertThat(content.chapters).isEqualTo(chapters)
+    assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Ready(chapterList))
     assertThat(content.settings).isEqualTo(settings)
   }
 
   @Test
   fun `a book whose chapters have not been extracted yet is still Content`() {
-    // Chapter extraction is an HTTP round trip per file. A screen that treated "no chapters yet"
-    // as "not loaded" would be blank for a second every time a book was opened.
-    val content =
-      bookUiState(listOf(book("wanted")), "wanted", emptyList(), settings) as BookUiState.Content
+    // Chapter extraction is an HTTP round trip per file. A screen that treated "not read yet" as
+    // "not loaded" would be blank for a second every time a book was opened.
+    val content = bookUiState(
+      listOf(book("wanted")),
+      "wanted",
+      BookUiState.Chapters.Reading,
+      settings,
+    ) as BookUiState.Content
 
-    assertThat(content.chapters).isEmpty()
+    assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Reading)
     assertThat(content.book.bookId).isEqualTo("wanted")
+  }
+
+  @Test
+  fun `a book whose chapters could not be read is still Content, with the book intact`() {
+    // The point of the whole type. A chapter read fails for every ordinary reason a self-hosted
+    // server fails, and none of them is a reason to stop showing the book: the title, the author,
+    // the position and the settings all came from Room and are untouched by it.
+    val content = bookUiState(
+      listOf(book("wanted")),
+      "wanted",
+      BookUiState.Chapters.Unavailable,
+      settings,
+    ) as BookUiState.Content
+
+    assertThat(content.chapters).isEqualTo(BookUiState.Chapters.Unavailable)
+    assertThat(content.book.title).isEqualTo("Title of wanted")
+    assertThat(content.settings).isEqualTo(settings)
+  }
+
+  @Test
+  fun `an empty chapter list is Ready, which is not the same answer as Unavailable`() {
+    // Most audiobook files carry no chapter atoms at all, so "read it, there were none" is the
+    // common case and must not render as a failure. A `List` could not tell the two apart, which
+    // is why this is a type and not a list -- and `isNotEqualTo` is the assertion that says so.
+    val ready = BookUiState.Chapters.Ready(emptyList())
+
+    assertThat(ready.chapters).isEmpty()
+    assertThat(ready).isNotEqualTo(BookUiState.Chapters.Unavailable)
+    assertThat(ready).isNotEqualTo(BookUiState.Chapters.Reading)
   }
 }

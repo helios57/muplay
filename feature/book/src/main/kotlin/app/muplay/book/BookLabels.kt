@@ -47,6 +47,28 @@ internal const val CHAPTERS_HEADING = "Chapters"
  * already rendered by then -- "loading" over a fully drawn book reads as a stuck screen.
  */
 internal const val CHAPTERS_LOADING_LABEL = "Reading chapters…"
+
+/**
+ * The chapter read threw -- an unreachable server, a stalled range request into a `moov` atom.
+ *
+ * **It names what still works**, because that is the whole point of the state it renders: a
+ * chapter-read failure leaves the cover, the position, both settings and `Resume` on screen and
+ * usable, and a bare "something went wrong" would send a listener back to the shelf for no reason.
+ * The word `Resume` is the button's own [RESUME_LABEL], which is what makes the sentence a pointer
+ * at something rather than a consolation.
+ */
+internal const val CHAPTERS_UNAVAILABLE_LABEL =
+  "Couldn't read the chapters. Resume still plays this book."
+
+/**
+ * The retry beside it.
+ *
+ * `Message` defaults its own retry label to this same word, and this constant is passed explicitly
+ * anyway: `:feature:book`'s instrumented suite finds every control by typing its string out, so a
+ * word it depends on belongs in this file with the others rather than in another module's default
+ * argument, where a change would move this screen's wording silently.
+ */
+internal const val RETRY_CHAPTERS_LABEL = "Try again"
 internal const val SKIP_SILENCE_LABEL = "Skip silence"
 
 // ---- The player ----
