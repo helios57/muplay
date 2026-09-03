@@ -1623,6 +1623,42 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // class that carries a floor, re-measure the floor's comment in the same task. It is one report
   // read, and it is the only thing standing between this table and a gate nobody can trust.
   ":core:media" to listOf(
+    // `PlaybackFailure` -- which of four sentences a listener is shown when playback stops.
+    //
+    // BRANCH, CLASS element, from **JVM data alone**: `PlaybackFailure.of` takes an `Int?` error
+    // code rather than a `PlaybackException`, precisely so the fast tier can hold it (see that
+    // function's own note on the `SystemClock` call that makes the exception unconstructable off a
+    // device). `requiresInstrumentedData` is deliberately absent.
+    //
+    // MEASURED on this tree: `PlaybackFailure` 4/4 = 1.0000, `PlaybackFailure$Companion` 19/20 =
+    // 0.9500, combined 23/24 = 0.9583. Floored at 0.90 rather than 0.95 because the companion sits
+    // exactly on 0.95 and a floor with zero margin fails on an unrelated line moving.
+    //
+    // The one missed branch is unreachable rather than untested: `in IO_RANGE` on an `Int?` subject
+    // resolves to `IntRange.contains(element: Int?)`, whose own null check cannot be reached --
+    // the `null ->` arm above it has already matched. Same shape as `CoverArtCacheKeyKt`'s.
+    //
+    // FALSIFIED, and the **first attempt did not move it**, which is worth more than the one that
+    // did:
+    //   - `@Disabled` on `a server that answered and refused is a server problem, not a network
+    //     one` -> **still 23/24**. A `when` chain's equality checks execute for every input, so
+    //     branch coverage cannot see which arm was *taken*: delete the named-constant arm entirely
+    //     and `ERROR_CODE_IO_BAD_HTTP_STATUS` silently falls through to `in IO_RANGE` -> Connection
+    //     ("Couldn't reach your server" for a wrong password) with this number unchanged. That
+    //     test is defended by no floor and has to be kept for its own sake.
+    //   - `@Disabled` on both `a container that could not be parsed is unplayable` and `a decoder
+    //     that failed is unplayable` -> **19/24 = 0.7917** combined, and 15/20 = 0.7500 for the
+    //     companion alone. Red. Those two are the only inputs that take the true side of
+    //     `in PARSING_AND_DECODING_RANGE`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.media.PlaybackFailure",
+        "app.muplay.media.PlaybackFailure*",
+      ),
+    ),
     // 15/16 = 0.9375 BRANCH from **JVM data alone** -- `StreamRetryPolicyTest`, ten tests, no
     // emulator. Confirmed by deleting the instrumented `.ec` and running
     // `jacocoJvmCoverageVerification`, which is what `requiresInstrumentedData = false` claims

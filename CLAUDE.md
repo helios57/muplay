@@ -1484,3 +1484,23 @@ on `Dispatchers.Default` that navigated a Compose back stack (a `SnapshotStateLi
 from any thread, so it would have *appeared* to work and misbehaved once a week), a `remember` that
 should have been `rememberSaveable`, and a defaulted `onRetry = {}` that would have shipped a
 "Try again" button wired to nothing. None of the three is visible to any gate in this repository.
+
+### The emulator died again on 2026-09-03, and idle host rules out the last hypothesis
+
+`muplay37` vanished mid-session (no qemu process, adb server still alive, no host reboot, no OOM
+of any kind, RAM used dropping 38 GB -> 10 GB as it went). A restart with the documented flags
+under `sg kvm` reproduced the recorded failure exactly: `Gfxstream initialized successfully!`, then
+repeated `detected a hanging thread 'QEMU2 CPU3 thread'. No response for 15004 ms`, `adb devices`
+stuck at `offline`, `sys.boot_completed` never set, and finally `Segmentation fault (core dumped)`
+(exit 139) after about twelve minutes.
+
+What this run adds to the section above is one eliminated hypothesis, measured rather than assumed:
+**it is not host load.** `vmstat` through the whole attempt read `id` 83%, `st` 0, with 51 GB free
+and load under 3. An earlier recovery had been attributed to "host I/O load dropping"; that
+attribution is now doubtful, because the quietest host this file has recorded still segfaults.
+
+Practical consequence, and it is the same as before: when this happens the device tier is gone and
+no `requiresInstrumentedData` floor can be measured. **Get the device runs in early.** This session
+kept its results only because the four module suites had been run and their XML read (with mtimes
+checked) before the emulator went; the one thing lost was a final whole-`:app` pass and fresh
+`.ec` coverage, which is why two new classes here carry no floor rather than an invented one.
