@@ -16,6 +16,7 @@ import app.muplay.model.SleepTimerRequest
 import app.muplay.model.SleepTimerState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -199,8 +200,40 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
       return
     }
     book.value = controls.book(bookId)
-    timeline.value = controls.timeline(bookId)
+    timeline.value = readTimeline(bookId)
     controls.observeSettings(bookId).collect { settings.value = it }
+  }
+
+  /**
+   * The chapter read, and the `catch` that stops it killing the app.
+   *
+   * `ChapterReader` fetches a file's `moov` atom over HTTP and throws when it cannot -- an
+   * unreachable server, a stalled range request. This runs inside a bare `viewModelScope.launch`
+   * (the `collectLatest` in `init`), and an exception out of one of those reaches the thread's
+   * default handler: `viewModelScope`'s `SupervisorJob` keeps the *scope* alive, not the process.
+   * So a book that started playing while the server was asleep used to **crash MuPlay** from this
+   * line, with the audio already running.
+   *
+   * An empty timeline, and not a state of its own, because this screen already has one and
+   * `bookPlayerUiState` is already gated on it: with no chapters it shows the transport, the
+   * cover, the title and the item's own duration, and hides the chapter marks. Everything a
+   * listener needs to keep listening survives, which is the same ruling `BookUiState.Chapters`
+   * makes on the book screen -- there it is worth a sentence and a retry because a chapter *list*
+   * is the point of that screen; here nothing would be added by saying it.
+   *
+   * The settings collection below is deliberately outside this: it is a Room flow that does not
+   * fail, and folding it in would tie a listener's speed to their server being awake.
+   *
+   * `CancellationException` is rethrown first, as `SyncEngine.syncIfStale` does for the same
+   * reason -- `collectLatest` cancels this body every time the media id changes, and swallowing
+   * that would publish an empty timeline over the book that replaced it.
+   */
+  private suspend fun readTimeline(bookId: String): List<BookChapter> = try {
+    controls.timeline(bookId)
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Exception) {
+    emptyList()
   }
 
   fun playPause() {

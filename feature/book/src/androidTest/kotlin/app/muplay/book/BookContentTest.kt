@@ -27,9 +27,11 @@ import org.junit.runner.RunWith
  * prove is the `LaunchedEffect(bookId) { viewModel.load(bookId) }` in the stateful entry point,
  * which is the one line an `:app` journey has to cover.
  *
- * **These tests have never been executed.** They were written with the emulator unavailable; every
- * assertion is an argument, not a measurement. See the `:feature:book` entry in the root
- * `coverageFloors` table.
+ * **They have been executed now.** The header used to say they never had -- they were written with
+ * the emulator down -- and that is no longer true: the whole module suite ran green on
+ * `muplay37`, 45 of 45, on the run that added the three chapter-failure tests below. The claim is
+ * corrected rather than deleted because the difference matters to anyone reading an assertion
+ * here: these are measurements, not arguments.
  *
  * camelCase method names: D8 refuses a space in any `SimpleName` at DEX 035.
  */
@@ -53,13 +55,14 @@ class BookContentTest {
         onPlayChapter = { playedChapters += it },
         onSpeed = { speeds += it },
         onSkipSilence = { skipSilence += it },
+        onRetryChapters = { actions += "retryChapters" },
         coverArtUrl = NO_COVER,
       )
     }
   }
 
   private fun content(
-    chapters: List<BookChapter> = chapters(),
+    chapters: BookUiState.Chapters = BookUiState.Chapters.Ready(chapters()),
     settings: BookSettings = bookSettings(),
   ) = BookUiState.Content(book = startedBook(), chapters = chapters, settings = settings)
 
@@ -134,7 +137,7 @@ class BookContentTest {
    */
   @Test
   fun aBookWhoseChaptersHaveNotArrivedStillRendersItselfAndSaysTheyAreComing() {
-    show(content(chapters = emptyList()))
+    show(content(chapters = BookUiState.Chapters.Reading))
 
     composeRule.onNodeWithText(STARTED_TITLE).assertIsDisplayed()
     composeRule.onNodeWithText(RESUME_LABEL).assertIsDisplayed()
@@ -142,6 +145,76 @@ class BookContentTest {
     composeRule.onNodeWithText(CHAPTERS_LOADING_LABEL).assertIsDisplayed()
     // Not "loading", which over a fully drawn book reads as a stuck screen.
     composeRule.onNodeWithText(LOADING_BOOK_LABEL).assertDoesNotExist()
+    // And no retry, because there is nothing to retry yet. `Message`'s own KDoc makes the case:
+    // a retry button that does nothing is worse than no button, which is why `onRetry` is
+    // nullable rather than defaulted to a no-op.
+    composeRule.onNodeWithText(RETRY_CHAPTERS_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(CHAPTERS_UNAVAILABLE_LABEL).assertDoesNotExist()
+  }
+
+  /**
+   * A chapter read that failed takes the chapter *list* down and nothing else.
+   *
+   * This is the assertion the whole `BookUiState.Chapters` type exists for, and it is on the
+   * device tier because it is the only tier that can see it: no JVM test in this project composes
+   * anything, so "the sentence is where the chapters were, and `Resume` is still above it and
+   * still reports" is unobservable from `:feature:book:test`.
+   *
+   * `Resume` is pressed rather than merely looked at. A screen that rendered the button but had
+   * stopped wiring it -- which is what an error state at the *screen* level would produce, since
+   * the whole `Content` arm would be gone -- passes an `assertIsDisplayed` and fails this.
+   */
+  @Test
+  fun chaptersThatCouldNotBeReadSaySoAndLeaveResumeWorking() {
+    show(content(chapters = BookUiState.Chapters.Unavailable))
+
+    // Before scrolling: `Resume` is above the fold, and pressing it is what proves it still works.
+    composeRule.onNodeWithText(RESUME_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithText(RESUME_LABEL).performClick()
+
+    scrollTo(CHAPTERS_UNAVAILABLE_LABEL)
+    composeRule.onNodeWithText(CHAPTERS_UNAVAILABLE_LABEL).assertIsDisplayed()
+    // Two different sentences for two different states. "Reading chapters..." left up over a read
+    // that has already failed is a screen that spins forever.
+    composeRule.onNodeWithText(CHAPTERS_LOADING_LABEL).assertDoesNotExist()
+    // Not a screen: the book is not "gone" and must not say so.
+    composeRule.onNodeWithText(BOOK_NOT_FOUND_LABEL).assertDoesNotExist()
+    assertThat(actions).containsExactly("resume")
+  }
+
+  /**
+   * The retry reports, which is `Message.onRetry`'s first caller in this app.
+   *
+   * `playedChapters` is asserted empty in the same breath: the retry sits where the chapter rows
+   * would be, and a press that had landed on a row instead would still leave the screen looking
+   * right.
+   */
+  @Test
+  fun theRetryUnderAFailedChapterReadReportsThePress() {
+    show(content(chapters = BookUiState.Chapters.Unavailable))
+
+    scrollTo(RETRY_CHAPTERS_LABEL)
+    composeRule.onNodeWithText(RETRY_CHAPTERS_LABEL).performClick()
+
+    assertThat(actions).containsExactly("retryChapters")
+    assertThat(playedChapters).isEmpty()
+  }
+
+  /**
+   * An empty answer is not a failed one, and they render differently.
+   *
+   * Most audiobook files carry no chapter atoms at all, so `Ready(emptyList())` is the common case
+   * -- the read worked and there was nothing in the file. A screen that folded it into
+   * `Unavailable` would offer a retry that can only ever find the same nothing.
+   */
+  @Test
+  fun aBookWhoseFilesCarryNoChaptersIsNotAFailedRead() {
+    show(content(chapters = BookUiState.Chapters.Ready(emptyList())))
+
+    composeRule.onNodeWithText(CHAPTERS_HEADING).assertExists()
+    composeRule.onNodeWithText(CHAPTERS_UNAVAILABLE_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(RETRY_CHAPTERS_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(CHAPTERS_LOADING_LABEL).assertDoesNotExist()
   }
 
   /**
