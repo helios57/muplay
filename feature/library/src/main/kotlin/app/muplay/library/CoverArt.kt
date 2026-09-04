@@ -36,7 +36,7 @@ fun CoverArtImage(
     Box(
       modifier = modifier
         .clip(RoundedCornerShape(4.dp))
-        .background(MaterialTheme.colorScheme.surfaceVariant),
+        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     )
     return
   }

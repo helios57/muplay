@@ -440,7 +440,11 @@ private const val SECONDARY_GLYPH_DP = 30
  * and stays at 1.76:1.
  */
 @Composable
-internal fun ProgressRule(fraction: Float, modifier: Modifier = Modifier) {
+internal fun ProgressRule(
+  fraction: Float,
+  modifier: Modifier = Modifier,
+  color: Color = MaterialTheme.colorScheme.primary,
+) {
   Box(
     modifier = modifier
       .fillMaxWidth()
@@ -452,7 +456,7 @@ internal fun ProgressRule(fraction: Float, modifier: Modifier = Modifier) {
       modifier = Modifier
         .fillMaxWidth(fraction.coerceIn(0f, 1f))
         .fillMaxHeight()
-        .background(MaterialTheme.colorScheme.primary),
+        .background(color),
     )
   }
 }

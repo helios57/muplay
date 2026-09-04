@@ -47,11 +47,11 @@ GEOMETRY = {
     # Adaptive background: the brand field, with one lighter disc offset up-and-left so the icon
     # has some depth under a circular mask without carrying any detail that a 48dp render loses.
     "background": [
-        {"kind": "rect", "bounds": (0.0, 0.0, 108.0, 108.0), "radius": 0.0, "colour": "#4F378B"},
+        {"kind": "rect", "bounds": (0.0, 0.0, 108.0, 108.0), "radius": 0.0, "colour": "#005048"},
         # Deliberately overflows the 108x108 viewport on three sides: a VectorDrawable
         # rasterises into its own bounds, so the overflow is clipped by construction and needs no
         # <clip-path>. What is left inside the viewport is one soft diagonal edge, bottom-right.
-        {"kind": "circle", "centre": (30.0, 26.0), "radius": 74.0, "colour": "#6750A4"},
+        {"kind": "circle", "centre": (30.0, 26.0), "radius": 74.0, "colour": "#00695E"},
     ],
     # Adaptive foreground, and (recoloured) the monochrome layer.
     "foreground": [

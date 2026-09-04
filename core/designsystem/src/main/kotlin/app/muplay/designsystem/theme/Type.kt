@@ -51,8 +51,10 @@ val MuPlayTypography = Typography(
   bodySmall = TextStyle(fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 17.sp, letterSpacing = 0.3.sp),
 
   labelLarge = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp),
-  // The eyebrow. `MuPlaySectionHeader` uses this one; the tracking is what makes a sentence-case
-  // string read as a heading without changing a character of it.
+  // The eyebrow. There is no `MuPlaySectionHeader` -- this KDoc named one for a while and nothing
+  // by that name has ever existed. What uses it is each screen's own `private fun SectionHeader`
+  // (`LibraryScreen`, `BookshelfScreen`) and the two book screens' inline headings. The tracking
+  // is what makes a sentence-case string read as a heading without changing a character of it.
   labelMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.9.sp),
   labelSmall = TextStyle(fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 15.sp, letterSpacing = 0.6.sp),
 )

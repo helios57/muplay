@@ -85,9 +85,11 @@ TAGLINE = ["Music and audiobooks", "from your own Navidrome server"]
 TAGLINE_SIZE = 40
 TAGLINE_TOP = 292
 TAGLINE_LEADING = 52
-# Material 3's `primaryContainer` tone against this field: readable on #4F378B without being the
-# same pure white as the wordmark, so the two lines read as a hierarchy rather than one block.
-TAGLINE_COLOUR = "#E8DEF8"
+# MuPlay's own `primaryContainer` against this field: readable on #005048 without being the same
+# pure white as the wordmark, so the two lines read as a hierarchy rather than one block. It was
+# #E8DEF8 -- Material's *baseline* purple container -- which is the tone that belongs on the
+# template field this app no longer uses.
+TAGLINE_COLOUR = "#7FF8E4"
 WORDMARK_COLOUR = "#FFFFFF"
 
 # Absolute floor below which a shrunk string stops being a store asset and starts being a defect.

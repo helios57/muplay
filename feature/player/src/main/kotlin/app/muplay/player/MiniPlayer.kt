@@ -148,8 +148,10 @@ private fun MiniPlayerBar(
 
   Surface(
     modifier = Modifier.fillMaxWidth(),
+    // No `tonalElevation`: M3 applies a tonal overlay only when the colour is `surface`, so
+    // passing both an explicit `surfaceContainer` and an elevation drew exactly the container
+    // colour and the elevation did nothing. The tier itself is what lifts the bar off the page.
     color = MaterialTheme.colorScheme.surfaceContainer,
-    tonalElevation = 3.dp,
   ) {
     Column {
       Row(
@@ -247,11 +249,21 @@ private fun MiniPlayerBar(
       // A track whose duration is not yet known reads as zero rather than as full: `x / 0` would
       // be a division by zero and `x / 0f` an Infinity, and an Infinity into a width fraction is a
       // bar that claims a track just starting is over.
+      // **The bar speaks the voice of what is playing.** `PlaybackState` already carries
+      // `isAudiobook`, and this was the one place in the app where "what is playing follows you"
+      // was visibly wrong: a teal hairline sat under an amber book shelf, because the rule always
+      // drew `primary`. The two players, the bookshelf and the book screens are all `tertiary`
+      // for a book; this is the strip that follows the user between them.
       ProgressRule(
         fraction = content.playback.durationMs
           .takeIf { it > 0L }
           ?.let { content.displayPositionMs.toFloat() / it }
           ?: 0f,
+        color = if (content.playback.isAudiobook) {
+          MaterialTheme.colorScheme.tertiary
+        } else {
+          MaterialTheme.colorScheme.primary
+        },
       )
     }
   }

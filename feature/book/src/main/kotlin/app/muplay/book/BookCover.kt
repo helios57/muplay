@@ -60,7 +60,7 @@ internal fun BookCover(
     Box(
       modifier = modifier
         .clip(shape)
-        .background(MaterialTheme.colorScheme.surfaceVariant),
+        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     )
     return
   }

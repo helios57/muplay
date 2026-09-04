@@ -124,6 +124,41 @@ val MuPlayOnSurfaceDark = Color(0xFFDEE4E1)
 val MuPlaySurfaceVariantDark = Color(0xFF3F4946)
 val MuPlayOnSurfaceVariantDark = Color(0xFFBEC9C4)
 val MuPlayOutlineDark = Color(0xFF89938F)
+
+/**
+ * The quietest rule, and also the seek bar's and `ProgressRule`'s unplayed track.
+ *
+ * **It is 2.00:1 against `MuPlaySurfaceDark`, and that is left as it is deliberately.** An audit
+ * called the 3dp track near-invisible in dark, which is true; the fix is not, because a track has
+ * two contrast obligations at once and they pull against each other. It must be visible against
+ * the background *and* the played fill drawn over it must be visible against it. Measured across
+ * the neutral ramp, against the three surfaces a track is actually drawn on (`surface`,
+ * `surfaceContainer`, `surfaceContainerLow`) and both fills (`primary`, `tertiary`):
+ *
+ * | candidate | vs surface | vs surfaceContainer | vs primary | worst |
+ * |-----------|-----------|---------------------|-----------|-------|
+ * | `#3F4946` (this)  | 2.00 | 1.79 | 5.52 | 1.79 |
+ * | `#5B6561`         | 3.08 | 2.71 | 3.57 | 2.71 |
+ * | **`#646E6A`**     | 3.53 | 3.10 | 3.12 | **3.10** |
+ * | `#6D7773`         | 4.02 | 3.54 | 2.74 | 2.74 |
+ *
+ * So exactly one value on the ramp clears 3:1 everywhere, with 0.10 to spare.
+ *
+ * **The light half cannot be fixed at all, and that is what settles it.** Light `surface`
+ * (`#FBF9F5`) to light `primary` (`#00695E`) is only **6.28:1** end to end. A track sits between
+ * them, and the two ratios multiply to roughly that total, so both reaching 3:1 needs **9:1** of
+ * range. Brute-forced over all 256 greys, the best achievable worst-case in light is 3.18:1 — and
+ * only at `#000000`, which is a bold rule, not a hairline. There is no light value that is both
+ * compliant and a hairline.
+ *
+ * Taking `#646E6A` in dark alone would therefore buy a compliant dark track at the cost of a
+ * divider that is 3.53:1 in dark and 1.61:1 in light — the same role reading as a crisp grid in
+ * one theme and a whisper in the other. Material's own `outlineVariant` is ~1.6:1 for this reason.
+ *
+ * The real fix is a track role of its own, separate from the divider role, which is a colour
+ * outside `ColorScheme` and the theme machinery to carry it. Worth doing; not worth doing
+ * halfway. **Do not "fix" this by nudging one theme.**
+ */
 val MuPlayOutlineVariantDark = Color(0xFF3F4946)
 
 val MuPlaySurfaceContainerLowestDark = Color(0xFF090F0E)

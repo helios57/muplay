@@ -49,7 +49,7 @@ fun Artwork(
   Box(
     modifier = modifier
       .clip(shape)
-      .background(MaterialTheme.colorScheme.surfaceVariant)
+      .background(MaterialTheme.colorScheme.surfaceContainerHighest)
       // On the Box, not on the AsyncImage: the placeholder must carry the same label as the
       // loaded image, or the screen loses its only description of this element for as long as the
       // art takes to arrive -- or forever, for a track the server has no art for.
