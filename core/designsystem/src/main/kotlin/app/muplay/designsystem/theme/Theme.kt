@@ -116,3 +116,56 @@ fun MuPlayTheme(
     content = content,
   )
 }
+
+/**
+ * [scheme] with the **audiobook voice in the roles Material reaches for by default**.
+ *
+ * `Color.kt` says `primary` is the music voice and `tertiary` the audiobook one, and that the book
+ * screens "use it exactly where the music screens use `primary`". Sixteen call sites across the
+ * three book screens do say `tertiary` by hand. The problem is everything that never asks: a
+ * `Button` takes `primary` for its container, an `OutlinedButton` and a `TextButton` take it for
+ * their content, a `Switch` takes `primary`/`onPrimary` for its track and thumb, a
+ * `LinearProgressIndicator` for its bar, and `surfaceTint` — which neither scheme sets, so
+ * `lightColorScheme()` defaults it to `primary` — tints every elevated surface with it.
+ *
+ * Measured on the tree this was written against: `BookScreen`'s skip-silence `Switch` and its
+ * "start again" `OutlinedButton`, and `BookPlayerScreen`'s sleep-timer `OutlinedButton`, were all
+ * rendering in the *music* voice on an audiobook screen. Nothing in their source names a colour,
+ * which is why reading the book screens does not reveal it.
+ *
+ * **Remapping rather than recolouring is the point.** Only the four `primary` roles and
+ * `surfaceTint` move; the chassis (surfaces, outlines, error, typography) is untouched, because
+ * "the two instruments never read as two apps" is the other half of the same claim. The `tertiary`
+ * roles are left exactly as they are, so the sixteen call sites that already had it right do not
+ * shift underneath this.
+ *
+ * A plain function over a plain value, not a `@Composable`, for the reason [colorSchemeFor] gives:
+ * it is then held by `BookVoiceTest` on the fast tier.
+ */
+internal fun bookVoiceScheme(scheme: ColorScheme): ColorScheme = scheme.copy(
+  primary = scheme.tertiary,
+  onPrimary = scheme.onTertiary,
+  primaryContainer = scheme.tertiaryContainer,
+  onPrimaryContainer = scheme.onTertiaryContainer,
+  surfaceTint = scheme.tertiary,
+)
+
+/**
+ * Wraps [content] so that **every** Material default inside it speaks the audiobook voice — see
+ * [bookVoiceScheme] for what that means and which components were getting it wrong.
+ *
+ * Every audiobook screen belongs inside one of these. Doing it per call site is what produced the
+ * leak: the explicit `tertiary` arguments are correct and were never the problem, but each is a
+ * thing somebody has to remember, and the next component added to a book screen will not have it.
+ * Here the default is right and an exception has to be written down, which is the way round that
+ * survives.
+ */
+@Composable
+fun BookVoice(content: @Composable () -> Unit) {
+  MaterialTheme(
+    colorScheme = bookVoiceScheme(MaterialTheme.colorScheme),
+    typography = MaterialTheme.typography,
+    shapes = MaterialTheme.shapes,
+    content = content,
+  )
+}

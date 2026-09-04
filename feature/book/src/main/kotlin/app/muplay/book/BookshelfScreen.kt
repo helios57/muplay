@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.theme.BookVoice
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.BookSummary
@@ -88,30 +89,32 @@ internal fun BookshelfContent(
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
-  when (state) {
-    BookshelfUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOKS_LABEL, loading = true) }
-    BookshelfUiState.Empty -> Centred(modifier) { Message(text = NO_BOOKS_LABEL) }
-    is BookshelfUiState.Content -> LazyColumn(
-      modifier = modifier.fillMaxSize(),
-      contentPadding = PaddingValues(
-        horizontal = MuPlaySpacing.lg,
-        vertical = MuPlaySpacing.md,
-      ),
-      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-    ) {
-      // Both headers are conditional, and both conditions are real: a listener who has started
-      // everything has no second group, and one who has started nothing has no first. A header
-      // over an empty list is a heading for nothing.
-      if (state.continueListening.isNotEmpty()) {
-        item { SectionHeader(CONTINUE_LISTENING_LABEL) }
-        items(state.continueListening, key = { it.bookId }) { book ->
-          BookRow(book, onBookClick, onResume, coverArtUrl)
+  BookVoice {
+    when (state) {
+      BookshelfUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOKS_LABEL, loading = true) }
+      BookshelfUiState.Empty -> Centred(modifier) { Message(text = NO_BOOKS_LABEL) }
+      is BookshelfUiState.Content -> LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+          horizontal = MuPlaySpacing.lg,
+          vertical = MuPlaySpacing.md,
+        ),
+        verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+      ) {
+        // Both headers are conditional, and both conditions are real: a listener who has started
+        // everything has no second group, and one who has started nothing has no first. A header
+        // over an empty list is a heading for nothing.
+        if (state.continueListening.isNotEmpty()) {
+          item { SectionHeader(CONTINUE_LISTENING_LABEL) }
+          items(state.continueListening, key = { it.bookId }) { book ->
+            BookRow(book, onBookClick, onResume, coverArtUrl)
+          }
         }
-      }
-      if (state.rest.isNotEmpty()) {
-        item { SectionHeader(BOOKSHELF_TITLE) }
-        items(state.rest, key = { it.bookId }) { book ->
-          BookRow(book, onBookClick, onResume, coverArtUrl)
+        if (state.rest.isNotEmpty()) {
+          item { SectionHeader(BOOKSHELF_TITLE) }
+          items(state.rest, key = { it.bookId }) { book ->
+            BookRow(book, onBookClick, onResume, coverArtUrl)
+          }
         }
       }
     }

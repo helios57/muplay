@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.theme.BookVoice
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
@@ -141,79 +142,81 @@ internal fun BookPlayerContent(
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
-  when (state) {
-    BookPlayerUiState.NothingPlaying -> Box(
-      modifier = modifier.fillMaxSize(),
-      contentAlignment = Alignment.Center,
-    ) {
-      Message(text = NOTHING_PLAYING_LABEL)
-    }
-
-    is BookPlayerUiState.Content -> Column(modifier = modifier.fillMaxSize()) {
-      NowReading(state = state, coverArtUrl = coverArtUrl)
-
-      // The only scrolling region. `contentPadding` rather than a padded parent so the chapter
-      // rows' ripples reach the gutter and the list scrolls under the header edge to edge.
-      LazyColumn(
-        modifier = Modifier.weight(1f),
-        contentPadding = PaddingValues(
-          start = MuPlaySpacing.gutter,
-          end = MuPlaySpacing.gutter,
-          bottom = MuPlaySpacing.md,
-        ),
+  BookVoice {
+    when (state) {
+      BookPlayerUiState.NothingPlaying -> Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
       ) {
-        // **First in the list, above the speed stepper, and inside the scrolling region.**
-        //
-        // The transport row below is pinned outside this `LazyColumn`, so putting the message here
-        // costs it no height and cannot push it off a short screen -- the failure mode
-        // `LibraryScreen` was fixed for in this same batch. First rather than anywhere else
-        // because a listener whose book has stopped is looking at the top of the screen.
-        state.failure?.let { failure ->
-          item {
-            // **No `onRetry`.** `Message`'s retry parameter is nullable precisely so a caller
-            // can say "there is nothing useful to add here", and this is that case: the transport
-            // row three inches below is permanently on screen and its play button already
-            // re-prepares the player. A second "Try again" would be two affordances for one
-            // action, and the one further from the thumb.
-            Message(text = failure.message())
-          }
-        }
-        item {
-          SpeedStepper(
-            speed = state.speed,
-            onSpeed = onSpeed,
-            modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.md),
-          )
-        }
-        item {
-          SleepTimerRow(
-            timer = state.sleepTimer,
-            onPreset = onSleepPreset,
-            onEndOfChapter = onEndOfChapter,
-            onCancel = onCancelTimer,
-            modifier = Modifier.padding(bottom = MuPlaySpacing.sm),
-          )
-        }
-        items(state.chapters, key = { it.index }) { chapter ->
-          ChapterRow(
-            chapter = chapter,
-            // `chapterNumber` is one-based, `BookChapter.index` is not -- `chapterRowLabel` makes
-            // the same `+ 1` for the same reason. Lighting the row a listener is inside is what
-            // makes a pinned list worth pinning: it answers "which one is this" without a wait.
-            isCurrent = chapter.index == state.chapterNumber - 1,
-            onClick = { onChapter(chapter) },
-          )
-        }
+        Message(text = NOTHING_PLAYING_LABEL)
       }
 
-      Transport(
-        isPlaying = state.isPlaying,
-        hasFailed = state.failure != null,
-        onPlayPause = onPlayPause,
-        onPreviousChapter = onPreviousChapter,
-        onNextChapter = onNextChapter,
-        onNudge = onNudge,
-      )
+      is BookPlayerUiState.Content -> Column(modifier = modifier.fillMaxSize()) {
+        NowReading(state = state, coverArtUrl = coverArtUrl)
+
+        // The only scrolling region. `contentPadding` rather than a padded parent so the chapter
+        // rows' ripples reach the gutter and the list scrolls under the header edge to edge.
+        LazyColumn(
+          modifier = Modifier.weight(1f),
+          contentPadding = PaddingValues(
+            start = MuPlaySpacing.gutter,
+            end = MuPlaySpacing.gutter,
+            bottom = MuPlaySpacing.md,
+          ),
+        ) {
+          // **First in the list, above the speed stepper, and inside the scrolling region.**
+          //
+          // The transport row below is pinned outside this `LazyColumn`, so putting the message here
+          // costs it no height and cannot push it off a short screen -- the failure mode
+          // `LibraryScreen` was fixed for in this same batch. First rather than anywhere else
+          // because a listener whose book has stopped is looking at the top of the screen.
+          state.failure?.let { failure ->
+            item {
+              // **No `onRetry`.** `Message`'s retry parameter is nullable precisely so a caller
+              // can say "there is nothing useful to add here", and this is that case: the transport
+              // row three inches below is permanently on screen and its play button already
+              // re-prepares the player. A second "Try again" would be two affordances for one
+              // action, and the one further from the thumb.
+              Message(text = failure.message())
+            }
+          }
+          item {
+            SpeedStepper(
+              speed = state.speed,
+              onSpeed = onSpeed,
+              modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.md),
+            )
+          }
+          item {
+            SleepTimerRow(
+              timer = state.sleepTimer,
+              onPreset = onSleepPreset,
+              onEndOfChapter = onEndOfChapter,
+              onCancel = onCancelTimer,
+              modifier = Modifier.padding(bottom = MuPlaySpacing.sm),
+            )
+          }
+          items(state.chapters, key = { it.index }) { chapter ->
+            ChapterRow(
+              chapter = chapter,
+              // `chapterNumber` is one-based, `BookChapter.index` is not -- `chapterRowLabel` makes
+              // the same `+ 1` for the same reason. Lighting the row a listener is inside is what
+              // makes a pinned list worth pinning: it answers "which one is this" without a wait.
+              isCurrent = chapter.index == state.chapterNumber - 1,
+              onClick = { onChapter(chapter) },
+            )
+          }
+        }
+
+        Transport(
+          isPlaying = state.isPlaying,
+          hasFailed = state.failure != null,
+          onPlayPause = onPlayPause,
+          onPreviousChapter = onPreviousChapter,
+          onNextChapter = onNextChapter,
+          onNudge = onNudge,
+        )
+      }
     }
   }
 }

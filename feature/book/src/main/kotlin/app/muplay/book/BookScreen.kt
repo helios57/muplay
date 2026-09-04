@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.theme.BookVoice
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
@@ -109,161 +110,163 @@ internal fun BookContent(
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
-  when (state) {
-    BookUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOK_LABEL, loading = true) }
-    BookUiState.NotFound -> Centred(modifier) { Message(text = BOOK_NOT_FOUND_LABEL) }
-    is BookUiState.Content -> LazyColumn(
-      modifier = modifier.fillMaxSize(),
-      contentPadding = PaddingValues(
-        horizontal = MuPlaySpacing.gutter,
-        vertical = MuPlaySpacing.lg,
-      ),
-    ) {
-      item {
-        Column(
-          modifier = Modifier.padding(bottom = MuPlaySpacing.lg),
-          verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
-        ) {
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
-            verticalAlignment = Alignment.CenterVertically,
+  BookVoice {
+    when (state) {
+      BookUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOK_LABEL, loading = true) }
+      BookUiState.NotFound -> Centred(modifier) { Message(text = BOOK_NOT_FOUND_LABEL) }
+      is BookUiState.Content -> LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+          horizontal = MuPlaySpacing.gutter,
+          vertical = MuPlaySpacing.lg,
+        ),
+      ) {
+        item {
+          Column(
+            modifier = Modifier.padding(bottom = MuPlaySpacing.lg),
+            verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
           ) {
-            BookCover(
-              coverArtId = state.book.coverArtId,
-              sizePx = COVER_DETAIL_PX,
-              // Null, as on the shelf: the title is right beside it as text.
-              contentDescription = null,
-              urlProvider = coverArtUrl,
-              shape = MaterialTheme.shapes.medium,
-              modifier = Modifier.size(COVER_DETAIL_DP.dp),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs)) {
-              Text(
-                text = state.book.title,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = TITLE_LINES,
-                overflow = TextOverflow.Ellipsis,
-                // The screen's subject. TalkBack's heading navigation is how somebody using a
-                // screen reader skips the header and gets to the chapters.
-                modifier = Modifier.semantics { heading() },
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              BookCover(
+                coverArtId = state.book.coverArtId,
+                sizePx = COVER_DETAIL_PX,
+                // Null, as on the shelf: the title is right beside it as text.
+                contentDescription = null,
+                urlProvider = coverArtUrl,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.size(COVER_DETAIL_DP.dp),
               )
-              Text(
-                text = state.book.author,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
-              Text(
-                text = formatRemaining(state.book.remainingMs),
-                style = MaterialTheme.typography.labelMedium,
+              Column(verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs)) {
+                Text(
+                  text = state.book.title,
+                  style = MaterialTheme.typography.titleLarge,
+                  maxLines = TITLE_LINES,
+                  overflow = TextOverflow.Ellipsis,
+                  // The screen's subject. TalkBack's heading navigation is how somebody using a
+                  // screen reader skips the header and gets to the chapters.
+                  modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                  text = state.book.author,
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                  text = formatRemaining(state.book.remainingMs),
+                  style = MaterialTheme.typography.labelMedium,
+                  color = MaterialTheme.colorScheme.tertiary,
+                )
+              }
+            }
+
+            // The same "where am I" the shelf draws, and conditional on the same flag for the same
+            // reason: a bar at zero on a book nobody has opened says nothing and looks broken.
+            if (state.book.hasStarted) {
+              LinearProgressIndicator(
+                progress = { state.book.progressFraction.toFloat() },
                 color = MaterialTheme.colorScheme.tertiary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
               )
             }
           }
-
-          // The same "where am I" the shelf draws, and conditional on the same flag for the same
-          // reason: a bar at zero on a book nobody has opened says nothing and looks broken.
-          if (state.book.hasStarted) {
-            LinearProgressIndicator(
-              progress = { state.book.progressFraction.toFloat() },
-              color = MaterialTheme.colorScheme.tertiary,
-              trackColor = MaterialTheme.colorScheme.surfaceVariant,
-              modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
-            )
-          }
         }
-      }
 
-      item {
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-          modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.lg),
-        ) {
-          Button(
-            onClick = onResume,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.tertiary,
-              contentColor = MaterialTheme.colorScheme.onTertiary,
-            ),
-            modifier = Modifier.weight(1f),
+        item {
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+            modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.lg),
           ) {
-            Icon(
-              MuPlayIcons.Play,
-              contentDescription = null,
-              modifier = Modifier.size(INLINE_GLYPH_DP.dp),
-            )
-            Text(RESUME_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
-          }
-          OutlinedButton(onClick = onRestart, modifier = Modifier.weight(1f)) {
-            Icon(
-              MuPlayIcons.RotateBack,
-              contentDescription = null,
-              modifier = Modifier.size(INLINE_GLYPH_DP.dp),
-            )
-            Text(
-              text = START_OVER_LABEL,
-              maxLines = START_OVER_LINES,
-              modifier = Modifier.padding(start = MuPlaySpacing.sm),
-            )
+            Button(
+              onClick = onResume,
+              colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary,
+                contentColor = MaterialTheme.colorScheme.onTertiary,
+              ),
+              modifier = Modifier.weight(1f),
+            ) {
+              Icon(
+                MuPlayIcons.Play,
+                contentDescription = null,
+                modifier = Modifier.size(INLINE_GLYPH_DP.dp),
+              )
+              Text(RESUME_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+            }
+            OutlinedButton(onClick = onRestart, modifier = Modifier.weight(1f)) {
+              Icon(
+                MuPlayIcons.RotateBack,
+                contentDescription = null,
+                modifier = Modifier.size(INLINE_GLYPH_DP.dp),
+              )
+              Text(
+                text = START_OVER_LABEL,
+                maxLines = START_OVER_LINES,
+                modifier = Modifier.padding(start = MuPlaySpacing.sm),
+              )
+            }
           }
         }
-      }
 
-      item {
-        // The speed control on **this** screen writes the book's row rather than the player: a
-        // listener can set a book's speed before ever starting it, and `BookPlayerViewModel` is
-        // the other direction. They meet at the same row.
-        SpeedStepper(
-          speed = state.settings.speed,
-          onSpeed = onSpeed,
-          modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.sm),
-        )
-      }
-
-      item {
-        SkipSilenceRow(
-          checked = state.settings.skipSilence,
-          onCheckedChange = onSkipSilence,
-        )
-      }
-
-      item {
-        Text(
-          text = CHAPTERS_HEADING,
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier
-            .padding(top = MuPlaySpacing.sm, bottom = MuPlaySpacing.xs)
-            .semantics { heading() },
-        )
-      }
-
-      // Three arms, and every one of them leaves the four blocks above on screen. Extraction is an
-      // HTTP round trip per file, so it is slow when it works and it fails for every ordinary
-      // reason a self-hosted server fails -- and **neither is a reason to take the book down**:
-      // `Resume`, the progress bar and both settings need no chapters at all.
-      //
-      // `Reading` says "reading chapters" rather than "loading" because the rest of the screen has
-      // already drawn by then, and "loading" over a fully drawn book reads as a stuck screen.
-      // `Unavailable` is the first caller of `Message`'s `onRetry` in this app: the read is a
-      // transport failure, so the same read a minute later usually works, and the button is how a
-      // listener says so without leaving the screen and coming back.
-      when (val chapters = state.chapters) {
-        BookUiState.Chapters.Reading -> item {
-          Message(text = CHAPTERS_LOADING_LABEL, loading = true)
-        }
-
-        BookUiState.Chapters.Unavailable -> item {
-          Message(
-            text = CHAPTERS_UNAVAILABLE_LABEL,
-            onRetry = onRetryChapters,
-            retryLabel = RETRY_CHAPTERS_LABEL,
+        item {
+          // The speed control on **this** screen writes the book's row rather than the player: a
+          // listener can set a book's speed before ever starting it, and `BookPlayerViewModel` is
+          // the other direction. They meet at the same row.
+          SpeedStepper(
+            speed = state.settings.speed,
+            onSpeed = onSpeed,
+            modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.sm),
           )
         }
 
-        is BookUiState.Chapters.Ready -> items(chapters.chapters, key = { it.index }) { chapter ->
-          ChapterRow(chapter = chapter, onClick = { onPlayChapter(chapter) })
+        item {
+          SkipSilenceRow(
+            checked = state.settings.skipSilence,
+            onCheckedChange = onSkipSilence,
+          )
+        }
+
+        item {
+          Text(
+            text = CHAPTERS_HEADING,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+              .padding(top = MuPlaySpacing.sm, bottom = MuPlaySpacing.xs)
+              .semantics { heading() },
+          )
+        }
+
+        // Three arms, and every one of them leaves the four blocks above on screen. Extraction is an
+        // HTTP round trip per file, so it is slow when it works and it fails for every ordinary
+        // reason a self-hosted server fails -- and **neither is a reason to take the book down**:
+        // `Resume`, the progress bar and both settings need no chapters at all.
+        //
+        // `Reading` says "reading chapters" rather than "loading" because the rest of the screen has
+        // already drawn by then, and "loading" over a fully drawn book reads as a stuck screen.
+        // `Unavailable` is the first caller of `Message`'s `onRetry` in this app: the read is a
+        // transport failure, so the same read a minute later usually works, and the button is how a
+        // listener says so without leaving the screen and coming back.
+        when (val chapters = state.chapters) {
+          BookUiState.Chapters.Reading -> item {
+            Message(text = CHAPTERS_LOADING_LABEL, loading = true)
+          }
+
+          BookUiState.Chapters.Unavailable -> item {
+            Message(
+              text = CHAPTERS_UNAVAILABLE_LABEL,
+              onRetry = onRetryChapters,
+              retryLabel = RETRY_CHAPTERS_LABEL,
+            )
+          }
+
+          is BookUiState.Chapters.Ready -> items(chapters.chapters, key = { it.index }) { chapter ->
+            ChapterRow(chapter = chapter, onClick = { onPlayChapter(chapter) })
+          }
         }
       }
     }
