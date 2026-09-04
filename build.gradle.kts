@@ -925,6 +925,45 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.setup.SetupFailureReason*",
       ),
     ),
+    // `ServerSection` -- the way back out of a mistyped server, and the only caller anywhere of
+    // `CredentialStore.clear()`. Before it existed, setup could be reached exactly once, on first
+    // run: a wrong URL, a changed password or a phone being sold left reinstalling as the only
+    // route. See the class's own header.
+    //
+    // LINE rather than BRANCH, per this table's doctrine for Compose-bearing files, and the
+    // numbers say why: **`ServerSection` measures 15/28 = 0.5357 BRANCH and `ServerSectionKt`
+    // 26/48 = 0.5417**, essentially all of it `$changed`-bitmask and skipping branches the Compose
+    // compiler emits at every call site. Measured LINE, 2026-09-05: `ServerSection` **13/13 =
+    // 1.0000**, `ServerSectionKt` **33/34 = 0.9706**, the nested `$Content$1$1$1` 3/3 and
+    // `$Content$1$1$1$1` 1/1.
+    //
+    // `ServerSectionKt`'s one missed line is `internal fun ServerSummary(` -- the stateless
+    // overload's own declaration line, the same Compose codegen artifact `SetupScreenKt` and
+    // `:feature:library`'s `LibraryScreenKt` floors both record. Not a missing case.
+    //
+    // **`requiresInstrumentedData`, and that is measured rather than inferred**: with every
+    // module's `.ec` withheld, both classes read **0/13 and 0/34** -- zero, not merely low. This
+    // module has no `src/androidTest` at all, and `ServerSectionTest` on the JVM asserts the
+    // `const val`s, which the compiler inlines, so it covers no line here by construction.
+    //
+    // Falsified 2026-09-05 with a real `am instrument` run rather than by re-reading a report --
+    // `@Ignore` alone measures nothing, because JaCoCo goes on crediting the previous run's `.ec`
+    // (see CLAUDE.md). `:app`'s `ServerChangeJourneyTest` run alone reproduces the full numbers
+    // exactly (13/13, 33/34), so it is the sole source; with its
+    // `signingOutClearsTheCredentialsAndReturnsToSetup` withheld and the suite genuinely re-run,
+    // this reads **`ServerSection` 11/13 = 0.8462 and `ServerSectionKt` 30/34 = 0.8824**. Both
+    // fire. What that withholding removes is the confirm-and-sign-out path -- the branch that
+    // actually destroys the Keystore key -- which is the one this floor most needs to hold.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.setup.ServerSection",
+        "app.muplay.setup.ServerSection*",
+      ),
+      requiresInstrumentedData = true,
+    ),
     // 81/83 = 0.9759 LINE -- the one Compose-bearing file in this module, gated on LINE rather
     // than BRANCH per the ruling in this table's own doc. Reachable only because FirstRunJourneyTest
     // composes SetupScreen for real on an emulator, down every terminal state -- a successful
@@ -978,6 +1017,39 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.database.KeystoreCipher"),
+    ),
+    // `SyncFailure.Companion` -- the `of(Throwable)` cascade, which is the single decision that
+    // stops every sync failure in this app from being reported as "Could not reach the server".
+    // **14/14 BRANCH, 10/10 LINE**, measured 2026-09-05: eight `is` clauses plus the `else`, every
+    // one reached by `SyncFailureTest`. Fast tier, by design -- `of`'s signature names no Android
+    // type, which is the whole reason this classification lives in this module rather than in the
+    // feature that renders it (see the type's own header).
+    //
+    // Falsified 2026-09-05, measured rather than predicted: withhold `an expired or untrusted
+    // certificate is distinguished from an unreachable server` and this reads **13/14 = 0.9286**;
+    // withhold `an exception nothing recognises is unknown rather than silently unreachable`
+    // instead and it also reads 13/14. Both fire.
+    //
+    // **BRANCH rather than LINE, and the falsification is what proves that is not a coin-toss.**
+    // Withholding the `SSLException` case leaves LINE at **10/10** -- an untested clause in the
+    // middle of a `when` costs no line at all, because the neighbouring clauses' lines are the
+    // same lines. A LINE floor at 1.00 here would have been green over a certificate failure
+    // silently reclassified as an unreachable server, which is exactly the defect this type
+    // exists to prevent.
+    //
+    // `SignInRejected` and `ServerError` ride along, same reasoning as the sealed members in
+    // `:feature:library`'s `LibraryNoticeKt` rule: measured branch n/a, line 1/1 each, so they
+    // cannot move this ratio and naming them is what stops `warnUngatedClasses` reporting two
+    // `data class`es with nothing a floor could gate. The six `data object`s carry no counters at
+    // all and never appear.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.database.SyncFailure",
+        "app.muplay.database.SyncFailure*",
+      ),
     ),
     // `MirrorMapper` is the second: a plain `object` with no injected collaborators and no
     // Android/SQLite dependency, so its own JVM `MirrorMapperTest` reaches its branches with no
@@ -4509,6 +4581,78 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // falsification is a measurement with a timestamp, not a property.
   ":app" to listOf(
     CoverageFloor(counter = "LINE", minimum = BigDecimal("0.90"), requiresInstrumentedData = true),
+    // **The predicate that decides which screen the app opens on, and that once bricked it.**
+    //
+    // `StartDestinationViewModel$2` is the `init` block's `viewModelScope.launch` body -- the
+    // three-condition test `hasCredentials() && roles.isNotEmpty() && roles.none { UNASSIGNED }`.
+    // The middle condition is the fix: `none {}` is vacuously true over an empty list, so a first
+    // run whose library fetch failed *after* the credentials were stored read as "configured,
+    // nothing untagged", opened the library screen, and left no route back to setup. The app was
+    // unusable until reinstalled, from losing the server for one minute. See the class's own note.
+    //
+    // **10/10 BRANCH from the JVM alone**, measured 2026-09-05 with every `.ec` withheld -- the
+    // `SetupProgress` seam exists precisely so this decision does not need an emulator, and this
+    // floor is what makes that design pay. No `requiresInstrumentedData`.
+    //
+    // **The `.2` is not a typo, and the `$` form is a trap.** JaCoCo matches a rule's `includes`
+    // against the class's *qualified* name, in which both the package separator and the nested-
+    // class separator are dots -- so this class is `app.muplay.ui.StartDestinationViewModel.2` to
+    // a floor, never `...ViewModel$2`. Proved here rather than read: a probe floor naming
+    // `app.muplay.database.CastSettings\$allowRendererDirect\$1` at minimum 1.00 matched nothing
+    // and passed, while the identical floor written `...CastSettings.allowRendererDirect.1` failed
+    // with `branches covered ratio is 0.14`. Every other floor in this table that reaches a nested
+    // class does it with a `*`, which is why this has not bitten before.
+    //
+    // What makes it worth a paragraph is how the two ways of getting it wrong differ. `"...$1"`
+    // in a Kotlin string is a **template**, so it does not compile and you find out at once.
+    // `"...$2"` is a digit, which Kotlin leaves literal -- so it compiles, runs, gates nothing,
+    // and reports success. This floor shipped that way for one run, and `warnVacuousFloors` is
+    // what caught it: a floor that enforces nothing is indistinguishable from one that has lost
+    // what it used to enforce, which is exactly why that warning exists.
+    //
+    // Exact name, not `StartDestinationViewModel*`: the sibling `.1` is the `@Inject`
+    // constructor's anonymous `SetupProgress` -- the real `CredentialStore`/`LibraryRepository`
+    // adapter -- which reads 0/2 BRANCH on the JVM because it needs Hilt and a Keystore. It is
+    // gated on LINE by the rule below instead. Wildcarding here would have made this floor
+    // device-dependent for no gain, which is the trap `:feature:library` records at its own
+    // `LibraryViewModel` rule.
+    //
+    // Falsified 2026-09-05, measured rather than predicted: withhold `credentials stored but no
+    // library ever synced opens setup rather than an empty library` -- the test for the brick --
+    // and this reads **8/10 = 0.8000**, which fires.
+    //
+    // **And the other half, which is the more useful record.** Withholding `a library still
+    // untagged opens setup` instead leaves this at **10/10 -- the floor does not move**, because
+    // the two neighbouring cases already drive both sides of every branch it touches. So this
+    // floor does not hold that test in place; only the behaviour it asserts does. Same shape as
+    // `:feature:library`'s `LibraryNoticeKt` rule, and worth saying rather than leaving somebody
+    // to withhold a test, see green, and conclude the floor is too low.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.ui.StartDestinationViewModel.2"),
+    ),
+    // The same view model's two device-only halves, on LINE: the outer class (**11/11**, of which
+    // the JVM reaches 8 -- the three it cannot are the `@Inject` secondary constructor's own body)
+    // and `$1`, the anonymous `SetupProgress` that adapter wraps (**4/4**, and **0/4** from the
+    // JVM). Together they are the assertion that the *production* wiring of this seam is exercised
+    // and not merely the fake one, which is the standing risk with any seam of this shape.
+    //
+    // `requiresInstrumentedData`, measured: with every module's `.ec` withheld these read
+    // **8/11 = 0.7273** and **0/4 = 0.0000**, both below this floor. That is the direction that
+    // matters for a rule of this kind -- it fires the moment the journeys stop constructing this
+    // view model through Hilt -- and it is measured rather than predicted.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf(
+        "app.muplay.ui.StartDestinationViewModel",
+        "app.muplay.ui.StartDestinationViewModel.1",
+      ),
+      requiresInstrumentedData = true,
+    ),
     // **The gate on the audiobook half of the application being reachable at all.**
     //
     // Two `NavKey`s, four lines between them, and every one of them is executed by *constructing

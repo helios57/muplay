@@ -1186,6 +1186,35 @@ Two lessons that generalise past this bar:
   `waitUntil { onAllNodesWithText(title).isNotEmpty() }` followed by a filtered assertion, so the
   wait returned on the bar and the assertion then failed against a list that had not arrived yet.
 
+## A coverage floor that names a nested class needs dots, and `$2` fails silently
+
+JaCoCo matches a rule's `includes` against the class's **qualified** name, where the
+nested-class separator is a **dot**, not `$`. So the anonymous class JaCoCo's own
+report calls `app/muplay/ui/StartDestinationViewModel$2` is
+`app.muplay.ui.StartDestinationViewModel.2` to a floor.
+
+Measured 2026-09-05 with a probe floor at `minimum = 1.00` over a class known to sit at
+0.14 BRANCH, written both ways on the same tree:
+
+    includes = listOf("app.muplay.database.CastSettings\$allowRendererDirect\$1")
+      -> matches nothing, BUILD SUCCESSFUL
+    includes = listOf("app.muplay.database.CastSettings.allowRendererDirect.1")
+      -> Rule violated ... branches covered ratio is 0.14, but expected minimum is 1.00
+
+Every existing floor that reaches a nested class does it with a `*`
+(`AlbumViewModel*Fetch*`, `SyncFailure*`), which is why this had not bitten before.
+
+**The two ways of getting it wrong fail very differently, and that is the trap.**
+`"...ViewModel$1"` in a Kotlin string is a template, so it does not compile and you find
+out immediately. `"...ViewModel$2"` is `$` followed by a digit, which Kotlin leaves
+literal — so it compiles, runs, matches nothing, gates nothing, and the build goes
+green. A floor written that way shipped here for exactly one run.
+
+`warnVacuousFloors` is what caught it, and this is the case it exists for: it reports
+that a floor "currently enforces nothing ... its COVEREDRATIO is NaN when the total is
+0". Read that warning as a defect in the floor, not as noise — a floor with nothing to
+gate is indistinguishable from one that has lost what it used to gate.
+
 ## A `coerceAtLeast`/`coerceIn` clamp is invisible to a BRANCH coverage floor
 
 Measured in Plan 4 Task 9 while falsifying `:feature:book`'s floors. Kotlin's
