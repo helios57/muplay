@@ -354,24 +354,81 @@ class BookSpeedControllerTest {
    * The window opens only after real audio has been produced, so buffering and the first HTTP
    * round trip are outside it. The player is released before returning: two players decoding at
    * once contend for audio focus, and the second would silently produce nothing.
+   *
+   * **A window in which the sink produced almost nothing is retried once, and that is a refusal to
+   * conclude rather than a softened assertion.** In a full `:core:media` run on 2026-09-05 this
+   * measured 185 ms of media in 2000 ms of wall clock at 1.0x and failed; the same class alone was
+   * 12/12 immediately afterwards. The obvious explanation was rebuffering, and it is wrong --
+   * measured on the device, `bufferedPosition - currentPosition` at the moment the window opens is
+   * **19888 ms**, the whole 21 s file, with `isPlaying = true` and `playbackState = READY`. So the
+   * data was all there and the audio sink simply produced no samples for most of the window, which
+   * is the same audio-focus contention this helper's own note describes, arriving from another
+   * class rather than from a second player here. A stalled window is not evidence about speed in
+   * either direction -- the same reading `ci/device-lock.sh` exit 75 gets -- so the answer is to
+   * measure again, not to widen the band.
+   *
+   * [STALL_FLOOR_MS] is what makes that safe. No speed this test sets can legitimately land under
+   * it: the slowest is 1.0x, which covers about [WINDOW_MS], and the retry threshold is a quarter
+   * of that. A player genuinely stuck at 1.0x when asked for 2.0x reports ~2000 ms and is *not*
+   * retried -- it fails, which is the point. Only a sink that produced essentially nothing is.
    */
   private fun elapsedMediaOverAWindow(speed: Float): Pair<Float, Long> {
+    val first = measureOneWindow(speed)
+    if (first.advancedMs >= STALL_FLOOR_MS) return first.reportedSpeed to first.normalised()
+
+    val second = measureOneWindow(speed)
+    // Both windows stalled, so this is no longer "the measurement did not happen" -- report it,
+    // with everything needed to tell a stalled device from a broken speed, because the failure
+    // that prompted this said only "185".
+    assertThat(second.advancedMs)
+      .describedAs(
+        "the audio sink produced almost no media in two consecutive %d ms windows at %.1fx " +
+          "(first %d ms, then %d ms; buffered ahead at open %d ms and %d ms; isPlaying %s/%s; " +
+          "playbackState %d/%d). Fully buffered and nominally playing means a starved sink, not " +
+          "a speed defect -- check whether another class left a player holding audio focus.",
+        WINDOW_MS, speed, first.advancedMs, second.advancedMs,
+        first.bufferedAheadMs, second.bufferedAheadMs,
+        first.playingAtClose, second.playingAtClose,
+        first.stateAtClose, second.stateAtClose,
+      )
+      .isGreaterThanOrEqualTo(STALL_FLOOR_MS)
+    return second.reportedSpeed to second.normalised()
+  }
+
+  /** One [WINDOW_MS] observation, with everything a failure needs to name its own cause. */
+  private data class Window(
+    val reportedSpeed: Float,
+    val advancedMs: Long,
+    val wallClockMs: Long,
+    val bufferedAheadMs: Long,
+    val playingAtClose: Boolean,
+    val stateAtClose: Int,
+  ) {
+    /**
+     * Normalised to the nominal window, because `Thread.sleep` may overshoot on a loaded emulator
+     * and an un-normalised number would drift toward passing as the host gets busier.
+     */
+    fun normalised(): Long = advancedMs * WINDOW_MS / wallClockMs
+  }
+
+  private fun measureOneWindow(speed: Float): Window {
     val harness = startQueue(listOf(book(LONG_BOOK, speed = speed)))
     harness.awaitPositionAtLeast(FIRST_AUDIO_MS, timeoutMs = PLAYBACK_TIMEOUT_MS)
 
     val from = harness.onMain { harness.player.currentPosition }
+    val bufferedAhead = harness.onMain { harness.player.bufferedPosition } - from
     val startedAt = SystemClock.elapsedRealtime()
     Thread.sleep(WINDOW_MS)
     val to = harness.onMain { harness.player.currentPosition }
     val wallClock = SystemClock.elapsedRealtime() - startedAt
     val reported = harness.onMain { harness.player.playbackParameters.speed }
+    val playing = harness.onMain { harness.player.isPlaying }
+    val state = harness.onMain { harness.player.playbackState }
 
     harness.assertNoPlaybackError()
     harness.release()
     harnesses.remove(harness.underlying)
-    // Normalised to the nominal window, because `Thread.sleep` may overshoot on a loaded emulator
-    // and an un-normalised number would drift toward passing as the host gets busier.
-    return reported to (to - from) * WINDOW_MS / wallClock
+    return Window(reported, to - from, wallClock, bufferedAhead, playing, state)
   }
 
   /** Registers [song] as a file of its own album's book, and returns it. */
@@ -475,6 +532,13 @@ class BookSpeedControllerTest {
 
     /** The measuring window. Two seconds of media at 1.0x, four at 2.0x, both inside a 21 s file. */
     const val WINDOW_MS = 2_000L
+
+    /**
+     * Below this, the window measured a starved audio sink rather than a speed -- see
+     * [elapsedMediaOverAWindow]. A quarter of the window, so it sits far under the ~2000 ms the
+     * slowest speed under test produces and cannot swallow a real speed defect.
+     */
+    const val STALL_FLOOR_MS = WINDOW_MS / 4
 
     const val PLAYBACK_TIMEOUT_MS = 30_000L
   }
