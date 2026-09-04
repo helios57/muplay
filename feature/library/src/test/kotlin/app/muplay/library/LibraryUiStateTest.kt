@@ -1,5 +1,6 @@
 package app.muplay.library
 
+import app.muplay.database.SyncFailure
 import app.muplay.model.Album
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
@@ -31,7 +32,7 @@ class LibraryUiStateTest {
         albums = emptyList(),
         searchAlbums = emptyList(),
         shuffle = null,
-        syncMessage = null,
+        notice = LibraryNotice.Idle,
       ),
     ).isEqualTo(LibraryUiState.NoLibraries)
   }
@@ -45,7 +46,7 @@ class LibraryUiStateTest {
       albums = listOf(album("a1", "Test Album", 1)),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.selectedLibraryId).isEqualTo(1)
@@ -63,7 +64,7 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.selectedLibraryId).isEqualTo(1)
@@ -78,7 +79,7 @@ class LibraryUiStateTest {
       albums = listOf(album("a1", "Test Album", 1)),
       searchAlbums = listOf(album("a2", "Booked", 1)),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.albums.map { it.name }).containsExactly("Booked")
@@ -94,7 +95,7 @@ class LibraryUiStateTest {
       albums = listOf(album("a1", "Test Album", 1)),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.albums.map { it.name }).containsExactly("Test Album")
@@ -109,7 +110,7 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = emptyList(),
       shuffle = ShuffleResult(listOf(song("s1", "Track 1", 1)), discardedOutOfScope = 2),
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.shuffled.map { it.title }).containsExactly("Track 1")
@@ -137,7 +138,7 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(asGiven.libraries).containsExactly(music, books)
@@ -149,7 +150,7 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(theOtherWayRound.libraries).containsExactly(books, music)
@@ -171,7 +172,7 @@ class LibraryUiStateTest {
         listOf(song("s3", "Zebra", 1), song("s1", "Apple", 1), song("s2", "Mango", 1)),
         discardedOutOfScope = 0,
       ),
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     // Neither alphabetical nor its reverse, so neither a stray sort nor a reversal survives.
@@ -191,14 +192,64 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = listOf(album("a1", "Zebra", 1), album("a2", "Apple", 1), album("a3", "Mango", 1)),
       shuffle = null,
-      syncMessage = null,
+      notice = LibraryNotice.Idle,
     ) as LibraryUiState.Content
 
     assertThat(state.albums.map { it.name }).containsExactly("Zebra", "Apple", "Mango")
   }
 
   @Test
-  fun `a sync message is passed through untouched`() {
+  fun `a sync failure is rendered from its cause rather than flattened`() {
+    val state = libraryContent(
+      libraries = listOf(music),
+      selectedLibraryId = 1,
+      query = "",
+      albums = listOf(album("a1", "Test Album", 1)),
+      searchAlbums = emptyList(),
+      shuffle = null,
+      notice = LibraryNotice.Failed(SyncFailure.ServerError(502)),
+    ) as LibraryUiState.Content
+
+    assertThat(state.syncMessage).contains("502")
+  }
+
+  @Test
+  fun `a failure with a mirror on screen offers it, and one without never does`() {
+    fun messageWith(albums: List<Album>) = (
+      libraryContent(
+        libraries = listOf(music),
+        selectedLibraryId = 1,
+        query = "",
+        albums = albums,
+        searchAlbums = emptyList(),
+        shuffle = null,
+        notice = LibraryNotice.Failed(SyncFailure.Unreachable),
+      ) as LibraryUiState.Content
+      ).syncMessage
+
+    assertThat(messageWith(listOf(album("a1", "Test Album", 1)))).contains("last synced")
+    // The first run. There is no last synced library, so offering one is a false promise -- the
+    // exact defect `LibraryUiState.Content`'s own KDoc forbids.
+    assertThat(messageWith(emptyList())).doesNotContain("last synced")
+  }
+
+  @Test
+  fun `a search that matches nothing does not claim the library is empty`() {
+    val state = libraryContent(
+      libraries = listOf(music),
+      selectedLibraryId = 1,
+      query = "brubeck",
+      albums = listOf(album("a1", "Test Album", 1)),
+      searchAlbums = emptyList(),
+      shuffle = null,
+      notice = LibraryNotice.Idle,
+    ) as LibraryUiState.Content
+
+    assertThat(state.emptyReason).isEqualTo(LibraryEmptyReason.SearchNoMatch("brubeck"))
+  }
+
+  @Test
+  fun `an empty mirror behind a failed sync blames the sync, not the library`() {
     val state = libraryContent(
       libraries = listOf(music),
       selectedLibraryId = 1,
@@ -206,9 +257,40 @@ class LibraryUiStateTest {
       albums = emptyList(),
       searchAlbums = emptyList(),
       shuffle = null,
-      syncMessage = "Could not reach the server",
+      notice = LibraryNotice.Failed(SyncFailure.SignInRejected(40)),
     ) as LibraryUiState.Content
 
-    assertThat(state.syncMessage).isEqualTo("Could not reach the server")
+    assertThat(state.emptyReason)
+      .isEqualTo(LibraryEmptyReason.SyncFailed(SyncFailure.SignInRejected(40)))
+  }
+
+  @Test
+  fun `only a completed sync over an empty library reports it as empty`() {
+    val state = libraryContent(
+      libraries = listOf(music),
+      selectedLibraryId = 1,
+      query = "",
+      albums = emptyList(),
+      searchAlbums = emptyList(),
+      shuffle = null,
+      notice = LibraryNotice.Idle,
+    ) as LibraryUiState.Content
+
+    assertThat(state.emptyReason).isEqualTo(LibraryEmptyReason.Empty)
+  }
+
+  @Test
+  fun `a list with albums in it has no empty reason at all`() {
+    val state = libraryContent(
+      libraries = listOf(music),
+      selectedLibraryId = 1,
+      query = "",
+      albums = listOf(album("a1", "Test Album", 1)),
+      searchAlbums = emptyList(),
+      shuffle = null,
+      notice = LibraryNotice.Idle,
+    ) as LibraryUiState.Content
+
+    assertThat(state.emptyReason).isNull()
   }
 }

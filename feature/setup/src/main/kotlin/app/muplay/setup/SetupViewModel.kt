@@ -72,7 +72,8 @@ class SetupViewModel(
    */
   fun connect(serverUrl: String, username: String, password: String) {
     val trimmedUrl = serverUrl.trim()
-    if (trimmedUrl.toHttpUrlOrNull() == null) {
+    val parsed = trimmedUrl.toHttpUrlOrNull()
+    if (parsed == null) {
       _uiState.value = SetupUiState.Failure(SetupFailureReason.InvalidUrl)
       return
     }
@@ -92,6 +93,12 @@ class SetupViewModel(
         SetupUiState.Failure(SetupFailureReason.Rejected(code = e.status, detail = e.message))
       } catch (e: CancellationException) {
         throw e
+      } catch (e: java.net.UnknownServiceException) {
+        // Android's cleartext block. Before the generic clause below, because it *is* an
+        // IOException and would otherwise render as "check the URL and your connection" for a URL
+        // and a connection that are both fine. The host comes from what the user typed rather than
+        // from `e.message`, which is a platform string this app does not control.
+        SetupUiState.Failure(SetupFailureReason.CleartextForbidden(parsed.host))
       } catch (e: Exception) {
         SetupUiState.Failure(SetupFailureReason.Unreachable)
       }

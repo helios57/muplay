@@ -93,7 +93,10 @@ class BrowseJourneyTest {
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(MUSIC_ALBUM).fetchSemanticsNodes().isEmpty()
     }
-    composeRule.onNodeWithText("Nothing here yet.").assertIsDisplayed()
+    // Not "Nothing here yet." -- that sentence used to cover a search with no match, a sync still
+    // running, a failed sync and a genuinely empty library all at once, so a typo'd server URL was
+    // indistinguishable from a working app with no music. See `LibraryEmptyReason`.
+    composeRule.onNodeWithText("No albums match \u201CNothing Matches This\u201D.").assertIsDisplayed()
 
     composeRule.onNodeWithText(SEARCH_LABEL).performTextClearance()
     composeRule.waitUntil(TIMEOUT_MILLIS) {

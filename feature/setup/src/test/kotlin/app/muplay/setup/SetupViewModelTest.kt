@@ -17,6 +17,7 @@ import app.muplay.network.SubsonicErrorException
 import app.muplay.network.SubsonicHttpException
 import app.muplay.network.SubsonicSource
 import java.io.IOException
+import java.net.UnknownServiceException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -323,6 +324,40 @@ class SetupViewModelTest {
     assertThat(vm.uiState.value)
       .isEqualTo(SetupUiState.Failure(SetupFailureReason.Unreachable))
   }
+
+  @Test
+  fun `a cleartext-blocked http url names the scheme, not the connection`() = runTest(dispatcher) {
+    // What Android really throws when `cleartextTrafficPermitted` is false. It is an IOException,
+    // so the `catch (e: Exception)` below used to render it as Unreachable -- "check the URL and
+    // your connection" for a URL and a connection that are both fine.
+    val vm = viewModel(
+      StubSource({
+        throw UnknownServiceException(
+          "CLEARTEXT communication to music.example.com not permitted by network security policy",
+        )
+      }),
+    )
+
+    vm.connect("http://music.example.com:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value)
+      .isEqualTo(SetupUiState.Failure(SetupFailureReason.CleartextForbidden("music.example.com")))
+  }
+
+  @Test
+  fun `a cleartext failure carries the host the user typed, not the one in the message`() =
+    runTest(dispatcher) {
+      // The host comes from the URL the user entered. Reading it out of the platform's message
+      // would tie this to a string Android is free to reword.
+      val vm = viewModel(StubSource({ throw UnknownServiceException("CLEARTEXT not permitted") }))
+
+      vm.connect("http://10.0.0.7:4533", "admin", "testpass")
+      dispatcher.scheduler.advanceUntilIdle()
+
+      val failure = vm.uiState.value as SetupUiState.Failure
+      assertThat((failure.reason as SetupFailureReason.CleartextForbidden).host).isEqualTo("10.0.0.7")
+    }
 
   @Test
   fun `a cancelled connection is never reported as a failure`() = runTest(dispatcher) {

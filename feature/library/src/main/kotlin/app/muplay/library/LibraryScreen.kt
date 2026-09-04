@@ -269,8 +269,14 @@ private fun LibraryScreen(
           }
         }
 
-        if (uiState.albums.isEmpty()) {
-          item { Text(text = EMPTY_LIBRARY_LABEL, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val emptyReason = uiState.emptyReason
+        if (emptyReason != null) {
+          // Not one sentence for four situations: a search that matched nothing, a sync still
+          // running, a sync that failed, and a library that really is empty each say their own
+          // thing. See `LibraryEmptyReason`.
+          item {
+            Text(text = emptyReason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
         } else {
           items(uiState.albums, key = { "album:" + it.id }) { album ->
             AlbumRow(album = album, coverArtUrl = coverArtUrl, onClick = { onAlbumClick(album.id) })
@@ -460,7 +466,6 @@ private const val LOADING_LABEL = "Loading your library…"
 private const val NO_LIBRARIES_LABEL =
   "No libraries yet. Finish setup to choose what each library is for."
 private const val SHUFFLE_HEADING = "Shuffled"
-private const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
 private const val OPEN_LABEL = "Open"
 private const val COVER_THUMBNAIL_PX = 128
 private const val COVER_THUMBNAIL_DP = 56

@@ -33,7 +33,11 @@ sealed interface LibraryUiState {
    *   anywhere re-checked, so a user who first opened the app during a server scan was stranded
    *   with a partial library until they force-stopped it. Nothing here may promise a future the
    *   app does not bring about; where an outcome depends on the user, the message names the
-   *   control that produces it.
+   *   control that produces it. It is rendered from [LibraryNotice], not built by hand, and the
+   *   second half of that rule is why [LibraryNotice.toMessage] is told whether a mirror exists:
+   *   the old wording offered *"your last synced library"* on a first run that had none.
+   * @property emptyReason why [albums] is empty, or `null` when it is not. Four different
+   *   situations used to render one `"Nothing here yet."` — see [LibraryEmptyReason].
    */
   data class Content(
     val libraries: List<MusicLibrary>,
@@ -43,6 +47,7 @@ sealed interface LibraryUiState {
     val shuffled: List<Song>,
     val discardedOutOfScope: Int,
     val syncMessage: String?,
+    val emptyReason: LibraryEmptyReason?,
   ) : LibraryUiState
 }
 
@@ -60,7 +65,7 @@ internal fun libraryContent(
   albums: List<Album>,
   searchAlbums: List<Album>,
   shuffle: ShuffleResult?,
-  syncMessage: String?,
+  notice: LibraryNotice,
 ): LibraryUiState {
   if (libraries.isEmpty()) return LibraryUiState.NoLibraries
 
@@ -68,14 +73,41 @@ internal fun libraryContent(
   // pointed at an id nothing matches, which would render as a permanently empty list.
   val selected = libraries.firstOrNull { it.id == selectedLibraryId }?.id ?: libraries.first().id
   val searching = query.isNotBlank()
+  val shown = if (searching) searchAlbums else albums
+
+  // `albums`, not `shown`: whether a *mirror* exists is a question about what was synced, and a
+  // search that matches nothing must not be allowed to answer "there is no library behind this".
+  val hasMirror = albums.isNotEmpty()
 
   return LibraryUiState.Content(
     libraries = libraries,
     selectedLibraryId = selected,
     query = query,
-    albums = if (searching) searchAlbums else albums,
+    albums = shown,
     shuffled = shuffle?.songs.orEmpty(),
     discardedOutOfScope = shuffle?.discardedOutOfScope ?: 0,
-    syncMessage = syncMessage,
+    syncMessage = notice.toMessage(hasMirror),
+    emptyReason = emptyReasonFor(shown, searching, query, notice),
   )
+}
+
+/**
+ * Which of the four empties this is, or `null` when the list has something in it.
+ *
+ * The order is the whole content of the decision. A search that matched nothing is a search
+ * result whatever the sync did, so it comes first; and [LibraryEmptyReason.Empty] — the only
+ * member that asserts the library really is empty — is reachable only once every reason to doubt
+ * it has been ruled out.
+ */
+private fun emptyReasonFor(
+  shown: List<Album>,
+  searching: Boolean,
+  query: String,
+  notice: LibraryNotice,
+): LibraryEmptyReason? = when {
+  shown.isNotEmpty() -> null
+  searching -> LibraryEmptyReason.SearchNoMatch(query)
+  notice is LibraryNotice.Syncing -> LibraryEmptyReason.Syncing
+  notice is LibraryNotice.Failed -> LibraryEmptyReason.SyncFailed(notice.failure)
+  else -> LibraryEmptyReason.Empty
 }

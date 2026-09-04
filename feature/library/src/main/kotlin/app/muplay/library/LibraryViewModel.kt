@@ -6,6 +6,7 @@ import app.muplay.database.BrowseRepository
 import app.muplay.database.LibraryRepository
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.SyncEngine
+import app.muplay.database.SyncFailure
 import app.muplay.database.SyncState
 import app.muplay.media.PlaybackLauncher
 import app.muplay.model.Album
@@ -94,7 +95,7 @@ class LibraryViewModel(
   private val selectedLibraryId = MutableStateFlow<Int?>(null)
   private val query = MutableStateFlow("")
   private val shuffleResult = MutableStateFlow<ShuffleResult?>(null)
-  private val syncMessage = MutableStateFlow<String?>(null)
+  private val notice = MutableStateFlow<LibraryNotice>(LibraryNotice.Idle)
   private val searchAlbums = MutableStateFlow<List<Album>>(emptyList())
 
   private val albums: Flow<List<Album>> =
@@ -110,8 +111,8 @@ class LibraryViewModel(
       selectedLibraryId,
       query,
       albums,
-      combine(searchAlbums, shuffleResult, syncMessage) { results, shuffled, message ->
-        Triple(results, shuffled, message)
+      combine(searchAlbums, shuffleResult, notice) { results, shuffled, currentNotice ->
+        Triple(results, shuffled, currentNotice)
       },
     ) { libraries, selected, currentQuery, currentAlbums, extras ->
       libraryContent(
@@ -121,7 +122,7 @@ class LibraryViewModel(
         albums = currentAlbums,
         searchAlbums = extras.first,
         shuffle = extras.second,
-        syncMessage = extras.third,
+        notice = extras.third,
       )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), LibraryUiState.Loading)
 
@@ -148,12 +149,24 @@ class LibraryViewModel(
     }
   }
 
+  /**
+   * Draws a shuffle, and **says so when it fails**.
+   *
+   * The failure used to be swallowed into `ShuffleResult(emptyList(), 0)`, which the screen
+   * renders identically to a shuffle nobody has tapped: server asleep, tap Shuffle, nothing
+   * happens, no explanation anywhere. A `runCatching` whose `getOrElse` discards the exception is
+   * the shape to distrust — it converts a failure into a legitimate-looking empty success.
+   */
   fun shuffle() {
     viewModelScope.launch {
       val id = currentLibraryId() ?: return@launch
-      shuffleResult.value = runCatching {
-        source.shuffle(id, ShuffleRepository.DEFAULT_SHUFFLE_SIZE)
-      }.getOrElse { ShuffleResult(emptyList(), discardedOutOfScope = 0) }
+      runCatching { source.shuffle(id, ShuffleRepository.DEFAULT_SHUFFLE_SIZE) }
+        .onSuccess { result ->
+          shuffleResult.value = result
+          // Clear only our own stale failure. A sync notice belongs to the sync and outlives this.
+          if (notice.value is LibraryNotice.ShuffleFailed) notice.value = LibraryNotice.Idle
+        }
+        .onFailure { notice.value = LibraryNotice.ShuffleFailed(SyncFailure.of(it)) }
     }
   }
 
@@ -173,12 +186,13 @@ class LibraryViewModel(
    */
   fun refresh() {
     viewModelScope.launch {
-      syncMessage.value = SYNCING_MESSAGE
-      syncMessage.value = when (val state = source.syncIfStale()) {
-        SyncState.UpToDate, is SyncState.Synced -> null
-        SyncState.ScanInProgress ->
-          "The server is still scanning, so some albums may be missing. Tap $REFRESH_LABEL when it has finished."
-        is SyncState.Failed -> "Could not reach the server. Showing your last synced library."
+      notice.value = LibraryNotice.Syncing
+      notice.value = when (val state = source.syncIfStale()) {
+        SyncState.UpToDate, is SyncState.Synced -> LibraryNotice.Idle
+        SyncState.ScanInProgress -> LibraryNotice.ScanInProgress
+        // Typed, not flattened: `SyncFailure.of` is what stops a changed password, a 502, a lapsed
+        // certificate and a blocked cleartext request all reading as "could not reach the server".
+        is SyncState.Failed -> LibraryNotice.Failed(SyncFailure.of(state.cause))
       }
     }
   }
@@ -211,12 +225,5 @@ class LibraryViewModel(
   private companion object {
     const val STOP_TIMEOUT_MILLIS = 5_000L
     const val SEARCH_LIMIT = 50
-
-    /**
-     * Shown while a refresh is in flight. It is the only feedback the action gives, and it is
-     * enough: the alternative was a fourth field on `LibraryUiState.Content` and a signature
-     * change to the pure builder, for a spinner.
-     */
-    const val SYNCING_MESSAGE = "Checking the server for changes…"
   }
 }

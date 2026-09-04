@@ -1,6 +1,7 @@
 package app.muplay.library
 
 import app.muplay.database.ShuffleRepository
+import app.muplay.database.SyncFailure
 import app.muplay.database.SyncState
 import app.muplay.database.dao.MirrorReplacement
 import app.muplay.model.Album
@@ -9,6 +10,7 @@ import app.muplay.model.MusicLibrary
 import app.muplay.model.SearchResults
 import app.muplay.model.ShuffleResult
 import app.muplay.model.Song
+import app.muplay.network.SubsonicErrorException
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -434,9 +436,75 @@ class LibraryViewModelTest {
       val vm = warm(fake)
       dispatcher.scheduler.advanceUntilIdle()
 
-      assertThat(content(vm).syncMessage)
-        .isEqualTo("Could not reach the server. Showing your last synced library.")
+      // No mirror was ever synced here, so the message must not offer one. It used to, always.
+      assertThat(content(vm).syncMessage).isEqualTo("Could not reach the server.")
     }
+
+  @Test
+  fun `a changed password is not reported as an unreachable server`() = runTest(dispatcher) {
+    // Every SyncState.Failed used to render one sentence, so a user whose password had changed on
+    // the server was told to check a connection that was working.
+    val fake = FakeLibrarySource(listOf(music)).apply {
+      syncAnswer = { SyncState.Failed(SubsonicErrorException(40, "Wrong username or password")) }
+    }
+    val vm = warm(fake)
+    dispatcher.scheduler.advanceUntilIdle()
+
+    val message = content(vm).syncMessage
+    assertThat(message).contains("sign in")
+    assertThat(message).doesNotContain("Could not reach")
+  }
+
+  @Test
+  fun `an empty library behind a failed sync blames the sync rather than the library`() =
+    runTest(dispatcher) {
+      // The typo'd-URL case: nothing synced, so "Nothing here yet." would describe a library the
+      // app has never successfully looked at.
+      val fake = FakeLibrarySource(listOf(music)).apply {
+        syncAnswer = { SyncState.Failed(IOException("down")) }
+      }
+      val vm = warm(fake)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(content(vm).emptyReason)
+        .isEqualTo(LibraryEmptyReason.SyncFailed(SyncFailure.Unreachable))
+    }
+
+  @Test
+  fun `a shuffle that throws says so instead of rendering an empty shuffle`() = runTest(dispatcher) {
+    // The defect: `runCatching { .. }.getOrElse { ShuffleResult(emptyList(), 0) }` turned a
+    // failure into a legitimate-looking empty success, which the screen draws as nothing at all.
+    val fake = FakeLibrarySource(listOf(music)).apply {
+      setAlbums(1, listOf(album("a1", "Music Album", 1)))
+      shuffleAnswer = { throw IOException("server asleep") }
+    }
+    val vm = warm(fake)
+    dispatcher.scheduler.advanceUntilIdle()
+
+    vm.shuffle()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(content(vm).syncMessage).contains("Shuffle")
+  }
+
+  @Test
+  fun `a shuffle that succeeds after one that failed clears the failure`() = runTest(dispatcher) {
+    val fake = FakeLibrarySource(listOf(music)).apply {
+      setAlbums(1, listOf(album("a1", "Music Album", 1)))
+      shuffleAnswer = { throw IOException("server asleep") }
+    }
+    val vm = warm(fake)
+    dispatcher.scheduler.advanceUntilIdle()
+    vm.shuffle()
+    dispatcher.scheduler.advanceUntilIdle()
+    assertThat(content(vm).syncMessage).isNotNull()
+
+    fake.shuffleAnswer = { ShuffleResult(listOf(song("s1", "Track 1", 1)), discardedOutOfScope = 0) }
+    vm.shuffle()
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(content(vm).syncMessage).isNull()
+  }
 
   @Test
   fun `refresh calls syncIfStale exactly once on init and once per explicit call, never from browsing`() =
