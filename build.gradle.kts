@@ -279,10 +279,14 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *   `$setRole$1` 2/2 BRANCH; `$continueToLibrary$1` 8/8 BRANCH; `$tagging$1`, no counters at all)
  *   — the same zero-branch-rider pattern `SetupUiState*` already uses below: harmless (`NaN` → no
  *   violation for the branch-less ones) and it is what keeps `warnUngatedClasses` quiet about
- *   them. `SetupFailureReasonKt` (7/8, floor 0.85, untouched by Task 8): `toMessage`'s
- *   `when`-cascade, `SetupFailureReasonTest` covers all three members plus both sides of
- *   `Rejected`'s `detail` null/non-null branch; the one branch still missing is an artifact of how
- *   a `when` with no `else` over a sealed interface compiles, not an uncovered case.
+ *   them. `SetupFailureReasonKt` (**9/10 = 0.9000** as re-measured 2026-09-05, floor 0.85):
+ *   `toMessage`'s `when`-cascade, `SetupFailureReasonTest` covers all **four** members -- the
+ *   fourth, `CleartextForbidden`, arrived when setup stopped misdiagnosing a platform-blocked
+ *   cleartext request as an unreachable server -- plus both sides of `Rejected`'s `detail`
+ *   null/non-null branch; the one branch still missing is an artifact of how a `when` with no
+ *   `else` over a sealed interface compiles, not an uncovered case. The floor stays at 0.85 on
+ *   purpose: the ratio is (2N+1)/(2N+2) in the member count, so 0.90 would encode "exactly four
+ *   members" -- see the floor's own comment.
  *
  *   And a rule of a different counter, added by Task 7 and re-measured here: `SetupScreenKt` LINE
  *   (**81/83 = 0.9759**, floor 0.90). From the JVM alone this class measures 0/54 — `0.00` is
@@ -887,13 +891,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.setup.SetupUiState*",
       ),
     ),
-    // 7/8 -- SetupFailureReason.toMessage's when-cascade; SetupFailureReasonTest covers all three
-    // members plus both sides of Rejected's detail null/non-null branch. The one branch still
-    // missing is an artifact of how a `when` over a sealed interface with no `else` compiles, not
-    // a reachable path SetupFailureReasonTest is missing a case for. SetupFailureReason/
-    // SetupFailureReason$* (the sealed interface and its members) ride along for the same reason
-    // SetupUiState does above -- 0 branches of their own, included only so their own fully-covered
-    // lines never show up as an ungated class. Untouched by Task 8.
+    // **9/10 = 0.9000, re-measured 2026-09-05** (was 7/8 = 0.875 when this floor was written, over
+    // three members). `SetupFailureReason.toMessage`'s when-cascade; `SetupFailureReasonTest`
+    // covers all **four** members -- `CleartextForbidden` is the fourth, added when setup stopped
+    // misdiagnosing a platform-blocked cleartext request as an unreachable server -- plus both
+    // sides of `Rejected`'s detail null/non-null branch. The one branch still missing is an
+    // artifact of how a `when` over a sealed interface with no `else` compiles, not a reachable
+    // path the test is missing a case for.
+    //
+    // **The minimum stays 0.85 rather than rising to the measured 0.9000, deliberately.** That
+    // ratio is (2N+1)/(2N+2) in the member count N: three members read 0.875 and four read 0.9000,
+    // so a floor of 0.90 would encode "there are exactly four members" and go red on correct,
+    // fully-tested code the day one is removed. 0.85 is one member's worth of headroom, the same
+    // choice `CoverArtKt`'s floor in `:feature:library` records for the same reason.
+    //
+    // Falsified 2026-09-05, measured rather than predicted, and it fires in both directions:
+    // withhold `CleartextForbidden names https and the host` and this reads **8/10 = 0.8000**;
+    // withhold `Rejected`'s two detail cases instead and it also reads **8/10 = 0.8000**. Either
+    // is below 0.85. Note that the *previous* comment here recorded no falsification at all, and
+    // its ratio had been stale for a whole member -- this table's own doc is explicit that a
+    // recorded falsification is a measurement with a timestamp, not a property.
+    //
+    // SetupFailureReason/SetupFailureReason$* (the sealed interface and its members) ride along
+    // for the same reason SetupUiState does above -- 0 branches of their own, included only so
+    // their own fully-covered lines never show up as an ungated class.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
@@ -3643,6 +3664,49 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.75"),
       includes = listOf("app.muplay.library.CoverArtCacheKeyKt"),
+    ),
+    // `LibraryNoticeKt` -- the three `when` cascades that decide every sentence this screen can
+    // put in front of a user: `LibraryEmptyReason.toMessage`, `LibraryNotice.toMessage(hasMirror)`
+    // and the private `SyncFailure.describe` they share. **30/30 BRANCH, 28/28 LINE**, measured
+    // 2026-09-05 after four members that had no test at all were given one.
+    //
+    // **This is a fast-tier floor, and that was measured rather than assumed.** With every
+    // module's `.ec` withheld -- `mergedExecutionData` hands this module the whole fleet's
+    // instrumented data, so the question is real -- the report reads BRANCH 30/30 and LINE 28/28
+    // unchanged. No `requiresInstrumentedData`; the device journeys contribute nothing here, and
+    // a pure function over two sealed interfaces should not be gated behind an emulator.
+    //
+    // The sealed members ride along for the reason `LibraryUiState*` rides along above: measured,
+    // every one of them carries **no BRANCH counter at all** (`LibraryNotice$Failed`,
+    // `$ShuffleFailed`, `LibraryEmptyReason$SyncFailed`, `$SearchNoMatch` are each branch n/a,
+    // line 1/1; the six `data object`s carry neither counter). They cannot move this ratio, and
+    // naming them is what stops `warnUngatedClasses` reporting ten types with nothing to gate.
+    //
+    // Falsified, measured, not predicted: withhold all four of `LibraryNoticeTest`'s 2026-09-05
+    // tests and this reads **BRANCH 27/30 = 0.9000** (LINE 27/28), which fires.
+    //
+    // **But note what the falsification also proved, because it is the more useful half.**
+    // Withholding only `a server mid-scan is told apart from a server that failed` leaves this at
+    // **30/30 -- the floor does not move at all** -- because `LibraryViewModelTest` already drives
+    // `SyncState.ScanInProgress` through the view model and so executes that branch without ever
+    // reading the sentence it produces. So this floor does not hold that test in place, and
+    // deleting it would cost nothing any number here can see. What holds it is the mutation it was
+    // written against: rendering `ScanInProgress` as `"The last sync did not finish."` -- a server
+    // that is working reported to the user as a sync that failed -- is caught by that test and by
+    // nothing else in this module. Same for the other three, each against its own collapse into
+    // "Could not reach the server.", which is the precise defect `LibraryNotice`'s own KDoc
+    // records as the reason this type exists.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.LibraryNoticeKt",
+        "app.muplay.library.LibraryNotice",
+        "app.muplay.library.LibraryNotice*",
+        "app.muplay.library.LibraryEmptyReason",
+        "app.muplay.library.LibraryEmptyReason*",
+      ),
     ),
     // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that
     // BrowseJourneyTest and ScopedShuffleJourneyTest compose and exercise them for real. ----

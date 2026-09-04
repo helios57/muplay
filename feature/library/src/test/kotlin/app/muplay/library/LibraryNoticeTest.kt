@@ -108,4 +108,53 @@ class LibraryNoticeTest {
 
     assertThat(message).contains("Shuffle")
   }
+
+  @Test
+  fun `a server mid-scan is told apart from a server that failed, and says what to do`() {
+    // `ScanInProgress` is the one notice here that is not an error: the server is working and the
+    // mirror will fill in by itself. Rendering it as a failure would send a user to check a
+    // connection that is fine, and the actionable half -- that tapping Refresh afterwards is what
+    // fills the gap -- is the only thing that distinguishes it from "wait and hope".
+    val message = LibraryNotice.ScanInProgress.toMessage(hasMirror = true)
+
+    assertThat(message).contains("scanning")
+    assertThat(message).contains(REFRESH_LABEL)
+    assertThat(message).doesNotContain("Could not")
+  }
+
+  @Test
+  fun `a sync with no server configured says so rather than blaming the network`() {
+    // Reachable in the wild: a sync attempted after a sign-out clears the credentials. The
+    // flattened message would say "Could not reach the server", sending the user to debug a
+    // network they never used -- and the fix is in Settings, which is where "no server is set up"
+    // points them.
+    val message = LibraryNotice.Failed(SyncFailure.NotConfigured).toMessage(hasMirror = false)
+
+    assertThat(message).contains("set up")
+    assertThat(message).doesNotContain("reach")
+  }
+
+  @Test
+  fun `a server reporting no libraries says that, not that the sync failed`() {
+    // The server answered correctly; it simply has nothing this app can read. Distinct from every
+    // failure beside it because the fix is on the server -- tag a library -- rather than in this
+    // app, the credentials or the network.
+    val message = LibraryNotice.Failed(SyncFailure.NoLibraries).toMessage(hasMirror = false)
+
+    assertThat(message).contains("libraries")
+    assertThat(message).doesNotContain("reach")
+  }
+
+  @Test
+  fun `an unrecognised failure is not silently reported as an unreachable server`() {
+    // `SyncFailure.Unknown` catches whatever the classification did not recognise, so it is the
+    // member most likely to be reached by something nobody predicted -- which makes it the one
+    // most tempting to fold into the catch-all sentence. Folding it in is the exact defect this
+    // type replaced: it would tell a user with a working network to go and check their network.
+    val message = LibraryNotice.Failed(SyncFailure.Unknown).toMessage(hasMirror = false)
+
+    assertThat(message).isNotEmpty()
+    assertThat(message)
+      .isNotEqualTo(LibraryNotice.Failed(SyncFailure.Unreachable).toMessage(hasMirror = false))
+  }
 }
