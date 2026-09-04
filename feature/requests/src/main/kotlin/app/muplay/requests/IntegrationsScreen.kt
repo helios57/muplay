@@ -18,9 +18,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.integrations.IntegrationService
 
 /** The heading. A screen, not a dialog: setting up a server is a task, not a confirmation. */
@@ -71,8 +71,10 @@ internal fun IntegrationsScreen(
       .fillMaxWidth()
       .testTag("integrations:root")
       .verticalScroll(rememberScrollState())
-      .padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+      // `gutter` horizontally, like every other screen -- see `RequestsScreen` for the shift this
+      // fixed. This screen is pushed from the settings screen, which is where it shows worst.
+      .padding(horizontal = MuPlaySpacing.gutter, vertical = MuPlaySpacing.lg),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
   ) {
     Text(text = INTEGRATIONS_SCREEN_TITLE, style = MaterialTheme.typography.headlineSmall)
 
@@ -109,7 +111,7 @@ private fun ServiceBlock(
 ) {
   Column(
     modifier = Modifier.fillMaxWidth().testTag("integrations:service:${service.name}"),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
   ) {
     Text(text = service.displayName, style = MaterialTheme.typography.titleMedium)
     Text(
@@ -119,7 +121,7 @@ private fun ServiceBlock(
     )
 
     if (form == null) {
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
         TextButton(onClick = onEdit, modifier = Modifier.testTag("integrations:setup:${service.name}")) {
           Text(if (configured) "Replace" else "Set up")
         }
@@ -151,7 +153,7 @@ private fun SetupForm(
   onTest: () -> Unit,
   onSave: () -> Unit,
 ) {
-  Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
     OutlinedTextField(
       value = form.urlText,
       onValueChange = onUrlChange,
@@ -189,7 +191,7 @@ private fun SetupForm(
       )
     }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
       TextButton(onClick = onTest, enabled = form.canTest, modifier = Modifier.testTag("setup:test")) {
         Text("Test connection")
       }

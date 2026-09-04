@@ -36,6 +36,12 @@ dependencies {
   // multibinding, so deleting this module takes the row with it. Same shape as
   // `:feature:castpicker` -> `:feature:settings`.
   implementation(project(":feature:settings"))
+  // `MuPlaySpacing`, and nothing else. This module drew its own gaps and pads until
+  // `ConventionTest`'s `no feature screen writes its own spacing or corner radius` was written --
+  // it was the one feature module using the scale nowhere at all, which is why every literal in it
+  // was individually reasonable and collectively a second opinion about how far apart things go.
+  // A `:core:` edge, downwards, and it costs the severability contract above nothing.
+  implementation(project(":core:designsystem"))
 
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)

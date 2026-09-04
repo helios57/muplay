@@ -1370,6 +1370,60 @@ class ConventionTest {
     text.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
       .replace(Regex("""//.*"""), "")
 
+  /**
+   * Every gap, pad, size and corner a feature screen draws comes from `:core:designsystem`.
+   *
+   * `MuPlaySpacing`'s own KDoc says the point of the scale is that "the numbers stop being decided
+   * one screen at a time", and `MuPlayShapes` says softer corners are what stop a picture reading
+   * as a database row. Neither claim was checked, and both had already drifted: `:feature:requests`
+   * used the scale nowhere at all -- it does not even declare the module -- and `:feature:library`
+   * clipped every cover to `RoundedCornerShape(4.dp)`, *sharper* than `MuPlayShapes.extraSmall`,
+   * which is the exact surface that shape step exists for.
+   *
+   * The drift is invisible by reading because each literal is individually reasonable. `8.dp` is a
+   * fine number; it is only wrong as a *decision made here*. And it is not cosmetic: the tap-target
+   * defect this rule was written beside was a row whose height arrived as the sum of a padding and
+   * a control's intrinsic size, which is what writing sizes by hand looks like when it goes wrong.
+   *
+   * Scoped to `feature/`, deliberately. `:core:designsystem` is where the numbers are declared, and
+   * a stroke width or a baseline offset inside a component there is a design-system decision rather
+   * than a screen making one. If a feature ever needs a number the scale does not have, the fix is
+   * to name it in `Dimens.kt` -- which is the change this rule exists to force.
+   */
+  @Test
+  fun `no feature screen writes its own spacing or corner radius`() {
+    val features = File(repoRoot(), "feature").listFiles().orEmpty()
+      .filter { it.isDirectory }
+      .map { File(it, "src/main") }
+      .filter { it.isDirectory }
+    // A scan that finds nothing is the failure mode every rule in this class guards against.
+    assertThat(features).describedAs("feature modules with a main source set").isNotEmpty()
+
+    val sources = features.flatMap { it.walkTopDown().filter { f -> f.extension == "kt" } }
+    assertThat(sources).describedAs("Kotlin sources under feature/*/src/main").isNotEmpty()
+
+    // Comments stripped first: this file's own KDoc above names both literals it forbids, and a
+    // raw-text scan would report the rule as its own offender -- the self-matching failure that has
+    // now cost this repository a `pgrep`, a `pkill` and one earlier `ConventionTest` rule.
+    val rawDp = Regex("""\b\d+(\.\d+)?\.dp\b""")
+    val rawCorner = Regex("""RoundedCornerShape\s*\(""")
+    val offences = sources.flatMap { file ->
+      val code = withoutComments(file.readText())
+      buildList {
+        rawDp.findAll(code).forEach { add("${file.path}: ${it.value}") }
+        rawCorner.findAll(code).forEach { add("${file.path}: RoundedCornerShape(") }
+      }
+    }
+
+    assertThat(offences)
+      .describedAs(
+        "a feature screen must take its spacing from `MuPlaySpacing` and its corners from " +
+          "`MaterialTheme.shapes`, both in :core:designsystem -- add a named step to Dimens.kt " +
+          "rather than a literal here",
+      )
+      .isEmpty()
+  }
+
   @Test
   fun `every Gradle project has a coverage floor`() {
     // A module absent from `coverageFloors` is un-gated, and the build's own warning for it has

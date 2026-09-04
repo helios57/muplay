@@ -17,9 +17,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.integrations.IntegrationService
 import app.muplay.integrations.MediaRequest
 import app.muplay.integrations.RequestStatus
@@ -70,8 +70,14 @@ internal fun RequestsScreen(
   val ready = uiState as? RequestsUiState.Ready ?: return
 
   LazyColumn(
-    modifier = modifier.fillMaxSize().testTag("requests:root").padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    // The same edge margin every other screen in this app has. It was a uniform 16dp, which put
+    // this screen's text 4dp left of the settings screen the user arrives from -- a shift you feel
+    // rather than see, and the reason `gutter` is a named decision instead of a number.
+    modifier = modifier
+      .fillMaxSize()
+      .testTag("requests:root")
+      .padding(horizontal = MuPlaySpacing.gutter, vertical = MuPlaySpacing.lg),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
   ) {
     item {
       OutlinedTextField(
@@ -141,7 +147,7 @@ internal fun searchLabel(services: Set<IntegrationService>): String =
 private fun CandidateRow(candidate: RequestCandidate, requested: Boolean, onRequest: () -> Unit) {
   Row(
     modifier = Modifier.fillMaxWidth().testTag("requests:candidate:${candidate.externalId}"),
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Column(modifier = Modifier.weight(1f)) {
@@ -162,7 +168,7 @@ private fun CandidateRow(candidate: RequestCandidate, requested: Boolean, onRequ
 private fun RequestRow(request: MediaRequest, onForget: () -> Unit, onOpenAlbum: (String) -> Unit) {
   Row(
     modifier = Modifier.fillMaxWidth().testTag("requests:row:${request.id}"),
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Column(modifier = Modifier.weight(1f)) {

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -15,9 +16,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.theme.MuPlaySpacing
 
 /**
  * The picker.
@@ -64,8 +65,8 @@ internal fun CastPickerSheet(
   modifier: Modifier = Modifier,
 ) {
   Column(
-    modifier = modifier.fillMaxWidth().padding(24.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    modifier = modifier.fillMaxWidth().padding(MuPlaySpacing.xl),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
   ) {
     Text(text = CAST_TITLE, style = MaterialTheme.typography.headlineSmall)
 
@@ -149,19 +150,32 @@ private fun Devices(
 }
 
 /**
- * One speaker.
+ * One speaker, at least [MuPlaySpacing.minTouchTarget] tall.
  *
  * [onClick] is `null` for the speaker already being cast to, which makes the row unclickable rather
  * than merely un-highlighted — re-casting to the current speaker would tear down and rebuild a
  * working session.
+ *
+ * **It measured 32.38dp before this pass** — `bodyLarge`'s line box plus 4dp either side — for any
+ * speaker with no second line, against the 48dp Android's accessibility guidance and Material's
+ * `minimumInteractiveComponentSize` both name. A row *with* a subtitle happened to clear it, which
+ * is why the defect is invisible against the Sonos fixtures everything else here is written on: a
+ * generic DLNA renderer that reports no model is the short one, and casting to one of those is
+ * half of what this screen is for.
+ *
+ * `heightIn` sits outside `clickable`, so the row's ripple and hit rectangle are the tall ones
+ * rather than the text's own box — the same ordering `BookScreen`'s chapter row documents for the
+ * same reason.
  */
 @Composable
 private fun DeviceRow(row: CastDeviceRow, onClick: (() -> Unit)?) {
   Column(
     modifier = Modifier
       .fillMaxWidth()
+      .heightIn(min = MuPlaySpacing.minTouchTarget)
       .let { if (onClick == null) it else it.clickable(onClick = onClick) }
-      .padding(vertical = 4.dp),
+      .padding(vertical = MuPlaySpacing.xs),
+    verticalArrangement = Arrangement.Center,
   ) {
     Text(text = row.name, style = MaterialTheme.typography.bodyLarge)
     // The model when the device reported one, and "Sonos speaker" when it did not but is one.

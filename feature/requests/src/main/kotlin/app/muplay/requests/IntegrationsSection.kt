@@ -11,9 +11,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.integrations.IntegrationService
 import app.muplay.integrations.requests.ConfiguredServices
 import app.muplay.settings.SettingsSection
@@ -104,7 +104,7 @@ internal fun IntegrationsSectionContent(
   onOpenRequests: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
     SettingsRow(
       title = INTEGRATIONS_TITLE,
       subtitle = if (configured.isEmpty()) {
@@ -137,8 +137,8 @@ private fun SettingsRow(title: String, subtitle: String, testTag: String, onClic
       .fillMaxWidth()
       .testTag(testTag)
       .clickable(onClick = onClick)
-      .padding(vertical = 8.dp),
-    verticalArrangement = Arrangement.spacedBy(4.dp),
+      .padding(vertical = MuPlaySpacing.sm),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
   ) {
     Text(text = title, style = MaterialTheme.typography.titleMedium)
     Text(

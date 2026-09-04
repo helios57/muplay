@@ -3,6 +3,7 @@ package app.muplay.castpicker
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.muplay.database.CastSettings
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.settings.SettingsScreen
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -121,6 +123,20 @@ class RendererDirectSectionTest {
 
     composeRule.onNodeWithText(RENDERER_DIRECT_TITLE).assertIsOff()
     composeRule.onNodeWithText(RENDERER_DIRECT_EXPLANATION).assertIsDisplayed()
+  }
+
+  @Test
+  fun theWholeRowIsBigEnoughToTapAndNotJustTheSwitch() {
+    // The row is `toggleable`, so the row *is* the target -- and a `Switch`'s own 48dp minimum
+    // interactive size does not propagate to the layout that wraps it. Measured on this emulator
+    // while writing this: delete the `heightIn` and the row measures 40.38dp, delete its vertical
+    // padding as well and it measures 32dp. Both are under the 48dp Android's accessibility
+    // guidance names, and neither is visible by reading -- the row looks generously padded either
+    // way, because the explanation paragraph underneath it fills the space.
+    composeRule.setContent { section.Content(onNavigate = {}) }
+
+    composeRule.onNodeWithText(RENDERER_DIRECT_TITLE)
+      .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
   }
 
   @Test

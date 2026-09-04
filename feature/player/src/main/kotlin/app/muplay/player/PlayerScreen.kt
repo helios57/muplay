@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -449,7 +449,7 @@ internal fun ProgressRule(
     modifier = modifier
       .fillMaxWidth()
       .height(PROGRESS_RULE_DP.dp)
-      .clip(RoundedCornerShape(PROGRESS_RULE_DP.dp))
+      .clip(CircleShape)
       .background(MaterialTheme.colorScheme.outlineVariant),
   ) {
     Box(

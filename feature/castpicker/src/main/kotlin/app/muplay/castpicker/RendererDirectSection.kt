@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
@@ -14,10 +15,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import app.muplay.database.CastSettings
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.settings.SettingsSection
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -121,6 +122,14 @@ class RendererDirectSection @Inject constructor(
  * guidance, and it matters here beyond ergonomics: the title and the switch are then **one**
  * semantics node, so a test that finds the title can assert what the control actually reads --
  * which is the assertion that a label wired to the wrong preference would fail.
+ *
+ * That one node is also the whole tap target, and **`Switch`'s own 48dp minimum does not extend to
+ * it**: measured on a device, this row is 32dp tall the moment its vertical padding is removed, so
+ * a `Switch` that meets the guidance sits inside a row that does not. The height is therefore
+ * stated -- [MuPlaySpacing.minTouchTarget], outside `toggleable` so the ripple and the hit
+ * rectangle are the tall one -- rather than left to arrive as the sum of a padding and a control's
+ * intrinsic size, which is what it was before and would have gone under again on any typography
+ * change. [RendererDirectSectionTest.theWholeRowIsBigEnoughToTapAndNotJustTheSwitch] measures it.
  */
 @Composable
 internal fun RendererDirectSwitch(
@@ -128,13 +137,17 @@ internal fun RendererDirectSwitch(
   onAllowedChange: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  Column(
+    modifier = modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+  ) {
     Row(
       modifier = Modifier
         .fillMaxWidth()
+        .heightIn(min = MuPlaySpacing.minTouchTarget)
         .toggleable(value = allowed, onValueChange = onAllowedChange, role = Role.Switch)
-        .padding(vertical = 8.dp),
-      horizontalArrangement = Arrangement.spacedBy(16.dp),
+        .padding(vertical = MuPlaySpacing.xs),
+      horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.lg),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(

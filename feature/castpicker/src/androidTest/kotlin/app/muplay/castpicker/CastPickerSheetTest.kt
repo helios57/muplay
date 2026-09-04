@@ -3,7 +3,10 @@ package app.muplay.castpicker
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -16,6 +19,7 @@ import app.muplay.cast.discovery.DiscoveryResult
 import app.muplay.cast.session.CastSessionState
 import app.muplay.castpicker.CastPickerFakes.DEVICE_HOST
 import app.muplay.castpicker.CastPickerFakes.device
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.RememberedRenderer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
@@ -110,6 +114,25 @@ class CastPickerSheetTest {
     assertThat(
       composeRule.onAllNodesWithText(CAST_SONOS_FALLBACK_SUBTITLE).fetchSemanticsNodes(),
     ).hasSize(1)
+  }
+
+  @Test
+  fun everySpeakerRowIsBigEnoughToTapWhetherOrNotItReportedAModel() {
+    // A row with a subtitle is about 48dp and a row without one is about 32dp -- `bodyLarge`'s
+    // line box plus 4dp either side -- which is under the 48dp Android's accessibility guidance
+    // and Material's `minimumInteractiveComponentSize` both name. **The short row is not the edge
+    // case**: it is what a generic DLNA renderer that reports no model renders as, and casting to
+    // one of those is half of what this screen is for. `isSonos = false` because the Sonos
+    // fallback subtitle would give the row a second line and hide the defect.
+    //
+    // Both rows asserted, because a fix applied to one branch of `DeviceRow` and not the other
+    // would satisfy either assertion alone.
+    show(devices(row("uuid:a", "Kuche", "Sonos One", isSonos = true), row("uuid:b", "Study Amp", null)))
+
+    composeRule.onNode(hasText("Study Amp") and hasClickAction())
+      .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+    composeRule.onNode(hasText("Kuche") and hasClickAction())
+      .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
   }
 
   @Test
