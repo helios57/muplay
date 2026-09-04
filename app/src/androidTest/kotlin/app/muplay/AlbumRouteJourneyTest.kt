@@ -1,12 +1,10 @@
 package app.muplay
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTextInput
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -44,10 +42,12 @@ import org.junit.runner.RunWith
  * `ci-navidrome-1` on 4533, `adb reverse tcp:4533 tcp:4533`, and an emulator started with
  * minigbm — see that class's own doc, and `ci/prepare-emulator.sh`.
  *
- * Setup is walked here rather than assumed: `SetupViewModel` starts at `Idle` on every Activity
- * launch, so reaching the browse screen at all means connecting and tagging first. Both libraries
- * are tagged unconditionally, so this test does not care what roles a previously-run test left
- * behind and needs no reset of its own.
+ * Setup is walked **only when this install needs it** — see [reachTheBrowseScreen] for the
+ * measured failure that taught the difference. The roles this walk relies on therefore come from
+ * whatever configured the app, which is safe here without being assumed: every path that
+ * configures it tags Music as music and Audiobooks as audiobooks, and if one had not, the
+ * assertions below fail loudly on [BOOK_AUTHOR_NAME] rather than passing quietly. That is the
+ * same property the two disjoint albums give the rest of the walk.
  */
 @RunWith(AndroidJUnit4::class)
 class AlbumRouteJourneyTest {
@@ -67,15 +67,18 @@ class AlbumRouteJourneyTest {
 
     awaitText(MUSIC_TRACK_ONE)
     composeRule.onNodeWithText(MUSIC_ALBUM_NAME).assertIsDisplayed()
-    composeRule.onNodeWithText(MUSIC_ARTIST_NAME).assertIsDisplayed()
-    composeRule.onNodeWithText(MUSIC_TRACK_ONE).assertIsDisplayed()
-    composeRule.onNodeWithText(MUSIC_TRACK_TWO).assertIsDisplayed()
-    composeRule.onNodeWithText(MUSIC_TRACK_THREE).assertIsDisplayed()
+    // `…OutsideMiniPlayer` on every track title and on the artist: the bar carries both, so an
+    // earlier journey's leftover playback makes the plain matcher find two nodes and throw. See
+    // `JourneyNavigation.notTheMiniPlayer`.
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_ARTIST_NAME).assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_TRACK_ONE).assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_TRACK_TWO).assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_TRACK_THREE).assertIsDisplayed()
     // Not the browse screen any more, and not the "no longer in your library" state a wrong or
     // constant id would land on.
     composeRule.onNodeWithText(SEARCH_LIBRARY_LABEL).assertDoesNotExist()
     composeRule.onNodeWithText(NOT_FOUND_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(BOOK_AUTHOR_NAME).assertDoesNotExist()
+    composeRule.onNodeWithTextOutsideMiniPlayer(BOOK_AUTHOR_NAME).assertDoesNotExist()
 
     // NavDisplay's onBack pops AlbumRoute and leaves LibraryRoute -- the browse screen is back.
     Espresso.pressBack()
@@ -96,26 +99,35 @@ class AlbumRouteJourneyTest {
     awaitText(BOOK_AUTHOR_NAME)
     composeRule.onNodeWithText(SEARCH_LIBRARY_LABEL).assertDoesNotExist()
     composeRule.onNodeWithText(OPEN_LABEL).assertDoesNotExist()
-    composeRule.onNodeWithText(BOOK_AUTHOR_NAME).assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer(BOOK_AUTHOR_NAME).assertIsDisplayed()
     composeRule.onNodeWithText(NOT_FOUND_LABEL).assertDoesNotExist()
     // The half that defeats a constant: an id hardcoded to the Music album would render Test
     // Album's tracks here, and an id hardcoded to this one would have failed above.
-    composeRule.onNodeWithText(MUSIC_TRACK_ONE).assertDoesNotExist()
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_TRACK_ONE).assertDoesNotExist()
     composeRule.onNodeWithText(MUSIC_ALBUM_NAME).assertDoesNotExist()
   }
 
-  /** Connect, tag both libraries, Continue — the shortest real path to the browse screen. */
+  /**
+   * The shortest real path to the browse screen, **whether or not this install is already set up**.
+   *
+   * This used to type into the setup screen unconditionally, on the reasoning quoted in this
+   * class's own header: `SetupViewModel` starts at `Idle` on every Activity launch. That is true
+   * of the setup *screen* and says nothing about whether it is shown — `StartDestinationViewModel`
+   * reads the stored credentials and opens straight on the library when there are some, and
+   * `connectedDebugAndroidTest` reinstalls the APK **without clearing app data**. So the walk
+   * worked only while some earlier class happened to have signed out, and failed with
+   *
+   *     Failed to perform text input.
+   *     Reason: Expected exactly '1' node but could not find any node that satisfies:
+   *       (Text + InputText + EditableText contains 'Server URL' ...)
+   *
+   * measured as the *first* test of a full run, where nothing had signed out yet.
+   *
+   * [reachLibraryScreen] is that branch, already written and used by eight other journeys here,
+   * so this defers to it rather than growing a ninth copy of the setup walk.
+   */
   private fun reachTheBrowseScreen() {
-    composeRule.onNodeWithText(SERVER_URL_LABEL).performTextInput(SERVER_URL)
-    composeRule.onNodeWithText(USERNAME_LABEL).performTextInput(USERNAME)
-    composeRule.onNodeWithText(PASSWORD_LABEL).performTextInput(PASSWORD)
-    composeRule.onNodeWithText(CONNECT_LABEL).performClick()
-
-    awaitText(TAG_AS_MUSIC_LABEL, CONNECT_TIMEOUT_MILLIS)
-    composeRule.onAllNodesWithText(TAG_AS_MUSIC_LABEL)[MUSIC_ROW_CHIP].performClick()
-    composeRule.onAllNodesWithText(TAG_AS_AUDIOBOOKS_LABEL)[AUDIOBOOKS_ROW_CHIP].performClick()
-    composeRule.onNodeWithText(CONTINUE_LABEL).assertIsEnabled().performClick()
-
+    composeRule.reachLibraryScreen()
     awaitText(SEARCH_LIBRARY_LABEL)
   }
 
@@ -128,32 +140,18 @@ class AlbumRouteJourneyTest {
    */
   private fun awaitText(text: String, timeoutMillis: Long = UI_TIMEOUT_MILLIS) {
     composeRule.waitUntil(timeoutMillis = timeoutMillis) {
-      composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(text).notTheMiniPlayer().fetchSemanticsNodes().isNotEmpty()
     }
   }
 
   private companion object {
-    const val SERVER_URL = "http://localhost:4533"
-    const val USERNAME = "admin"
-    const val PASSWORD = "testpass"
-
     // Literal strings the real screens render, duplicated here rather than shared -- same rule
     // FirstRunJourneyTest states: a shared constant would let a change to what the user actually
-    // sees pass unnoticed in a black-box journey.
-    const val SERVER_URL_LABEL = "Server URL"
-    const val USERNAME_LABEL = "Username"
-    const val PASSWORD_LABEL = "Password"
-    const val CONNECT_LABEL = "Connect"
-    const val CONTINUE_LABEL = "Continue"
-    const val TAG_AS_MUSIC_LABEL = "Tag as Music"
-    const val TAG_AS_AUDIOBOOKS_LABEL = "Tag as Audiobooks"
+    // sees pass unnoticed in a black-box journey. (The setup screen's own labels went with the
+    // hand-written setup walk; `JourneyNavigation` owns those now.)
     const val SEARCH_LIBRARY_LABEL = "Search this library"
     const val OPEN_LABEL = "Open"
     const val NOT_FOUND_LABEL = "That album is no longer in your library."
-
-    /** Row positions in the tagging list, not roles -- see FirstRunJourneyTest's own note. */
-    const val MUSIC_ROW_CHIP = 0
-    const val AUDIOBOOKS_ROW_CHIP = 1
 
     /**
      * What `ci/configure-libraries.sh` and `ci/seed-fixtures.sh` actually put on the server. The
@@ -182,10 +180,6 @@ class AlbumRouteJourneyTest {
      * per-album parent for an ancestor or sibling matcher to reach through.
      */
     const val BOOK_ROW = 3
-
-    /** A first `ping` plus `refreshFromServer` against the container. Same figure and same
-     *  reasoning as FirstRunJourneyTest's: generous, because a gate that flakes is worse than none. */
-    const val CONNECT_TIMEOUT_MILLIS = 30_000L
 
     /** The mirror reconcile LibraryViewModel's `init { refresh() }` starts: a `getScanStatus`
      *  round trip plus a full album/song fetch for both libraries, then a Room write. */

@@ -11,10 +11,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.SemanticsNodeInteractionCollection
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -566,21 +564,6 @@ class PlaybackJourneyTest {
     check(index >= 0) { "the row '$text' at y=$y is no longer on screen" }
     matches[index].performClick()
   }
-
-  /**
-   * Drops the mini player bar from a text match.
-   *
-   * The bar's `Modifier.clickable` merges its descendants, so on the merged tree the playing
-   * track's title resolves to the bar node itself — which would make `onAllNodesWithText("Track
-   * 2")[0]` a coin flip between a list row and the bar as soon as anything is playing.
-   */
-  private fun SemanticsNodeInteractionCollection.notTheMiniPlayer() =
-    filter(
-      SemanticsMatcher("is not the mini player bar") { node ->
-        node.config.getOrNull(SemanticsProperties.ContentDescription)
-          ?.contains(MINI_PLAYER_LABEL) != true
-      },
-    )
 
   // ---- observations ---------------------------------------------------------------------------
 

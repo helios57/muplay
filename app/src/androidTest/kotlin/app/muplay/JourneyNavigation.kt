@@ -1,8 +1,10 @@
 package app.muplay
 
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.SemanticsNodeInteractionCollection
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -162,7 +164,58 @@ internal fun ComposeTestRule.openBookNamed(title: String) {
 }
 
 private fun ComposeTestRule.bookRows(title: String): SemanticsNodeInteractionCollection =
-  onAllNodesWithText(title).filter(hasContentDescription(MINI_PLAYER_LABEL).not())
+  onAllNodesWithText(title).notTheMiniPlayer()
+
+// ---- telling the app's content apart from the bar above it -------------------------------------
+
+/**
+ * Drops the mini player bar from a text match.
+ *
+ * **A text matcher that does not do this is reading the app's own "now playing" bar as library
+ * content.** `MiniPlayer` puts a `contentDescription` on a `MergeDescendants` row, so the playing
+ * track's title *and artist* both resolve to the bar node itself on the merged tree — measured:
+ *
+ *     ContentDescription = '[Now playing]'
+ *     Text = '[Test Book, Test Author]'
+ *     MergeDescendants = 'true'
+ *
+ * That is not a hypothetical collision with a badly-chosen fixture. `books.tsv` gives the seeded
+ * book's one file the track title `Test Book` and the artist `Test Author`, and the music tracks
+ * the artist `Test Artist` — so the strings the bar can carry are exactly the strings these
+ * journeys assert on, and the app has to be playing something for it to matter, which by the
+ * second class in a full run it always is.
+ *
+ * Three ways it goes wrong, all three measured on this suite rather than reasoned about:
+ *
+ *  - `onNodeWithText(title)` throws *"Expected exactly '1' node but found '2'"* — the failure that
+ *    sent `TranscodeSeekJourneyTest` red in two consecutive full runs while passing alone.
+ *  - `assertDoesNotExist()` finds the bar and reports a **library-scoping leak that did not
+ *    happen** — the app's central promise, wrongly failed.
+ *  - a `check(... .isNotEmpty())` written to prove some list is non-empty is satisfied by the bar
+ *    **on that list's behalf**, so it keeps passing over an empty one. A false green on the guard
+ *    whose whole job is to stop the assertion beside it being vacuous.
+ *
+ * `ScopedShuffleJourneyTest.aMusicShuffleIsScopedEvenWhileTheMiniPlayerIsShowingABook` drives the
+ * first two deterministically, so this filter has a test that goes red when it is removed rather
+ * than a comment claiming it matters.
+ *
+ * Shared here rather than copied: the same idea had been written three times independently — a
+ * private `notTheMiniPlayer` in `PlaybackJourneyTest`, the inline matcher its `shuffledRows` still
+ * uses (which stays, being a compound "clickable text row that is not the bar"), and `bookRows`
+ * above — and not at all in the five journeys that needed it.
+ */
+internal fun SemanticsNodeInteractionCollection.notTheMiniPlayer(): SemanticsNodeInteractionCollection =
+  filter(hasContentDescription(MINI_PLAYER_LABEL).not())
+
+/**
+ * The one node carrying [text] that is **not** the mini player bar.
+ *
+ * The drop-in for `onNodeWithText(text)` in a journey, and it keeps that matcher's strictness:
+ * still exactly one node, so two genuine copies of a row are still a loud failure. See
+ * [notTheMiniPlayer] for what it is dropping and why.
+ */
+internal fun ComposeTestRule.onNodeWithTextOutsideMiniPlayer(text: String): SemanticsNodeInteraction =
+  onNode(hasText(text) and hasContentDescription(MINI_PLAYER_LABEL).not())
 
 /**
  * The one pause control on screen, whichever surface is showing it.
@@ -225,7 +278,7 @@ private const val CHAPTERS_HEADING = "Chapters"
 /** Shared by `PlayerScreen`, `BookPlayerScreen` and `MiniPlayer`. */
 private const val PAUSE_LABEL = "Pause"
 
-/** `MiniPlayer`'s own accessible name, which is what tells its title apart from a shelf row's. */
+/** `MiniPlayer`'s own accessible name — what tells the bar apart from the content under it. */
 private const val MINI_PLAYER_LABEL = "Now playing"
 
 /** Book player -> book -> shelf -> library is three; the fourth is the margin that reports rather than exits. */

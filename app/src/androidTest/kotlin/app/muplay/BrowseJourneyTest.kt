@@ -47,7 +47,9 @@ class BrowseJourneyTest {
       composeRule.onAllNodesWithText(MUSIC_ALBUM).fetchSemanticsNodes().isNotEmpty()
     }
     composeRule.onNodeWithText(MUSIC_ALBUM).assertIsDisplayed()
-    composeRule.onNodeWithText("Test Artist").assertIsDisplayed()
+    // Outside the bar: it renders the playing track's artist, and every seeded music track has
+    // this one. See `JourneyNavigation.notTheMiniPlayer`.
+    composeRule.onNodeWithTextOutsideMiniPlayer("Test Artist").assertIsDisplayed()
   }
 
   @Test
@@ -56,10 +58,11 @@ class BrowseJourneyTest {
 
     composeRule.onAllNodesWithText(AUDIOBOOK_LIBRARY)[LIBRARY_CHIP].performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
 
-    composeRule.onNodeWithText(AUDIOBOOK_TITLE).assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer(AUDIOBOOK_TITLE).assertIsDisplayed()
     // The scoping contract at the UI level: the music album must be gone, not merely further
     // down the list.
     composeRule.onNodeWithText(MUSIC_ALBUM).assertDoesNotExist()
@@ -74,12 +77,13 @@ class BrowseJourneyTest {
     }
     composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText("Track 1").fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText("Track 1").notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
 
-    composeRule.onNodeWithText("Track 1").assertIsDisplayed()
-    composeRule.onNodeWithText("Track 2").assertIsDisplayed()
-    composeRule.onNodeWithText("Track 3").assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer("Track 1").assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer("Track 2").assertIsDisplayed()
+    composeRule.onNodeWithTextOutsideMiniPlayer("Track 3").assertIsDisplayed()
   }
 
   @Test
@@ -206,7 +210,8 @@ class BrowseJourneyTest {
     }
     composeRule.onAllNodesWithText(OPEN_LABEL)[FIRST_ALBUM].performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText("Track 1").fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText("Track 1").notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
     // The album screen really did replace the library screen -- otherwise "back returned us to
     // the library" would be satisfied by never having left it.

@@ -1,5 +1,6 @@
 package app.muplay
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -54,11 +55,13 @@ class ScopedShuffleJourneyTest {
       }
 
       // The whole point, asserted on screen: the audiobook chapter is never in a music shuffle.
-      composeRule.onNodeWithText(AUDIOBOOK_TITLE).assertDoesNotExist()
+      // `notTheMiniPlayer()` on both, and neither is cosmetic -- see that helper. Unfiltered, the
+      // first reports a leak whenever the bar is showing the book (whose track title *is*
+      // [AUDIOBOOK_TITLE]), and the second is satisfied by a bar showing music even if this
+      // shuffle returned none.
+      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).notTheMiniPlayer().assertCountEquals(0)
       // ...and something was actually shuffled, so the assertion above is not vacuous.
-      composeRule.onAllNodesWithText("Track 1").fetchSemanticsNodes()
-        .plus(composeRule.onAllNodesWithText("Track 2").fetchSemanticsNodes())
-        .plus(composeRule.onAllNodesWithText("Track 3").fetchSemanticsNodes())
+      MUSIC_TITLES.flatMap { composeRule.onAllNodesWithText(it).notTheMiniPlayer().fetchSemanticsNodes() }
         .also { check(it.isNotEmpty()) { "a music shuffle returned no music" } }
     }
   }
@@ -99,7 +102,8 @@ class ScopedShuffleJourneyTest {
 
     composeRule.onAllNodesWithText(AUDIOBOOK_LIBRARY)[LIBRARY_CHIP].performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
 
     composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
@@ -111,10 +115,81 @@ class ScopedShuffleJourneyTest {
 
     // ...and what it shuffled is not music. The music library's three tracks are the only titles
     // that could leak in, and they are the same three the mirror test asserts on.
-    val music = MUSIC_TITLES.flatMap { composeRule.onAllNodesWithText(it).fetchSemanticsNodes() }
+    val music = MUSIC_TITLES.flatMap {
+      composeRule.onAllNodesWithText(it).notTheMiniPlayer().fetchSemanticsNodes()
+    }
     check(music.isEmpty()) {
       "an audiobook shuffle surfaced music: ${MUSIC_TITLES.joinToString()} should not be on screen"
     }
+  }
+
+  /**
+   * The same scoping claim, made while the **mini player is showing a book** — which is the state
+   * every run of the full suite actually reaches, and which the two tests above cannot survive.
+   *
+   * `MiniPlayer` renders the playing *track's* title, and `books.tsv` gives the seeded book's one
+   * file the track title `Test Book` — byte-for-byte [AUDIOBOOK_TITLE], the string
+   * [shufflingTheMusicLibraryNeverSurfacesAnAudiobook] searches for to prove a leak. So a bar left
+   * over from any earlier journey puts that string on the library screen with no shuffle involved,
+   * and an unfiltered matcher reads the app's own "now playing" bar as a scoping defect.
+   *
+   * All three failure directions were measured here before the filter existed, and they are why
+   * this is a test rather than a comment:
+   *
+   *  - **False red.** `assertDoesNotExist()` finds the bar and reports that a music shuffle
+   *    surfaced an audiobook. The most important behavioural claim in this app, wrongly failed.
+   *  - **False green.** The non-vacuity guard below it — "something really was shuffled" — is
+   *    satisfied by a bar showing `Track 1`, so it would keep passing over a shuffle that returned
+   *    nothing at all. That is the assertion-that-cannot-fail shape this repository exists to keep
+   *    out of its own gates.
+   *  - **False red again**, in [shufflingTheAudiobookLibraryDoesSurfaceTheAudiobook], whose
+   *    `check(music.isEmpty())` reads a bar showing music as an audiobook shuffle leaking music.
+   *
+   * This test pins the first two deterministically. Before, they surfaced only when an earlier
+   * class happened to leave the right thing playing — the "order-dependent flake whose failing
+   * test moves between runs" CLAUDE.md records, with a cause rather than a shrug.
+   */
+  @Test
+  fun aMusicShuffleIsScopedEvenWhileTheMiniPlayerIsShowingABook() {
+    composeRule.reachLibraryScreen()
+
+    // Leave a book playing, then come back. Paused rather than stopped, because a paused bar is
+    // exactly what an earlier journey leaves behind and it stays on screen indefinitely.
+    composeRule.openBookshelf()
+    composeRule.openBookNamed(AUDIOBOOK_TITLE)
+    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.pausePlayback()
+    composeRule.pressBackToLibraryScreen()
+
+    composeRule.onAllNodesWithText(MUSIC_LIBRARY)[LIBRARY_CHIP].performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isEmpty()
+    }
+
+    // The premise, checked rather than assumed, and checked *here* rather than before the switch:
+    // on the Music library nothing but the bar can carry the book's title, so this cannot be
+    // satisfied by an Audiobooks album row that an earlier test left selected. Without the bar
+    // this test proves nothing, so a change that stopped showing the title has to fail loudly
+    // rather than make it quietly vacuous.
+    composeRule.waitUntil("the mini player to carry the book's title", TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+    check(composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).fetchSemanticsNodes().size == 1) {
+      "the mini player is not showing \"$AUDIOBOOK_TITLE\"; this test would prove nothing"
+    }
+    composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SHUFFLE_HEADING).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    // The library screen holds no audiobook -- the bar above it is not the library.
+    composeRule.onAllNodesWithText(AUDIOBOOK_TITLE).notTheMiniPlayer().assertCountEquals(0)
+    // ...and the shuffle really returned music, counted outside the bar so that a bar showing a
+    // music track cannot satisfy this on an empty shuffle's behalf.
+    val shuffled = MUSIC_TITLES.flatMap {
+      composeRule.onAllNodesWithText(it).notTheMiniPlayer().fetchSemanticsNodes()
+    }
+    check(shuffled.isNotEmpty()) { "a music shuffle returned no music" }
   }
 
   @Test
@@ -148,6 +223,9 @@ class ScopedShuffleJourneyTest {
     val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
 
     /** The two library chips' own labels, i.e. the names ci/configure-libraries.sh gives them. */
+    /** `BookScreen`'s own button, duplicated from it -- see this companion's note above. */
+    const val START_OVER_LABEL = "Start from the beginning"
+
     const val MUSIC_LIBRARY = "Music"
     const val AUDIOBOOK_LIBRARY = "Audiobooks"
 

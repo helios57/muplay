@@ -1135,6 +1135,57 @@ filter), and every flake did not.
 Do not "fix" these by adding sleeps. Two of them want the state they depend on made
 explicit in their own `@Before`; that is the change, and it has not been made yet.
 
+## The mini player is in every `:app` journey's text matches, and it carries fixture strings
+
+`MiniPlayer`'s bar is a `MergeDescendants` node with `contentDescription = "Now playing"`, so on
+the merged tree **the playing track's title and artist both resolve to the bar itself**. Measured:
+
+    ContentDescription = '[Now playing]'
+    Text = '[Test Book, Test Author]'
+    MergeDescendants = 'true'
+
+The strings it can carry are exactly the strings these journeys assert on, because `books.tsv`
+gives the seeded book's one file the *track title* `Test Book` and the artist `Test Author`, and
+the music tracks the artist `Test Artist`. From the second class of a full `:app` run onwards
+something is always playing, so the bar is always there.
+
+Three failure directions, all measured on this suite rather than reasoned about:
+
+- **A single-node matcher throws.** `onNodeWithText("Offset Track")` -> *"Expected exactly '1' node
+  but found '2'"*. This is what sent `TranscodeSeekJourneyTest` red in two consecutive full runs
+  while passing alone, and it is not an emulator flake — it reproduces the moment the bar happens
+  to carry that title.
+- **`assertDoesNotExist()` reports a library-scoping leak that did not happen.**
+  `ScopedShuffleJourneyTest` searched for `Test Book` to prove a music shuffle never surfaces an
+  audiobook; the bar showing the book satisfies that search. A **false red on the app's central
+  promise**, caused by the app working correctly.
+- **A non-vacuity guard passes on the bar's behalf.** The `check(... .isNotEmpty())` beside that
+  assertion — there precisely so the assertion cannot be vacuous — is satisfied by a bar showing
+  `Track 1` even if the shuffle returned nothing. A **false green on the guard against false
+  greens**, which is the shape this repository exists to keep out of its own gates.
+
+The filter is `JourneyNavigation`'s `notTheMiniPlayer()` / `onNodeWithTextOutsideMiniPlayer()`, and
+`ScopedShuffleJourneyTest.aMusicShuffleIsScopedEvenWhileTheMiniPlayerIsShowingABook` drives the
+first two **deterministically** — it plays the book, pauses, returns to the library and shuffles,
+so the bar is guaranteed rather than left to test order. Falsified: with the filter removed it
+fails with the node dump above; with it, green.
+
+Note what this does *not* explain. The `:core:media` entries in the order-dependent-flake table
+above (`MediaCacheTest`, `MuPlaybackServiceTest`, `BrowseSearchBrowserTest`) are a different
+mechanism and are untouched by this. What it does explain is why an `:app` journey could fail in a
+full run and pass alone with no product defect anywhere — and the general shape is the one this
+file keeps recording: **the check returned a real observation of the wrong thing.**
+
+Two lessons that generalise past this bar:
+
+- A `contentDescription` on a merging node does not *replace* its children's text for the test
+  matchers the way it does for TalkBack — the text is still there to be matched. Any app chrome
+  that echoes content (a now-playing bar, a header, a breadcrumb) is inside every text match on
+  the screen below it.
+- **Write the wait and the assertion against the same filtered set.** Several waits here were
+  `waitUntil { onAllNodesWithText(title).isNotEmpty() }` followed by a filtered assertion, so the
+  wait returned on the bar and the assertion then failed against a list that had not arrived yet.
+
 ## A `coerceAtLeast`/`coerceIn` clamp is invisible to a BRANCH coverage floor
 
 Measured in Plan 4 Task 9 while falsifying `:feature:book`'s floors. Kotlin's

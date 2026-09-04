@@ -159,9 +159,12 @@ class TranscodeSeekJourneyTest {
     composeRule.onNodeWithText(OPEN_LABEL).performClick()
 
     composeRule.waitUntil("the album's tracks to be listed", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(OPUS_TRACK).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(OPUS_TRACK).notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
-    composeRule.onNodeWithText(OPUS_TRACK).performClick()
+    // Not `onNodeWithText`: measured failing twice in a full suite with *"Expected exactly '1'
+    // node but found '2'"*, because a bar left playing this very track carries its title too.
+    composeRule.onNodeWithTextOutsideMiniPlayer(OPUS_TRACK).performClick()
     composeRule.waitUntil("the player screen to open", TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithContentDescription(PLAY_LABEL).fetchSemanticsNodes().isNotEmpty() ||
         composeRule.onAllNodesWithContentDescription(PAUSE_LABEL).fetchSemanticsNodes().isNotEmpty()

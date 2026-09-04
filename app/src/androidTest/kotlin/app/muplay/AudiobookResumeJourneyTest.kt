@@ -326,9 +326,12 @@ class AudiobookResumeJourneyTest {
     }
     composeRule.onNodeWithText(OPEN_LABEL).performClick()
     composeRule.waitUntil("the album's track list", TIMEOUT_MILLIS) {
-      composeRule.onAllNodesWithText(MUSIC_TRACK_TITLE).fetchSemanticsNodes().isNotEmpty()
+      composeRule.onAllNodesWithText(MUSIC_TRACK_TITLE).notTheMiniPlayer().fetchSemanticsNodes()
+        .isNotEmpty()
     }
-    composeRule.onNodeWithText(MUSIC_TRACK_TITLE).performClick()
+    // This journey always arrives here with a book in the mini player -- that is the whole point
+    // of it -- so the row has to be told apart from the bar. See `JourneyNavigation`.
+    composeRule.onNodeWithTextOutsideMiniPlayer(MUSIC_TRACK_TITLE).performClick()
   }
 
   // ---- the app's own row ------------------------------------------------------------------------
