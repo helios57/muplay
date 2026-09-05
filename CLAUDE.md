@@ -1134,6 +1134,20 @@ Two limits of that rule, both measured, both worth knowing before trusting it:
 For a single known row, `assertHeightIsAtLeast` on the node is still the right tool and it does go
 red honestly (32.38dp on the cast picker's speaker row).
 
+**The fixture gates as much as the assertion does.** Falsifying the ported sweep in
+`:feature:castpicker` against the real defect -- delete `DeviceRow`'s `heightIn`, restoring 32.38dp
+rows -- the sweep stayed **green** while the height assertion beside it went red, because the
+fixture gave one of the two speakers a model name. A subtitle makes a row two lines and tall enough
+to need no expansion, so nothing can collide with it and an overlap check has nothing to see. With
+both speakers subtitle-less it fires: `Study Amp and Kitchen Display: 3.43dp of their touch bounds
+is the same place`. One short row is not a crowd.
+
+**And when you port a test helper, copy the helper and not its falsification record.** The first
+port of that file was `sed 's/SettingsRow/DeviceRow/'`, which left a KDoc claiming, of
+`:feature:castpicker`, three measurements taken in `:feature:requests` -- including an overlap
+between two rows that do not exist in this module. A measurement record is about one tree at one
+moment; renaming an identifier inside it does not move it.
+
 ## The device suite has order-dependent flakes, and the failing test moves between runs
 
 Measured across five full `:app` + `:core:media` runs on one tree (2026-08-28), after

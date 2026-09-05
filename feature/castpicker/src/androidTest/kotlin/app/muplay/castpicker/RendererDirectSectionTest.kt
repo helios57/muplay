@@ -149,6 +149,16 @@ class RendererDirectSectionTest {
 
   private fun onSwitch() = composeRule.onNodeWithText(RENDERER_DIRECT_TITLE)
 
+
+  @Test
+  fun theSwitchDoesNotCrowdAnythingElseOnTheSettingsScreen() {
+    // On the screen it actually ships on, not composed alone: `SettingsScreen` puts sections in a
+    // column, so a short row here would collide with whatever is rendered next to it.
+    composeRule.setContent { SettingsScreen(sections = listOf(section), onNavigate = {}) }
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
   private companion object {
     /** Generous: this waits on a real DataStore write reaching a real file on an emulator. */
     const val TIMEOUT_MS = 5_000L

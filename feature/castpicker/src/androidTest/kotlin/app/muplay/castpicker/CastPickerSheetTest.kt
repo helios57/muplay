@@ -330,6 +330,30 @@ class CastPickerSheetTest {
     volumePercent: Int? = null,
   ) = CastUiState.Devices(rows.toList(), unreachable, connectedUdn, volumePercent)
 
+
+  @Test
+  fun noTwoSpeakerRowsFightOverTheSamePixels() {
+    // **Both selectable speakers report no model**, and that is the fixture doing work rather than
+    // being tidy. Two generic DLNA renderers is an ordinary living room and it is the only shape
+    // this sweep can see: a subtitle makes a row two lines and about 56dp, which needs no expansion
+    // and so cannot collide with anything. Measured while writing this -- with one short row and
+    // one subtitled one, deleting `DeviceRow`'s `heightIn` left this test **green** while the
+    // height assertion above went red at 32.38dp. A sweep is only as good as the crowd it is given.
+    //
+    // The connected speaker is here for the crowd, not as a target: its `onClick` is null, so it
+    // carries no click action and never enters the sweep.
+    show(
+      devices(
+        row("uuid:a", "Kuche", "Sonos One", isSonos = true, isConnected = true),
+        row("uuid:b", "Study Amp", null),
+        row("uuid:c", "Kitchen Display", null),
+        connectedUdn = "uuid:a",
+      ),
+    )
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
   private companion object {
     val REMEMBERED = RememberedRenderer("uuid:z", "Bedroom", "http://${DEVICE_HOST}:1400/xml/d.xml")
 
