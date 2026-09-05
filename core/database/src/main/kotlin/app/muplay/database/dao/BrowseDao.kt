@@ -101,12 +101,63 @@ abstract class BrowseDao {
   abstract suspend fun searchSongs(libraryId: Int, pattern: String, limit: Int): List<SongEntity>
 
   /**
+   * Every mirrored song beneath one folder, at any depth, ordered by path.
+   *
+   * [pathPattern] comes from `FolderPaths.likePatternFor`, which ends the pattern at a separator
+   * so a folder cannot reach a sibling whose name merely begins the same way, and escapes the
+   * user's own `%` and `_`. Passing a raw prefix here is a bug that only shows up on a library
+   * with a folder named like another folder's start.
+   *
+   * **`path IS NOT NULL` is doing real work.** Rows mirrored before schema version 8 have no path
+   * until the next reconcile, and SQLite's `LIKE` is false for null anyway -- the clause is here
+   * to say so out loud, because the alternative reading (that such a row belongs at the root) is
+   * the one a reader would otherwise reach for. See [app.muplay.database.MIGRATION_7_8].
+   *
+   * Recursive by construction: the folder screen counts and lists from this one result rather
+   * than issuing a query per folder, and `FolderPaths` -- unit-tested on the fast tier -- is what
+   * splits it into subfolders and the tracks lying directly in the folder. One source of truth,
+   * so the count beside a folder and the queue that shuffling it builds cannot disagree.
+   */
+  @Query(
+    "SELECT * FROM songs WHERE libraryId = :libraryId AND path IS NOT NULL " +
+      "AND path LIKE :pathPattern ESCAPE '\\' ORDER BY path",
+  )
+  abstract fun observeSongsUnder(libraryId: Int, pathPattern: String): Flow<List<SongEntity>>
+
+  /** [observeSongsUnder] as a one-shot, for shuffling a folder the user is not looking at. */
+  @Query(
+    "SELECT * FROM songs WHERE libraryId = :libraryId AND path IS NOT NULL " +
+      "AND path LIKE :pathPattern ESCAPE '\\' ORDER BY path",
+  )
+  abstract suspend fun songsUnder(libraryId: Int, pathPattern: String): List<SongEntity>
+
+  /**
+   * How many songs in [libraryId] know their path yet.
+   *
+   * The folder screen needs this to tell "this library has no folders" from "this mirror predates
+   * schema version 8 and the reconcile that fills the column has not run yet". Both render as an
+   * empty list, and only one of them is worth an explanation.
+   */
+  @Query("SELECT COUNT(*) FROM songs WHERE libraryId = :libraryId AND path IS NOT NULL")
+  abstract fun observePathedSongCount(libraryId: Int): Flow<Int>
+
+  /**
    * Which of [ids] the mirror agrees are songs in [libraryId]. Backs the shuffle scope guard: a
    * song the server returned for a "music" shuffle that this mirror says lives in the audiobook
    * library is dropped rather than played.
    */
   @Query("SELECT id FROM songs WHERE libraryId = :libraryId AND id IN (:ids)")
   abstract suspend fun songIdsInLibrary(libraryId: Int, ids: List<String>): List<String>
+
+  /**
+   * The mirror's rows for [ids], in no particular order and possibly fewer than were asked for.
+   *
+   * Backs `PlaylistRepository`'s library re-stamp. A playlist is not library-scoped in the
+   * protocol, so the server's answer says nothing about which library each entry belongs to; the
+   * mirror is the only thing that knows, and a song it has never seen simply is not returned.
+   */
+  @Query("SELECT * FROM songs WHERE id IN (:ids)")
+  abstract suspend fun songsByIds(ids: List<String>): List<SongEntity>
 
   /**
    * Replaces **everything** the mirror holds for one library, in one transaction.

@@ -66,6 +66,8 @@ class LocalOnlyProgressTest {
       "getScanStatus",
       "getAlbumList2",
       "getAlbum",
+      "getPlaylists",
+      "getPlaylist",
       "search3",
       "getRandomSongs",
       "coverArtUrl",
@@ -96,6 +98,8 @@ class LocalOnlyProgressTest {
       "getScanStatus",
       "getAlbumList2",
       "getAlbum",
+      "getPlaylists",
+      "getPlaylist",
       "search3",
       "getRandomSongs",
       "coverArtUrl",
@@ -126,6 +130,14 @@ class LocalOnlyProgressTest {
       "rest/getAlbumList2",
       "rest/getMusicFolders",
       "rest/getOpenSubsonicExtensions",
+      // Reads, added deliberately, and in sorted position because this assertion is ordered.
+      // `getPlaylist`/`getPlaylists` open and list a server-side playlist; neither has a write
+      // counterpart here. Subsonic's playlist *writes* -- `createPlaylist`, `updatePlaylist`,
+      // `deletePlaylist` -- are absent on purpose: this app reads playlists and does not edit
+      // them, so the surface stays free of a command that could reorder or delete somebody's
+      // playlist. Adding one is a decision, not a fill-in.
+      "rest/getPlaylist",
+      "rest/getPlaylists",
       "rest/getRandomSongs",
       "rest/getScanStatus",
       "rest/ping",

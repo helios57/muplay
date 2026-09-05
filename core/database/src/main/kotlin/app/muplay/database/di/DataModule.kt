@@ -10,6 +10,7 @@ import app.muplay.database.Bookshelf
 import app.muplay.database.CastPreferences
 import app.muplay.database.LibraryRepository
 import app.muplay.database.MIGRATION_6_7
+import app.muplay.database.MIGRATION_7_8
 import app.muplay.database.MuPlayDatabase
 import app.muplay.database.RendererStore
 import app.muplay.database.SubsonicSourceProvider
@@ -58,7 +59,7 @@ object DataModule {
       // every listener's book position -- the one thing this application exists to keep -- and no
       // migration test that is handed `MIGRATION_6_7` by name can see it happen.
       // `MigrationTest.theRealBuilderMigratesRatherThanDropping` is the one that can.
-      .addMigrations(MIGRATION_6_7)
+      .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
       // Pre-release only, and still needed. Versions 1 through 6 have no `Migration` between them
       // -- Plan 2 Tasks 4, 5 and 6 and Plan 3 Task 11 each bumped `version` and wrote none -- so a
       // developer's device (and the emulator that runs the required Tier 2 gate) must be allowed

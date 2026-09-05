@@ -82,6 +82,7 @@ object MirrorMapper {
     replayGainTrackDb = song.replayGain?.trackGainDb,
     replayGainAlbumDb = song.replayGain?.albumGainDb,
     replayGainPeak = song.replayGain?.peakAmplitude,
+    path = song.path,
   )
 
   fun song(entity: SongEntity): Song = Song(
@@ -98,6 +99,7 @@ object MirrorMapper {
     suffix = entity.suffix,
     coverArtId = entity.coverArtId,
     replayGain = entity.replayGain(),
+    path = entity.path,
   )
 
   /**

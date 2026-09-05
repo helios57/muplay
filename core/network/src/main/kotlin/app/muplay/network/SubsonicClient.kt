@@ -7,6 +7,8 @@ import app.muplay.model.Artist
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.model.ReplayGain
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
@@ -14,6 +16,7 @@ import app.muplay.model.ServerInfo
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
+import app.muplay.network.model.PlaylistBody
 import app.muplay.network.model.AlbumBody
 import app.muplay.network.model.ArtistBody
 import app.muplay.network.model.ChildBody
@@ -211,6 +214,35 @@ class SubsonicClient(
   }
 
   /**
+   * Every playlist the user can see.
+   *
+   * No `musicFolderId` on the wire, because the command has no such parameter. Navidrome ignores
+   * one silently, which would leave this app believing playlists were scoped when they are not.
+   */
+  override suspend fun getPlaylists(): List<Playlist> {
+    val body = call { api.getPlaylists(authParams()) }
+    // Absent container -> no playlists. Measured: the server sends `"playlists": {}`.
+    return body.playlists?.playlist.orEmpty().map { it.toPlaylist() }
+  }
+
+  /**
+   * One playlist and its entries, in the order the server returned them.
+   *
+   * A success envelope with no `playlist` payload is a [SubsonicMalformedResponseException] rather
+   * than an empty playlist -- the decision [getAlbum] makes, for the same reason: reading "ok, and
+   * nothing" as "this playlist is empty" shows the user an empty screen where a real playlist is.
+   */
+  override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs {
+    val body = call { api.getPlaylist(authParams() + mapOf("id" to playlistId)) }
+    val playlist = body.playlist ?: throw SubsonicMalformedResponseException("playlist")
+    return PlaylistWithSongs(
+      playlist = playlist.toPlaylist(),
+      // No sort: the order *is* the playlist.
+      songs = playlist.entry.map { it.toSong(musicFolderId) },
+    )
+  }
+
+  /**
    * An authenticated `getCoverArt` URL. Built here rather than issued, because the caller is an
    * image loader, not this client.
    *
@@ -307,6 +339,16 @@ class SubsonicClient(
     suffix = suffix,
     coverArtId = coverArt,
     replayGain = replayGain.toDomain(),
+    path = path,
+  )
+
+  private fun PlaylistBody.toPlaylist() = Playlist(
+    id = id,
+    name = name,
+    songCount = songCount,
+    durationSeconds = duration,
+    owner = owner,
+    coverArtId = coverArt,
   )
 
   /**

@@ -59,3 +59,35 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     db.execSQL("CREATE INDEX IF NOT EXISTS `index_chapters_mediaId` ON `chapters` (`mediaId`)")
   }
 }
+
+/**
+ * 7 -> 8: `songs.path`, and a cleared sync watermark.
+ *
+ * The column is what folder browsing reads. The `DELETE` is what makes it arrive.
+ *
+ * `SyncEngine` reconciles only when the server's `lastScan` differs from the watermark this
+ * database last stored, so an upgraded install would keep a mirror of songs whose `path` is null
+ * until the server happened to rescan -- which on a settled library may be months, or never. The
+ * Folders screen would be empty, the library plainly is not, and nothing anywhere would report a
+ * fault. Deleting the watermark makes `SyncDecision.decide(stored = null, ...)` return `Reconcile`
+ * on the very next poll, which is the one and only thing that fills the new column.
+ *
+ * That costs one full re-fetch of the mirror per install, once. The mirror is a cache of the
+ * server and a reconcile deletes and re-inserts it wholesale anyway; nothing durable lives there.
+ * In particular `media_progress` is a different table that no reconcile touches, so no listener's
+ * book position is at risk here -- which is the question to ask of any migration in this file.
+ *
+ * The `ALTER TABLE` is *not* copied from a generated `createSql`, because there is no such string
+ * for a column addition: SQLite's `ADD COLUMN` has no counterpart in a `CREATE TABLE`. What
+ * [MIGRATION_6_7]'s doc demands instead is that the result validate against
+ * `core/database/schemas/app.muplay.database.MuPlayDatabase/8.json`, and
+ * `MigrationTest`'s `runMigrationsAndValidate` is what checks it. `TEXT` with no `NOT NULL` and no
+ * default is what Room generates for a `String?` with a Kotlin default of null; a `DEFAULT ''`
+ * here would validate *and* be wrong, because `""` is a prefix that matches every path.
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    db.execSQL("ALTER TABLE `songs` ADD COLUMN `path` TEXT")
+    db.execSQL("DELETE FROM `sync_watermark`")
+  }
+}

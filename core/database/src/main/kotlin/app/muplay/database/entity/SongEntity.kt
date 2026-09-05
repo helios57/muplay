@@ -55,4 +55,19 @@ data class SongEntity(
   val replayGainTrackDb: Float? = null,
   val replayGainAlbumDb: Float? = null,
   val replayGainPeak: Float? = null,
+  /**
+   * The file's path relative to its library root, `/`-separated, as the server reports it
+   * (`"Fourth Author/Multi Part Book/02 - Part Two.mp3"`).
+   *
+   * Mirrored so that browsing and shuffling by folder are local queries over this column rather
+   * than a walk of the server's `getIndexes`/`getMusicDirectory` tree, which would need one
+   * request per folder and would not work offline at all.
+   *
+   * **Nullable, and null means "not known yet" rather than "at the root".** A row written before
+   * version 8 has no path until the next reconcile, and `""` would be a real prefix matching every
+   * path -- so the folder queries below all require a non-null value and such a row is invisible
+   * to them until it is refreshed. [app.muplay.database.MIGRATION_7_8] clears the sync watermark
+   * so that refresh happens on the next poll rather than whenever the server next rescans.
+   */
+  val path: String? = null,
 )

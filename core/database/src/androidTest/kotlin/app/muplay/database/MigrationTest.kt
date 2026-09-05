@@ -1,6 +1,7 @@
 package app.muplay.database
 
 import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -47,7 +48,31 @@ class MigrationTest {
 
   /** Two progress rows differing in every column, plus a whole small library mirror. */
   private fun seedVersionSix(name: String) {
-    helper.createDatabase(name, 6).use { db ->
+    helper.createDatabase(name, 6).use { db -> seedRows(db) }
+  }
+
+  /**
+   * The same rows at version 7, plus one row in each table version 7 introduced.
+   *
+   * `songs` did not change between 6 and 7, so the insert list below is shared verbatim -- which
+   * is the point: a version-8 migration that lost a column would lose exactly these values.
+   */
+  private fun seedVersionSeven(name: String) {
+    helper.createDatabase(name, 7).use { db ->
+      seedRows(db)
+      db.execSQL("INSERT INTO book_settings (bookId, speed, skipSilence) VALUES ('book-1', 1.4, 1)")
+      db.execSQL(
+        "INSERT INTO chapter_scans (mediaId, chapterCount, scannedAtEpochMs) " +
+          "VALUES ('chapter-14', 2, 5)",
+      )
+      db.execSQL(
+        "INSERT INTO chapters (mediaId, chapterIndex, startMs, endMs, title) " +
+          "VALUES ('chapter-14', 0, 0, 7000, 'Head')",
+      )
+    }
+  }
+
+  private fun seedRows(db: SupportSQLiteDatabase) {
       db.execSQL(
         "INSERT INTO media_progress " +
           "(mediaId, positionMs, isFinished, lastPlayedAtEpochMs, speed, skipSilence, gainDb) " +
@@ -88,7 +113,6 @@ class MigrationTest {
           "'mp3', NULL, 'a song', NULL, NULL, NULL)",
       )
       db.execSQL("INSERT INTO sync_watermark (id, lastScan) VALUES (0, '2026-08-20T09:00:00Z')")
-    }
   }
 
   @Test
@@ -261,6 +285,104 @@ class MigrationTest {
       room.close()
       // Independent of the order it runs in, and of anything it leaves for `DataModuleTest`.
       context.getDatabasePath(MuPlayDatabase.DATABASE_NAME).delete()
+    }
+  }
+
+  @Test
+  fun everySongSurvivesTheMoveToEightAndArrivesWithoutAPath() {
+    seedVersionSeven(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, MIGRATION_7_8)
+
+    db.query(
+      "SELECT id, title, trackNumber, durationSeconds, replayGainTrackDb, path " +
+        "FROM songs ORDER BY id",
+    ).use { c ->
+      assertThat(c.count).isEqualTo(2)
+      c.moveToFirst()
+      assertThat(c.getString(0)).isEqualTo("a-song")
+      assertThat(c.getString(1)).isEqualTo("A Song")
+      // Nobody's existing rows know their path: the column is new and only a reconcile fills it.
+      // A default of "" here would be worse than null, because "" is a real prefix that matches
+      // every path and would put the whole library in one nameless folder.
+      assertThat(c.isNull(5)).describedAs("path arrived with a value nothing wrote").isTrue
+      c.moveToNext()
+      assertThat(c.getString(0)).isEqualTo("chapter-14")
+      assertThat(c.getInt(2)).isEqualTo(2)
+      assertThat(c.getInt(3)).isEqualTo(300)
+      assertThat(c.getFloat(4)).isEqualTo(-7.5f)
+      assertThat(c.isNull(5)).isTrue
+    }
+  }
+
+  @Test
+  fun theMoveToEightClearsTheWatermarkSoTheNextSyncActuallyFetchesThePaths() {
+    // The half of this migration that is not schema, and the half that would be silently omitted.
+    // `SyncEngine` reconciles only when the server's `lastScan` differs from the stored watermark,
+    // so an upgraded install with its watermark intact keeps a mirror of songs whose `path` is
+    // null until the server next rescans -- which may be never. Folders would be empty, on a
+    // library that is plainly not, with nothing anywhere reporting a fault.
+    seedVersionSeven(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, MIGRATION_7_8)
+
+    db.query("SELECT lastScan FROM sync_watermark").use { c ->
+      assertThat(c.count).describedAs("a watermark survived, so no reconcile will be forced").isZero
+    }
+    // ...and it cleared the watermark rather than the database. Everything else is still here.
+    db.query("SELECT COUNT(*) FROM media_progress").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isEqualTo(2)
+    }
+    db.query("SELECT COUNT(*) FROM songs").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isEqualTo(2)
+    }
+  }
+
+  @Test
+  fun theVersionSevenTablesSurviveTheMoveToEight() {
+    // `book_settings` holds a listener's per-book speed and silence skipping, and `chapters` the
+    // parsed chapter marks. Both are cheap to lose sight of in a migration that is "just a column
+    // on songs", and both are what a destructive fallback would take.
+    seedVersionSeven(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, MIGRATION_7_8)
+
+    db.query("SELECT speed, skipSilence FROM book_settings WHERE bookId = 'book-1'").use { c ->
+      assertThat(c.count).isEqualTo(1)
+      c.moveToFirst()
+      assertThat(c.getFloat(0)).isEqualTo(1.4f)
+      assertThat(c.getInt(1)).isEqualTo(1)
+    }
+    db.query("SELECT chapterIndex, startMs, endMs, title FROM chapters").use { c ->
+      assertThat(c.count).isEqualTo(1)
+      c.moveToFirst()
+      assertThat(listOf(c.getInt(0), c.getLong(1), c.getLong(2), c.getString(3)))
+        .containsExactly(0, 0L, 7000L, "Head")
+    }
+  }
+
+  @Test
+  fun aVersionSixDatabaseReachesEightThroughBothMigrations() {
+    // The upgrade an installed phone actually performs. Room chains the two migrations, and a
+    // 7 -> 8 that assumed something version 7 created would only fail on this path.
+    seedVersionSix(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, MIGRATION_6_7, MIGRATION_7_8)
+
+    db.query("SELECT positionMs, speed FROM media_progress WHERE mediaId = 'chapter-14'").use { c ->
+      assertThat(c.count).isEqualTo(1)
+      c.moveToFirst()
+      assertThat(c.getLong(0)).isEqualTo(3_600_000L)
+      assertThat(c.getFloat(1)).isEqualTo(1.4f)
+    }
+    db.query("SELECT path FROM songs").use { c ->
+      assertThat(c.count).isEqualTo(2)
+    }
+    db.query("SELECT COUNT(*) FROM sync_watermark").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isZero
     }
   }
 }

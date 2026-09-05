@@ -35,4 +35,22 @@ data class Song(
    * Defaulted so that no existing positional construction of this class had to move.
    */
   val replayGain: ReplayGain? = null,
+
+  /**
+   * The file's path **relative to its library root**, as the server reports it — measured against
+   * the CI Navidrome as `"Fourth Author/Multi Part Book/02 - Part Two.mp3"`, `/`-separated,
+   * with no leading slash.
+   *
+   * This is what makes browsing and shuffling by folder a **local** question. With the path
+   * mirrored, "every track under this folder, including its subfolders" is one `LIKE 'prefix/%'`
+   * over the mirror: instant, offline, and recursive by construction. The alternative — walking
+   * `getMusicDirectory` from the top on every request — is one round trip per directory for an
+   * answer the app already has.
+   *
+   * Nullable because it is the server's to omit and no part of the app may depend on it being
+   * present: a track with no path simply does not appear in the folder tree, and everything else
+   * about it still works. Defaulted so that no existing positional construction of this class had
+   * to move, the same as [replayGain] above.
+   */
+  val path: String? = null,
 )

@@ -1,0 +1,60 @@
+{
+  "subsonic-response": {
+    "status": "ok",
+    "version": "1.16.1",
+    "type": "navidrome",
+    "serverVersion": "0.63.2 (be10f89c)",
+    "openSubsonic": true,
+    "playlist": {
+      "id": "pl-1",
+      "name": "Late Night",
+      "songCount": 2,
+      "duration": 9,
+      "owner": "alice",
+      "created": "2026-09-05T20:43:53.160031038Z",
+      "changed": "2026-09-05T20:43:53.169377658Z",
+      "coverArt": "pl-1_6a9c7f09",
+      "readonly": false,
+      "entry": [
+        {
+          "id": "song-1",
+          "parent": "album-1",
+          "isDir": false,
+          "title": "Part One",
+          "album": "Multi Part Book",
+          "artist": "Fourth Author",
+          "track": 1,
+          "coverArt": "al-album-1_0",
+          "size": 48587,
+          "contentType": "audio/mpeg",
+          "suffix": "mp3",
+          "duration": 6,
+          "bitRate": 64,
+          "path": "Fourth Author/Multi Part Book/01 - Part One.mp3",
+          "albumId": "album-1",
+          "artistId": "artist-1",
+          "type": "music",
+          "mediaType": "song",
+          "replayGain": {}
+        },
+        {
+          "id": "song-2",
+          "parent": "album-2",
+          "isDir": false,
+          "title": "Second Track",
+          "album": "Test Album",
+          "artist": "Test Artist",
+          "track": 4,
+          "suffix": "flac",
+          "duration": 3,
+          "path": "Test Artist/Test Album/04 - Second Track.flac",
+          "albumId": "album-2",
+          "artistId": "artist-2",
+          "type": "music",
+          "mediaType": "song",
+          "replayGain": {}
+        }
+      ]
+    }
+  }
+}

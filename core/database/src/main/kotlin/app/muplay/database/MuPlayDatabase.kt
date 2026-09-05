@@ -43,7 +43,11 @@ import app.muplay.database.entity.SyncWatermarkEntity
  * measurement.)
  *
  * **Plan 4 Task 2 takes it to version 7 -- `book_settings`, `chapter_scans` and `chapters` -- and
- * is the first version bump in this project with a real [MIGRATION_6_7] behind it.** Every earlier
+ * is the first version bump in this project with a real [MIGRATION_6_7] behind it.**
+ *
+ * Version 8 adds one nullable column, `songs.path`, so the library can be browsed and shuffled by
+ * folder without asking the server per directory. [MIGRATION_7_8] adds it and, unusually for a
+ * migration, also deletes a row -- see its doc for why that is the load-bearing half.** Every earlier
  * step still relies on the escape hatch in `DataModule`, which is why that hatch is still there
  * and why removing it is not this task's to do; see `DESTRUCTIVE_MIGRATION_EXEMPTION.md` for the
  * list of what is still owed. From here on, a task that adds or reshapes a table writes a
@@ -61,7 +65,7 @@ import app.muplay.database.entity.SyncWatermarkEntity
     ChapterScanEntity::class,
     ChapterEntity::class,
   ],
-  version = 7,
+  version = 8,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {

@@ -8,6 +8,8 @@ import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
 import app.muplay.model.ServerInfo
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.Song
 import app.muplay.model.StreamFormat
 import app.muplay.model.SubsonicCredentials
@@ -69,6 +71,25 @@ interface SubsonicSource {
    * to 500, which Navidrome enforces silently.
    */
   suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song>
+
+  /**
+   * Every playlist the signed-in user can see.
+   *
+   * Deliberately unscoped: `getPlaylists` has no `musicFolderId` parameter, and a playlist's
+   * entries may come from any library. See [app.muplay.model.Playlist].
+   */
+  suspend fun getPlaylists(): List<Playlist>
+
+  /**
+   * One playlist and its entries, in the server's order.
+   *
+   * [musicFolderId] is a **stamp**, not a request parameter — `getPlaylist` takes only `id` — and
+   * it is the same compromise [getAlbum] makes for the same reason: no Subsonic response carries a
+   * library id, and `Song.libraryId` is the only thing this app has to tell music from audiobooks.
+   * A caller that knows better (one holding the mirror, where every song's real library is
+   * recorded) is expected to correct it; `PlaylistRepository` does exactly that.
+   */
+  suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs
 
   /**
    * An authenticated cover-art URL. Not `suspend`: it opens no connection, it builds a URL.

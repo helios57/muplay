@@ -41,6 +41,8 @@ data class SubsonicResponseBody(
   val searchResult3: SearchResult3Body? = null,
   val randomSongs: SongsBody? = null,
   val scanStatus: ScanStatusBody? = null,
+  val playlists: PlaylistsBody? = null,
+  val playlist: PlaylistBody? = null,
 )
 
 /**
@@ -150,6 +152,8 @@ data class ChildBody(
   val type: String? = null,
   val isDir: Boolean = false,
   val replayGain: ReplayGainBody? = null,
+  /** Relative to the library root, `/`-separated. Absent on servers that do not report it. */
+  val path: String? = null,
 )
 
 /**
@@ -212,4 +216,31 @@ data class ScanStatusBody(
   val scanning: Boolean,
   val count: Int? = null,
   val lastScan: String? = null,
+)
+
+/**
+ * The `playlists` container of `getPlaylists`.
+ *
+ * The `playlist` key is **absent** when the user owns none — measured, the server sends
+ * `"playlists": {}` rather than an empty array — which is the same absent-container idiom
+ * [AlbumList2Body] meets on a past-the-end page.
+ */
+@Serializable
+data class PlaylistsBody(
+  val playlist: List<PlaylistBody> = emptyList(),
+)
+
+/**
+ * One playlist. Serves both `getPlaylists` (where [entry] is absent) and `getPlaylist` (where it
+ * carries the tracks, as full `Child` objects — measured, `path` and all).
+ */
+@Serializable
+data class PlaylistBody(
+  val id: String,
+  val name: String,
+  val songCount: Int = 0,
+  val duration: Int = 0,
+  val owner: String? = null,
+  val coverArt: String? = null,
+  val entry: List<ChildBody> = emptyList(),
 )

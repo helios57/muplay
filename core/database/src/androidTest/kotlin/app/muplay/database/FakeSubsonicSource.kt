@@ -4,6 +4,8 @@ import app.muplay.model.Album
 import app.muplay.model.AlbumListType
 import app.muplay.model.AlbumWithSongs
 import app.muplay.model.MusicLibrary
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
@@ -130,6 +132,20 @@ class FakeSubsonicSource : SubsonicSource {
   override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String =
     "https://fake.invalid/rest/stream?id=$songId&format=${format.wireValue}" +
       (timeOffsetSeconds?.let { "&timeOffset=$it" } ?: "")
+
+  /**
+   * The sync engine does not mirror playlists -- they are read live by their own repository, and
+   * nothing in this suite exercises them. Returning empty rather than throwing keeps a future
+   * caller from mistaking "the fake does not model this" for "the server has none"; the two are
+   * different answers and only one of them is a defect worth a loud failure.
+   */
+  override suspend fun getPlaylists(): List<Playlist> {
+    record("getPlaylists()")
+    return emptyList()
+  }
+
+  override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
+    error("not used by the sync suite")
 
   /** Nothing in the sync engine negotiates capabilities; `TranscodeOffsetSupport` is the caller. */
   override suspend fun capabilities(): ServerCapabilities = error("not used by the sync suite")
