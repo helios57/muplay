@@ -11,6 +11,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -21,6 +22,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.Lifecycle
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso
@@ -28,7 +31,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import app.muplay.media.PlaybackConnection
+import app.muplay.media.PlaybackEntryPoint
 import app.muplay.media.PlaybackNotification
+import app.muplay.media.PlaybackQueue
+import app.muplay.model.SubsonicCredentials
+import app.muplay.network.SubsonicClient
+import dagger.hilt.android.EntryPointAccessors
 import kotlin.math.abs
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
@@ -211,7 +219,7 @@ class PlaybackJourneyTest {
 
     composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     awaitControl(PLAY_LABEL)
-    val whenPaused = timeReadouts().first
+    val whenPaused = awaitSettledElapsed()
     Thread.sleep(PAUSE_OBSERVATION_MILLIS)
     assertThat(timeReadouts().first)
       .describedAs("the elapsed readout ${PAUSE_OBSERVATION_MILLIS}ms after pausing")
@@ -268,6 +276,88 @@ class PlaybackJourneyTest {
   }
 
   /**
+   * **"Try again" restarts a player Media3 has already given up on.**
+   *
+   * The defect this exists against is recorded in `PlayerScreen`'s own comment: a failed track used
+   * to publish `isPlaying = false` and nothing else, so it was indistinguishable from a pause, and
+   * the button a user then pressed was the ordinary play button. `PlaybackControls.retry` is a
+   * member of its own so that the failure state gets an action that means "start this again".
+   *
+   * **What makes it discriminating is the third step, and it is deliberate.** A real, playable item
+   * is put on the session *without* preparing it. A player in `STATE_IDLE` stays there until
+   * something prepares it, so at that moment the queue is good, the screen still shows the failure,
+   * and nothing is playing -- the only thing on the device that can turn that into audio is the
+   * button. The assertions either side of the tap say both halves out loud: idle and silent before,
+   * decoding real PCM after. **Falsified:** with `retry()`'s body emptied, this fails at
+   * `ComposeTimeoutException: Condition ('Pause' to appear on screen) still not satisfied after
+   * 30000 ms`.
+   *
+   * **What it does *not* pin is the `prepare()` call inside `retry()`, and that was measured rather
+   * than assumed.** Deleting it -- leaving `retry()` as a bare `play()` -- keeps this test green.
+   * `connection.controller()` hands back a `MediaController`, and a controller's `play()` reaches
+   * the player through `MediaSessionImpl.handleMediaControllerPlayRequest`, which calls
+   * `Util.handlePlayButtonAction`, which prepares an `STATE_IDLE` player itself before playing
+   * (verified in `media3-common-1.11.0`'s bytecode, not inferred). So no journey through a session
+   * can separate the two, here or anywhere else; see the note at the `prepare()` call for why the
+   * line stays.
+   *
+   * It is also the only test in this project that reaches the `PlaybackControls` implementation the
+   * `@Inject` constructor builds. `:feature:player`'s own suite composes over a hand-built one on
+   * purpose, so that adapter is reachable through Hilt's graph alone -- and when `retry` was added
+   * to it, its five lines were the only ones in `PlayerViewModel$1` no test executed. The floor at
+   * `app.muplay.player.PlayerViewModel.1` went from 10/10 to 10/15 and stayed red, unseen, because
+   * only a full instrumented coverage run can measure it.
+   *
+   * The unreachable item's cache key is unique per run. `TrackIdCacheKeyFactory` throws on a
+   * `DataSpec` with no key, so one has to be set; making it constant would let a previous run's
+   * cached bytes satisfy the request this test needs to fail.
+   */
+  @Test
+  fun tryAgainRestartsASessionMedia3HasMovedToIdle() {
+    openTheMusicAlbum()
+    playTrackNamed(MUSIC_TRACKS[1])
+    awaitElapsedAtLeast(1)
+
+    // Built before the session is broken: it reaches the network, and a failure there should read
+    // as a fixture problem rather than as this test's subject.
+    val playable = aRealPlayableItem()
+    val controller = connectController()
+
+    onMain {
+      controller.setMediaItem(anUnreachableItem())
+      controller.prepare()
+    }
+    awaitLabel(RETRY_LABEL)
+    assertThat(awaitMusicActive(false))
+      .describedAs("AudioManager.isMusicActive() once the item failed to load")
+      .isFalse
+
+    // The queue is good again and the player is not. No `prepare()` here, and that absence is the
+    // whole assertion below it.
+    onMain { controller.setMediaItem(playable) }
+    awaitOnMain("the player to still be idle after the queue was replaced") {
+      controller.playbackState == Player.STATE_IDLE
+    }
+    assertThat(awaitMusicActive(false))
+      .describedAs("AudioManager.isMusicActive() with a good queue on an idle player")
+      .isFalse
+    composeRule.onAllNodesWithText(RETRY_LABEL).notTheMiniPlayer()
+      .assertCountEquals(1)
+
+    composeRule.onAllNodesWithText(RETRY_LABEL).notTheMiniPlayer()[0].performClick()
+
+    awaitControl(PAUSE_LABEL)
+    // From an item this test put on the session at position zero, so reaching a second is the
+    // retry and nothing else.
+    awaitElapsedAtLeast(1)
+    assertThat(awaitMusicActive(true))
+      .describedAs("AudioManager.isMusicActive() after 'Try again'")
+      .isTrue
+    composeRule.onAllNodesWithText(RETRY_LABEL).notTheMiniPlayer()
+      .assertCountEquals(0)
+  }
+
+  /**
    * The lock screen, the headset button and Android Auto's play/pause all arrive the same way: as
    * a media button event the system routes to the active session. Driving a real
    * `KEYCODE_MEDIA_PLAY_PAUSE` through the shell exercises that whole path, and needs no UI
@@ -282,7 +372,10 @@ class PlaybackJourneyTest {
 
     shell("input keyevent 85") // KEYCODE_MEDIA_PLAY_PAUSE
     awaitOnMain("playback to pause") { !controller.isPlaying }
-    val pausedAt = onMain { controller.currentPosition }
+    // Settled, for the reason `awaitSettledElapsed` records: `isPlaying` goes false a fraction of
+    // a second before the position stops moving. Reading it raw here has never failed, and it is
+    // the same race one layer down from the one that did.
+    val pausedAt = awaitSettled("the paused position") { onMain { controller.currentPosition } }
     Thread.sleep(PAUSE_OBSERVATION_MILLIS)
     // Paused means the clock stopped, not merely that a flag flipped.
     assertThat(onMain { controller.currentPosition }).isEqualTo(pausedAt)
@@ -595,6 +688,49 @@ class PlaybackJourneyTest {
     return readouts[0].second to readouts[1].second
   }
 
+  /**
+   * The elapsed readout, once it has stopped moving.
+   *
+   * **Pausing does not stop the clock instantly, and the readout can tick once more afterwards.**
+   * Measured here: a pause taken at about 2.9s published `0:02`, and 1.5s later the screen read
+   * `0:03` on a player that had been genuinely stopped throughout. Two things add up to it --
+   * `PlaybackConnection`'s ticker samples every 250ms, and the audio sink drains for up to a couple
+   * of hundred milliseconds after `isPlaying` goes false (CLAUDE.md records the same delay from the
+   * other side, as a `media_progress` row rewritten one tick after a pause). Neither is a defect;
+   * together they move the position by a fraction of a second, which changes the *readout* only
+   * when that fraction happens to cross a second boundary. So it fails about one run in five, and
+   * the run it fails is the one where the pause landed near a whole second.
+   *
+   * Settling costs the caller nothing it needs: a **playing** player holds each readout for a full
+   * second, so this returns just as promptly against one, and the freeze assertion after it is
+   * exactly as sharp as it was.
+   */
+  private fun awaitSettledElapsed(): String =
+    awaitSettled("the elapsed readout") { timeReadouts().first }
+
+  /**
+   * Polls [sample] until the same value comes back for [SETTLE_MILLIS], and returns it.
+   *
+   * Bounded, and loud when it runs out: a value that never settles is a finding, not a reason to
+   * carry on with whatever the last sample happened to be.
+   */
+  private fun <T> awaitSettled(description: String, sample: () -> T): T {
+    val deadline = System.currentTimeMillis() + TIMEOUT_MILLIS
+    var last = sample()
+    var stableSince = System.currentTimeMillis()
+    while (System.currentTimeMillis() < deadline) {
+      Thread.sleep(POLL_MILLIS)
+      val now = sample()
+      if (now != last) {
+        last = now
+        stableSince = System.currentTimeMillis()
+      } else if (System.currentTimeMillis() - stableSince >= SETTLE_MILLIS) {
+        return now
+      }
+    }
+    throw AssertionError("$description never held still for ${SETTLE_MILLIS}ms; last saw '$last'")
+  }
+
   private fun secondsOf(readout: String): Int =
     readout.split(":").map { it.toInt() }.fold(0) { total, part -> total * 60 + part }
 
@@ -701,6 +837,48 @@ class PlaybackJourneyTest {
     return runBlocking { open.controller() }
   }
 
+  /**
+   * A `MediaItem` the app can really play, built through the **application's own**
+   * [app.muplay.media.QueueRepository] -- stored credentials, one `SubsonicSource` per queue, the
+   * real stream URL and the `muplay-art:` artwork URI.
+   *
+   * Not hand-assembled here, for the reason `PlaybackEntryPoint`'s own doc gives: an item this test
+   * built would exercise `MediaItems.of` and not the chain that feeds the service in production.
+   */
+  private fun aRealPlayableItem(): MediaItem {
+    val songs = runBlocking {
+      SubsonicClient(SubsonicCredentials(NAVIDROME_URL, USERNAME, PASSWORD))
+        .getRandomSongs(musicFolderId = MUSIC_LIBRARY_ID, size = RANDOM_SONGS_PAGE)
+        // The five-second CBR fixtures only. `Offset Track` is thirty seconds of Opus whose first
+        // ten are silent, so a queue starting there would reach neither the elapsed readout nor
+        // `isMusicActive` inside this test's patience.
+        .filter { it.suffix.equals("mp3", ignoreCase = true) }
+        .sortedBy { it.title }
+    }
+    check(songs.isNotEmpty()) { "the seeded music library returned no mp3 fixture to retry onto" }
+    val items = runBlocking { queueRepository().mediaItems(PlaybackQueue.of(listOf(songs[0]))) }
+    return items.single()
+  }
+
+  /**
+   * An item whose host answers nothing, so preparing it fails rather than hanging.
+   *
+   * Port 1 on the device's own loopback: privileged, unbound, and refused immediately by the
+   * kernel. A URL on the real server that merely 404s would take the same path through
+   * `StreamRetryPolicy` and cost the test its retries in wall clock.
+   */
+  private fun anUnreachableItem(): MediaItem =
+    MediaItem.Builder()
+      .setUri(UNREACHABLE_URI)
+      // Required, not decorative: `TrackIdCacheKeyFactory.buildCacheKey` throws
+      // `MissingCacheKeyException` on a `DataSpec` with no key rather than falling back to the URI,
+      // so an item with none fails for a reason this test is not about.
+      .setCustomCacheKey("p8-retry-${System.nanoTime()}")
+      .build()
+
+  private fun queueRepository() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).queueRepository()
+
   private fun <T> onMain(block: () -> T): T {
     var result: Any? = null
     var thrown: Throwable? = null
@@ -740,6 +918,17 @@ class PlaybackJourneyTest {
     const val ARTWORK_DESCRIPTION = "Cover art"
     const val MINI_PLAYER_LABEL = "Now playing"
     const val MUSIC_LIBRARY = "Music"
+
+    /**
+     * `Message`'s action label on the player screen, retyped rather than imported.
+     *
+     * `:feature:player` declares it `internal`, which is module-scoped in Kotlin and cannot cross a
+     * Gradle module boundary at all -- and the retyping is the convention here anyway, for the
+     * reason the block above gives. This one is anchored: the journey that names it asserts it is
+     * **displayed** before it taps it, so a wording change goes red rather than quietly passing an
+     * absence check.
+     */
+    const val RETRY_LABEL = "Try again"
 
     /** The seeded content, per `ci/seed-fixtures.sh` and `ci/configure-libraries.sh`. */
     /**
@@ -785,6 +974,16 @@ class PlaybackJourneyTest {
      */
     const val PAUSE_OBSERVATION_MILLIS = 1_500L
 
+    /**
+     * How long a value has to hold still to count as settled.
+     *
+     * Comfortably past both of the delays `awaitSettledElapsed` names -- one 250ms ticker interval
+     * and the couple of hundred milliseconds the sink takes to drain -- and comfortably short of
+     * the one second a playing readout holds each value for, so it cannot be reached by a player
+     * that is still running.
+     */
+    const val SETTLE_MILLIS = 500L
+
     /** Long enough that a service the system killed at HOME cannot fake the advance. */
     const val BACKGROUND_OBSERVATION_MILLIS = 3_000L
 
@@ -811,5 +1010,20 @@ class PlaybackJourneyTest {
     /** `AudioTrack` does not stop the instant `pause()` returns, but it does not take seconds. */
     const val AUDIO_STATE_TIMEOUT_MILLIS = 5_000L
     const val POLL_MILLIS = 100L
+
+    /** ci/navidrome.compose.yml's credentials, reached via `adb reverse tcp:4533 tcp:4533`. */
+    const val NAVIDROME_URL = "http://localhost:4533"
+    const val USERNAME = "admin"
+    const val PASSWORD = "testpass"
+    const val MUSIC_LIBRARY_ID = 1
+
+    /** Navidrome caps `getRandomSongs` at 500; asking for the cap returns the whole fixture set. */
+    const val RANDOM_SONGS_PAGE = 500
+
+    /**
+     * A port on the device's own loopback that nothing binds. Privileged, so nothing in this
+     * process could take it either.
+     */
+    const val UNREACHABLE_URI = "http://localhost:1/p8-retry.mp3"
   }
 }

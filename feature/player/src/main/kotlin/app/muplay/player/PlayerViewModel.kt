@@ -100,9 +100,17 @@ class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
 
       override suspend fun seekTo(positionMs: Long) = connection.controller().seekTo(positionMs)
 
-      // `prepare()` then `play()`. `prepare()` alone is enough *if* `playWhenReady` survived the
-      // error -- it usually does -- but "usually" is not a contract, and a retry that leaves the
-      // player prepared and silent is the same complaint the user just made.
+      // `prepare()` then `play()`, and the first of the two is belt-and-braces rather than the
+      // load-bearing half -- measured, because an earlier version of this comment guessed the
+      // other way. A `MediaController.play()` does not reach the player directly: it becomes
+      // `MediaSessionImpl.handleMediaControllerPlayRequest`, which calls
+      // `Util.handlePlayButtonAction`, which prepares an `STATE_IDLE` player *itself* before
+      // playing. (Read out of `media3-common-1.11.0`'s bytecode; and `PlaybackJourneyTest`'s retry
+      // journey stays green with this line deleted, which is the same fact from the other side.)
+      //
+      // It stays because it is what this method *means*. `PlaybackControls` is an interface whose
+      // other implementations are hand-built, and "restart a player that failed" should not be
+      // spelled `play()` and left to depend on a courtesy inside somebody else's session.
       override suspend fun retry() {
         val controller = connection.controller()
         controller.prepare()
