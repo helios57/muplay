@@ -619,6 +619,18 @@ class MediaCacheTest {
     // nothing to construct: assert against what it left, and touch nothing.
     val alreadyHeld = SimpleCache.isCacheFolderLocked(expected)
     val production = if (alreadyHeld) null else MediaCacheModule.provideMediaCache(context)
+    // **The directory is created after the constructor returns, and this line is what waits for
+    // it.** Read out of `media3-datasource` 1.11.0's bytecode rather than inferred: `SimpleCache`'s
+    // constructor starts an init thread and blocks on a `ConditionVariable` that the thread opens
+    // *before* running `initialize()` -- and `initialize()` is what calls `createCacheDirectories`.
+    // So `create` returns while the directory may still not exist, and `isDirectory()` below is a
+    // race this test loses under load: it failed once in four full `:core:media` runs and was 15/15
+    // every time the class ran alone.
+    //
+    // Every public `SimpleCache` method is `synchronized`, and the init thread holds that monitor
+    // for the whole of `initialize()`, so one call is a happens-after edge on it. `getKeys()` is
+    // the cheapest, it is on the `Cache` interface, and it is not a sleep.
+    production?.keys
     try {
       // Discriminating in both directions: a `create` that used `filesDir`, or that derived a
       // different sub-directory name than `DIRECTORY_NAME`, leaves this path non-existent.

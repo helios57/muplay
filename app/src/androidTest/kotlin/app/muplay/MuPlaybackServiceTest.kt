@@ -228,7 +228,22 @@ class MuPlaybackServiceTest {
     setQueueAndPlay(songs.take(3))
     awaitPositionAtLeast(500L)
     onMain { controller.seekToNextMediaItem() }
-    awaitState("mediaId == ${songs[1].id}") { connection.state.value.mediaId == songs[1].id }
+    // **Waited for a prepared item, not merely for its id.** A `MediaController` masks a seek
+    // synchronously, so `mediaId` becomes `songs[1]` the instant the call returns -- while the
+    // player is still preparing that item. `COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM` is not permanent:
+    // 1.11.0's `Util.getAvailableCommands` `addIf`s it on `isCurrentMediaItemSeekable()` -- read
+    // out of the shipped bytecode rather than assumed -- and that is false for a window whose
+    // duration is not yet known. So the old wait returned before the thing asserted below could be
+    // true, and this test read `[true, true, true, false, true]`, one command short at index 3, in
+    // a full `:app` run while passing 16/16 alone.
+    //
+    // A position and a duration inside `songs[1]` say "prepared" without being the assertion
+    // itself: waiting on `isCurrentMediaItemSeekable` would make the check below circular, and a
+    // sleep would only give the same race a longer fuse.
+    awaitState("playback inside ${songs[1].id}, not just its masked id") {
+      val state = connection.state.value
+      state.mediaId == songs[1].id && state.positionMs > 0L && state.durationMs > 0L
+    }
 
     val commands = onMain { controller.availableCommands }
     // The exact list, not `anyMatch`: an empty command set would make an `anyMatch` check
