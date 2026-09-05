@@ -23,6 +23,15 @@ import app.muplay.model.browse.BrowseSurface
  * authenticated `format=raw` items Plan 3 builds. Putting a stream URL on a browse item would put
  * an authenticated, non-expiring Subsonic credential into Android Auto's persisted recents, where
  * it would outlive the session it was minted for.
+ *
+ * **The `artworkUri` this is handed is that credential, and that argument applies to it unchanged.**
+ * `MuPlayLibraryCallback` passes `BrowseTreeRepository.artworkUri(node.artworkId)`, which is
+ * `SubsonicClient.coverArtUrl` -- the same `u`, `s` and `t` triple, minted from the same
+ * `authParams()`. Queue items stopped carrying it when [app.muplay.media.ArtworkUri] landed; browse
+ * items never followed, because a browse item's art is fetched by the **remote** browser rather
+ * than by this process's `BitmapLoader`, so a `muplay-art:` URI here would render nothing at all.
+ * Tracked in docs/AUDIT-BACKLOG.md, "a browse item still carries the credential the `muplay-art:`
+ * fix removed"; the remedy is a `content://` provider, and the test for it goes red today.
  */
 object BrowseItems {
 

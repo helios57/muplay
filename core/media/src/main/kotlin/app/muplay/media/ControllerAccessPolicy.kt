@@ -56,9 +56,21 @@ package app.muplay.media
  * has granted notification-listener access reads that directly, without ever calling
  * [MuPlaybackService]. This gate therefore moves the exposure from *"any local app, no permission"*
  * down to *"an app the user granted notification-listener access, or one holding
- * MEDIA_CONTENT_CONTROL"* -- the tier a media app cannot get below. Removing the credential from the
- * metadata altogether (carrying a coverArt **id** and resolving it in the bitmap loader, which Plan
- * 5's `BrowseNode` already does) is the fix that closes it, and it is tracked separately.
+ * MEDIA_CONTENT_CONTROL"* -- the tier a media app cannot get below.
+ *
+ * Removing the credential from the metadata altogether is what gets *below* that tier, and it has
+ * since shipped for the metadata surface: [ArtworkUri] puts `muplay-art:<coverArtId>` on the item
+ * and [MuPlayBitmapLoader] resolves it in this process.
+ *
+ * **It did not reach browse results, and an earlier version of this paragraph implied it had.**
+ * `BrowseNode` does carry a coverArt id, but `MuPlayLibraryCallback` resolves that id into
+ * `BrowseTreeRepository.artworkUri` -- the authenticated `getCoverArt` URL -- before handing it to
+ * `BrowseItems.of`, so `onGetChildren`, `onGetItem` and `onSearch` all answer a connected
+ * controller with the credential. The gate above is therefore the *only* thing standing in front of
+ * it, where the metadata surface now has two. See docs/AUDIT-BACKLOG.md, "a browse item still
+ * carries the credential the `muplay-art:` fix removed", for why the remedy is a `content://`
+ * provider rather than the same scheme: a browse item's art is fetched by the remote browser, not
+ * by this process's `BitmapLoader`.
  */
 object ControllerAccessPolicy {
 

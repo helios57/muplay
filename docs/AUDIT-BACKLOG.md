@@ -204,6 +204,73 @@ settled it; two of the three turned out to be about something other than what th
 
 ---
 
+## P1 — a browse item still carries the credential the `muplay-art:` fix removed
+
+Found 2026-09-05, running the deferred security audit's first question: *is the new
+`muplay-art:` scheme an SSRF?*
+
+**It is not, and the reason is worth writing down so nobody re-asks.** The only thing a
+`muplay-art:` URI contributes to a request is its `<coverArtId>`, which
+`SubsonicClient.coverArtUrl` puts on the wire through
+`HttpUrl.Builder.addQueryParameter("id", coverArtId)`. The host and path come from
+`credentials.baseUrl` and a literal `addPathSegments("rest/getCoverArt")`, and OkHttp
+percent-encodes the value — so an id containing `&`, `?`, `#`, `/` or `..`, from a
+malicious or compromised Navidrome, stays one query parameter on the user's own server.
+`ArtworkUri.coverArtIdOf` also refuses anything that is not `muplay-art:`-prefixed and
+non-blank, so `MuPlayBitmapLoader` never fetches a URL the server named.
+
+### What the same audit did find
+
+`ArtworkUri` exists because a `MediaItem`'s `artworkUri` used to be the authenticated
+`getCoverArt` URL — `u`, `s=<salt>`, `t=md5(password+salt)`, a **non-expiring
+password-equivalent granting the whole Subsonic API**. Queue and metadata items now carry
+`muplay-art:<coverArtId>` instead, and `MuPlayBitmapLoader` resolves it in-process.
+
+**Browse items never followed.** `MuPlayLibraryCallback` calls
+`treeRepository.artworkUri(node.artworkId)` at `MuPlayLibraryCallback.kt:175`, `:195` and
+`:250`, which is `BrowseTreeRepository.artworkUri` → `BrowseRepository.coverArtUrl` — the
+credentialed URL — and hands it to `BrowseItems.of`, which sets it on the item
+(`BrowseItems.kt:38`). So `onGetChildren`, `onGetItem` and `onSearch` all answer with the
+credential.
+
+Three things make this worth a P1 rather than a note:
+
+- **The file's own stated reasoning argues against what it does.** `BrowseItems`' KDoc
+  says a *stream* URL is kept off a browse item because it "would put an authenticated,
+  non-expiring Subsonic credential into Android Auto's persisted recents, where it would
+  outlive the session it was minted for." The artwork URL is the same credential, minted
+  from the same `authParams()`, and it is on the item.
+- **`ControllerAccessPolicy`'s KDoc reads as though browse were already fixed.** It names
+  the remedy as "carrying a coverArt **id** and resolving it in the bitmap loader, which
+  Plan 5's `BrowseNode` already does". `BrowseNode` does carry an id; the callback
+  resolves it to a credentialed URL before it leaves the process. A reader checking
+  whether this surface is clean is told that it is.
+- **Nothing tests it.** `BrowseGraph`'s fake source returns `http://art.invalid/<id>/<px>`,
+  so no browse test has ever seen a credentialed URL, and there is no counterpart to
+  `ArtworkUriTest`'s assertion that the queue item's URI carries no credential.
+
+Exposure is bounded by the connect gate — a caller must pass
+`ControllerAccessPolicy.accepts`, i.e. hold notification-listener access,
+`MEDIA_CONTENT_CONTROL` or `STATUS_BAR_SERVICE`, or be the system or this process. That is
+the tier `ControllerAccessPolicy` calls "the tier a media app cannot get below", and it is
+where the metadata surface sat *before* `ArtworkUri`. The point of `ArtworkUri` was to get
+below it; browse is still at it, and a browse result can be persisted by the host in a way
+live metadata is not.
+
+### Why it is not a one-line fix
+
+A browse item's art is fetched by the **remote** browser (Auto, Wear, Assistant), not by
+this process's `BitmapLoader` — which is exactly why `muplay-art:` works for the
+notification and lock screen and would render nothing here. The standard remedy is a
+`content://` URI backed by a `ContentProvider` in this app that opens a pipe and fetches
+with credentials that never leave the process, granted per-URI to the caller. That is real
+work: a provider, its manifest declaration, grant handling, and a device test that a
+browse item's `artworkUri` carries no `u`/`t`/`s`.
+
+Whatever the shape, the test is the cheap half and should land first: it goes red today.
+
+---
+
 ## P2 — assets and consistency
 
 - ✅ **The seven store screenshots are current**, regenerated 2026-09-05 against master
@@ -302,6 +369,16 @@ classes) · dead code and reachability · docs coherence · remaining security s
 
 The security and vacuous-assertion sweeps are the two worth running first: both target
 defect classes this repository has already shipped more than once.
+
+**Two of the eight ran on 2026-09-05 and are struck from this list.** The
+vacuous-assertion sweep covered all 88 absence assertions and all 35 count-zero ones,
+fixed three constants that could not fail, and left the property behind as a
+`ConventionTest` rule. The security sweep answered the SSRF question (no) and found the
+browse-item credential above. Neither is a whole audit: the vacuity sweep looked at
+absence assertions only, and the security sweep followed one thread — **the artwork
+surface** — to its end. Untouched: everything else the eight name, plus the rest of the
+security surface (the cast proxy, the Bindery key, the watch link, `exported` components
+other than the playback service).
 
 **One of the eight has been partly overtaken, and only partly.** The 48dp half of the
 accessibility audit was done on 2026-09-05: every clickable node on eight screens across
