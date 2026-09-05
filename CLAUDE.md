@@ -577,6 +577,74 @@ than once per boot. Two other things worth knowing while you are there:
   the same reboot caused. Neither was a defect in this repository, and both read
   exactly like one.
 
+## Somebody can restart the shared emulator *without* the documented flags
+
+Measured 2026-09-05, and it is a third thing that looks like the two failures above without
+being either. Mid-session, a `:feature:player` run went red having executed **21 of 43**
+tests, with the one reported failure carrying an empty `<failure></failure>` and no stack
+trace — the "another agent reinstalled underneath me" signature this file already records.
+It was not that. `logcat` showed Zygote preloading, and:
+
+    adb shell cat /proc/uptime     ->  36 s
+    last reboot                    ->  yesterday, unmoved
+    adb reverse --list             ->  empty
+
+which is the in-guest reboot section above. But the repair there — wait for
+`sys.boot_completed`, re-run `ci/prepare-emulator.sh` — then failed:
+
+    ro.hardware.gralloc is 'ranchu', expected 'minigbm'
+
+Reading the process list explains all of it at once:
+
+    ps -eo pid,etimes,args | grep qemu-system-x86_64-headless
+    1223226  150  .../qemu-system-x86_64-headless -avd muplay37 -wipe-data -no-window
+             -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
+
+**150 seconds old, `-wipe-data`, and no `-feature Minigbm`.** Somebody had stopped the
+emulator and started it again with different flags. That is not an in-guest reboot and not
+a death; it is a *replacement*, and it leaves the device tier unusable for UI tests for as
+long as it lasts, because `prepare-emulator.sh` correctly refuses.
+
+So `etimes` on the qemu process is the observation that separates the three cases, and it
+is cheap:
+
+| qemu `etimes` | guest `/proc/uptime` | what happened |
+|---|---|---|
+| large | small | Android rebooted inside a surviving qemu — re-run `prepare-emulator.sh` |
+| no process | — | the emulator died — see the sections above |
+| small | small | **somebody replaced it** — check its flags before believing anything |
+
+Do not kill it and do not start a second: that rule holds here too, and a run you cannot
+explain is much cheaper than a colleague's suite you destroyed. Wait, and meanwhile note
+what you already measured — a green suite from earlier on the same tree is still evidence,
+and a partial run killed by the replacement measured nothing at all.
+
+## A background device run can be killed for "low memory" on a host with 30 GB free
+
+Twice in one afternoon, `run_in_background` device suites were stopped by the harness with
+*"the system is running low on memory"* while `free -h` reported **30-35 GiB available**, no
+`CONSTRAINT_MEMCG` in the kernel log, and no OOM of any kind. The single largest consumer is
+the emulator's qemu at ~38 GB resident, which no Gradle setting reaches and which a restart
+is forbidden to reclaim — so the watchdog fires on the machine's *shape* rather than on
+anything the build did wrong.
+
+What it costs is not the run. It is that Gradle's `connectedDebugAndroidTest` **clears each
+module's output directory before it runs**, so a kill part-way through an eleven-module
+invocation destroys the results and the `.ec` of every module it had reached — including
+ones that had already finished. The first kill here took `:feature:player`'s 43/43 and its
+coverage with it, minutes after that suite had gone green.
+
+The working shape is **one module per bounded foreground call**:
+
+    ./gradlew :app:assembleDebugAndroidTest :app:assembleDebug        # unlocked, once
+    ci/device-lock.sh ./gradlew --max-workers=1 :feature:book:connectedDebugAndroidTest
+
+Each of the eleven modules finishes inside the ten-minute tool cap on its own (`:core:media`,
+the largest at 371 tests, took about seven minutes), nothing is lost when one is
+interrupted, and `--max-workers=1` stops Gradle running two connected tasks against one
+emulator inside a single build. Reserve `run_in_background` for the runs whose partial loss
+you can afford.
+
 ## A release build *can* do cleartext HTTP — to `localhost`, and only there
 
 `app/src/androidTest/.../FirstRunJourneyTest` says "Cleartext HTTP is allowed only
