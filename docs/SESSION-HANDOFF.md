@@ -135,13 +135,18 @@ OS app, because no watch artifact is built or signed. `app/build.gradle.kts` dec
 listing, the release workflow and `play/` as inputs of that test, after it was measured
 running `FROM-CACHE` over an edit to the very document it gates.
 
-The seven phone screenshots are captured and committed under `play/screenshots/phone/`.
-What is wrong with them is not that they are missing: they were regenerated at `976b0bc`
-**between** the two design rounds, so they show `Open` buttons under rows, a three-across
-button row, a teal artist line and an off-axis play control, none of which exists in the
-code. `StoreListingTest` checks names, not pixels, so nothing goes red. **Regenerate with
-`ci/store-screenshots.sh` before any submission** — this is the one item in this file that
-blocks a Play release.
+The seven phone screenshots are captured, committed under `play/screenshots/phone/`, and
+**current** — regenerated 2026-09-05 against master and reviewed one frame at a time.
+
+This paragraph used to call them the one item here blocking a Play release, "one design
+round stale", and list four markers. Three of the four were already absent from the
+pixels and the fourth was a button the app still has; the note had been carried forward
+past the commit that fixed it. `docs/AUDIT-BACKLOG.md` carries the measurement, including
+the part worth keeping: four of the seven regenerated **byte-identical**, so the design
+work really was invisible in these frames.
+
+Nothing in this repository now blocks a Play submission. What remains is Play Console
+work only the account holder can do.
 
 ## Remaining waves
 

@@ -184,12 +184,27 @@ stops after one paragraph stops in the right place.
 
 ## P2 — assets and consistency
 
-- **OPEN, and a release blocker: the seven store screenshots are one design round stale.**
-  Regenerated at `976b0bc` (2026-08-31), *between* the two rounds: they still show `Open`
-  buttons under rows, a three-across button row, a teal artist line and the cast icon pushing
-  play off-axis — none of which exists in the code now. `StoreListingTest` checks names, not
-  pixels, so nothing goes red. Regenerate with `ci/store-screenshots.sh` before any
-  submission.
+- ✅ **The seven store screenshots are current**, regenerated 2026-09-05 against master
+  and reviewed one frame at a time. The entry that stood here called them a release
+  blocker, "one design round stale", and named four markers of it. **Three of the four
+  were already absent from the pixels** when somebody finally looked: the button row is
+  two-across, not three; the artist line is grey, not teal; the play control is
+  dead-centre with the cast icon at the edge, not pushed off-axis. The fourth was never
+  a marker at all — `OPEN_LABEL` is still in `LibraryScreen.kt:469` and that button is
+  meant to be there. The record had simply been carried forward past `2cb4dd3`, which
+  regenerated them on 2026-09-04 and said so in its own message.
+
+  They *were* one round behind, for a different and real reason nobody had written
+  down: `5bbbfe5` (`Theme.kt` plus the three book screens) and `4d20aff`
+  (`PlayerScreen.kt`, `CoverArt.kt`) both landed after that capture. What the
+  regeneration then measured is the useful part — **four of the seven came back
+  byte-identical**, and the other three differ only in shuffle order and which track was
+  current. The design changes are not visible in these seven frames: `BookVoice` moved
+  the three *book* screens, and `04-browse-your-audiobooks` is the library's Audiobooks
+  tab, which is not one of them.
+
+  The lesson is the one this repository keeps paying for: **the markers in a staleness
+  record go stale faster than the thing they describe.** Check the pixels, not the note.
 - **OPEN:** two players use two chassis; album and book detail are two layouts for one job;
   `BookScreen.kt:176-209` puts two pills of different heights side by side, with a restart
   action co-equal to the primary one.
