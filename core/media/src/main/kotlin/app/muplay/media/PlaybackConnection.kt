@@ -108,6 +108,24 @@ class PlaybackConnection @Inject constructor(
   private val _state = MutableStateFlow(PlaybackState.NOTHING_PLAYING)
   val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
+  private val _queue = MutableStateFlow(QueueSnapshot.EMPTY)
+
+  /**
+   * What is queued, read from the player's own timeline.
+   *
+   * A second flow rather than a field on [PlaybackState], and that is not a stylistic split.
+   * [state] is republished four times a second by the ticker so the position readout moves; the
+   * queue changes only when something changes it, and rebuilding a hundred-item list at 4 Hz to
+   * carry a value that did not move would recompose every queue row of every subscriber for
+   * nothing. So this is published from the listener alone, on the two events that can change a
+   * timeline, and `MutableStateFlow`'s own equality check absorbs the rest.
+   *
+   * Read from the player and never maintained beside it: a car, a watch, a headset button and the
+   * Assistant all edit this queue through the same media session, so any copy this process kept
+   * would be wrong the first time one of them touched it.
+   */
+  val queue: StateFlow<QueueSnapshot> = _queue.asStateFlow()
+
   private var controllerFuture: ListenableFuture<MediaController>? = null
   private var controller: MediaController? = null
 
@@ -133,7 +151,16 @@ class PlaybackConnection @Inject constructor(
   private var connection: Deferred<MediaController>? = null
 
   private val listener = object : Player.Listener {
-    override fun onEvents(player: Player, events: Player.Events) = publish(player)
+    override fun onEvents(player: Player, events: Player.Events) {
+      publish(player)
+      // Only the two events that can move an item in or out of the timeline, or move playback
+      // between them. Every other event -- a play/pause, a seek inside one item, a speed change --
+      // leaves the queue exactly as it was, and rebuilding it for those would be a hundred
+      // allocations to arrive at the value already published.
+      if (events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+        publishQueue(player)
+      }
+    }
   }
 
   /**
@@ -195,7 +222,19 @@ class PlaybackConnection @Inject constructor(
     controllerFuture?.let { MediaController.releaseFuture(it) }
     controllerFuture = null
     _state.value = PlaybackState.NOTHING_PLAYING
+    _queue.value = QueueSnapshot.EMPTY
   }
+
+  /**
+   * Runs [block] against the session's player on the thread the controller belongs to.
+   *
+   * Every `MediaController` method asserts the `Looper` it was built with, so a queue edit from a
+   * ViewModel coroutine -- which is on whatever dispatcher its caller was -- has to hop. Exposed
+   * here rather than reconstructed by each caller because [mainDispatcher] is this class's, and a
+   * second `Handler(Looper.getMainLooper())` somewhere else is a second thing to keep true.
+   */
+  suspend fun <T> onController(block: (MediaController) -> T): T =
+    withContext(mainDispatcher) { block(controller()) }
 
   /**
    * Builds one controller and installs it, or throws.
@@ -233,6 +272,10 @@ class PlaybackConnection @Inject constructor(
     // suspend.
     artworkUrls.warm()
     publish(connected)
+    // The listener above fires on *changes*, and a controller connecting to a session that is
+    // already playing has missed all of them. Without this the queue screen is empty until the next
+    // track boundary -- which on an audiobook chapter is half an hour away.
+    publishQueue(connected)
     startTicker(connected)
     return connected
   }
@@ -256,6 +299,26 @@ class PlaybackConnection @Inject constructor(
         delay(POSITION_TICK_MS)
       }
     }
+  }
+
+  /**
+   * Reads the whole timeline. `getMediaItemAt` and `mediaItemCount` are `Player`'s own stable API,
+   * so no opt-in is needed and nothing here reaches for an `ExoPlayer` type.
+   *
+   * The title falls back to the media id rather than to a placeholder. An item whose metadata never
+   * arrived is still a row the user queued and can remove, and a queue of five rows all reading
+   * "Unknown" is a screen you cannot act on; an id is at least distinct.
+   */
+  private fun publishQueue(player: Player) {
+    val items = (0 until player.mediaItemCount).map { index ->
+      val item = player.getMediaItemAt(index)
+      QueueItem(
+        mediaId = item.mediaId,
+        title = item.mediaMetadata.title?.toString() ?: item.mediaId,
+        artist = item.mediaMetadata.artist?.toString(),
+      )
+    }
+    _queue.value = QueueSnapshot(items = items, currentIndex = player.currentMediaItemIndex)
   }
 
   private fun publish(player: Player) {

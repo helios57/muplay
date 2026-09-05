@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.component.fastScrollBuckets
@@ -73,6 +74,9 @@ fun FolderScreen(
     onShuffle = { viewModel.shuffleFolder(); onOpenPlayer() },
     onPlayAll = { viewModel.playFolder(); onOpenPlayer() },
     onTrackClick = { index -> viewModel.playTrack(index); onOpenPlayer() },
+    // No `onOpenPlayer()`: queueing leaves the user in the folder they are adding from.
+    onTrackPlayNext = viewModel::playNext,
+    onTrackAddToQueue = viewModel::enqueue,
     modifier = modifier,
   )
 }
@@ -84,6 +88,8 @@ private fun FolderScreen(
   onShuffle: () -> Unit,
   onPlayAll: () -> Unit,
   onTrackClick: (Int) -> Unit,
+  onTrackPlayNext: (Int) -> Unit,
+  onTrackAddToQueue: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // Subfolders and then tracks, as one list, because that is what the `LazyColumn` below draws and
@@ -132,7 +138,12 @@ private fun FolderScreen(
       // Indexed so a tap can name its own row, which is what makes the queue start on the song the
       // user pointed at rather than on the first one.
       itemsIndexed(uiState.tracks, key = { _, song -> "track:" + song.id }) { index, song ->
-        FolderTrackRow(song = song, onClick = { onTrackClick(index) })
+        FolderTrackRow(
+          song = song,
+          onClick = { onTrackClick(index) },
+          onPlayNext = { onTrackPlayNext(index) },
+          onAddToQueue = { onTrackAddToQueue(index) },
+        )
       }
     }
 
@@ -186,33 +197,47 @@ private fun FolderRow(folder: FolderNode, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FolderTrackRow(song: Song, onClick: () -> Unit) {
+private fun FolderTrackRow(
+  song: Song,
+  onClick: () -> Unit,
+  onPlayNext: () -> Unit,
+  onAddToQueue: () -> Unit,
+) {
   Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onClick)
-      .heightIn(min = MuPlaySpacing.minTouchTarget)
-      .padding(vertical = MuPlaySpacing.xs),
+    modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
   ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Text(
-        text = song.title,
-        style = MaterialTheme.typography.bodyLarge,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-      )
-      song.artistName?.let {
+    // A sibling of the queue button, not its parent -- see `AlbumScreen`'s `TrackRow` for the
+    // semantics-merging reason a control nested in a clickable row is unreachable to TalkBack.
+    Row(
+      modifier = Modifier
+        .weight(1f)
+        .clickable(onClick = onClick)
+        .heightIn(min = MuPlaySpacing.minTouchTarget)
+        .padding(vertical = MuPlaySpacing.xs),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = it,
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          text = song.title,
+          style = MaterialTheme.typography.bodyLarge,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+        song.artistName?.let {
+          Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
       }
     }
+    AddToQueueButton(onPlayNext = onPlayNext, onAddToQueue = onAddToQueue)
   }
 }
 

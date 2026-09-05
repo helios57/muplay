@@ -68,6 +68,7 @@ class PlayerScreenTest {
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
         onRetry = { actions += "retry" },
+        onOpenQueue = { actions += "openQueue" },
       )
     }
   }
@@ -83,6 +84,7 @@ class PlayerScreenTest {
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
         onRetry = { actions += "retry" },
+        onOpenQueue = { actions += "openQueue" },
         castDeviceName = castDeviceName,
         castButton = { TextButton(onClick = { actions += "cast" }) { Text(CAST_SLOT_LABEL) } },
       )
@@ -237,6 +239,22 @@ class PlayerScreenTest {
 
     composeRule.onNodeWithContentDescription(PAUSE_LABEL).performClick()
     assertThat(actions).containsExactly("next", "previous", "playPause")
+
+    // The queue button is in the same `Box` as the three above and is the newest thing in it, so
+    // it is the one most likely to have been handed a neighbour's lambda.
+    composeRule.onNodeWithContentDescription(QUEUE_TITLE).performClick()
+    assertThat(actions).containsExactly("next", "previous", "playPause", "openQueue")
+  }
+
+  /**
+   * There is no other way to the queue in the app, so a player that draws no queue button makes the
+   * whole screen unreachable -- and nothing else would notice.
+   */
+  @Test
+  fun theQueueIsReachableFromThePlayer() {
+    show(content())
+
+    composeRule.onNodeWithContentDescription(QUEUE_TITLE).assertIsDisplayed()
   }
 
   /**
@@ -337,7 +355,9 @@ class PlayerScreenTest {
   fun theHiltBoundScreenFollowsItsViewModelAndItsControlsReachItAgain() {
     val controls = RecordingPlaybackControls()
     val viewModel = PlayerViewModel(controls)
-    composeRule.setContent { PlayerScreen(viewModel = viewModel) }
+    composeRule.setContent {
+      PlayerScreen(onOpenQueue = { actions += "openQueue" }, viewModel = viewModel)
+    }
 
     composeRule.onNodeWithText(NOTHING_PLAYING_LABEL).assertIsDisplayed()
 

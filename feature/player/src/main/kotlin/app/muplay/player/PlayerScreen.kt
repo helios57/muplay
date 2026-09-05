@@ -75,6 +75,7 @@ import app.muplay.designsystem.theme.MuPlayTimecode
  */
 @Composable
 fun PlayerScreen(
+  onOpenQueue: () -> Unit,
   modifier: Modifier = Modifier,
   castDeviceName: String? = null,
   castButton: @Composable () -> Unit = {},
@@ -89,6 +90,7 @@ fun PlayerScreen(
     onScrubTo = viewModel::scrubTo,
     onScrubFinished = viewModel::commitScrub,
     onRetry = viewModel::retry,
+    onOpenQueue = onOpenQueue,
     castDeviceName = castDeviceName,
     castButton = castButton,
     modifier = modifier,
@@ -116,6 +118,9 @@ internal fun PlayerScreen(
   // button that does nothing -- which `Message`'s own doc calls out as worse than no button at all,
   // and is why that component's `onRetry` is nullable rather than a defaulted no-op.
   onRetry: () -> Unit,
+  // Required, and for the same reason `onRetry` above is: this is the only way to the queue in the
+  // whole app, and a defaulted `{}` would ship a control that looks like a way there and is not.
+  onOpenQueue: () -> Unit,
   castDeviceName: String? = null,
   castButton: @Composable () -> Unit = {},
   modifier: Modifier = Modifier,
@@ -272,6 +277,19 @@ internal fun PlayerScreen(
             label = NEXT_LABEL,
             enabled = uiState.playback.hasNext,
             onClick = onNext,
+          )
+        }
+        // The two non-transport controls hang off the two edges, so the play button keeps the
+        // screen's one vertical axis -- see this `Box`'s own note above. Queue leads, cast
+        // trails: "what plays next" belongs beside the skip buttons it is about, and casting is
+        // about somewhere else entirely.
+        IconButton(onClick = onOpenQueue, modifier = Modifier.align(Alignment.CenterStart)) {
+          Icon(
+            imageVector = MuPlayIcons.Queue,
+            // `QUEUE_TITLE`, the heading of the screen this opens, rather than a second string
+            // saying the same thing: a control named after where it goes cannot drift from it.
+            contentDescription = QUEUE_TITLE,
+            modifier = Modifier.size(MuPlaySpacing.xl),
           )
         }
         Box(modifier = Modifier.align(Alignment.CenterEnd)) { castButton() }

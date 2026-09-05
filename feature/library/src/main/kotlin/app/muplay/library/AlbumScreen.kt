@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
@@ -132,6 +133,11 @@ fun AlbumScreen(
               viewModel.play(index)
               onOpenPlayer()
             },
+            // No `onOpenPlayer()` here, and that is the whole distinction: queueing a track leaves
+            // the user where they are, on the album, adding more. Navigating to the player would
+            // make the two controls do the same thing with different words.
+            onPlayNext = { viewModel.playNext(index) },
+            onAddToQueue = { viewModel.enqueue(index) },
           )
         }
       }
@@ -148,29 +154,48 @@ fun AlbumScreen(
  * reason that style exists: proportional digits make a column of track numbers ragged.
  */
 @Composable
-private fun TrackRow(position: Int, song: Song, onClick: () -> Unit) {
+private fun TrackRow(
+  position: Int,
+  song: Song,
+  onClick: () -> Unit,
+  onPlayNext: () -> Unit,
+  onAddToQueue: () -> Unit,
+) {
   Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onClick)
-      .heightIn(min = MuPlaySpacing.minTouchTarget)
-      .padding(vertical = MuPlaySpacing.sm),
+    modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
   ) {
-    Text(
-      text = position.toString(),
-      style = MaterialTheme.typography.bodyMedium.merge(MuPlayTimecode),
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      textAlign = TextAlign.End,
-      modifier = Modifier.width(TRACK_NUMBER_WIDTH_DP.dp),
-    )
-    Text(
-      text = song.title,
-      style = MaterialTheme.typography.bodyLarge,
-      maxLines = 2,
-      overflow = TextOverflow.Ellipsis,
-    )
+    // **The queue button is a sibling of the tappable part, not a child of it.** `Modifier
+    // .clickable` merges its descendants' semantics and a merging node has no children in the
+    // merged tree, so a control nested inside this row would be invisible to TalkBack's swipe
+    // navigation and to every merged-tree matcher -- while still being perfectly tappable by a
+    // finger, which is the combination that gets shipped. Splitting the row into two clickables
+    // keeps both reachable and leaves `onNodeWithText("Track 3")` resolving to the tappable half,
+    // which is what four `:app` journeys use.
+    Row(
+      modifier = Modifier
+        .weight(1f)
+        .clickable(onClick = onClick)
+        .heightIn(min = MuPlaySpacing.minTouchTarget)
+        .padding(vertical = MuPlaySpacing.sm),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+    ) {
+      Text(
+        text = position.toString(),
+        style = MaterialTheme.typography.bodyMedium.merge(MuPlayTimecode),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+        modifier = Modifier.width(TRACK_NUMBER_WIDTH_DP.dp),
+      )
+      Text(
+        text = song.title,
+        style = MaterialTheme.typography.bodyLarge,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+    AddToQueueButton(onPlayNext = onPlayNext, onAddToQueue = onAddToQueue)
   }
 }
 

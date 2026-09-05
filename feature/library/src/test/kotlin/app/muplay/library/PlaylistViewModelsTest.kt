@@ -75,6 +75,17 @@ class PlaylistViewModelsTest {
     override suspend fun play(songs: List<Song>, startIndex: Int) {
       playCalls += songs.map { it.id } to startIndex
     }
+
+    /** The two queue edits, kept apart: appending and inserting are different promises. */
+    val enqueueCalls = mutableListOf<List<String>>()
+    override suspend fun enqueue(songs: List<Song>) {
+      enqueueCalls += songs.map { it.id }
+    }
+
+    val playNextCalls = mutableListOf<List<String>>()
+    override suspend fun playNext(songs: List<Song>) {
+      playNextCalls += songs.map { it.id }
+    }
   }
 
   private val dispatcher = StandardTestDispatcher()
@@ -287,5 +298,76 @@ class PlaylistViewModelsTest {
     advanceUntilIdle()
 
     assertThat(source.playlistCalls).containsExactly("p1" to 7, "p2" to 7)
+  }
+
+  /**
+   * **One song, and nothing started.** A playlist is the list most likely to be queued a track at a
+   * time rather than played whole, and the control that does it must leave the current track alone.
+   */
+  @Test
+  fun `adding a track to the queue queues that one track and starts nothing`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"), song("c"))) }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    vm.enqueue(2)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).containsExactly(listOf("c"))
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  @Test
+  fun `playing a track next inserts that one track and starts nothing`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"))) }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    vm.playNext(1)
+    advanceUntilIdle()
+
+    assertThat(source.playNextCalls).containsExactly(listOf("b"))
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  /**
+   * The other guard on the queue path: a tap before `open` has answered reads a state that is not
+   * `Content`, which is a different branch from an out-of-range index. `:feature:library`'s 1.00
+   * BRANCH floor over this class is what found it missing.
+   */
+  @Test
+  fun `queueing a row before the playlist has loaded touches nothing`() = runTest {
+    val source = FakePlaylistSource()
+    val vm = PlaylistViewModel(source)
+
+    vm.enqueue(0)
+    vm.playNext(0)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
+  /** `play`'s range guard, on the queue path, which is a different one. */
+  @Test
+  fun `queueing a row the playlist does not have touches nothing`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"))) }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    vm.enqueue(3)
+    vm.playNext(-1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
   }
 }

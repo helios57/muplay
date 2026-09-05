@@ -78,6 +78,17 @@ class FolderViewModelTest {
       playCalls += songs.map { it.id } to startIndex
     }
 
+    /** The two queue edits, kept apart: appending and inserting are different promises. */
+    val enqueueCalls = mutableListOf<List<String>>()
+    override suspend fun enqueue(songs: List<Song>) {
+      enqueueCalls += songs.map { it.id }
+    }
+
+    val playNextCalls = mutableListOf<List<String>>()
+    override suspend fun playNext(songs: List<Song>) {
+      playNextCalls += songs.map { it.id }
+    }
+
     private fun empty(path: String) = FolderListing(path, emptyList(), emptyList())
   }
 
@@ -288,5 +299,80 @@ class FolderViewModelTest {
 
     assertThat(source.songsUnderCalls).isEmpty()
     assertThat(source.playCalls).isEmpty()
+  }
+
+  /**
+   * **The row's own track, and nothing started.** The folder screen is the one place this could
+   * plausibly queue the wrong thing: `songsUnder` is right there and returns the whole subtree,
+   * which is what the two folder-level buttons on the same screen use.
+   */
+  @Test
+  fun `adding a row to the queue queues that row alone and reads no subtree`() = runTest {
+    val source = FakeFolderSource()
+    val tracks = listOf(song("a", "F/01.mp3"), song("b", "F/02.mp3"), song("c", "F/03.mp3"))
+    source.setListing(1, "F", FolderListing("F", emptyList(), tracks))
+    source.songsUnderAnswer = listOf(song("z", "F/sub/99.mp3")) + tracks
+    val vm = warm(source)
+    vm.open("F")
+    advanceUntilIdle()
+
+    vm.enqueue(1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).containsExactly(listOf("b"))
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+    assertThat(source.songsUnderCalls).isEmpty()
+  }
+
+  @Test
+  fun `playing a row next inserts that row alone and starts nothing`() = runTest {
+    val source = FakeFolderSource()
+    source.setListing(1, "F", FolderListing("F", emptyList(), listOf(song("a", "F/01.mp3"), song("b", "F/02.mp3"))))
+    val vm = warm(source)
+    vm.open("F")
+    advanceUntilIdle()
+
+    vm.playNext(0)
+    advanceUntilIdle()
+
+    assertThat(source.playNextCalls).containsExactly(listOf("a"))
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  /**
+   * The other guard on the queue path: a tap before `open` has answered reads a null `uiState`,
+   * which is a different branch from an out-of-range index. `:feature:library`'s 1.00 BRANCH floor
+   * over this class is what found it missing.
+   */
+  @Test
+  fun `queueing a row before the folder has loaded touches nothing`() = runTest {
+    val source = FakeFolderSource()
+    val vm = warm(source)
+
+    vm.enqueue(0)
+    vm.playNext(0)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
+  /** `playTrack`'s range guard, on the queue path, which is a different one. */
+  @Test
+  fun `queueing a row the folder does not have touches nothing`() = runTest {
+    val source = FakeFolderSource()
+    source.setListing(1, "F", FolderListing("F", emptyList(), listOf(song("a", "F/01.mp3"))))
+    val vm = warm(source)
+    vm.open("F")
+    advanceUntilIdle()
+
+    vm.enqueue(4)
+    vm.playNext(-1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
   }
 }

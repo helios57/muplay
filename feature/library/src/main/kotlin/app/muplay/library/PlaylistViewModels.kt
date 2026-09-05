@@ -6,6 +6,7 @@ import app.muplay.database.LibrarySelection
 import app.muplay.database.PlaylistRepository
 import app.muplay.database.SyncFailure
 import app.muplay.media.PlaybackLauncher
+import app.muplay.media.QueueEditor
 import app.muplay.model.Playlist
 import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.Song
@@ -24,7 +25,7 @@ import kotlinx.coroutines.launch
  * Both are on one seam because they read the same two calls and fail the same way; splitting them
  * would be two interfaces with one implementation each and the same fake written twice.
  */
-interface PlaylistSource {
+interface PlaylistSource : QueueSink {
   val selectedLibraryId: Flow<Int?>
   suspend fun playlists(): List<Playlist>
   suspend fun playlist(playlistId: String, fallbackLibraryId: Int): PlaylistWithSongs
@@ -65,7 +66,10 @@ class PlaylistsViewModel(
     playlistRepository: PlaylistRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
-  ) : this(PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher))
+    queueEditor: QueueEditor,
+  ) : this(
+    PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher, queueEditor),
+  )
 
   private val state = MutableStateFlow<PlaylistsUiState>(PlaylistsUiState.Loading)
   val uiState: StateFlow<PlaylistsUiState> = state.asStateFlow()
@@ -103,7 +107,10 @@ class PlaylistViewModel(
     playlistRepository: PlaylistRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
-  ) : this(PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher))
+    queueEditor: QueueEditor,
+  ) : this(
+    PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher, queueEditor),
+  )
 
   private val state = MutableStateFlow<PlaylistUiState>(PlaylistUiState.Loading)
   val uiState: StateFlow<PlaylistUiState> = state.asStateFlow()
@@ -140,6 +147,24 @@ class PlaylistViewModel(
     if (songs.isEmpty()) return
     viewModelScope.launch { source.play(songs.shuffled(), 0) }
   }
+
+  /**
+   * Adds the tapped row to the end of the queue, and **changes nothing about what is playing** --
+   * the distinction the control exists for. [playNext] is its sibling.
+   */
+  fun enqueue(index: Int) {
+    songAt(index)?.let { song -> viewModelScope.launch { source.enqueue(listOf(song)) } }
+  }
+
+  /** Inserts the tapped row directly after whatever is playing. See [enqueue]. */
+  fun playNext(index: Int) {
+    songAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
+  }
+
+  /** `orEmpty` rather than a second `?.`, for the reason [play] states: `Content.songs` is
+   *  non-null, so a null check on it is a branch nothing can take. Measured at 29/32 before. */
+  private fun songAt(index: Int): Song? =
+    (state.value as? PlaylistUiState.Content)?.songs.orEmpty().getOrNull(index)
 }
 
 /**
@@ -152,7 +177,8 @@ private class PlaylistRepositorySource(
   private val playlistRepository: PlaylistRepository,
   librarySelection: LibrarySelection,
   private val playbackLauncher: PlaybackLauncher,
-) : PlaylistSource {
+  queueEditor: QueueEditor,
+) : PlaylistSource, QueueSink by QueueEditorSink(queueEditor) {
   override val selectedLibraryId: Flow<Int?> = librarySelection.selected
   override suspend fun playlists(): List<Playlist> = playlistRepository.playlists()
   override suspend fun playlist(playlistId: String, fallbackLibraryId: Int): PlaylistWithSongs =

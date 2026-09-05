@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.muplay.database.FolderRepository
 import app.muplay.database.LibrarySelection
 import app.muplay.media.PlaybackLauncher
+import app.muplay.media.QueueEditor
 import app.muplay.model.FolderListing
 import app.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,7 +27,7 @@ import kotlinx.coroutines.launch
  * is Room-backed and `PlaybackLauncher` needs a bound media session, so neither can be constructed
  * on the JVM, and this project bans mock frameworks.
  */
-interface FolderSource {
+interface FolderSource : QueueSink {
   val selectedLibraryId: Flow<Int?>
   fun listing(libraryId: Int, path: String): Flow<FolderListing>
   fun pathedSongCount(libraryId: Int): Flow<Int>
@@ -56,8 +57,9 @@ class FolderViewModel(
     folderRepository: FolderRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
+    queueEditor: QueueEditor,
   ) : this(
-    object : FolderSource {
+    object : FolderSource, QueueSink by QueueEditorSink(queueEditor) {
       override val selectedLibraryId: Flow<Int?> = librarySelection.selected
       override fun listing(libraryId: Int, path: String): Flow<FolderListing> =
         folderRepository.listing(libraryId, path)
@@ -131,6 +133,26 @@ class FolderViewModel(
     if (startIndex !in tracks.indices) return
     viewModelScope.launch { source.play(tracks, startIndex) }
   }
+
+  /**
+   * Adds the tapped row to the end of the queue, and **changes nothing about what is playing**.
+   *
+   * From the listing, like [playTrack] and unlike [shuffleFolder]: the rows on screen are what a
+   * user is pointing at, and `songsUnder`'s subtree is a different list with a different index.
+   */
+  fun enqueue(index: Int) {
+    trackAt(index)?.let { song -> viewModelScope.launch { source.enqueue(listOf(song)) } }
+  }
+
+  /** Inserts the tapped row directly after whatever is playing. See [enqueue]. */
+  fun playNext(index: Int) {
+    trackAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
+  }
+
+  /** `orEmpty` rather than a second `?.`, exactly as [playTrack] above does and for the same
+   *  measured reason: `FolderUiState.tracks` is non-null, so `?.tracks?.getOrNull(..)` emits a null
+   *  check nothing can take, and this class read 18/20 against a 1.00 floor until it went. */
+  private fun trackAt(index: Int): Song? = uiState.value?.tracks.orEmpty().getOrNull(index)
 
   private fun withSongsUnder(arrange: (List<Song>) -> List<Song>) {
     val at = path.value ?: return

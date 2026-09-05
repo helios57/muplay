@@ -76,6 +76,18 @@ class AlbumViewModelTest {
     override suspend fun play(songs: List<Song>, startIndex: Int) {
       playCalls += songs.map { it.id } to startIndex
     }
+
+    /** The two queue edits, kept apart: "append" and "insert after this one" are different
+     *  promises, and one lambda handed to the wrong control is the defect this catches. */
+    val enqueueCalls = mutableListOf<List<String>>()
+    override suspend fun enqueue(songs: List<Song>) {
+      enqueueCalls += songs.map { it.id }
+    }
+
+    val playNextCalls = mutableListOf<List<String>>()
+    override suspend fun playNext(songs: List<Song>) {
+      playNextCalls += songs.map { it.id }
+    }
   }
 
   private val dispatcher = StandardTestDispatcher()
@@ -369,5 +381,84 @@ class AlbumViewModelTest {
     advanceUntilIdle()
 
     assertThat(source.playCalls).isEmpty()
+  }
+
+  /**
+   * **One song, and nothing played.** The whole point of the control the user asked for is that it
+   * does not take over what is currently playing -- so the assertion that `play` was never called
+   * is the load-bearing half, and an implementation that enqueued the album from the tapped index
+   * (the shape `play` right beside it has) satisfies everything else.
+   */
+  @Test
+  fun `adding a track to the queue queues that one track and starts nothing`() = runTest(dispatcher) {
+    val source = loadedAlbum()
+    val vm = warm(source)
+    vm.load("a")
+    advanceUntilIdle()
+
+    vm.enqueue(1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).containsExactly(listOf("s2"))
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  @Test
+  fun `playing a track next inserts that one track and starts nothing`() = runTest(dispatcher) {
+    val source = loadedAlbum()
+    val vm = warm(source)
+    vm.load("a")
+    advanceUntilIdle()
+
+    vm.playNext(2)
+    advanceUntilIdle()
+
+    assertThat(source.playNextCalls).containsExactly(listOf("s3"))
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  /**
+   * The **other** guard on the queue path, and the reason `songAt` is written with `orEmpty`: a tap
+   * that arrives before the album has loaded reads a `uiState` that is not `Content` at all, which
+   * is a different branch from an index the loaded album does not have. Without this test that
+   * branch is never taken and `:feature:library`'s 1.00 BRANCH floor over this class goes red --
+   * which is how it was found, rather than by reading.
+   */
+  @Test
+  fun `queueing a track before the album has loaded touches nothing`() = runTest(dispatcher) {
+    val source = loadedAlbum()
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    vm.enqueue(0)
+    vm.playNext(0)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  /** Same guard as `play`'s, and it needs its own test: a queue edit is a different code path. */
+  @Test
+  fun `queueing a row the album does not have touches nothing`() = runTest(dispatcher) {
+    val source = loadedAlbum()
+    val vm = warm(source)
+    vm.load("a")
+    advanceUntilIdle()
+
+    vm.enqueue(9)
+    vm.playNext(-1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
+  private fun loadedAlbum() = FakeAlbumSource().apply {
+    albumsById["a"] = album("a", "First", 1)
+    setSongs("a", listOf(song("s1", "One", "a", 1), song("s2", "Two", "a", 1), song("s3", "Three", "a", 1)))
   }
 }

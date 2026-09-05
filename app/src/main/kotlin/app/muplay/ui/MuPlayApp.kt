@@ -41,6 +41,7 @@ import app.muplay.library.PlaylistsScreen
 import app.muplay.library.folderTitle
 import app.muplay.player.MiniPlayer
 import app.muplay.player.PlayerScreen
+import app.muplay.player.QueueScreen
 import app.muplay.requests.IntegrationsPresenceViewModel
 import app.muplay.requests.IntegrationsRoute
 import app.muplay.requests.IntegrationsScreen
@@ -58,6 +59,7 @@ import app.muplay.ui.navigation.LibraryRoute
 import app.muplay.ui.navigation.PlayerRoute
 import app.muplay.ui.navigation.PlaylistRoute
 import app.muplay.ui.navigation.PlaylistsRoute
+import app.muplay.ui.navigation.QueueRoute
 import app.muplay.ui.navigation.SettingsRoute
 
 /**
@@ -294,12 +296,18 @@ private fun MuPlayNavigation(
         }
         entry<PlayerRoute> {
           PlayerScreen(
+            onOpenQueue = { backStack.add(QueueRoute) },
             castDeviceName = castDeviceName,
             castButton = {
               CastButton(onClick = { pickerOpen = true }, viewModel = castViewModel)
             },
           )
         }
+        // Pushed on top of the player rather than replacing it, so back returns to what is
+        // playing. The mini player is deliberately visible underneath -- `onPlayer` above is false
+        // for this route -- because the queue is the one screen where "what is playing right now" and "what
+        // plays next" are two different questions a user is holding at the same time.
+        entry<QueueRoute> { QueueScreen() }
         // These three bodies are each **one statement on one line**, which is a coverage decision
         // and not a style one. `:app`'s only floor is a BUNDLE LINE 0.90 over merged JVM +
         // instrumented data, and nothing navigates to these three destinations until Plan 4 Task

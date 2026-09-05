@@ -3777,6 +3777,80 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf("app.muplay.media.AudiobookSnapshot*start*1"),
       requiresInstrumentedData = true,
     ),
+    // `QueueSnapshotKt` -- `playNextIndexIn`, `canRemoveFrom` and `canMoveWithin`: the three rules
+    // that decide which play-queue edits exist at all. They are top-level `internal` functions
+    // rather than members of `QueueSnapshot` because two callers need them and only one of them
+    // has a snapshot: the screen decides whether to *draw* a control from the snapshot it is
+    // looking at, and `QueueEditor` decides whether to *send* it from the live controller. Media3
+    // throws `IllegalSeekPositionException` out of the controller for an index that has gone out
+    // of range -- it does not ignore it -- so both ends have to agree about which indices are
+    // real, and agreeing is what one shared function is for.
+    //
+    // MEASURED 2026-09-06: 10/10 = 1.0000 BRANCH, 3/3 LINE, from **JVM data alone**
+    // (`QueueSnapshotTest`, eleven tests, no emulator). `requiresInstrumentedData` is deliberately
+    // absent.
+    //
+    // 10/10 rather than 10/12 because a branch that could not be reached was **deleted rather than
+    // floored around**: `playNextIndex` had an `if (items.isEmpty()) 0 else ..` in front of its
+    // clamp, and on an empty queue `coerceIn(0, 0)` already answers 0 whatever `currentIndex`
+    // holds. That guard's own KDoc records the measurement. Note what this means for the other
+    // direction, which CLAUDE.md has now cost this repository twice: the *clamp itself* compiles
+    // to `Math.max`/`Math.min` and carries **no JaCoCo branch counter**, so the tests that prove
+    // "append" is `items.size` and not the last index move no number here. They are not redundant;
+    // this floor simply cannot see them.
+    //
+    // `QueueSnapshot`, `QueueSnapshot.Companion` and `QueueItem` ride along carrying zero BRANCH
+    // counters (two `data class`es and an object holding `EMPTY`), so per-CLASS they answer NaN
+    // and cannot move this rule; they are named so `warnUngatedClasses` has nothing to say about
+    // them on every run. All 10 branches are `QueueSnapshotKt`'s.
+    //
+    // FALSIFIED three ways, all measured with `@Disabled` and
+    // `:core:media:jacocoTestReport --rerun-tasks`, none of them predicted:
+    //
+    //   `moving a row to where it already is is not a move` withheld            -> 9/10 = 0.9000
+    //   `a row that is on the queue can be removed and one past the end cannot` -> 9/10 = 0.9000
+    //   both move tests withheld together                                       -> 4/10 = 0.4000
+    //
+    // The minimum is **1.00 and not this table's usual 0.90 precisely because of the first two
+    // rows**: at 0.90 a single withheld test lands exactly *on* the floor and passes, so the floor
+    // would defend neither of the two tests it exists for. There is no unreachable counter here to
+    // buy margin for -- all ten branches are reached -- so 1.00 is the honest number and any new
+    // untested branch in these three functions fires it.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.media.QueueSnapshotKt",
+        "app.muplay.media.QueueSnapshot",
+        "app.muplay.media.QueueSnapshot.Companion",
+        "app.muplay.media.QueueItem",
+      ),
+    ),
+    // `QueueEditor` (BRANCH 0/22, LINE 0/35) carries **no rule, and no test on any tier**. Saying
+    // so here is the point: it is the half of the play queue that talks to a live
+    // `MediaController` -- `enqueue`, `playNext`, `remove`, `move`, `jumpTo` -- so nothing about it
+    // can be reached without a session, and a session means `MediaController.Builder` binding to
+    // `MuPlaybackService` under Hilt. That is `:app`'s tier, not this module's: this module's
+    // instrumented suite runs under the default test application with no Hilt graph, which is why
+    // `MuPlaybackServiceTest` and `PlaybackJourneyTest` live in `:app` and not beside
+    // `ControllerAccessGateTest`. The missing test is an `:app` queue journey, and it is missing
+    // because the shared emulator was replaced mid-session with one started without
+    // `-feature Minigbm`, so `ci/prepare-emulator.sh` correctly refuses and no journey written now
+    // could be run, let alone falsified. CLAUDE.md's ruling for that state is not to invent the
+    // floor, and a journey nobody has watched fail is worth about as much as one.
+    //
+    // What that leaves untested is worth naming rather than leaving to be discovered: the
+    // `wasEmpty -> prepare()` arm in `enqueue` and `playNext` (add-to-queue against a session with
+    // nothing in it), and the `mediaItemsFor` null for an empty list. The *guards* are not in that
+    // set -- `playNextIndexIn`, `canRemoveFrom` and `canMoveWithin` are the floored functions
+    // above, which is the whole reason `QueueEditor` asks them instead of re-deriving bounds from
+    // the controller.
+    //
+    // `PlaybackConnection$onController$2` (LINE 0/1) is ungated for the same reason and is the
+    // same class of thing: the `withContext(mainDispatcher)` hop `onController` exists to make, so
+    // that every edit above reaches the controller on the thread the player was built on. Nothing
+    // off a device can execute it.
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
@@ -3854,6 +3928,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("1.00"),
       includes = listOf("app.muplay.designsystem.component.FastScrollIndexKt"),
     ),
+    // `AddToQueueButtonKt` -- the overflow menu every track row now carries ("Play next" / "Add to
+    // queue") -- has **no rule**, for the same reason `FastScrollBarKt` above has none: it is a
+    // Composable file, it measures 0 from the JVM, and this module's only Composable floor is the
+    // `requiresInstrumentedData` LINE rule above, which it cannot join without making that rule
+    // unenforceable on the fast tier. It is a menu with no arithmetic in it -- the decision of
+    // *what* the two items do belongs to the three view models behind `QueueSink` in
+    // `:feature:library` and is tested there on the fast tier -- so what a device run would add
+    // here is only that the menu opens. It goes on being
+    // reported by `warnUngatedClasses` until one of them composes it on a device.
   ),
   // Plan 2 Task 9 (:feature:library), floors 2 and 3 added in its review round 1 (N-7). Every
   // number below is measured from `./gradlew :feature:library:test :feature:library:jacocoTestReport`
@@ -4786,6 +4869,142 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
       requiresInstrumentedData = true,
     ),
+    // The play queue's one mapping, and the reason it is a top-level function in its own file:
+    // `queueUiState` turns what the player reports about its own timeline into rows a screen can
+    // draw -- which row is playing, and which of the two arrows each row may offer. `QueueScreen.kt`
+    // could have held it and `QueueViewModel` could have been a method; `:feature:library`'s
+    // `CoverArtCacheKey.kt` header records what happens then -- a pure function sharing a
+    // file-class with a Composable measures its own branches drowned in the Composable's synthetic
+    // ones, and no floor can reach it.
+    //
+    // MEASURED 2026-09-06: 4/4 = 1.0000 BRANCH, 14/14 LINE, from **JVM data alone**
+    // (`QueueUiStateTest`'s eight tests and `QueueViewModelTest`'s seven).
+    // `requiresInstrumentedData` is deliberately absent -- this decision never needs an emulator.
+    //
+    // `QueueUiState`, `QueueUiState*` and `QueueRow` ride along carrying **zero BRANCH counters**
+    // of their own (a sealed interface, a `data object`, two `data class`es), so per-CLASS they
+    // answer JaCoCo's NaN and cannot move this rule; they are named only so `warnUngatedClasses`
+    // has nothing to say about them on every run. The rule is not thereby vacuous: all 4 branches
+    // are `QueueUiStateKt`'s.
+    //
+    // **FALSIFIED, and the two attempts that did *not* move it are the more useful half.** All
+    // four measured with `@Disabled` and `:feature:player:jacocoTestReport --rerun-tasks`:
+    //
+    //   `an empty queue has nothing to show` withheld, `QueueUiStateTest` only  -> still 4/4
+    //   `the row the player is on is the one marked as playing` withheld, ditto -> still 4/4
+    //   the empty arm withheld from **both** test classes at once               -> 3/4 = 0.7500
+    //   every test that renders a queue of more than one row, both classes      -> 3/4 = 0.7500
+    //
+    // `QueueViewModelTest` is a second caller of `queueUiState` -- `uiState` is
+    // `controls.queue.map(::queueUiState)`, so its assertions walk the same four branches. That is
+    // CLAUDE.md's "a recorded floor falsification goes stale when a second caller appears", met on
+    // the day the floor was written rather than months later. **This floor holds the mapping and
+    // holds no individual test**: do not delete a test here because withholding it leaves this
+    // green.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.player.QueueUiStateKt",
+        "app.muplay.player.QueueUiState",
+        "app.muplay.player.QueueUiState*",
+        "app.muplay.player.QueueRow",
+      ),
+    ),
+    // `QueueViewModel` itself -- **18/21 = 0.8571 LINE**, JVM data alone (`QueueViewModelTest`,
+    // seven tests, no emulator).
+    //
+    // LINE and not BRANCH because this class has **no BRANCH counters at all**: it holds no
+    // decisions. Every `if` the play queue owns is either `QueueSnapshotKt`'s in `:core:media` (may
+    // this index be removed, moved, played) or `queueUiState`'s above, which is exactly the split
+    // the `QueueControls` seam exists to make -- the view model is five one-line launches and a
+    // `map`. A BRANCH rule here would match a class with zero counters of its kind, answer NaN,
+    // gate nothing, and `warnVacuousFloors` would say so.
+    //
+    // Floored at 0.85. The three missing lines are the `@Inject` secondary constructor's own body,
+    // reachable only through Hilt -- the same shape and nearly the same ratio `PlayerViewModel`
+    // records above at 23/26 and `:feature:library` records for `LibraryViewModel` at 36/39.
+    // Losing one further line reads 17/21 = 0.8095 and fires.
+    //
+    // FALSIFIED 2026-09-06 by withholding the covering data rather than by raising the minimum:
+    // `@Disabled` on the whole `QueueViewModelTest` -> **0/21 = 0.0000**, red.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf("app.muplay.player.QueueViewModel"),
+    ),
+    // The view model's coroutine and `Flow` codegen, LINE, for the reason the `PlayerViewModel*`
+    // rule above is LINE: what is worth knowing about compiler-generated continuation machinery is
+    // whether it ran, not which state-machine arms the compiler emitted.
+    //
+    // MEASURED 2026-09-06, JVM data alone:
+    //
+    //   `$2` (the `init` block's connect launch)      1/1     `$jumpTo$1`   1/1
+    //   `$remove$1`                                   1/1     `$moveUp$1`   1/1
+    //   `$moveDown$1`                                 1/1
+    //   `$special$$inlined$map$1$2`                   2/2
+    //   `$special$$inlined$map$1`                     2/3 = 0.6667   <- this sets the minimum
+    //
+    // **0.65, and the number is the one inherited class in the set rather than anything in this
+    // repository.** `$special$$inlined$map$1` is compiled from kotlinx-coroutines' own
+    // `SafeCollector.common.kt`, not from any file here, and its missed line is that file's line
+    // 108 -- the `Unit.INSTANCE; areturn` that `collect` reaches only by *returning normally*.
+    // Read out of the class file rather than guessed, and confirmed against the report's own
+    // line-level data (`line 105` ci 3, `line 107` ci 6, `line 108` ci 0). `controls.queue` is a
+    // `StateFlow`, whose `collect` never completes, so that return is unreachable -- the same
+    // shape, and the same reasoning, as `:core:media`'s `AudiobookSnapshot$start$1` at 6/7.
+    //
+    // Element is CLASS, so 0.65 is not the weak floor it looks like: every other class here is
+    // 1/1 or 2/2 and is checked on its own, where any loss at all reads 0.0000 and fires.
+    //
+    // Two exclusions, both load-bearing and both copied from the `PlayerViewModel*` rule above:
+    //
+    //  * `QueueViewModel` itself, because a `"...*"` include matches the empty string too and it
+    //    would arrive here at 0.8571, dragging a rule every class it is meant to gate clears. It
+    //    has its own floor immediately above.
+    //  * `QueueViewModel$1` -- written `QueueViewModel.1`, because a literal `$` in a JaCoCo
+    //    pattern never matches (this table's own doc, gotcha 3). It is the anonymous
+    //    `QueueControls` adapter the `@Inject` constructor builds over `PlaybackConnection` and
+    //    `QueueEditor`: **0/7 LINE**, reachable only through Hilt's graph. `PlayerViewModel.1` has
+    //    a floor because `:app`'s `PlaybackJourneyTest` reaches it; nothing opens the queue screen
+    //    in a journey yet, and the emulator is unavailable, so this one is deliberately left at
+    //    0.0000 in `warnUngatedClasses`'s output rather than given an invented floor.
+    //
+    // FALSIFIED 2026-09-06 with `@Disabled` on the whole `QueueViewModelTest`: every class in this
+    // set drops to 0.0000 -- `$2`, `$jumpTo$1`, `$remove$1`, `$moveUp$1`, `$moveDown$1` to 0/1,
+    // `$special$$inlined$map$1$2` to 0/2 and `$special$$inlined$map$1` to 0/3 -- and
+    // `jacocoJvmCoverageVerification` names each one.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf("app.muplay.player.QueueViewModel*"),
+      excludes = listOf(
+        "app.muplay.player.QueueViewModel",
+        // `QueueViewModel.1`, not `QueueViewModel$1`: a literal `$` in a pattern never matches.
+        "app.muplay.player.QueueViewModel.1",
+      ),
+    ),
+    // `QueueScreenKt` (LINE 0/80, BRANCH 0/182) and `QueueViewModel$1` (LINE 0/7) carry **no rule
+    // on purpose**, and both go on being reported by `warnUngatedClasses` until a device is
+    // available. `feature/player/src/androidTest/.../QueueScreenTest.kt` exists, compiles and has
+    // eight tests; **it has never been executed** -- the shared emulator was replaced mid-session
+    // with one started without `-feature Minigbm`, so `ci/prepare-emulator.sh` correctly refuses
+    // and the whole instrumented tier is unavailable. CLAUDE.md's ruling for exactly this state is
+    // to write the tests and *not* invent the floors. When the emulator is back:
+    //
+    //   1. `./gradlew :feature:player:assembleDebugAndroidTest :feature:player:assembleDebug`,
+    //      then `ci/device-lock.sh ./gradlew --max-workers=1
+    //      :feature:player:connectedDebugAndroidTest`, then `:feature:player:jacocoTestReport` --
+    //      separate invocations, nothing touching `feature/player/build/outputs/` in between, and
+    //      confirm the `.ec` exists before reading any ratio.
+    //   2. Read `QueueScreenKt`'s LINE ratio and expect it below the three Composable files above:
+    //      `QueueScreenTest` composes the stateless overload for seven of its eight tests.
+    //   3. Falsify with JUnit 4's **`@Ignore`** (this source set is JUnit 4) and a **fresh
+    //      `connectedDebugAndroidTest`** -- re-reading the report measures nothing, because JaCoCo
+    //      matches the previous run's `.ec` to the unchanged production class by class id.
   ),
   // 78/81 = 0.9630 LINE across the whole module, re-measured at Plan 3 Task 10 with
   // `PlaybackJourneyTest` in the run (the module has grown since the 61/63 recorded here before

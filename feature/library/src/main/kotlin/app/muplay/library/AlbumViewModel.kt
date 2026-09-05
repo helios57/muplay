@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.muplay.database.BrowseRepository
 import app.muplay.media.PlaybackLauncher
+import app.muplay.media.QueueEditor
 import app.muplay.model.Album
 import app.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,7 +26,7 @@ import kotlinx.coroutines.launch
  * hand-written fake needs a seam rather than a subclass. Real usage is bound to it by the
  * `@Inject` secondary constructor below.
  */
-interface AlbumSource {
+interface AlbumSource : QueueSink {
   fun songs(albumId: String): Flow<List<Song>>
   suspend fun album(albumId: String): Album?
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
@@ -59,8 +60,12 @@ class AlbumViewModel(
 ) : ViewModel() {
 
   @Inject
-  constructor(browseRepository: BrowseRepository, playbackLauncher: PlaybackLauncher) : this(
-    object : AlbumSource {
+  constructor(
+    browseRepository: BrowseRepository,
+    playbackLauncher: PlaybackLauncher,
+    queueEditor: QueueEditor,
+  ) : this(
+    object : AlbumSource, QueueSink by QueueEditorSink(queueEditor) {
       override fun songs(albumId: String): Flow<List<Song>> = browseRepository.songs(albumId)
       override suspend fun album(albumId: String): Album? = browseRepository.album(albumId)
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
@@ -149,6 +154,35 @@ class AlbumViewModel(
     val content = uiState.value as? AlbumUiState.Content ?: return
     viewModelScope.launch { source.play(content.songs, startIndex) }
   }
+
+  /**
+   * Adds the tapped row to the end of the queue, and **changes nothing about what is playing**.
+   *
+   * That is the distinction the whole control exists for -- "enqueue a song instead of playing it
+   * directly" -- so it is one song, taken from the list the screen is showing, and no index reaches
+   * the player. [playNext] is its sibling and the two are deliberately not one method with a flag.
+   *
+   * The range guard is `play`'s, and it earns its own test rather than borrowing that one: a tap on
+   * a row that has just been removed by a sync must do nothing, and this is a different path.
+   */
+  fun enqueue(index: Int) {
+    songAt(index)?.let { song -> viewModelScope.launch { source.enqueue(listOf(song)) } }
+  }
+
+  /** Inserts the tapped row directly after whatever is playing. See [enqueue]. */
+  fun playNext(index: Int) {
+    songAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
+  }
+
+  /**
+   * `orEmpty` and not a second `?.`, for the reason `play` above states and `PlaylistViewModel` and
+   * `FolderViewModel` both repeat: `Content.songs` is non-null, so `?.songs?.getOrNull(..)` emits a
+   * null check on it that no input can take -- a branch this module's 1.00 BRANCH floor can never
+   * see covered, and an unreachable guard reads as a case somebody thought about when it is really
+   * a case nothing tests. Measured: written that way this class sat at 13/16.
+   */
+  private fun songAt(index: Int): Song? =
+    (uiState.value as? AlbumUiState.Content)?.songs.orEmpty().getOrNull(index)
 
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
     source.coverArtUrl(coverArtId, sizePx)

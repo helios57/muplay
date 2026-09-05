@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.component.fastScrollBuckets
@@ -134,7 +135,13 @@ fun PlaylistScreen(
       itemsIndexed(state.songs, key = { index, song -> "song:$index:" + song.id }) { index, song ->
         // Keyed on index as well as id, deliberately: a playlist may legitimately hold the same
         // song twice, and a duplicate key crashes `LazyColumn` rather than merely looking wrong.
-        PlaylistSongRow(song = song, onClick = { viewModel.play(index); onOpenPlayer() })
+        PlaylistSongRow(
+          song = song,
+          onClick = { viewModel.play(index); onOpenPlayer() },
+          // No `onOpenPlayer()`: queueing leaves the user in the playlist they are adding from.
+          onPlayNext = { viewModel.playNext(index) },
+          onAddToQueue = { viewModel.enqueue(index) },
+        )
       }
     }
   }
@@ -169,16 +176,26 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PlaylistSongRow(song: Song, onClick: () -> Unit) {
+private fun PlaylistSongRow(
+  song: Song,
+  onClick: () -> Unit,
+  onPlayNext: () -> Unit,
+  onAddToQueue: () -> Unit,
+) {
   Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onClick)
-      .heightIn(min = MuPlaySpacing.minTouchTarget)
-      .padding(vertical = MuPlaySpacing.xs),
+    modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    Column(modifier = Modifier.weight(1f)) {
+    // A sibling of the queue button, not its parent -- see `AlbumScreen`'s `TrackRow` for the
+    // semantics-merging reason a control nested in a clickable row is unreachable to TalkBack.
+    Column(
+      modifier = Modifier
+        .weight(1f)
+        .clickable(onClick = onClick)
+        .heightIn(min = MuPlaySpacing.minTouchTarget)
+        .padding(vertical = MuPlaySpacing.xs),
+      verticalArrangement = Arrangement.Center,
+    ) {
       Text(
         text = song.title,
         style = MaterialTheme.typography.bodyLarge,
@@ -195,6 +212,7 @@ private fun PlaylistSongRow(song: Song, onClick: () -> Unit) {
         )
       }
     }
+    AddToQueueButton(onPlayNext = onPlayNext, onAddToQueue = onAddToQueue)
   }
 }
 

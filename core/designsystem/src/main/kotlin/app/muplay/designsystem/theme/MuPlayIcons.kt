@@ -249,12 +249,25 @@ object MuPlayIcons {
     close()
   }
 
-  /** Grab handle for a row the user can drag. Two rules, deliberately not three. */
-  val DragHandle: ImageVector = stroked("MuPlayDragHandle") {
-    moveTo(6f, 9.5f)
-    lineTo(18f, 9.5f)
+  /**
+   * Move a queued row one place towards the front, and its mirror.
+   *
+   * A pair of chevrons rather than the grab handle this set used to carry. Drag-to-reorder is the
+   * nicer gesture and it is not a *drawing* decision: Compose Foundation ships no reorderable list,
+   * so it would be a hand-written pointer loop, and a gesture can only be proved on a device. Two
+   * buttons say exactly what they do, work under a screen reader without any custom accessibility
+   * action, and are checkable by a plain click.
+   */
+  val ArrowUp: ImageVector = stroked("MuPlayArrowUp") {
     moveTo(6f, 14.5f)
+    lineTo(12f, 8.5f)
     lineTo(18f, 14.5f)
+  }
+
+  val ArrowDown: ImageVector = stroked("MuPlayArrowDown") {
+    moveTo(6f, 9.5f)
+    lineTo(12f, 15.5f)
+    lineTo(18f, 9.5f)
   }
 
   /** Dismisses the sleep timer. */
