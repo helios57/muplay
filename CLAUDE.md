@@ -378,6 +378,20 @@ assertion-that-cannot-fail class, aimed at the gates rather than at the product.
 the number moves.** Do not copy a recorded falsification forward; it is evidence
 of one past run, not a property.
 
+**And a second *tier* invalidates it as thoroughly as a second caller.** Measured
+2026-09-05: `:feature:setup` gained a device tier, and `ServerSection`'s floor --
+whose comment recorded that withholding one `:app` journey test dropped it to
+0.8462 -- could no longer be falsified that way at all. The new `ServerSectionTest`
+composes the same section directly and reproduces the identical 13/13 and 33/34 on
+its own, proven by stashing every other module's `.ec` and re-running the report.
+It now takes **three** withheld tests across two modules to fire it.
+
+That is worth seeing clearly rather than filing as bookkeeping: covering one path
+from two tiers is good for the product and quietly weakens what each individual
+test gates. The floor still holds the *path*; it no longer holds any one test, so
+"delete this test and the floor goes red" stopped being true of all three of them
+on the day the second tier landed.
+
 **And a floor can be cured by the very commit that was supposed to test it.**
 `:app`'s bundle LINE floor was failing at 124/138 = 0.8986 for want of a journey
 that navigates to a book. Plan 4 Task 10 wrote that journey — and in the same

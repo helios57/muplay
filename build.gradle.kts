@@ -942,18 +942,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `:feature:library`'s `LibraryScreenKt` floors both record. Not a missing case.
     //
     // **`requiresInstrumentedData`, and that is measured rather than inferred**: with every
-    // module's `.ec` withheld, both classes read **0/13 and 0/34** -- zero, not merely low. This
-    // module has no `src/androidTest` at all, and `ServerSectionTest` on the JVM asserts the
-    // `const val`s, which the compiler inlines, so it covers no line here by construction.
+    // module's `.ec` withheld, both classes read **0/13 and 0/34** -- zero, not merely low.
     //
-    // Falsified 2026-09-05 with a real `am instrument` run rather than by re-reading a report --
-    // `@Ignore` alone measures nothing, because JaCoCo goes on crediting the previous run's `.ec`
-    // (see CLAUDE.md). `:app`'s `ServerChangeJourneyTest` run alone reproduces the full numbers
-    // exactly (13/13, 33/34), so it is the sole source; with its
-    // `signingOutClearsTheCredentialsAndReturnsToSetup` withheld and the suite genuinely re-run,
-    // this reads **`ServerSection` 11/13 = 0.8462 and `ServerSectionKt` 30/34 = 0.8824**. Both
-    // fire. What that withholding removes is the confirm-and-sign-out path -- the branch that
-    // actually destroys the Keystore key -- which is the one this floor most needs to hold.
+    // **There are now two sources, and the previous record here is superseded.** When this floor
+    // was written this module had no `src/androidTest` at all and `:app`'s `ServerChangeJourneyTest`
+    // was the sole source, so withholding that journey's
+    // `signingOutClearsTheCredentialsAndReturnsToSetup` alone dropped it to 0.8462/0.8824. It no
+    // longer does: `:feature:setup`'s own `ServerSectionTest` composes the section directly, and
+    // with **every other module's `.ec` stashed** it reproduces the full numbers by itself --
+    // `ServerSection` 13/13 and `ServerSectionKt` 33/34, byte for byte what the merged report says.
+    // That is this table's own documented staleness case (see CLAUDE.md, "A recorded floor
+    // falsification goes stale when a second caller appears") and it went stale within a day.
+    //
+    // Re-falsified 2026-09-05 against both sources, with real `connectedDebugAndroidTest` runs of
+    // each rather than by re-reading a report -- `@Ignore` alone measures nothing, because JaCoCo
+    // goes on crediting the previous run's `.ec` (see CLAUDE.md). Withholding **all three** tests
+    // that reach the confirm-and-sign-out path -- `:app`'s
+    // `signingOutClearsTheCredentialsAndReturnsToSetup` plus this module's
+    // `confirmingForgetsTheCredentialsFirstAndOnlyThenNavigates` and
+    // `theNavigationHappensOnTheMainThreadRatherThanWhereverTheSignOutFinished` -- and re-running
+    // both suites reads **`ServerSection` 11/13 = 0.8462 and `ServerSectionKt` 30/34 = 0.8824**.
+    // Both fire. What that withholding removes is the path that actually destroys the Keystore
+    // key, which is the one this floor most needs to hold; that any one of the three alone now
+    // leaves it green is the price of covering it twice, and is the reason the number to watch is
+    // the *path*, not the test.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",

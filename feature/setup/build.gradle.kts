@@ -45,4 +45,18 @@ dependencies {
 
   testImplementation(libs.coroutines.test)
   testImplementation(libs.turbine)
+
+  // The device tier. `ServerSection` is a `@Composable` over a flow, a confirmation dialog and a
+  // `rememberSaveable`, and none of those three has a JVM tier here -- this project takes no
+  // Robolectric. Until this source set existed the only thing that had ever composed this section
+  // was an `:app` journey, which reaches it through the whole app and cannot vary its state.
+  androidTestImplementation(libs.compose.ui.test.junit4)
+  // Manifest only -- it declares the `androidx.activity.ComponentActivity` that `createComposeRule()`
+  // needs to host a composition. `debugImplementation`, because a library module's test APK merges
+  // this module's debug manifest.
+  debugImplementation(libs.compose.ui.test.manifest)
+  androidTestImplementation(libs.androidx.test.ext)
+  androidTestImplementation(libs.androidx.test.runner)
+  androidTestImplementation(libs.androidx.test.espresso)
+  androidTestImplementation(libs.assertj)
 }

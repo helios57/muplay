@@ -278,9 +278,16 @@ jobs:
           # rather than product code; neither module carries a coverage floor over its Composables,
           # deliberately, because nobody has measured one. See both modules' entries in the root
           # `coverageFloors` table for what has to be measured once this job is green.
+          #
+          # `:feature:setup` joined last, and unlike those two its suite *has* been run here before
+          # it was added: 9 tests against `ServerSection`, green on `muplay37`. It is the module the
+          # rule above would have caught eventually and nobody had noticed -- the section that
+          # destroys the AndroidKeystore key had no device tier at all, and its three documented
+          # decisions (collect rather than read once, ask first, sign out before navigating on the
+          # main thread) were held by their own comments until then.
           script: |
             ./ci/prepare-emulator.sh
-            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :feature:setup:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that
