@@ -1728,6 +1728,38 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // class that carries a floor, re-measure the floor's comment in the same task. It is one report
   // read, and it is the only thing standing between this table and a gate nobody can trust.
   ":core:media" to listOf(
+    // `ArtworkUri` -- the object that keeps a non-expiring Subsonic password equivalent off the
+    // platform media session, and until 2026-09-05 a class no floor reached. `MediaItems.of` used
+    // to put `SubsonicClient.coverArtUrl`'s `u`/`s`/`t` on every item's `artworkUri`, which any app
+    // with notification-listener access can read; it now carries `muplay-art:<coverArtId>` and
+    // `MuPlayBitmapLoader` resolves that in-process. Both halves of the round trip are this object.
+    //
+    // BRANCH, CLASS element, and **`requiresInstrumentedData` is deliberately absent -- measured,
+    // not assumed.** With every module's connected `.ec` moved aside and the report re-run from
+    // JVM data alone, this class reads **19/20 = 0.9500: byte-identical to the merged number**. The
+    // device suites do exercise it (14/20 by themselves, see the falsification below), but they add
+    // nothing the fast tier does not already have, so this floor is enforceable without an emulator
+    // and belongs on the tier that runs on every push.
+    //
+    // MEASURED 19/20 = 0.9500 BRANCH, 4/4 LINE. Floored at 0.90: the one missed branch is
+    // unreachable rather than untested, and 0.95 with a single unreachable counter is a floor with
+    // no margin. That branch is the `?.` on `ArtworkUri.kt:70` -- the last link of
+    // `coverArtIdOf`'s chain, whose receiver is `removePrefix`'s **non-null** `String`, so the null
+    // arm cannot be taken. Same shape as `CoverArtCacheKeyKt` and `SetupFailureReasonKt`; check for
+    // one before reading a floor a branch short as a missing test.
+    //
+    // FALSIFIED: `@Disabled` on the whole `ArtworkUriTest` (5 tests) -> **14/20 = 0.7000**, red.
+    // The 14 that survive are what `MediaItemsTest`, `QueueRepositoryTest` and
+    // `PlatformSessionCredentialTest` reach on their way past; the five this floor defends are
+    // `coverArtIdOf` refusing a plain `http` URL, refusing rubbish, refusing a bare scheme with no
+    // id, and `of` answering null for a blank id. Those are the refusals -- the half that decides
+    // what `MuPlayBitmapLoader` hands to its delegate instead of fetching with credentials.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.ArtworkUri"),
+    ),
     // `PlaybackFailure` -- which of four sentences a listener is shown when playback stops.
     //
     // BRANCH, CLASS element, from **JVM data alone**: `PlaybackFailure.of` takes an `Int?` error
@@ -4760,6 +4792,32 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf("app.muplay.cast.net.LocalAddress"),
+    ),
+    // `CredentialQuery` -- the other half of the local-network rule, and until 2026-09-05 the only
+    // class in this module's `net` package that no floor reached. `LocalNetworkOnly` (above) answers
+    // "may this host be spoken to in the clear"; this one answers "may this string be handed to a
+    // peer at all", and what it is looking for is the Subsonic `u`/`t`/`s` triple -- a non-expiring
+    // password equivalent. `CastSource` consults it on every URL and every artwork URI that goes to
+    // a renderer, so a branch of it that stops being exercised is a leak nobody is measuring.
+    //
+    // Measured 1.0000 (BRANCH 10/10, LINE 15/15) from a plain `:core:cast:test` -- no emulator, no
+    // container. Falsified twice on that tree, and the first number is the one that matters,
+    // because five test files reach this class and only one of them is about it:
+    //
+    //   whole `CredentialQueryTest` withheld (8 tests)  -> BRANCH 7/10 = 0.70, LINE 12/15 = 0.80
+    //   only its two ampersand-escaping tests withheld  -> BRANCH 8/10 = 0.80, LINE 12/15 = 0.80
+    //
+    // So the incidental coverage from `CastCredentialLeakTest`, `PublishedRedactionTest`,
+    // `CastItemsTest` and `LiveNavidromeProxyTest` holds it at 0.70 by itself, and this floor is
+    // what notices if the deliberate tests go. The second row is the sharper one: deleting the two
+    // tests that drive `unescapeAmpersands` -- the pass that finds a credential inside a
+    // twice-XML-escaped SOAP envelope, which is the artifact that actually reaches a speaker --
+    // fires it on a two-line deletion.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.cast.net.CredentialQuery"),
     ),
     // Plan 6 Task 2, `app.muplay.cast.discovery`. Every class below with an author-written branch
     // measures **1.0000** today, and each number is from
