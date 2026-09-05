@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.muplay.library.NOT_FOUND_LABEL
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -149,9 +150,13 @@ class AlbumRouteJourneyTest {
     // FirstRunJourneyTest states: a shared constant would let a change to what the user actually
     // sees pass unnoticed in a black-box journey. (The setup screen's own labels went with the
     // hand-written setup walk; `JourneyNavigation` owns those now.)
+    //
+    // The rule holds because each of these is *clicked* or *awaited*: reword the screen and this
+    // class goes red. `NOT_FOUND_LABEL` used to be here too and is the one case where the same rule
+    // gives the opposite result -- see the import at the top of this file, and `AlbumScreen`'s own
+    // KDoc on it.
     const val SEARCH_LIBRARY_LABEL = "Search this library"
     const val OPEN_LABEL = "Open"
-    const val NOT_FOUND_LABEL = "That album is no longer in your library."
 
     /**
      * What `ci/configure-libraries.sh` and `ci/seed-fixtures.sh` actually put on the server. The

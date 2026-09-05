@@ -178,10 +178,21 @@ private const val LOADING_LABEL = "Loading…"
 
 /**
  * Only ever shown after a lookup has actually come back empty -- see [AlbumUiState.NotFound].
- * `AlbumRouteJourneyTest` asserts this exact wording is *absent* on a healthy album, so it is a
- * contract as much as it is copy.
+ *
+ * **Public, where every other label in this module is private, and that is deliberate.**
+ * `AlbumRouteJourneyTest` asserts this exact wording is *absent* on a healthy album. This
+ * repository's journeys normally retype a label rather than import it, so that changing what the
+ * user sees fails a test -- but that mechanism is a **presence** assertion going red when it can no
+ * longer find the string. An absence assertion over a retyped copy does the opposite: reword this
+ * line and the journey starts passing because nothing renders the old sentence any more.
+ *
+ * The state is unreachable from `:app`'s tier -- there is no user path to a missing album -- so the
+ * journey cannot hold a presence assertion to re-arm the convention. Sharing the constant is what
+ * is left, and it is the stronger half of the trade anyway: the journey is then asserting the
+ * absence of whatever this screen actually says, not of a sentence it was told about once.
+ * `ConventionTest`'s `no test constant is used only to assert something is absent` is the gate.
  */
-private const val NOT_FOUND_LABEL = "That album is no longer in your library."
+const val NOT_FOUND_LABEL = "That album is no longer in your library."
 
 private const val COVER_DETAIL_PX = 512
 private const val COVER_DETAIL_DP = 160

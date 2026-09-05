@@ -75,12 +75,23 @@ class TranscodeSeekSessionTest {
     controller = runBlocking { connection.controller() }
   }
 
+  /**
+   * Guarded, for the reason `CLAUDE.md` records against `GaplessTest`: a teardown that throws
+   * replaces the real failure with its own. [setUp] here reaches the network before it assigns
+   * either of these -- `getRandomSongs(...).single { ... }` throws if the corpus ever holds no Opus
+   * fixture or two of them, which is the exact change that broke `GaplessTest`'s hardcoded count --
+   * so the failure a reader needs to see is the one from `setUp`, not this.
+   */
   @After
   fun tearDown() {
     InstrumentationRegistry.getInstrumentation().runOnMainSync {
-      controller.stop()
-      controller.clearMediaItems()
-      connection.release()
+      // Each guarded on its own rather than behind one early return: [connection] is assigned
+      // before [controller], so a failure between them leaves a real session to release.
+      if (::controller.isInitialized) {
+        controller.stop()
+        controller.clearMediaItems()
+      }
+      if (::connection.isInitialized) connection.release()
     }
   }
 

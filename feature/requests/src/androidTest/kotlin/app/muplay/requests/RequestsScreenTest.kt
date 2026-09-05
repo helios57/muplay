@@ -92,6 +92,22 @@ class RequestsScreenTest {
     assertThat(countOf(searchLabel(setOf(IntegrationService.LIDARR)))).isZero()
   }
 
+  /**
+   * The other half of [nothingConfiguredRendersNothingAtAll], and the reason that one is evidence.
+   *
+   * [ROOT] is this test's own copy of the tag `RequestsScreen` writes. A copied string that is only
+   * ever asserted **absent** passes for two different reasons -- the screen drew nothing, or the
+   * tag was renamed under it and nothing carries that string any more -- and nothing in the test
+   * above can tell those apart. This assertion is what does: rename the tag in either place and it
+   * goes red, which is the whole mechanism the retyping convention relies on.
+   */
+  @Test
+  fun aConfiguredScreenDrawsTheRootThatAnUnconfiguredOneOmits() {
+    show(ready(services = setOf(IntegrationService.LIDARR)))
+
+    composeRule.onNodeWithTag(ROOT).assertIsDisplayed()
+  }
+
   // ---- searching -----------------------------------------------------------------------------
 
   /**

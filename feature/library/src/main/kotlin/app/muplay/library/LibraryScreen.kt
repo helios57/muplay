@@ -263,7 +263,7 @@ private fun LibraryScreen(
           if (uiState.discardedOutOfScope > 0) {
             item {
               Text(
-                text = "${uiState.discardedOutOfScope} tracks were outside this library and were skipped.",
+                text = "${uiState.discardedOutOfScope} $OUT_OF_SCOPE_SUFFIX",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -465,8 +465,13 @@ internal const val REFRESH_LABEL = "Refresh library"
 /**
  * Plan 6 Task 12. The label on the only route to the settings screen.
  *
- * `internal`, like [REFRESH_LABEL], so `:app`'s journey can find the button by the same string the
- * screen renders rather than by a copy of it.
+ * `internal` rather than `private`, on the same reasoning as [REFRESH_LABEL] -- but note what that
+ * does **not** buy, because this KDoc used to claim it did: Kotlin's `internal` is visible to this
+ * module's own test source sets and to nothing outside the module, so `:app`'s journeys cannot
+ * import it and do not. `ServerChangeJourneyTest` declares its own `"Settings"`, which is the
+ * retyping convention working exactly as intended -- it clicks the button, so a wording change
+ * fails it. Contrast [NOT_FOUND_LABEL], which is `public` precisely because the only journey that
+ * names it asserts it *absent* and so has no such red available.
  */
 internal const val SETTINGS_LABEL = "Settings"
 
@@ -494,6 +499,22 @@ private const val LOADING_LABEL = "Loading your library…"
 private const val NO_LIBRARIES_LABEL =
   "No libraries yet. Finish setup to choose what each library is for."
 private const val SHUFFLE_HEADING = "Shuffled"
+
+/**
+ * The tail of the line a library-scoped shuffle draws when it had to drop tracks.
+ *
+ * `public`, for the same reason [NOT_FOUND_LABEL] is: `StoreScreenshotsTest` asserts this sentence
+ * is **absent** before it captures `05-shuffle-only-this-library.png`, because a store asset that
+ * shows a warning line is not the asset that caption promises. That is an absence assertion over a
+ * string the journey cannot make appear -- the seeded library has nothing out of scope -- so a
+ * retyped copy would have no presence assertion anywhere to go red when this wording changed, and
+ * would simply start passing. See `ConventionTest`'s
+ * `no test constant is used only to assert something is absent`.
+ *
+ * The count is prefixed at the use site, so the rendered line is "$n $OUT_OF_SCOPE_SUFFIX" and a
+ * `substring = true` match on this constant finds it.
+ */
+const val OUT_OF_SCOPE_SUFFIX = "tracks were outside this library and were skipped."
 private const val OPEN_LABEL = "Open"
 private const val COVER_THUMBNAIL_PX = 128
 private const val COVER_THUMBNAIL_DP = 56

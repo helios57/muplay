@@ -22,6 +22,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.muplay.library.OUT_OF_SCOPE_SUFFIX
 import app.muplay.model.LibraryRole
 import app.muplay.setup.LibraryRepositoryEntryPoint
 import dagger.hilt.android.EntryPointAccessors
@@ -208,9 +209,14 @@ class StoreScreenshotsTest {
     composeRule.onNodeWithText(SHUFFLE_LABEL).performClick()
     await(SYNC_TIMEOUT_MILLIS, "the $SHUFFLE_HEADING heading") { nodesWithText(SHUFFLE_HEADING).isNotEmpty() }
     composeRule.onNodeWithText(SHUFFLE_HEADING).assertIsDisplayed()
-    // Nothing was dropped for being outside the library. Had anything been, this screen would
-    // carry a line in red, which is not what this asset is for -- and the shuffle would not be
-    // demonstrating the thing the caption claims.
+    // Nothing was dropped for being outside the library. Had anything been, this screen would carry
+    // an extra line under the shuffle, which is not what this asset is for -- and the shuffle would
+    // not be demonstrating the thing the caption claims.
+    //
+    // Imported from `LibraryScreen` rather than retyped, unlike every other string this class
+    // names. It is the one assertion here that is an **absence**, and the seeded library cannot
+    // produce the state, so a copy would have nothing anywhere to go red when the sentence was
+    // reworded -- it would just start passing. See that constant's own KDoc.
     composeRule.onNodeWithText(OUT_OF_SCOPE_SUFFIX, substring = true).assertDoesNotExist()
     val shuffled = shuffledTitles(musicBrowse)
     assertThat(shuffled).describedAs("rows under the $SHUFFLE_HEADING heading").isNotEmpty()
@@ -503,7 +509,6 @@ class StoreScreenshotsTest {
     const val SHUFFLE_HEADING = "Shuffled"
     const val OPEN_LABEL = "Open"
     const val EMPTY_LIBRARY_LABEL = "Nothing here yet."
-    const val OUT_OF_SCOPE_SUFFIX = "were outside this library"
     const val PLAY_LABEL = "Play"
     const val PAUSE_LABEL = "Pause"
     const val NEXT_LABEL = "Next"

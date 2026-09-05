@@ -98,14 +98,22 @@ class SleepTimerFadeAudioTest {
     scope = CoroutineScope(SupervisorJob() + MAIN_EXECUTOR.asCoroutineDispatcher())
   }
 
+  /**
+   * Guarded, the same way `GaplessTest` is and for the reason `CLAUDE.md` records at that class: a
+   * teardown that throws replaces the real failure with its own. [setUp] fetches the audiobook
+   * corpus over HTTP and then picks one file by title, and `first { }` throws if the fixtures are
+   * ever regenerated without that book -- which is exactly the corpus change that broke
+   * `GaplessTest`'s hardcoded count. Unguarded, `scope.cancel()` would then report
+   * `UninitializedPropertyAccessException` and the fixture problem would never appear.
+   */
   @After
   fun tearDown() {
-    scope.cancel()
+    if (::scope.isInitialized) scope.cancel()
     harnesses.forEach { it.release() }
     harnesses.clear()
     cleanups.forEach { it() }
     cleanups.clear()
-    cacheDir.deleteRecursively()
+    if (::cacheDir.isInitialized) cacheDir.deleteRecursively()
   }
 
   /**

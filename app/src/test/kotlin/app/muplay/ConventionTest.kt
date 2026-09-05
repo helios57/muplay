@@ -549,6 +549,10 @@ class ConventionTest {
   @Test
   fun `no navigation graph registers one route class twice`() {
     val offenders = mutableListOf<String>()
+    // Every `entry<...>` the walk saw, kept only so the assertion below can prove this rule
+    // looked at a navigation graph at all. An absence check over a walk that found nothing is
+    // green for the wrong reason, and would stay green through a rename of `MuPlayApp`.
+    val entriesSeen = mutableListOf<String>()
     repoRoot().walkTopDown()
       .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
       .filter { it.isFile && it.extension == "kt" }
@@ -564,12 +568,16 @@ class ConventionTest {
           .findAll(source)
           .map { it.groupValues[1] }
           .toList()
+        entriesSeen += routes
         routes.groupBy { it }
           .filterValues { it.size > 1 }
           .keys
           .forEach { offenders += "${file.name}: entry<$it> declared ${routes.count { r -> r == it }} times" }
       }
 
+    assertThat(entriesSeen)
+      .`as`("the scan for navigation entries -- with none found, the rule below gates nothing")
+      .isNotEmpty()
     assertThat(offenders)
       .`as`(
         "Navigation 3 throws \"An 'entry' with the same 'clazz' has already been added\" at " +
@@ -620,6 +628,10 @@ class ConventionTest {
   @Test
   fun `nothing marks a notification local-only, which would stop a watch controlling playback`() {
     val offenders = mutableListOf<String>()
+    // This rule has no positive instance anywhere in the tree -- the call it forbids is absent,
+    // which is the point -- so the only non-vacuity guard available is that the walk read source
+    // at all. Without it a broken filter reports "no offenders" exactly as a clean tree does.
+    var scanned = 0
     repoRoot().walkTopDown()
       .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
       .filter { it.isFile && it.extension == "kt" }
@@ -629,11 +641,15 @@ class ConventionTest {
         val source = file.readText()
           .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
           .replace(Regex("""//[^\n]*"""), "")
+        scanned++
         if (Regex("""setLocalOnly\s*\(\s*true\s*\)""").containsMatchIn(source)) {
           offenders += file.relativeTo(repoRoot()).path
         }
       }
 
+    assertThat(scanned)
+      .`as`("Kotlin files read by this scan -- zero means the walk, not the tree, is clean")
+      .isNotZero()
     assertThat(offenders)
       .`as`(
         "Marking a notification local-only stops Wear OS bridging it, so a paired watch silently " +
@@ -1318,6 +1334,9 @@ class ConventionTest {
       RegexOption.IGNORE_CASE,
     )
     val offenders = mutableListOf<String>()
+    // Data classes examined, so a green here means "none of them leaks" rather than "the walk
+    // found no data classes" -- which is what a changed source layout would quietly produce.
+    var examined = 0
 
     repoRoot().walkTopDown()
       .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
@@ -1329,17 +1348,136 @@ class ConventionTest {
           .findAll(source)
           .forEach { match ->
             val body = match.value
+            examined++
             if (secretish.containsMatchIn(body) && !body.contains("override fun toString")) {
               offenders += "${file.relativeTo(repoRoot()).path}: ${match.groupValues[1]}"
             }
           }
       }
 
+    assertThat(examined)
+      .`as`("data classes read by this scan -- zero means the walk stopped seeing them")
+      .isNotZero()
     assertThat(offenders)
       .`as`(
         "a data class holding a credential-shaped property must override toString and redact it. " +
           "The compiler-generated one prints every property, and that output reaches crash dumps, " +
           "debuggers and test failure messages. See IntegrationCredentials.Bindery for the shape.",
+      )
+      .isEmpty()
+  }
+
+  /**
+   * **A string a test types out again, and then only ever asserts is *absent*, cannot fail.**
+   *
+   * This repository retypes production strings in its journeys on purpose. `BookLabels.kt` states
+   * the reason: *"a journey finds a control by typing the string out again, deliberately, so that a
+   * wording change is caught rather than silently followed"*. That works because the retyped copy
+   * is used in a **presence** assertion -- change the wording in the screen and the journey stops
+   * finding it, which is the red that makes somebody look.
+   *
+   * For an **absence** assertion the same convention produces the exact opposite outcome. Change
+   * the wording and `onNodeWithText(COPY).assertDoesNotExist()` starts passing for the new reason
+   * that nothing on earth renders `COPY` any more. It does not go red, it goes *permanently green*,
+   * and it goes on reporting that the state it was written to exclude is excluded.
+   *
+   * So the convention needs one qualifier, which this rule is: a retyped constant must have at
+   * least one use that could go red. Either a presence assertion somewhere in its own class, or --
+   * where the state is unreachable from that tier, which is why these constants exist at all --
+   * no local copy: import the production constant, so drift is not possible rather than not
+   * detected.
+   *
+   * **Measured 2026-09-05**, against a sweep of all 88 absence assertions in the tree. Exactly
+   * three constants had no use other than an absence assertion, and each was a copy of a real
+   * production string:
+   *
+   * ```
+   * AlbumRouteJourneyTest.NOT_FOUND_LABEL     "That album is no longer in your library."
+   * StoreScreenshotsTest.OUT_OF_SCOPE_SUFFIX  "were outside this library"
+   * RequestsScreenTest.ROOT                   "requests:root"
+   * ```
+   *
+   * None was vacuous *yet* -- every copy still matched its original on the day this was written.
+   * That is the point: the mechanism that was supposed to notice when they stopped matching was
+   * the presence assertion none of them had. The two `:app` ones now import from
+   * `:feature:library`, which is why those labels are public; `ROOT`'s screen is reachable from its
+   * own module's tier, so it got the presence assertion instead.
+   *
+   * **Falsified in both directions, 2026-09-05**, on the fixed tree (green, no offenders):
+   *
+   * ```
+   * withhold RequestsScreenTest's new presence assertion
+   *   -> ["feature/requests/.../RequestsScreenTest.kt: ROOT"]
+   * copy NOT_FOUND_LABEL back into AlbumRouteJourneyTest instead of importing it
+   *   -> ["app/src/androidTest/kotlin/app/muplay/AlbumRouteJourneyTest.kt: NOT_FOUND_LABEL"]
+   * ```
+   *
+   * Both resolutions therefore satisfy this rule and it does not prefer one: a presence assertion
+   * removes the absence-only property, and an import removes the local declaration.
+   *
+   * Run it with `--rerun`. Nothing outside `:app` is a declared input of `:app:testDebugUnitTest`,
+   * so editing another module's test and re-running `check` locally can report on a tree it never
+   * looked at -- the hole this file's own note about `ConventionTest` records, and the one every
+   * rule here shares.
+   *
+   * Only a **bare identifier** matcher is considered -- `onNodeWithText(NAME)`, not
+   * `onNodeWithText("0. $NAME")`. A template builds a string that is not the constant, and
+   * `BookContentTest`'s zero-based-numbering probe is the case: it asserts `"0. <title>"` absent
+   * one line after asserting `"2. <title>"` present, so the *form* it matches on is anchored even
+   * though the constant inside it is not.
+   */
+  @Test
+  fun `no test constant is used only to assert something is absent`() {
+    val declaration = Regex("""\bconst val ([A-Z][A-Z0-9_]*)\s*=\s*"""")
+    val absenceTail = Regex("""\.assert(?:DoesNotExist|IsNotDisplayed)\(\)""")
+    val offenders = mutableListOf<String>()
+    // Absence assertions this scan actually read. A rule about assertions that cannot fail owes
+    // this more than most: every part of it -- the androidTest path filter, the separator, the
+    // declaration regex -- fails silently by finding nothing, and reports that as a clean tree.
+    var absenceAssertionsSeen = 0
+
+    repoRoot().walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter {
+        it.isFile && it.extension == "kt" &&
+          it.path.contains("${File.separator}src${File.separator}androidTest${File.separator}")
+      }
+      .forEach { file ->
+        // Comments stripped first, for the reason this class has met twice now: this rule's own
+        // KDoc names the three constants it was written against, and a raw-text scan of a test
+        // whose header explains why a label is absent would report that explanation.
+        val source = withoutComments(file.readText())
+        val lines = source.lines()
+        absenceAssertionsSeen += lines.count { absenceTail.containsMatchIn(it) }
+        declaration.findAll(source).map { it.groupValues[1] }.distinct().forEach { name ->
+          val word = Regex("""\b$name\b""")
+          var absence = 0
+          var other = 0
+          lines.forEach { line ->
+            if (!word.containsMatchIn(line) || declaration.containsMatchIn(line)) return@forEach
+            if (Regex("""onNodeWith\w+\(\s*$name\s*[,)]""").containsMatchIn(line) &&
+              absenceTail.containsMatchIn(line)
+            ) {
+              absence++
+            } else {
+              other++
+            }
+          }
+          if (absence > 0 && other == 0) {
+            offenders += "${file.relativeTo(repoRoot()).path}: $name"
+          }
+        }
+      }
+
+    assertThat(absenceAssertionsSeen)
+      .`as`("absence assertions read by this scan -- zero means it is gating nothing")
+      .isNotZero()
+    assertThat(offenders)
+      .`as`(
+        "a constant declared in a test and used only in assertDoesNotExist()/assertIsNotDisplayed() " +
+          "has nothing that can go red when the production string it copies changes wording -- it " +
+          "starts passing because nothing renders the old text any more. Give it a presence " +
+          "assertion, or import the production constant instead of copying it.",
       )
       .isEmpty()
   }

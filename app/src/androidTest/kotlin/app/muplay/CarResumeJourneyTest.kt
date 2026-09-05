@@ -100,8 +100,22 @@ class CarResumeJourneyTest {
     browser = connect(BrowseSurfaces.HINT_CAR)
   }
 
+  /**
+   * Guarded, and `CLAUDE.md` records why in general -- *"a `tearDown` that throws replaces the real
+   * failure with its own"*. This class is the shape that note warns about: [browser] is assigned on
+   * the **last** line of [setUp], after `reachLibraryScreen()` has driven the whole setup flow
+   * against a real server. Anything that fails in there leaves [browser] unset, and an unguarded
+   * teardown then reports `UninitializedPropertyAccessException` as the only message the report
+   * carries.
+   *
+   * Measured on this tree 2026-09-05, in a full `:app` run that aborted with
+   * `INSTRUMENTATION_ABORTED: System has crashed`: the report named
+   * `lateinit property browser has not been initialized at CarResumeJourneyTest.tearDown` and
+   * nothing else. Whatever actually went wrong in `setUp` was unrecoverable from the run.
+   */
   @After
   fun tearDown() {
+    if (!::browser.isInitialized) return
     onMain {
       browser.stop()
       browser.clearMediaItems()

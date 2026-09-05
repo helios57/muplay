@@ -234,6 +234,49 @@ settled it; two of the three turned out to be about something other than what th
 - **Investigated, no change:** "progress bars are 5dp and 6dp" is two different components
   with documented reasons -- `ProgressRule` is a 3dp hand-drawn rule with no semantics node,
   `BookPlayerScreen` uses a 6dp `LinearProgressIndicator`.
+- **OPEN, found by the absence-assertion sweep 2026-09-05:** `:feature:library` has **no
+  `src/androidTest` at all**, so nothing anywhere renders `AlbumScreen`. Its three states --
+  `Loading`, `NotFound`, `Content` -- are reachable only through an `:app` journey that drives
+  the healthy one, and `AlbumUiState.Loading/NotFound` is a thing the "genuinely good" section
+  below singles out for praise. `AlbumViewModelTest` covers the state machine; the `when` that
+  turns a state into a screen is covered by nothing.
+
+  The sweep's fix (sharing `NOT_FOUND_LABEL` so the journey asserts the absence of whatever the
+  screen really says) removes the way that assertion could silently stop meaning anything. It
+  does not make the message *renderable* by any test, and no gate here can tell those apart.
+
+  What it costs to close: the same shape `:feature:book` already has -- split a stateless
+  `AlbumContent(uiState, ...)` out of the `hiltViewModel()` wrapper, add the six androidTest
+  dependencies `feature/book/build.gradle.kts` documents, and add `:feature:library` to
+  `e2e.yml`'s module list (`ConventionTest` will demand that second part on its own). Belongs
+  with the ungated-class work rather than here.
+
+- **Partly fixed 2026-09-05 — a teardown that throws hides the failure that caused it.**
+  `CLAUDE.md` records this against `GaplessTest`, and a full `:app` device run on 2026-09-05 hit it
+  again for real: the report's only message was
+  `UninitializedPropertyAccessException: lateinit property browser has not been initialized at
+  CarResumeJourneyTest.tearDown`, and whatever actually failed in `setUp` was unrecoverable from
+  the run.
+
+  A scan of every `@After` in the tree found **23** that dereference a `lateinit` with no
+  `::x.isInitialized` guard. Three are now guarded — the three where `@Before` does something
+  fallible *before* the assignment, which is what makes the guard more than decoration:
+
+  | class | what runs first |
+  | --- | --- |
+  | `CarResumeJourneyTest` | `reachLibraryScreen()` — the whole setup flow against a real server |
+  | `TranscodeSeekSessionTest` | `getRandomSongs(...).single { it.suffix == "opus" }` over HTTP |
+  | `SleepTimerFadeAudioTest` | `audiobookFiles()` over HTTP, then `first { it.title == ... }` |
+
+  The last two are the corpus-change shape exactly: `single`/`first` throw when the fixture set
+  moves under them, which is how `GaplessTest`'s hardcoded `3` broke.
+
+  **OPEN: the other 20** — seven in `:core:database`, twelve in `:core:media`, one in
+  `:integrations:core` — assign their `lateinit`s from local construction (an in-memory Room
+  database, a temp `File`, an `AudioManager`) with nothing fallible ahead of them, so the guard
+  would be code no failure has ever reached. Deliberately not written, and deliberately not made a
+  `ConventionTest` rule: a rule needing twenty carve-outs is a rule somebody switches off. If one
+  of those `@Before`s ever grows a network call, guard it then.
 
 ---
 
