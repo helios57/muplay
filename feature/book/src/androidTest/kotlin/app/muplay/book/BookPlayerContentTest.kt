@@ -535,6 +535,16 @@ class BookPlayerContentTest {
     }
   }
 
+
+  @Test
+  fun theFiveTransportControlsDoNotFightOverTheSamePixels() {
+    // Five controls across a phone in one row, which is the other direction this can go wrong:
+    // the overlap check is on both axes, and horizontal crowding is what a five-across row risks.
+    show(content())
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
   private companion object {
 
     /** Ninety seconds in: three quarters of the first chapter, and no other ratio on this screen. */

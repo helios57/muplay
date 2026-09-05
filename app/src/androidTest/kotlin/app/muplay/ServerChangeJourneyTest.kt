@@ -80,6 +80,51 @@ class ServerChangeJourneyTest {
   }
 
   /**
+   * Every control on the **assembled** settings screen is big enough to hit, and no two of them
+   * share the pixels they claim.
+   *
+   * This screen is the one place in the app whose contents no single module owns: `:feature:settings`
+   * draws a title and a divider, and each row on it arrives from a different feature's
+   * `SettingsSection`. A sweep inside any of those modules composes its own section alone, at
+   * whatever spacing that composition happens to give it. Only here are the destructive sign-out
+   * button, the renderer-direct switch and the integrations rows laid out together, by the real
+   * screen, at the real spacing -- which is the only arrangement a user ever sees.
+   */
+  @Test
+  fun everyControlOnTheAssembledSettingsScreenIsBigEnoughToTap() {
+    composeRule.reachLibraryScreen()
+    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
+  /**
+   * And the confirmation dialog, which is a different layout with its own two buttons side by side.
+   *
+   * Worth its own case rather than a second sweep in the one above: a dialog composes into a
+   * separate window, so the controls behind the scrim are still in the tree and the two that
+   * matter are the ones on top.
+   */
+  @Test
+  fun theSignOutConfirmationsButtonsAreBigEnoughToTap() {
+    composeRule.reachLibraryScreen()
+    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.waitUntil(TIMEOUT_MILLIS) {
+      composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText(SIGN_OUT_LABEL).performClick()
+    composeRule.onNodeWithText(SIGN_OUT_CONFIRM_TITLE).assertIsDisplayed()
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+
+    // Left as it was found: this class's other journeys assume no dialog is up.
+    composeRule.onNodeWithText(CANCEL_LABEL).performClick()
+  }
+
+  /**
    * **The defect, end to end.** Confirming lands the app back on setup with the credentials gone.
    *
    * The assertion is on the setup screen's own field labels rather than on the settings screen

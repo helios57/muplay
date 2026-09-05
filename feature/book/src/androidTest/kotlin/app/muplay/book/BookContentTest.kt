@@ -311,4 +311,16 @@ class BookContentTest {
 
     assertThat(skipSilence).containsExactly(true)
   }
+
+  @Test
+  fun noTwoChapterRowsFightOverTheSamePixels() {
+    // The chapter list is the crowded case in this app: `BookScreen` gives the `LazyColumn` no
+    // `verticalArrangement` on purpose, so chapter rows sit directly on each other and their own
+    // height is the only thing separating them. Zero gap means a short row has nowhere to expand
+    // into that is not its neighbour.
+    show(content())
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
 }

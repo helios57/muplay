@@ -1,75 +1,63 @@
-package app.muplay.castpicker
+package app.muplay
 
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.designsystem.theme.MuPlaySpacing
 import org.assertj.core.api.Assertions.assertThat
 
 /**
- * Asserts that every node on the composed screen carrying a click action can be hit: touch bounds of
- * at least [MuPlaySpacing.minTouchTarget] in both directions, and no two non-nested targets sharing
- * any of them.
+ * Asserts that every node on the screen currently showing carries touch bounds of at least
+ * [MuPlaySpacing.minTouchTarget] in both directions, and that no two non-nested targets share any
+ * of them.
  *
- * **A sweep rather than a list**, because the defect that prompted it was invisible to a list. This
- * module is where that defect was: `DeviceRow` measured 32.38dp for any speaker that reported no
- * model, and the only reason nobody saw it is that every fixture in this suite reported one. A
- * sweep over `hasClickAction()` has no fixture bias about *which* controls it looks at -- though it
- * has one about which it can see anything wrong with, which is the last section here.
+ * The third copy of a helper that lives in `:feature:requests`, `:feature:book` and
+ * `:feature:castpicker` -- read `:feature:requests`' for the measurements behind the rule, and
+ * `:feature:book`'s for a falsification of it against a real row. What is different here, and the
+ * reason it is worth a fourth copy rather than a fourth screen in a feature module, is the
+ * **receiver**: a journey drives the assembled app through `MainActivity`, so this one hangs off
+ * [SemanticsNodeInteractionsProvider] and works against any compose rule.
  *
- * ### Why it measures what it measures
+ * That is what buys the one thing no feature module can test. The settings screen is empty by
+ * design -- `:feature:settings` draws a title, a divider and nothing else, and every row on it is
+ * contributed by another module's `SettingsSection`. So the question "do a destructive button, a
+ * switch and an integrations row crowd each other once they are on one screen together" has no
+ * home in any single module, and this is the only place all three are ever composed at their real
+ * spacing.
  *
- * Both natural choices are wrong, and both were measured wrong rather than argued wrong, in
- * `:feature:requests` where this helper was first written -- see its copy for the raw numbers.
- * In short: `touchBoundsInRoot` **alone cannot fail**, because Compose grows a small pointer-input
- * area to the minimum touch target by itself; and `SemanticsNode.size` **reports Material as
- * broken**, because `minimumInteractiveComponentSize` reserves a `TextButton`'s 48dp on an
- * ancestor rather than on the node carrying the click, so every one of them measures 40.00dp.
+ * ### What it measured, and what it does not gate
  *
- * What survives both is the overlap check. Expansion to 48dp is only worth anything when the space
- * it expands into is free: two short rows stacked in a `Column` each grow to 48dp and then run into
- * each other, so part of each "target" belongs to its neighbour. A lone small control with room
- * around it genuinely can be hit, and Material's 40dp buttons are fine for the same reason.
- * Nested targets -- a button inside a clickable row -- are excluded, because containment is the one
- * overlap that is intentional.
+ * The cross-window filter is here because of a **false red**, measured in both directions on the
+ * real screen with the sign-out confirmation up. Without it:
  *
- * `useUnmergedTree` is load-bearing for a third, independent reason: `Modifier.clickable` applies
- * `semantics(mergeDescendants = true)`, so a tappable thing *inside* a tappable row vanishes into
- * its parent on the merged tree, and a row is exactly where a too-small control hides.
+ * ```
+ * ["Let speakers stream from Navidrome directly and Cancel: 8.95dp of their touch bounds is the
+ *   same place", "... and Sign out: 8.95dp ..."]
+ * ```
  *
- * The empty-sweep guard is not decoration either: a screen that failed to compose, or a state that
- * rendered no control, would otherwise pass this silently.
+ * Both statements are true about the pixels and neither is about anything a user can mis-tap: a
+ * dialog composes into a root of its own, and the switch it was reported as crowding is behind a
+ * modal scrim. `theSignOutConfirmationsButtonsAreBigEnoughToTap` is what holds the filter -- delete
+ * the `other.root === node.root` line and that test goes red with the message above.
  *
- * ### Falsified against the defect itself, not against a stand-in
+ * **And here is what a green from this file does not mean.** Deleting
+ * `RendererDirectSwitch`'s `heightIn(min = MuPlaySpacing.minTouchTarget)` -- the real 32dp defect
+ * this whole sweep was written for, on a row that is on this very screen -- leaves both tests here
+ * **passing**. Measured, not assumed. The reason is slack: that row sits in a section with 8dp
+ * between its own children and 16dp between it and the next section, so a shortened row expands to
+ * 48dp without reaching another tappable node, and the size half of the sweep cannot fail by
+ * construction (see the copies in the feature modules for why).
  *
- * Deleting the one `heightIn` line from `DeviceRow` restores the real defect exactly -- speaker rows
- * back to 32.38dp in a `spacedBy(MuPlaySpacing.md)` column -- and this sweep fires, naming the two
- * speakers:
- *
- *     Study Amp and Kitchen Display: 3.43dp of their touch bounds is the same place
- *
- * 3.43dp is small and it is the whole margin: 12dp of gap against about 7.8dp of expansion on each
- * side. A rule that only checked sizes would have called both rows 48dp and passed.
- *
- * ### It needs two short rows to see anything, and that is the fixture's job
- *
- * The first version of that fixture gave one of the two speakers a model name, which makes its row
- * two lines and tall enough to need no expansion -- so nothing could collide with it. Under the
- * identical mutation this sweep stayed **green** while
- * `CastPickerSheetTest.everySpeakerRowIsBigEnoughToTapWhetherOrNotItReportedAModel` went red at
- * 32.38dp. The fixture gates as much as the assertion does, which is the original defect's own
- * lesson arriving from the other side.
- *
- * A copy of `:feature:requests`' file of the same name. There is no shared `androidTest` artifact in
- * this build, deliberately -- see `RequestsFixtures` for the same duplication and the same reason.
- * **Copy the helper, never the falsification record**: the first port of this file renamed
- * `SettingsRow` to `DeviceRow` throughout and thereby claimed, of this module, three measurements
- * taken in another one.
+ * So this file gates the *arrangement* of the assembled screen and nothing about any one row.
+ * The row itself is held where it is drawn: `:feature:castpicker`'s `RendererDirectSectionTest`
+ * asserts its height directly, and that is the test that goes red for the defect above. A sweep
+ * over a screen with generous gaps is a guard against the day a section ships a short row beside
+ * another one -- not a gate on the rows that are there today.
  */
-internal fun ComposeContentTestRule.assertEveryTapTargetIsBigEnough() {
+internal fun SemanticsNodeInteractionsProvider.assertEveryTapTargetIsBigEnough() {
   val density = InstrumentationRegistry.getInstrumentation()
     .targetContext.resources.displayMetrics.density
   val minimumPx = MuPlaySpacing.minTouchTarget.value * density

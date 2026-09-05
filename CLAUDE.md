@@ -1148,6 +1148,26 @@ port of that file was `sed 's/SettingsRow/DeviceRow/'`, which left a KDoc claimi
 between two rows that do not exist in this module. A measurement record is about one tree at one
 moment; renaming an identifier inside it does not move it.
 
+**A dialog is a second window, and the sweep read across it.** Composing the real settings screen
+in an `:app` journey with the sign-out confirmation up, the sweep reported
+
+    "Let speakers stream from Navidrome directly and Cancel: 8.95dp of their touch bounds is the
+     same place"
+
+which is true about the pixels and false about anything a user can mis-tap: an `AlertDialog`
+composes into a root of its own, its bounds are measured from that root's origin, and the row it
+was said to be crowding is behind a modal scrim. `SemanticsNode.root` is the discriminator --
+compare only nodes that share one. Falsified in both directions on the same tree: with the filter
+removed that test goes red with the message above, with it, green.
+
+**And a sweep over a roomy screen gates the arrangement, not the rows.** On the assembled settings
+screen, deleting `RendererDirectSwitch`'s `heightIn` -- the real 32dp defect the whole sweep was
+written for, on a row that is on that screen -- left the `:app` sweep **green**. The section has
+8dp between its own children and 16dp to the next section, so the shortened row expands to 48dp
+without reaching another tappable node, and the size half cannot fail by construction. The row is
+held where it is drawn, by `assertHeightIsAtLeast` in its own module. Two green sweeps over the
+same screen are not two gates on the same thing, and only running the mutation says which.
+
 ## The device suite has order-dependent flakes, and the failing test moves between runs
 
 Measured across five full `:app` + `:core:media` runs on one tree (2026-08-28), after

@@ -214,4 +214,15 @@ class BookshelfContentTest {
 
     assertThat(titleY).isLessThan(authorY)
   }
+
+  @Test
+  fun noTwoBooksOnTheShelfFightOverTheSamePixels() {
+    // A started book carries a resume control *inside* its clickable row, which is the nesting the
+    // sweep deliberately excludes -- a button in a row is the one overlap that is meant to be
+    // there. An unstarted one beside it is the plain case.
+    show(BookshelfUiState.Content(listOf(startedBook(), unstartedBook())))
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
 }

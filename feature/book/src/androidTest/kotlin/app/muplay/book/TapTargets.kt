@@ -1,4 +1,4 @@
-package app.muplay.requests
+package app.muplay.book
 
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -10,75 +10,63 @@ import app.muplay.designsystem.theme.MuPlaySpacing
 import org.assertj.core.api.Assertions.assertThat
 
 /**
- * Asserts that every node on the composed screen carrying a click action lays out at least
- * [MuPlaySpacing.minTouchTarget] in both directions, and names every one that does not.
+ * Asserts that every node on the composed screen carrying a click action can be hit: touch bounds of
+ * at least [MuPlaySpacing.minTouchTarget] in both directions, and no two non-nested targets sharing
+ * any of them.
  *
- * **A sweep rather than a list**, because the defect that prompted it was invisible to a list. A
- * speaker row on the cast picker measured 32.38dp for any device that reported no model, and the
- * only reason nobody saw it is that every fixture in that suite reported one. A sweep over
- * `hasClickAction()` has no fixture bias: it asks the composed tree what is tappable and measures
- * all of it, so a control added next year is covered by a test written today.
+ * A sweep rather than a list, so a control added next year is covered by a test written today. This
+ * module has the most tappable surface in the app -- a chapter list, a shelf of books, and five
+ * transport controls -- and the chapter list is the one place here where rows sit **directly on
+ * each other** with no gap at all, by design (see `BookScreen`'s own note on why a list-wide
+ * `verticalArrangement` was wrong for it). Zero gap is where a short row has nowhere to expand.
  *
- * ### Two obvious measures are wrong, and each was measured wrong rather than argued wrong
+ * ### Why it measures what it measures
  *
- * **`touchBoundsInRoot` alone is unfalsifiable.** Compose's hit-testing grows a small pointer-input
- * area to the minimum touch target by itself, so that rectangle is almost never under 48dp whatever
- * the layout does. Measured, with a deliberate ~20dp `Text(modifier = Modifier.clickable {})`
- * injected into `SettingsRow` to falsify this sweep:
+ * Both natural choices are wrong, and both were measured wrong rather than argued wrong, in
+ * `:feature:requests` where this helper was first written -- see its copy for the raw numbers.
+ * In short: `touchBoundsInRoot` **alone cannot fail**, because Compose grows a small pointer-input
+ * area to the minimum touch target by itself; and `SemanticsNode.size` **reports Material as
+ * broken**, because `minimumInteractiveComponentSize` reserves a `TextButton`'s 48dp on an ancestor
+ * rather than on the node carrying the click, so every one of them measures 40.00dp.
  *
- *     PROBE TINY Rect.fromLTRB(-23.5, 53.5, 102.5, 179.5)
+ * What survives both is the overlap check. Expansion to 48dp is only worth anything when the space
+ * it expands into is free: two short rows stacked in a column each grow to 48dp and then run into
+ * each other, so part of each "target" belongs to its neighbour. A lone small control with room
+ * around it genuinely can be hit, and Material's 40dp buttons are fine for the same reason. Nested
+ * targets -- a button inside a clickable row -- are excluded, because containment is the one
+ * overlap that is intentional.
  *
- * 126 x 126 device pixels, which at this emulator's 420dpi is exactly 48.0dp x 48.0dp -- the same
- * number being asserted, so the assertion passed over a target built to fail it. The negative left
- * edge is the tell: the rectangle had been grown outside its own parent.
- *
- * **`SemanticsNode.size` alone reports Material as broken.** On the unmerged tree the clickable
- * node of a `TextButton` measures **40.00dp** tall -- `minimumInteractiveComponentSize` reserves
- * its 48dp on an ancestor, not on the node carrying the click. Measured, on this module's own two
- * screens, seven controls at 40.00dp: `setup:test`, `setup:save`, `Cancel`,
- * `integrations:setup:BINDERY`, `Asked already`, `Play`, `Forget`. Every one of them is fine; a
- * rule that names them is a rule nobody can satisfy without abandoning Material.
- *
- * ### What is actually asserted: the bounds are big **and** nobody else is standing in them
- *
- * Expansion to 48dp is only worth anything when the space it expands into is free. That is the
- * whole difference between the two cases above and the defect that prompted this file: two 32.38dp
- * speaker rows stacked in a `Column` each grow to 48dp and then **overlap each other by ~16dp**, so
- * a third of each "target" belongs to its neighbour and neither can be hit reliably. A lone 20dp
- * control with empty space around it genuinely can be. So this sweep asserts both halves, and
- * nested targets (a button inside a clickable row) are excluded from the overlap check because
- * containment is the one overlap that is intentional.
- *
- * ### `useUnmergedTree`, and that is load-bearing too
- *
- * `Modifier.clickable` applies `semantics(mergeDescendants = true)`, so a tappable thing *inside* a
- * tappable row vanishes into its parent on the merged tree -- and a row is exactly where a
- * too-small control hides. The same falsification above reported nothing at all on the merged tree,
- * for that second, independent reason.
+ * `useUnmergedTree` is load-bearing for a third, independent reason: `Modifier.clickable` applies
+ * `semantics(mergeDescendants = true)`, so a tappable thing *inside* a tappable row vanishes into
+ * its parent on the merged tree, and a row is exactly where a too-small control hides.
  *
  * The empty-sweep guard is not decoration either: a screen that failed to compose, or a state that
  * rendered no control, would otherwise pass this silently.
  *
- * ### Falsified, and what it does *not* catch
+ * ### Falsified here
  *
- * Shortening both `SettingsRow`s to a single line with 4dp of padding -- ~32dp, the cast-picker
- * defect's own shape -- fires it, naming the pair:
+ * Deleting `ChapterRow`'s `heightIn(min = MuPlaySpacing.minTouchTarget)` -- the one line that KDoc
+ * says is there because the row "measured about 44dp before this pass" -- makes
+ * `noTwoChapterRowsFightOverTheSamePixels` fail with the two collisions it should:
  *
- *     settings:integrations and settings:requests: 7.62dp of their touch bounds is the same place
+ * ```
+ * ["1. The Opening and 2. The Middle: 19.43dp of their touch bounds is the same place",
+ *  "2. The Middle and 3. The End: 19.43dp of their touch bounds is the same place"]
+ * ```
  *
- * Two things that did **not** fire, both worth knowing before trusting this:
+ * Note the number. Without the constraint the row is a 20dp `bodyMedium` line box plus 4dp of
+ * padding either side, so about 28dp, and Compose grows each one to 48dp -- roughly 10dp into each
+ * neighbour, from both sides, which is the 19.43dp measured. The rows have no gap to expand into
+ * because `BookScreen` deliberately gives the chapter `LazyColumn` no `verticalArrangement`.
  *
- * - **The size half has never fired**, under either mutation. Compose's automatic expansion makes
- *   a small target report 48dp on its own, so that assertion is a cheap backstop for a target whose
- *   expansion is clipped, not the gate. The overlap half is the gate.
- * - **A one-line row with 8dp padding -- 40dp -- in this `spacedBy(8.dp)` column passes.** The 4dp
- *   of expansion each side exactly meets the 8dp gap and `Rect.overlaps` is strict, so it touches
- *   without overlapping. That is the honest reading of this rule: it is not "every target is 48dp",
- *   it is "no two targets are fighting over the same pixels", which is the property a thumb
- *   actually cares about and the one Material's 40dp buttons satisfy legitimately.
+ * **The other 49 tests in this module were green over that same mutation.** Nothing here asserted
+ * on a row height, so the constraint whose KDoc explains at length why it exists was, until this
+ * sweep, held by nothing at all.
  *
- * It lives in this module because this is where it was written and falsified. Porting it is a copy
- * of this one file -- there is no shared `androidTest` artifact here, deliberately.
+ * A copy of `:feature:requests`' file of the same name. There is no shared `androidTest` artifact in
+ * this build, deliberately. **Copy the helper, never the falsification record**: a `sed` port of
+ * this file into `:feature:castpicker` once renamed its way into three measurements that were real
+ * and were about another module's screens.
  */
 internal fun ComposeContentTestRule.assertEveryTapTargetIsBigEnough() {
   val density = InstrumentationRegistry.getInstrumentation()
