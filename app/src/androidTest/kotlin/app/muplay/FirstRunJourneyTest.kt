@@ -41,9 +41,13 @@ import org.junit.runner.RunWith
  * 1. The container is up and seeded (`docker compose -f ci/navidrome.compose.yml up -d --wait`
  *    then `ci/configure-libraries.sh`).
  * 2. `adb reverse tcp:4533 tcp:4533`, which is what makes [SERVER_URL]'s `localhost` inside the
- *    emulator reach the container on the host. Note that a missing reverse forward does not fail
- *    fast: the connection attempt simply times out, so this test would report the
- *    [waitUntilSettled] timeout below rather than anything naming the real cause.
+ *    emulator reach the container on the host. A missing forward does not time out -- measured
+ *    2026-09-05, the guest gets `ConnectException: Failed to connect to localhost/127.0.0.1:4533`
+ *    immediately -- but the app renders "Could not reach the server." for a refusal exactly as it
+ *    does for a server that is genuinely down, so this test still reports the [waitUntilSettled]
+ *    timeout below rather than anything naming the real cause. Re-run `ci/prepare-emulator.sh`
+ *    before every device run, not once per boot: Android can restart inside a still-running qemu
+ *    and take the forward with it while `adb devices` and `sys.boot_completed` read normal.
  * 3. The emulator itself was started with `-feature Minigbm -prop qemu.hardware.gralloc=minigbm`.
  *    Without it, this emulator + system-image pair aborts SurfaceFlinger and system_server on
  *    every CPU read of a graphics buffer — which happens at every activity teardown, i.e. once

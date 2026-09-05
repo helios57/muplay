@@ -3,11 +3,23 @@
 # Waits for a booted emulator, checks it is the device this repository's Tier 2 gate is written
 # against, and gives it the one thing `FirstRunJourneyTest` needs but cannot do for itself:
 # `adb reverse tcp:4533 tcp:4533`, so `http://localhost:4533` inside the emulator reaches the
-# Navidrome container on the host (ci/navidrome.compose.yml). Note that a missing forward does not
-# fail loudly -- the app's connection attempt simply times out.
+# Navidrome container on the host (ci/navidrome.compose.yml).
 #
-# Run once per emulator boot, before `./gradlew :app:connectedDebugAndroidTest` -- locally and in
-# `.github/workflows/e2e.yml` alike, so both run against the same device state.
+# Run this before *every* device-tier run -- not once per boot. It is idempotent, it takes about a
+# second, it installs nothing and restarts nothing, so it needs no device lock. The reason it is not
+# "once per boot" is that a boot can happen without anyone seeing it: Android restarted inside the
+# still-running qemu on 2026-09-05 (`/proc/uptime` back to 143 s, host `last reboot` unmoved) and
+# took the forward with it, while `adb devices`, `sys.boot_completed` and the container's own health
+# check all still read normal. See CLAUDE.md, "A reboot *inside* the emulator silently drops
+# `adb reverse`".
+#
+# What a missing forward looks like, measured rather than assumed: the guest gets connection
+# *refused*, not a timeout --
+#
+#   java.net.ConnectException: Failed to connect to localhost/127.0.0.1:4533
+#
+# -- immediately, on every request, while `curl http://localhost:4533/ping` on the host answers 200.
+# `.github/workflows/e2e.yml` runs this too, so CI and local runs face the same device state.
 #
 # --- The emulator this expects to be talking to ------------------------------------------------
 #

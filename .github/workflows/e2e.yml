@@ -233,9 +233,10 @@ jobs:
           # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
           # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
           # `adb reverse` that makes `http://localhost:4533` inside the emulator reach the
-          # container started above. A missing reverse forward does not fail loudly — the app's
-          # connection attempt simply times out — so this is not something to leave to a separate
-          # step that could be reordered away from the test.
+          # container started above. A missing reverse forward is refused immediately rather than
+          # timing out, but the app renders the same "Could not reach the server." it shows for a
+          # server that is genuinely down — so the failure never names the forward, and this is not
+          # something to leave to a separate step that could be reordered away from the test.
           #
           # The logcat dump has to happen *here*, inside the action's own step, because the action
           # shuts the emulator down as that step ends — a later `adb logcat` step would find no

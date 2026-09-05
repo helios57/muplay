@@ -530,6 +530,53 @@ who marked an entire instrumented tier unverified because `adb` was not on
 just wrote is broken — check that the emulator and the container are actually
 up.**
 
+## A reboot *inside* the emulator silently drops `adb reverse`, and the symptom names the container
+
+Measured 2026-09-05. A full `:app:connectedDebugAndroidTest` went red from its
+second test onwards with
+
+    java.net.ConnectException: Failed to connect to localhost/127.0.0.1:4533
+
+while, on the host, `docker ps` showed `ci-navidrome-1  Up 13 hours (healthy)`
+and `curl http://localhost:4533/ping` returned **200**. The container was fine.
+`adb reverse --list` was **empty**.
+
+Android had restarted inside the still-running qemu -- `adb shell cat
+/proc/uptime` read 143 s, then 420 s a few minutes later, against a host whose
+`last reboot` had not moved. A reverse forward belongs to the running system, so
+it goes with it, and neither `adb devices` (still `device`) nor
+`sys.boot_completed` (still `1`) says anything happened. `ci/prepare-emulator.sh`
+sets the forward and its header says to run it "once per emulator boot" -- which
+is correct and useless, because this is a boot nobody sees.
+
+So when a device run fails to reach Navidrome, **check the forward before the
+container**, and note that all three of the obvious checks pass while it is
+broken:
+
+    docker ps --filter name=ci-navidrome-1     # Up (healthy)
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:4533/ping   # 200
+    adb devices                                # emulator-5554  device
+    adb reverse --list                         # <-- empty. this is the one.
+
+The repair is one idempotent command, and it needs no lock because it installs
+nothing and restarts nothing:
+
+    adb reverse tcp:4533 tcp:4533
+
+`ci/prepare-emulator.sh` does that plus the gralloc and API-level checks in about
+a second, so the cheap habit is to run it **before every device-tier run** rather
+than once per boot. Two other things worth knowing while you are there:
+
+- The device shell has no `curl`, no `wget` and no `/dev/tcp`, so there is no
+  quick positive probe from inside the guest. `adb reverse --list` naming the
+  port is the observation you get; a green suite is the proof.
+- An in-guest reboot is also what a concurrent device-owner test suite from
+  *another* project on this shared emulator looks like from here. This session
+  lost one run to `INSTRUMENTATION_ABORTED: System has crashed` with another
+  app's logcat in `:app`'s output directory, and a second to the dropped forward
+  the same reboot caused. Neither was a defect in this repository, and both read
+  exactly like one.
+
 ## A release build *can* do cleartext HTTP — to `localhost`, and only there
 
 `app/src/androidTest/.../FirstRunJourneyTest` says "Cleartext HTTP is allowed only
