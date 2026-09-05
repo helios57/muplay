@@ -348,4 +348,14 @@ class IntegrationsScreenTest {
     const val API_KEY_FIELD_LABEL = "API key"
     const val CANCEL_LABEL = "Cancel"
   }
+
+  @Test
+  fun everyControlIsBigEnoughToTap() {
+    // The editing state, which is the one with the most controls on it: each service block's own
+    // buttons plus the open form's test, save and cancel.
+    show(IntegrationsUiState(configured = setOf(IntegrationService.LIDARR), editing = form()))
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
 }

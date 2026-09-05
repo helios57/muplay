@@ -125,4 +125,14 @@ class IntegrationsSectionContentTest {
     const val INTEGRATIONS_ROW = "settings:integrations"
     const val REQUESTS_ROW = "settings:requests"
   }
+
+  @Test
+  fun everyRowIsBigEnoughToTap() {
+    // Both rows at once: the integrations row is always there, the requests row only once a service
+    // is configured, so this is the state that renders every tap target this section has.
+    show(setOf(IntegrationService.LIDARR))
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
 }

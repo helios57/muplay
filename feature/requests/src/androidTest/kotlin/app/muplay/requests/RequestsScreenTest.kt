@@ -365,4 +365,26 @@ class RequestsScreenTest {
     fun rowTag(id: String) = "requests:row:$id"
     fun statusTag(id: String) = "requests:status:$id"
   }
+
+  @Test
+  fun everyControlIsBigEnoughToTap() {
+    // A result to request and an arrived request to play or forget: every row-level action this
+    // screen has, on screen together and above the fold for the reason this file documents above.
+    show(
+      ready(
+        results = listOf(albumCandidate()),
+        requests = listOf(
+          mediaRequest(
+            service = IntegrationService.LIDARR,
+            externalId = ALBUM_ID,
+            title = LIDARR_REQUEST_TITLE,
+            status = RequestStatus.Arrived(ARRIVED_ALBUM_ID),
+          ),
+        ),
+      ),
+    )
+
+    composeRule.assertEveryTapTargetIsBigEnough()
+  }
+
 }

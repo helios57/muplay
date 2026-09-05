@@ -1098,6 +1098,42 @@ general shape is worth recognising: **a navigation decision read from a flow tha
 same tap is about to change is always one event stale**, and the only test that can see
 it is one that drives the real screens.
 
+## A Compose tap-target assertion is wrong in both obvious directions
+
+Writing a sweep that measures every `hasClickAction()` node on a screen, both natural choices are
+wrong, and each was measured wrong rather than argued wrong (Plan 8, `:feature:requests`):
+
+- **`SemanticsNode.touchBoundsInRoot` cannot fail.** Compose's hit-testing grows a small
+  pointer-input area to the minimum touch target on its own. A deliberate ~20dp
+  `Text(modifier = Modifier.clickable {})` injected to falsify the sweep measured
+  `Rect.fromLTRB(-23.5, 53.5, 102.5, 179.5)` — 126x126px, which at 420dpi is exactly **48.0dp**,
+  the same number being asserted. Note the **negative left edge**: the rectangle had been grown
+  outside its own parent. The sweep passed over a target built to fail it.
+- **`SemanticsNode.size` reports Material as broken.** On the unmerged tree a `TextButton`'s
+  *clickable* node measures **40.00dp** tall — `minimumInteractiveComponentSize` reserves its 48dp
+  on an ancestor, not on the node carrying the click. Measured: seven controls at 40.00dp across
+  two screens (`setup:test`, `setup:save`, `Cancel`, `integrations:setup:BINDERY`,
+  `Asked already`, `Play`, `Forget`), every one of them fine.
+
+What works is asserting that non-nested targets' touch bounds **do not overlap**. Expansion is only
+worth anything when the space it expands into is free: two 32dp rows in a column each grow to 48dp
+and then collide, which is the real defect, while a lone small control with room around it is
+genuinely hittable. Falsified — two one-line rows at ~32dp report
+`settings:integrations and settings:requests: 7.62dp of their touch bounds is the same place`.
+
+Two limits of that rule, both measured, both worth knowing before trusting it:
+
+- A **40dp** row in a `spacedBy(8.dp)` column passes: 4dp of expansion each side exactly meets the
+  8dp gap, and `Rect.overlaps` is strict. It is not a "48dp" rule, it is a "nobody is fighting over
+  the same pixels" rule.
+- `useUnmergedTree = true` is required. `Modifier.clickable` applies
+  `semantics(mergeDescendants = true)`, so a tappable thing *inside* a tappable row vanishes on the
+  merged tree — the first falsification above reported nothing at all for that second, independent
+  reason.
+
+For a single known row, `assertHeightIsAtLeast` on the node is still the right tool and it does go
+red honestly (32.38dp on the cast picker's speaker row).
+
 ## The device suite has order-dependent flakes, and the failing test moves between runs
 
 Measured across five full `:app` + `:core:media` runs on one tree (2026-08-28), after
