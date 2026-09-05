@@ -367,6 +367,10 @@ scope, lazy keys, Flow-in-composition) · vacuous assertions · coverage (92 ung
 classes) · dead code and reachability · docs coherence · remaining security surface
 (including possible SSRF in the new `muplay-art:` scheme) · audiobook domain.
 
+(The "92 ungated classes" figure is wrong and was never measured — the real census on
+2026-09-05 was **70**, and it is now 63. Treat every number in this paragraph as a note
+somebody wrote down, not as a reading.)
+
 The security and vacuous-assertion sweeps are the two worth running first: both target
 defect classes this repository has already shipped more than once.
 
@@ -379,6 +383,29 @@ absence assertions only, and the security sweep followed one thread — **the ar
 surface** — to its end. Untouched: everything else the eight name, plus the rest of the
 security surface (the cast proxy, the Bindery key, the watch link, `exported` components
 other than the playback service).
+
+**The coverage audit has been started, not finished, and what it found is the reason it
+should be.** Four ungated classes were gated on 2026-09-05, each falsified by running the
+withholding rather than predicting it: `ArtworkUri` and `CredentialQuery` (both keep a
+Subsonic password equivalent off a wire), `CastSettings` + its companion (the
+renderer-direct default, whose own header calls flipping it "this project's single most
+dangerous mutation"), and `BookSpeedController` (the speed and silence reset). That is
+four of about seventy, chosen because each one guards something a reader of this backlog
+would care about; the remaining ~63 are mostly Compose file-classes and coroutine
+machinery, where a floor gates the compiler rather than the product.
+
+**And the audit found a gate that was already red.** `app.muplay.player.PlayerViewModel.1`
+— the `PlaybackControls` adapter only Hilt can build — went from 10/10 to **10/15 LINE**
+when `674120e` (2026-09-03) added `retry()` to it, and stayed red on master for two days.
+Nothing saw it: the class is unreachable from any JVM test, so only the emulator job's
+coverage gate measures it, and the floor's own comment went on saying "10/10, measured".
+The shipped "Try again" button's real-session wiring had never once been executed. It is
+15/15 now, driven by `PlaybackJourneyTest.tryAgainRestartsASessionMedia3HasMovedToIdle`,
+which breaks the session for real and then puts a good queue on an idle player so that
+only the button can start it.
+
+The general shape is worth carrying forward: **a floor over a class only the DI graph can
+build has no cheap tier under it, so adding a member to that class silently lowers it.**
 
 **One of the eight has been partly overtaken, and only partly.** The 48dp half of the
 accessibility audit was done on 2026-09-05: every clickable node on eight screens across
