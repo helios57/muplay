@@ -164,8 +164,13 @@ class DeviceDescriptionTest {
       .isEqualTo("http://192.168.1.77:2869/AVTransport/desc.xml")
   }
 
+  /**
+   * A **different port** on the device's own host is the device's own business, and real hardware
+   * does it: a description served on 2869 may name a control endpoint on 8080. Only the host is
+   * held; see the cross-host tests below for why.
+   */
   @Test
-  fun `an absolute control url is left alone`() {
+  fun `an absolute control url on the device's own host is left alone`() {
     val absolute = generic.replace(
       "<controlURL>/AVTransport/ctrl</controlURL>",
       "<controlURL>http://192.168.1.77:8080/other/ctrl</controlURL>",
@@ -175,6 +180,130 @@ class DeviceDescriptionTest {
       DeviceDescription.parse(absolute, genericUrl)
         .service("urn:schemas-upnp-org:service:AVTransport:1")!!.controlUrl.toString(),
     ).isEqualTo("http://192.168.1.77:8080/other/ctrl")
+  }
+
+  /**
+   * **A description is a device describing itself, not a device choosing what this app connects
+   * to.**
+   *
+   * Every URL in this document is chosen by an unauthenticated peer: SSDP is UDP, anything on the
+   * LAN can answer a search, and the `LOCATION` it returns is the URL this app then fetches a
+   * description from. If an absolute `controlURL` in that document is honoured as written, the
+   * peer is choosing the *host* MuPlay opens a socket to and POSTs a SOAP body at -- which is a
+   * server-side request forgery primitive with the phone as the confused deputy.
+   *
+   * [app.muplay.cast.net.LocalNetworkOnly] bounds the damage and does not remove it: it refuses
+   * anything off the local network, which leaves every RFC 1918 address, every link-local address
+   * and **loopback** still reachable. Those are the interesting targets, not the internet ones --
+   * a router's admin interface, another device's unauthenticated HTTP service, and services bound
+   * to `127.0.0.1` on this very phone by other apps, which commonly treat "the connection came
+   * from loopback" as "the caller is this device's owner".
+   *
+   * So the rule is that a service URL must name the host the description came from. Nothing legal
+   * is lost: a UPnP device is one device at one address, its URLs are normally relative, and the
+   * test above shows a different port on the same host still passes.
+   */
+  @Test
+  fun `a control url pointing at another host is dropped, and its neighbours are kept`() {
+    val elsewhere = generic.replace(
+      "<controlURL>/AVTransport/ctrl</controlURL>",
+      "<controlURL>http://192.168.1.1/admin/reboot</controlURL>",
+    )
+
+    val device = DeviceDescription.parse(elsewhere, genericUrl)
+
+    assertThat(device.service("urn:schemas-upnp-org:service:AVTransport:1")).isNull()
+    // The neighbour survives, so one hostile service does not empty the device.
+    assertThat(device.service("urn:schemas-upnp-org:service:RenderingControl:1")!!.controlUrl.toString())
+      .isEqualTo("http://192.168.1.77:2869/RenderingControl/ctrl")
+  }
+
+  /**
+   * Loopback stated separately from the case above, because it is the one the network guard cannot
+   * help with and the one with a real privilege boundary behind it: `127.0.0.1` is local by every
+   * definition [app.muplay.cast.net.LocalNetworkOnly] has, so this rule is the only thing standing
+   * between a LAN peer and the services other apps bind on this phone.
+   */
+  @Test
+  fun `a control url pointing at loopback is dropped`() {
+    val loopback = generic.replace(
+      "<controlURL>/AVTransport/ctrl</controlURL>",
+      "<controlURL>http://127.0.0.1:4533/rest/deleteUser</controlURL>",
+    )
+
+    assertThat(
+      DeviceDescription.parse(loopback, genericUrl)
+        .service("urn:schemas-upnp-org:service:AVTransport:1"),
+    ).isNull()
+  }
+
+  /**
+   * The same escape by the other door. `URLBase` is device-supplied too, so a parser that checks
+   * only the literal `controlURL` is satisfied by a *relative* one resolved against a base that
+   * points somewhere else entirely.
+   *
+   * **Ignored, not fatal**, for the reason the unparseable-`URLBase` test above gives. Dropping
+   * every service here would be safe and would also delete a device whose only sin is naming
+   * itself by hostname in `URLBase` while SSDP announced it by address -- "the speaker is there
+   * and nothing works" again, this time caused by a security check. Falling back to the
+   * description URL is equally safe: nothing off-host is ever contacted either way.
+   */
+  @Test
+  fun `a URLBase pointing at another host is ignored rather than relocating the device`() {
+    val movedBase = generic.replace(
+      "<specVersion><major>1</major><minor>0</minor></specVersion>",
+      "<specVersion><major>1</major><minor>0</minor></specVersion>" +
+        "<URLBase>http://10.0.0.1:8080/base/</URLBase>",
+    )
+
+    val device = DeviceDescription.parse(movedBase, genericUrl)
+
+    // Both services survive, resolved against the host the description actually came from.
+    assertThat(device.service("urn:schemas-upnp-org:service:AVTransport:1")!!.controlUrl.toString())
+      .isEqualTo("http://192.168.1.77:2869/AVTransport/ctrl")
+    assertThat(device.service("urn:schemas-upnp-org:service:RenderingControl:1")!!.controlUrl.toString())
+      .isEqualTo("http://192.168.1.77:2869/RenderingControl/ctrl")
+  }
+
+  /**
+   * A control URL that names no host at all -- an opaque URI, a `mailto:`, an authority `URI`
+   * cannot read as server-based -- resolves to something with a null host, which is neither this
+   * device's host nor a usable socket address. It goes the same way as a cross-host one.
+   *
+   * `SoapNames.requireControlUrl` refuses a hostless URL too, and deliberately still does: that is
+   * the last gate before a socket, this is the first gate after the parse, and neither is the
+   * other's excuse for not existing.
+   */
+  @Test
+  fun `a control url with no host at all is dropped`() {
+    val hostless = generic.replace(
+      "<controlURL>/AVTransport/ctrl</controlURL>",
+      "<controlURL>mailto:speaker@example.com</controlURL>",
+    )
+
+    assertThat(
+      DeviceDescription.parse(hostless, genericUrl)
+        .service("urn:schemas-upnp-org:service:AVTransport:1"),
+    ).isNull()
+  }
+
+  /**
+   * `SCPDURL` is fetched by the same client as `controlURL`, so it needs the same rule. It is
+   * nulled rather than dropping the service: the control URL is what makes a renderer usable, and
+   * a service description this app never has to read is not worth losing a working speaker over.
+   */
+  @Test
+  fun `an SCPDURL pointing at another host is nulled while the service survives`() {
+    val elsewhere = generic.replace(
+      "<SCPDURL>/AVTransport/desc.xml</SCPDURL>",
+      "<SCPDURL>http://169.254.169.254/latest/meta-data/</SCPDURL>",
+    )
+
+    val service = DeviceDescription.parse(elsewhere, genericUrl)
+      .service("urn:schemas-upnp-org:service:AVTransport:1")!!
+
+    assertThat(service.scpdUrl).isNull()
+    assertThat(service.controlUrl.toString()).isEqualTo("http://192.168.1.77:2869/AVTransport/ctrl")
   }
 
   @Test

@@ -108,7 +108,29 @@ private data class SigningMaterial(
   val keyAlias: String,
   val keyPassword: String,
   val source: String,
-)
+) {
+
+  /**
+   * The two passwords redacted, because the sentence above this class was not enforced by anything.
+   *
+   * A `data class` gets a compiler-generated `toString` printing every property, so "never logged"
+   * was a promise the compiler broke on this type's behalf: any Gradle failure that interpolated
+   * one of these -- a `require` message, an exception, a `println` while debugging the signing
+   * path -- would put the **upload key's passwords** into a build log, and a CI build log is
+   * retained, often widely readable, and exactly where nobody looks for a secret afterwards.
+   *
+   * [storeFile], [keyAlias] and [source] are printed: they are what makes this line worth having
+   * when a release build picks up the wrong key, and none of them is a secret. That is the whole
+   * point of overriding rather than suppressing.
+   *
+   * `ConventionTest`'s `no data class prints a credential in its generated toString` is what
+   * should have caught this and could not: its regex matched `internal` and `public` declarations
+   * and this one is `private`.
+   */
+  override fun toString(): String =
+    "SigningMaterial(storeFile=$storeFile, storePassword=<redacted>, keyAlias=$keyAlias, " +
+      "keyPassword=<redacted>, source=$source)"
+}
 
 internal const val KEYSTORE_PATH_ENV = "MUPLAY_KEYSTORE_PATH"
 internal const val KEYSTORE_PASSWORD_ENV = "MUPLAY_KEYSTORE_PASSWORD"

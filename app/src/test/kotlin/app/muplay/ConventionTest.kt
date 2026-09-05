@@ -1256,11 +1256,67 @@ class ConventionTest {
    * and what stops this rule reporting itself: this file is `src/test`, so the property names
    * spelled in this very sentence are out of its own reach. That mattered -- five checks in this
    * repository have matched their own text.
+   *
+   * ### Widened twice, after it missed five more
+   *
+   * A security pass on 2026-09-05 found five leaking types this rule was green over, and each one
+   * escaped through a different half of it. Both halves are now fixed, and both are worth naming
+   * because the failure mode was the same: **the rule reported "no offenders" and meant "none I
+   * can see".**
+   *
+   * 1. **It could not see a `private data class`.** The declaration regex matched an optional
+   *    `internal` or `public` and nothing else, so a `private` one was skipped entirely -- and
+   *    `ReleaseBuild.SigningMaterial`, which holds the **upload key's `storePassword` and
+   *    `keyPassword`** and whose own KDoc says "never logged", is `private`. So was
+   *    `CastSession.LoadedItem`, which holds a credentialed Navidrome URL. Note the shape: the
+   *    name list already matched `storePassword` perfectly. The rule was looking for the right
+   *    thing in a place it had excluded.
+   * 2. **A credential-bearing URL is not named after a credential.** `PlaybackState.artworkUri`,
+   *    `CastItem.resourceUrl` and `CastRoute`'s three `url` properties all hold either a Subsonic
+   *    URL bearing `u`/`t`/`s` or a proxy URL whose path *is* a capability token. The names that
+   *    mean this here are now listed.
+   *
+   * What the name list still cannot reach is a bare `val url: String` -- `CastRoute.Proxied` and
+   * `RendererDirect` are exactly that, and adding `url` would flag nineteen classes that hold
+   * ordinary URLs and get the rule switched off. Those two are held instead by
+   * `PublishedRedactionTest`, which constructs each type with a credential-bearing URL and asks
+   * `CredentialQuery` whether the printed form still carries one. A name rule and a behaviour
+   * test, each covering what the other cannot.
+   *
+   * **Falsified, both halves, on 2026-09-05.** Every redacting `toString` in the tree was deleted
+   * in memory and the gates re-run. This rule went red naming exactly three:
+   *
+   * ```
+   * core/cast/.../CastItem.kt: CastItem             (`artworkUri`, `resourceUrl`)
+   * core/media/.../PlaybackState.kt: PlaybackState  (`artworkUri`)
+   * build-logic/.../ReleaseBuild.kt: SigningMaterial (private, `storePassword`)
+   * ```
+   *
+   * and `PublishedRedactionTest` went red on the four the name list cannot reach, in the same
+   * sweep. Nothing here was predicted; those lists are the failure messages.
+   *
+   * **`upstreamUrl` in the name list currently changes no verdict, and saying so is the point.**
+   * The first sweep, before `CastSession.LoadedItem` was fixed, named it fourth -- it was the one
+   * class that was `private` *and* named after a credentialed URL rather than after a credential,
+   * so it was the only offender that needed both halves of this rule at once. The fix it got is
+   * structural (it is no longer a `data class`, so it has no generated `toString` to leak through),
+   * which is better product code and leaves this name matching nothing new: the two remaining
+   * `upstreamUrl` holders, `PublishedMedia` and `PublishedArtwork`, are already reported by
+   * `token`. It is kept as reach rather than as evidence. The next `private data class` built
+   * around a proxy's upstream URL is what it is for, and there is no test here that can go red for
+   * it today.
    */
   @Test
   fun `no data class prints a credential in its generated toString`() {
-    val secretish = Regex("""\bval\s+\w*(apiKey|keyText|password|secret|token|credential)\w*\s*:""",
-      RegexOption.IGNORE_CASE)
+    // Two groups of names. The first is a secret spelled as one. The second is a **URL that
+    // carries one in this codebase** -- a Subsonic `getCoverArt`/`stream` URL bears `u`, `t` and
+    // `s`, and a proxy URL's path bears the capability token -- which no amount of reading the
+    // property name "url" would reveal, so the names that do mean it are listed.
+    val secretish = Regex(
+      """\bval\s+\w*(apiKey|keyText|password|secret|token|credential""" +
+        """|artworkUri|artworkUrl|upstreamUrl|streamUrl|resourceUrl)\w*\s*:""",
+      RegexOption.IGNORE_CASE,
+    )
     val offenders = mutableListOf<String>()
 
     repoRoot().walkTopDown()
@@ -1269,7 +1325,7 @@ class ConventionTest {
       .forEach { file ->
         val source = withoutComments(file.readText())
         // Each `data class` body, from its declaration to the next top-level declaration.
-        Regex("""(?m)^\s*(?:internal\s+|public\s+)?data class\s+(\w+)[\s\S]*?(?=^\s*(?:internal\s+|public\s+)?(?:data class|class|object|interface|fun|enum)\s|\z)""")
+        Regex("""(?m)^\s*(?:private\s+|internal\s+|public\s+)?data class\s+(\w+)[\s\S]*?(?=^\s*(?:private\s+|internal\s+|public\s+)?(?:data class|class|object|interface|fun|enum)\s|\z)""")
           .findAll(source)
           .forEach { match ->
             val body = match.value

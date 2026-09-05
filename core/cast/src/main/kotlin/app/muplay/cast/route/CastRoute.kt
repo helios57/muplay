@@ -31,7 +31,14 @@ enum class UnroutableReason {
  * all and, deliberately, for every route that is not [CastRoute.Proxied]. See
  * [CastRoute.RendererDirect].
  */
-data class ProxiedArtwork(val url: String, val media: PublishedArtwork)
+data class ProxiedArtwork(val url: String, val media: PublishedArtwork) {
+  /**
+   * [url] is `http://<phone>:<port>/art/<token>` -- **the token is in the path**, so printing the
+   * URL prints the capability. That is precisely why [PublishedArtwork] redacts its own `path`,
+   * and this type carries the same string one layer up. See [CastRoute.Proxied.toString].
+   */
+  override fun toString(): String = "ProxiedArtwork(url=<redacted>, media=$media)"
+}
 
 /** Where a renderer is told to get the bytes. */
 sealed interface CastRoute {
@@ -82,7 +89,25 @@ sealed interface CastRoute {
     val artwork: ProxiedArtwork?,
     val deviceName: String,
     val proofRequired: Boolean,
-  ) : CastRoute
+  ) : CastRoute {
+
+    /**
+     * [url] redacted, [deviceName] and [proofRequired] kept.
+     *
+     * The URL is `http://<phone>:<port>/media/<token>.<ext>` and **the token is the capability** --
+     * anything on the LAN holding that string can fetch the user's audio for as long as the
+     * session lasts. [app.muplay.cast.proxy.PublishedMedia] redacts its `path` for this exact
+     * reason, and its KDoc records that an earlier version redacted `token=` while printing
+     * `path=` and so redacted nothing. This type is that same mistake one layer up: the module
+     * hardened what the registry prints and left the route holding the same string.
+     *
+     * The other two fields are what make a printed route useful when a cast goes wrong, and
+     * neither is a secret.
+     */
+    override fun toString(): String =
+      "Proxied(url=<redacted>, media=$media, artwork=$artwork, deviceName=$deviceName, " +
+        "proofRequired=$proofRequired)"
+  }
 
   /**
    * From Navidrome, directly.
@@ -119,7 +144,15 @@ sealed interface CastRoute {
    * `<upnp:album>` and `<res>`, and **no `<upnp:albumArtURI>` element at all** -- `DidlLite` omits
    * an absent optional field rather than rendering it empty, which is what a renderer needs.
    */
-  data class RendererDirect(val url: String) : CastRoute
+  data class RendererDirect(val url: String) : CastRoute {
+    /**
+     * [url] is **Navidrome's own stream URL**, carrying `u`, `t` and `s` -- the non-expiring
+     * password equivalent this route's own KDoc, twenty lines up, describes as the thing the user
+     * opted into handing one speaker. Opting in to giving it to a speaker is not opting in to
+     * putting it in a crash dump.
+     */
+    override fun toString(): String = "RendererDirect(url=<redacted>)"
+  }
 
   /** Neither. Casting fails, with a reason a user can act on. */
   data class Unroutable(val reason: UnroutableReason, val detail: String) : CastRoute

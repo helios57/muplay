@@ -142,8 +142,26 @@ class CastSession(
    */
   private var unprovedRoute: LoadedItem? = null
 
-  /** What [proveRoute] needs to re-issue an item on the renderer-direct fallback. */
-  private data class LoadedItem(val route: CastRoute, val item: CastItem, val upstreamUrl: String)
+  /**
+   * What [proveRoute] needs to re-issue an item on the renderer-direct fallback.
+   *
+   * **Not a `data class`, and that is the redaction.** [upstreamUrl] is the Navidrome URL the proxy
+   * fetches from, `u`/`t`/`s` and all — so a compiler-generated `toString` printing every property
+   * put a password-equivalent into any crash dump or debugger view that reached this field. It was
+   * a `data class` until a security pass on 2026-09-05, and it was the leak nothing looked at,
+   * because `ConventionTest`'s rule could not see a `private data class` at all.
+   *
+   * The rule now can, and the first fix here was the one it asks for: override `toString` and
+   * redact. This is the better one. Nothing in this file uses `copy`, `==`, `hashCode` or
+   * destructuring on it — it is constructed at one line and read at two — so `data` was buying
+   * exactly one thing, and that thing was the defect. A plain class cannot print the URL at all,
+   * where an override is a promise a later edit can quietly withdraw. `Object.toString` gives an
+   * identity hash, which is useless in a log and safe in one.
+   *
+   * Re-adding `data` re-arms the leak, and that is gated rather than trusted: the widened rule
+   * reports it the moment it comes back.
+   */
+  private class LoadedItem(val route: CastRoute, val item: CastItem, val upstreamUrl: String)
 
   // ---- commands ------------------------------------------------------------------------------
 

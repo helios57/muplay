@@ -1,6 +1,7 @@
 package app.muplay.media
 
 import androidx.media3.common.MediaMetadata
+import app.muplay.cast.net.CredentialQuery
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -122,4 +123,59 @@ class PlaybackStateTest {
     assertThat(PlaybackState.durationMsOf(playerDurationMs = -1L, metadataDurationMs = 5_000L))
       .isZero()
   }
+
+  /**
+   * **The one field here that carries the user's password equivalent, and what happens when
+   * something prints it.**
+   *
+   * This class's own KDoc states the rule -- a cover-art URL carries the same `t` and `s` a stream
+   * URL does, and it "must not be logged, printed, or asserted whole" -- and a `data class` gets a
+   * compiler-generated `toString` that prints every property, so the type documented the promise
+   * and then broke it. `PublishedMedia` and `PublishedArtwork` in `:core:cast` were fixed for
+   * exactly this; `PlaybackState` was missed, because the convention rule that polices it matches
+   * property *names* (`apiKey`, `password`, `token`, ...) and `artworkUri` is not one.
+   *
+   * Nothing prints a `PlaybackState` today, so this is a latent leak rather than an active one.
+   * The path that makes it real is the cheapest one imaginable: a failing AssertJ assertion on a
+   * `PlaybackState` renders the whole value into a test report, and this repository's own device
+   * tier asserts on these.
+   *
+   * Written against [CredentialQuery], not against the literal "u", "t" and "s", for the reason
+   * `PublishedRedactionTest` gives: a test that spelled the parameters itself would keep passing
+   * if the auth scheme gained a fourth.
+   */
+  @Test
+  fun `a printed playback state does not carry the credentials on its artwork url`() {
+    val printed = PlaybackState.NOTHING_PLAYING.copy(
+      title = "Track 1",
+      artworkUri =
+        "https://music.example.com/rest/getCoverArt?id=al-1&u=listener" +
+          "&t=0123456789abcdef0123456789abcdef&s=abcd1234",
+    ).toString()
+
+    assertThat(CredentialQuery.carries(printed))
+      .describedAs("a printed PlaybackState still carries a Subsonic auth parameter: %s", printed)
+      .isFalse()
+    // Positive control: redaction must not be achieved by printing nothing useful, or the
+    // assertion above would pass over an empty string.
+    assertThat(printed).contains("PlaybackState", "Track 1")
+  }
+
+  /**
+   * The other side of the one branch that `toString` has, and it is a real distinction rather than
+   * a coverage errand.
+   *
+   * Redacting `artworkUri` unconditionally would print `<redacted>` for a state that has no cover
+   * at all, and "there is no artwork" is the answer a reader of this line usually wants -- it is
+   * the difference between a track the server gave no `coverArt` id and one whose URL is simply
+   * not being shown. Absence is not a secret, so `null` stays `null`.
+   */
+  @Test
+  fun `a printed playback state with no artwork says so rather than redacting one it does not have`() {
+    val printed = PlaybackState.NOTHING_PLAYING.copy(title = "Track 1", artworkUri = null).toString()
+
+    assertThat(printed).contains("artworkUri=null")
+    assertThat(printed).doesNotContain("<redacted>")
+  }
+
 }

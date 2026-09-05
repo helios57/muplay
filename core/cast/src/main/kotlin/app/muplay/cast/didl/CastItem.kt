@@ -22,4 +22,23 @@ data class CastItem(
   val upnpClass: String,
   val resourceUrl: String,
   val served: ServedMedia,
-)
+) {
+
+  /**
+   * The two URLs redacted; everything a reader actually wants kept.
+   *
+   * [resourceUrl] is whatever the chosen route decided: a proxy URL whose path **is** the
+   * capability token, or -- on [app.muplay.cast.route.CastRoute.RendererDirect] -- Navidrome's own
+   * stream URL carrying `u`, `t` and `s`. [artworkUri] is the same story for the cover. So this
+   * type holds, at various moments, every secret `:core:cast` has, and it was the one type on the
+   * path that let the compiler print them.
+   *
+   * `null` stays `null` for [artworkUri]: whether a renderer was sent a cover at all is a real
+   * question when a speaker shows no art, and "absent" is not a secret. [resourceUrl] is
+   * non-nullable and always redacted.
+   */
+  override fun toString(): String =
+    "CastItem(mediaId=$mediaId, title=$title, artist=$artist, albumTitle=$albumTitle, " +
+      "artworkUri=${if (artworkUri == null) "null" else "<redacted>"}, durationMs=$durationMs, " +
+      "upnpClass=$upnpClass, resourceUrl=<redacted>, served=$served)"
+}

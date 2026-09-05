@@ -36,7 +36,7 @@ data class UpnpDevice(
 /**
  * The UPnP device description parser.
  *
- * Three things it does that the obvious implementation does not:
+ * Four things it does that the obvious implementation does not:
  *
  * 1. **It recurses into `deviceList`.** Sonos's root device is a `ZonePlayer`, and the
  *    `MediaRenderer` with the `AVTransport` service is *nested inside it*, alongside a
@@ -44,9 +44,14 @@ data class UpnpDevice(
  *    is not a renderer, and the symptom is the named user requirement quietly missing from the
  *    picker.
  * 2. **It resolves relative URLs against `URLBase` when present and the description URL when not.**
- *    UPnP 1.1 deprecated `URLBase`; devices still send it, and when they do it wins.
+ *    UPnP 1.1 deprecated `URLBase`; devices still send it, and when they do it wins -- unless it
+ *    names another host, which point 4 ignores it for.
  * 3. **It refuses a `DOCTYPE`.** This document arrives from an unauthenticated device on the LAN,
  *    over a protocol where anything that can send a datagram chooses what URL this app fetches.
+ * 4. **It holds every service URL to the host the description came from.** The sentence that
+ *    justifies point 3 justifies this, and this is the sharper of the two: a peer who chooses the
+ *    URLs in this document otherwise chooses the host MuPlay opens a socket to and POSTs at. See
+ *    [isOnDeviceHost].
  *
  * Namespace handling is deliberately by **local name**: real descriptions use the
  * `urn:schemas-upnp-org:device-1-0` default namespace, some use a prefix, and a few omit it. There
@@ -109,7 +114,10 @@ object DeviceDescription {
     // element-less input, which the `runCatching` above has already turned into a
     // MalformedDescriptionException. An elvis here would be a branch no test could ever reach.
     val root = document.documentElement
-    val base = childText(root, "URLBase")?.let { runCatching { URI(it) }.getOrNull() } ?: descriptionUrl
+    val base = childText(root, "URLBase")
+      ?.let { runCatching { URI(it) }.getOrNull() }
+      ?.takeIf { isOnDeviceHost(it, descriptionUrl) }
+      ?: descriptionUrl
     val deviceElement = childElement(root, "device")
       ?: throw MalformedDescriptionException("device description at $descriptionUrl has no <device> element")
 
@@ -206,7 +214,7 @@ object DeviceDescription {
       manufacturer = childText(element, "manufacturer"),
       modelName = childText(element, "modelName"),
       services = childElement(element, "serviceList")
-        ?.let { list -> childElements(list, "service").mapNotNull { parseService(it, base) } }
+        ?.let { list -> childElements(list, "service").mapNotNull { parseService(it, base, descriptionUrl) } }
         .orEmpty(),
       embedded = childElement(element, "deviceList")
         ?.let { list ->
@@ -216,16 +224,60 @@ object DeviceDescription {
     )
   }
 
-  private fun parseService(element: Element, base: URI): UpnpService? {
+  private fun parseService(element: Element, base: URI, descriptionUrl: URI): UpnpService? {
     val type = childText(element, "serviceType") ?: return null
     val control = childText(element, "controlURL") ?: return null
-    val controlUri = runCatching { base.resolve(control) }.getOrNull() ?: return null
+    // Dropped, not clamped: a service whose control URL names another host is not a service this
+    // app can use, and rewriting the peer's URL to one it did not ask for would be guessing.
+    val controlUri = runCatching { base.resolve(control) }.getOrNull()
+      ?.takeIf { isOnDeviceHost(it, descriptionUrl) }
+      ?: return null
     return UpnpService(
       serviceType = type,
       serviceId = childText(element, "serviceId").orEmpty(),
       controlUrl = controlUri,
-      scpdUrl = childText(element, "SCPDURL")?.let { runCatching { base.resolve(it) }.getOrNull() },
+      // Nulled rather than dropping the service: the control URL is what makes a renderer usable,
+      // and this app never fetches an SCPD anyway.
+      scpdUrl = childText(element, "SCPDURL")
+        ?.let { runCatching { base.resolve(it) }.getOrNull() }
+        ?.takeIf { isOnDeviceHost(it, descriptionUrl) },
     )
+  }
+
+  /**
+   * True when [url] names the same host the description was fetched from.
+   *
+   * **Why this exists.** Every URL in a device description is chosen by an unauthenticated peer:
+   * SSDP is UDP, anything on the LAN can answer a search, and the `LOCATION` in that answer is the
+   * URL this app fetches the document from. Honouring an absolute `controlURL` as written lets
+   * that peer choose the host MuPlay opens a socket to and POSTs a SOAP body at -- the phone as a
+   * confused deputy, reaching things the peer cannot reach itself.
+   *
+   * [app.muplay.cast.net.LocalNetworkOnly] bounds that and does not close it. It refuses anything
+   * off the local network, which still leaves every RFC 1918 address, every link-local address and
+   * **loopback** -- and those are the interesting targets rather than the internet ones: a
+   * router's admin interface, another device's unauthenticated service, and whatever other apps on
+   * this phone have bound to `127.0.0.1` in the belief that a loopback caller is the device's own
+   * owner. This rule is the only thing standing in front of that last one.
+   *
+   * **Host, not host and port.** A description served on one port may legitimately name a control
+   * endpoint on another, and `DeviceDescriptionTest` has always exercised that. A different port
+   * on the peer's own address grants an attacker nothing they do not already have -- it is their
+   * device -- whereas a different host is the whole attack.
+   *
+   * Compared as strings, both through `URI.getHost()`, so the bracketed form of an IPv6 literal is
+   * consistent on both sides. Two *different* textual spellings of one IPv6 address would compare
+   * unequal and drop the service; that is the safe direction, and a device that spells its own
+   * address two ways within one document is beyond what this parser tries to rescue.
+   */
+  private fun isOnDeviceHost(url: URI, descriptionUrl: URI): Boolean {
+    // `URI.getHost()` is null for anything not server-based -- `mailto:`, an opaque URI, an
+    // authority this parser cannot read -- and such a URL names no host to compare, so it fails.
+    // The comparison then carries the description's own null (if it ever had one) without a second
+    // branch of its own: `String.equals(null, ignoreCase = true)` is false, which is the answer
+    // that arm would have returned anyway. One branch rather than two, and no unreachable arm.
+    val host = url.host ?: return false
+    return host.equals(descriptionUrl.host, ignoreCase = true)
   }
 
   /** Direct children only, matched by local name -- never `getElementsByTagName`, which recurses. */

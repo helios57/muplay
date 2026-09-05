@@ -69,6 +69,35 @@ data class PlaybackState(
 ) {
 
   /**
+   * Every field except [artworkUri], which is redacted.
+   *
+   * A `data class` gets a compiler-generated `toString` that prints every property, and this class
+   * carries a cover-art URL bearing `u`, `t` and `s` -- a non-expiring password equivalent for the
+   * whole Subsonic API. This type's own KDoc already said that URL "must not be logged, printed,
+   * or asserted whole"; without this override the type stated the promise and the compiler broke
+   * it. `PublishedMedia` and `PublishedArtwork` in `:core:cast` were fixed for exactly this, and
+   * this one was missed because `ConventionTest`'s rule matches property *names* -- `apiKey`,
+   * `password`, `token` -- and `artworkUri` is not one of them.
+   *
+   * Nothing printed a `PlaybackState` when this was written, so it was a latent leak. The path
+   * that makes it real is the cheapest one there is, and `PlaybackStateTest` demonstrated it: a
+   * failing assertion on a `PlaybackState` renders the whole value into a test report, credential
+   * included.
+   *
+   * **`null` stays `null`, and only a present URL becomes `<redacted>`.** Printing `<redacted>`
+   * unconditionally would hide the one thing a reader of this line usually wants -- whether there
+   * is artwork at all -- and would make "no cover" and "a cover I am not showing you" the same
+   * string. There is nothing to protect in the absence of a URL.
+   */
+  override fun toString(): String =
+    "PlaybackState(isPlaying=$isPlaying, isBuffering=$isBuffering, mediaId=$mediaId, " +
+      "title=$title, artist=$artist, albumTitle=$albumTitle, " +
+      "artworkUri=${if (artworkUri == null) "null" else "<redacted>"}, " +
+      "positionMs=$positionMs, durationMs=$durationMs, hasNext=$hasNext, " +
+      "hasPrevious=$hasPrevious, mediaType=$mediaType, speed=$speed, failure=$failure)"
+
+
+  /**
    * Whether what is playing is a book, which is a different question from what library it came
    * from.
    *

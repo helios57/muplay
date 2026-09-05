@@ -1,6 +1,9 @@
 package app.muplay.cast.proxy
 
+import app.muplay.cast.didl.CastItem
 import app.muplay.cast.didl.ServedMedia
+import app.muplay.cast.route.CastRoute
+import app.muplay.cast.route.ProxiedArtwork
 import app.muplay.cast.net.CredentialQuery
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -77,6 +80,109 @@ class PublishedRedactionTest {
 
     assertThat(printed).contains("token=null")
     assertThat(printed).doesNotContain("<redacted>")
+  }
+
+
+  /**
+   * **The route types, which carry the same strings one layer up.**
+   *
+   * `:core:cast` redacted what the *registry* prints and left the *route* holding the identical
+   * URL. `CastRoute.Proxied.url` is `/media/<token>.<ext>` -- the token is the path, which is the
+   * reason [PublishedMedia] redacts its own `path` -- and `CastRoute.RendererDirect.url` is
+   * Navidrome's own stream URL with `u`, `t` and `s` on it.
+   *
+   * These live here rather than being caught by `ConventionTest`'s name rule because the property
+   * is called `url`, and a rule that flagged every `val url` would flag nineteen innocent classes
+   * and get switched off. A behaviour test can ask the question a name cannot answer: print it,
+   * and see whether a credential comes out.
+   */
+  @Test
+  fun `a proxied route does not print the capability in its url`() {
+    val published = PublishedMedia(
+      token = SECRET_TOKEN,
+      path = "/media/$SECRET_TOKEN.mp3",
+      upstreamUrl = credentialUrl,
+      served = ServedMedia("audio/mpeg", "mp3"),
+    )
+    val printed = CastRoute.Proxied(
+      url = "http://192.168.1.20:8080/media/$SECRET_TOKEN.mp3",
+      media = published,
+      artwork = null,
+      deviceName = "Study Amp",
+      proofRequired = true,
+    ).toString()
+
+    assertThat(printed).doesNotContain(SECRET_TOKEN)
+    assertThat(CredentialQuery.carries(printed)).isFalse()
+    // The fields that make a printed route worth having survive.
+    assertThat(printed).contains("Proxied", "Study Amp", "proofRequired=true")
+  }
+
+  @Test
+  fun `a renderer-direct route does not print the navidrome credentials it carries`() {
+    val printed = CastRoute.RendererDirect(url = credentialUrl).toString()
+
+    assertThat(CredentialQuery.carries(printed))
+      .describedAs("printed form still carries a Subsonic auth parameter: %s", printed)
+      .isFalse()
+    assertThat(printed).contains("RendererDirect")
+  }
+
+  @Test
+  fun `a proxied cover does not print the capability in its url`() {
+    val printed = ProxiedArtwork(
+      url = "http://192.168.1.20:8080/art/$SECRET_TOKEN",
+      media = PublishedArtwork(
+        token = SECRET_TOKEN,
+        path = "/art/$SECRET_TOKEN",
+        upstreamUrl = credentialUrl.replace("/stream", "/getCoverArt"),
+      ),
+    ).toString()
+
+    assertThat(printed).doesNotContain(SECRET_TOKEN)
+    assertThat(CredentialQuery.carries(printed)).isFalse()
+  }
+
+  /**
+   * The DIDL item is where both secrets meet: its `resourceUrl` is whichever the route chose, and
+   * its `artworkUri` is the cover's. `artworkUri` keeps its `null` rather than being redacted
+   * unconditionally, because "was this renderer sent a cover at all" is a real question when a
+   * speaker shows no art, and an absent URL is not a secret.
+   */
+  @Test
+  fun `a cast item prints neither of the two urls it carries`() {
+    val printed = CastItem(
+      mediaId = "tr-1",
+      title = "Track 1",
+      artist = "Test Artist",
+      albumTitle = "Test Album",
+      artworkUri = credentialUrl.replace("/stream", "/getCoverArt"),
+      durationMs = 5_000L,
+      upnpClass = "object.item.audioItem.musicTrack",
+      resourceUrl = "http://192.168.1.20:8080/media/$SECRET_TOKEN.mp3",
+      served = ServedMedia("audio/mpeg", "mp3"),
+    ).toString()
+
+    assertThat(CredentialQuery.carries(printed)).isFalse()
+    assertThat(printed).doesNotContain(SECRET_TOKEN)
+    assertThat(printed).contains("CastItem", "Track 1", "Test Artist")
+  }
+
+  @Test
+  fun `a cast item with no cover says so rather than redacting one it does not have`() {
+    val printed = CastItem(
+      mediaId = "tr-1",
+      title = "Track 1",
+      artist = null,
+      albumTitle = null,
+      artworkUri = null,
+      durationMs = 5_000L,
+      upnpClass = "object.item.audioItem.musicTrack",
+      resourceUrl = "http://192.168.1.20:8080/media/$SECRET_TOKEN.mp3",
+      served = ServedMedia("audio/mpeg", "mp3"),
+    ).toString()
+
+    assertThat(printed).contains("artworkUri=null")
   }
 
   private companion object {
