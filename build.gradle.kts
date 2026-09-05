@@ -1019,6 +1019,91 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // `replaceLibraryContents`) and LINE 23/23; MirrorReplacement LINE 7/7; BrowseRepository BRANCH
   // 4/4 (shrank from 6/6 once the LIKE-pattern logic moved into `MirrorMapper`) and LINE 17/17.
   ":core:database" to listOf(
+    // `CastSettings.Companion` -- `readAllowRendererDirect`, the `?:` that decides whether a
+    // speaker may be handed a Navidrome stream URL. **2/2 = 1.0000 BRANCH, 2/2 LINE, from JVM data
+    // alone**, measured 2026-09-05 with every connected `.ec` stashed.
+    //
+    // That placement is deliberate and this floor is what finally holds it. The class's own header
+    // argues that the reading half is a `companion` function precisely so the fast tier can reach
+    // it -- "this project's single most dangerous mutation", flipping the default from `false` to
+    // `true`, which turns a security decision inside out while every route still works. The
+    // argument was sound and nothing enforced it: until this entry the class appeared in
+    // `warnUngatedClasses`'s output on every run.
+    //
+    // **Falsified on Tier 1, and it cannot be falsified on Tier 2 -- both halves measured
+    // 2026-09-05, and the second half is the more useful one.**
+    //
+    //   `jacocoJvmCoverageVerification`, whole `CastSettingsTest` withheld
+    //     -> `Rule violated for class app.muplay.database.CastSettings.Companion: branches covered
+    //        ratio is 0.00, but expected minimum is 1.00`, BUILD FAILED.
+    //   `jacocoJvmCoverageVerification`, only `the shipped default is off, and that is the security
+    //     decision three other arguments rest on` withheld -> still 2/2, green. The other five
+    //     tests reach both arms, so no single test defends this floor.
+    //   `jacocoTestCoverageVerification` (the full gate), whole class withheld -> still **2/2**,
+    //     green. The instrumented `CastSettingsStoreTest` executes the same `?:` from the device,
+    //     so on the merged report this floor is un-withholdable by any change to the JVM tier.
+    //
+    // That last line is the trap this table has already been bitten by twice, in the form recorded
+    // at `:feature:setup`'s `ServerSection`: covering one decision from two tiers is good for the
+    // product and quietly weakens what withholding on either tier can prove. Do not read a green
+    // full gate over a withheld JVM test as evidence that this floor is too low -- run Tier 1.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.database.CastSettings.Companion"),
+    ),
+    // `CastSettings` itself -- the **fail-closed** rule, which is a different decision from the
+    // default above and needs a device to reach. **2/2 = 1.0000 BRANCH, 10/10 LINE** from the
+    // merged report; **0/2 and 1/10** with the connected `.ec` stashed, which is the measurement
+    // behind `requiresInstrumentedData` and the falsification in one.
+    //
+    // The two branches are `catch { if (cause is IOException) emit(emptyPreferences()) else throw
+    // cause }`, and both arms matter in opposite directions: the `is` arm is what makes a corrupt
+    // preferences file cost the user the *feature* rather than the credential, and the `else` arm
+    // is what stops a `CancellationException` being swallowed into an uncancellable flow.
+    // `CastSettingsStoreTest.aStoreThatCannotBeReadAnswersOffRatherThanThrowing` is the first;
+    // ordinary cancellation on every other test is the second.
+    //
+    // The `catch`/`map` machinery beside it -- `CastSettings$allowRendererDirect$1` at 1/7 BRANCH,
+    // and the `$special$$inlined$map$1*` family -- is deliberately **not** in this floor. Those are
+    // compiler-generated state machines whose unreached arms are suspension points no caller can
+    // take, and folding them in would drop a 1.00 rule to 0.30 and make it gate nothing. They are
+    // held by the LINE floor below instead, which is what this table already does for
+    // `:feature:player`'s continuation classes.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.database.CastSettings"),
+      requiresInstrumentedData = true,
+    ),
+    // The generated machinery around it, LINE, instrumented: `$allowRendererDirect$1` 1/1,
+    // `$setAllowRendererDirect$2` 1/1, `$special$$inlined$map$1$2` 2/2 and `$special$$inlined$map$1`
+    // **2/3** -- `map`'s collector adapter, whose third line is the same shape this table records at
+    // `BookPlayerViewModel$3`. 0.60 is set under that 0.6667 and over nothing: the question a LINE
+    // floor over continuation classes answers is whether they *ran*, and with the connected `.ec`
+    // stashed every one of them reads 0.
+    //
+    // The three classes carrying no counters at all (`$special$$inlined$map$1$1`,
+    // `$setAllowRendererDirect$1`, `$special$$inlined$map$1$2$1`) are matched by the wildcard and
+    // skipped by JaCoCo for want of anything to divide, exactly as `warnVacuousFloors` describes.
+    // They are inside the pattern rather than excluded so that `warnUngatedClasses` has nothing to
+    // say about this family on every run -- which, before this entry, it did about seven classes.
+    //
+    // Falsified 2026-09-05 with the connected `.ec` stashed: `lines covered ratio is 0.00, but
+    // expected minimum is 0.60`.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.60"),
+      includes = listOf("app.muplay.database.CastSettings*"),
+      excludes = listOf(
+        "app.muplay.database.CastSettings",
+        "app.muplay.database.CastSettings.Companion",
+      ),
+      requiresInstrumentedData = true,
+    ),
     // The only floor in this module Tier 1 could enforce through Task 4, and one of two as of
     // Task 5. KeystoreCipher takes a `SecretKey` rather than fetching one from AndroidKeyStore
     // precisely so its cryptographic contract is testable off-device, and KeystoreCipherTest
@@ -2600,6 +2685,36 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.media.BookPlaybackSettings",
         "app.muplay.media.AudiobookItem",
       ),
+    ),
+    // `BookSpeedController` -- the half of that split that *applies* the decision, and the one that
+    // was gated by nothing at all until 2026-09-05. **13/14 = 0.9286 BRANCH, 18/18 LINE**,
+    // instrumented (`BookSpeedControllerTest`, twelve tests against a real `ExoPlayer`); 0/14 and
+    // 0/18 from JVM data alone, measured with the connected `.ec` moved aside, which is what
+    // `requiresInstrumentedData` claims here.
+    //
+    // **0.90 and not 1.00, because 13/14 is this class's ceiling rather than a missing test.** The
+    // one uncovered branch is line 123's `player.currentMediaItem?.mediaId ?: return`: `mediaId` is
+    // non-null in Media3, so the `?.` emits a second decision no run can take. That is the same
+    // arithmetic this file's own header records for `:feature:library`'s `CoverArtCacheKeyKt` and
+    // `:feature:setup`'s `SetupFailureReasonKt` -- check for a null-safe chain on a non-null
+    // property before reading a floor a branch short as a gap. The class documents that exact
+    // reasoning about `onMediaItemTransition` and writes it the other way there; the remaining one
+    // is worth folding when this module is next opened, at which point this becomes 13/13 and the
+    // minimum can go to 1.00.
+    //
+    // Falsified 2026-09-05 by withholding the covering data rather than by raising the minimum:
+    // with the instrumented `.ec` files stashed this reads **0/14** and
+    // `jacocoTestCoverageVerification` fails with `branches covered ratio is 0.00, but expected
+    // minimum is 0.90`. What it gates is worth naming: the speed and silence flag being re-applied
+    // at every item transition (a song after a book otherwise plays at the book's speed, silently),
+    // and the equality guard that stops a book-to-book transition writing one book's speed onto the
+    // other's row.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.90"),
+      includes = listOf("app.muplay.media.BookSpeedController"),
+      requiresInstrumentedData = true,
     ),
     // 22/22 = 1.0000 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
     // in `:app` (see that suite's own doc for why it cannot live in this module, and `Jacoco.kt`'s
@@ -4458,18 +4573,28 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       ),
     ),
     // `PlayerViewModel$1`, the anonymous `PlaybackControls` adapter the `@Inject` constructor
-    // builds: **10/10 LINE = 1.0000**, measured. It is excluded from the rule above and gated here
-    // instead because it is the one class in this module that no JVM test can reach -- this
-    // module's own device suite composes over a hand-built `PlaybackControls` on purpose, so the
-    // adapter that binds the real `PlaybackConnection` is reachable only through Hilt's graph, i.e.
-    // only from `:app`'s `PlaybackJourneyTest`. Between Task 9 and Task 10 it stood at 0/10 and was
-    // named, with that ratio, in `warnUngatedClasses`'s output on every run.
+    // builds: **15/15 LINE = 1.0000**, measured 2026-09-05. It is excluded from the rule above and
+    // gated here instead because it is the one class in this module that no JVM test can reach --
+    // this module's own device suite composes over a hand-built `PlaybackControls` on purpose, so
+    // the adapter that binds the real `PlaybackConnection` is reachable only through Hilt's graph,
+    // i.e. only from `:app`'s `PlaybackJourneyTest`. Between Task 9 and Task 10 it stood at 0/10
+    // and was named, with that ratio, in `warnUngatedClasses`'s output on every run.
     //
-    // All ten lines are covered, and getting the last three of them is why
-    // `theOnScreenControlsDriveTheRealSession` exists in the shape it does: `state`, `connect`,
-    // `isPlaying`, `play` and `pause` come free from any journey that plays something, but `next`,
-    // `previous` and `seekTo` need the Next, Previous and seek-bar controls actually driven against
-    // a live session. Without that test this rule would sit at 7/10 = 0.70.
+    // Every line is covered, and getting them is why two journeys exist in the shape they do:
+    // `state`, `connect`, `isPlaying`, `play` and `pause` come free from any journey that plays
+    // something, but `next`, `previous` and `seekTo` need the Next, Previous and seek-bar controls
+    // driven against a live session (`theOnScreenControlsDriveTheRealSession`), and `retry` needs a
+    // session that has actually failed (`tryAgainRestartsASessionMedia3HasMovedToIdle`). Without
+    // the first this rule sits at 7/15; without the second, at 10/15.
+    //
+    // **It read 10/15 = 0.6667 and was red on master from 674120e (2026-09-03) until 2026-09-05,
+    // and nothing noticed.** That commit added `retry` to this adapter -- five lines, no caller in
+    // any test -- and the only thing that can see it is a full instrumented coverage run, which is
+    // the emulator job. The number in this comment said 10/10 throughout. Two things follow, and
+    // both are already rules elsewhere in this file: a recorded ratio is a measurement with a
+    // timestamp rather than a property, and **a floor over a class only Hilt can build goes stale
+    // the moment somebody adds a member to it** -- there is no cheaper tier that would have
+    // complained.
     //
     // Falsified by withholding the covering data rather than by raising the minimum, since it
     // measures 1.0000: with the instrumented `.ec` files moved aside this reports

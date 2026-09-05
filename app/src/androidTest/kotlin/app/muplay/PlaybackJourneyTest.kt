@@ -301,12 +301,14 @@ class PlaybackJourneyTest {
    * can separate the two, here or anywhere else; see the note at the `prepare()` call for why the
    * line stays.
    *
-   * It is also the only test in this project that reaches the `PlaybackControls` implementation the
-   * `@Inject` constructor builds. `:feature:player`'s own suite composes over a hand-built one on
-   * purpose, so that adapter is reachable through Hilt's graph alone -- and when `retry` was added
-   * to it, its five lines were the only ones in `PlayerViewModel$1` no test executed. The floor at
-   * `app.muplay.player.PlayerViewModel.1` went from 10/10 to 10/15 and stayed red, unseen, because
-   * only a full instrumented coverage run can measure it.
+   * The `PlaybackControls` implementation the `@Inject` constructor builds is reachable from this
+   * class and nowhere else -- `:feature:player`'s own suite composes over a hand-built one on
+   * purpose, so that adapter exists only inside Hilt's graph, and
+   * [theOnScreenControlsDriveTheRealSession] above is what drives the rest of it. `retry` was the
+   * one member of it nothing drove: when it was added, its five lines were the only ones in
+   * `PlayerViewModel$1` no test executed, and the floor at `app.muplay.player.PlayerViewModel.1`
+   * went from 10/10 to 10/15 and stayed red, unseen, because only a full instrumented coverage run
+   * can measure it.
    *
    * The unreachable item's cache key is unique per run. `TrackIdCacheKeyFactory` throws on a
    * `DataSpec` with no key, so one has to be set; making it constant would let a previous run's
