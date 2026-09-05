@@ -1,7 +1,16 @@
 package app.muplay.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -9,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
@@ -21,8 +31,14 @@ import app.muplay.castpicker.CastViewModel
 import app.muplay.book.BookPlayerScreen
 import app.muplay.book.BookScreen
 import app.muplay.book.BookshelfScreen
+import app.muplay.designsystem.theme.MuPlayIcons
+import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.library.AlbumScreen
+import app.muplay.library.FolderScreen
 import app.muplay.library.LibraryScreen
+import app.muplay.library.PlaylistScreen
+import app.muplay.library.PlaylistsScreen
+import app.muplay.library.folderTitle
 import app.muplay.player.MiniPlayer
 import app.muplay.player.PlayerScreen
 import app.muplay.requests.IntegrationsPresenceViewModel
@@ -37,8 +53,11 @@ import app.muplay.ui.navigation.AlbumRoute
 import app.muplay.ui.navigation.BookPlayerRoute
 import app.muplay.ui.navigation.BookRoute
 import app.muplay.ui.navigation.BookshelfRoute
+import app.muplay.ui.navigation.FolderRoute
 import app.muplay.ui.navigation.LibraryRoute
 import app.muplay.ui.navigation.PlayerRoute
+import app.muplay.ui.navigation.PlaylistRoute
+import app.muplay.ui.navigation.PlaylistsRoute
 import app.muplay.ui.navigation.SettingsRoute
 
 /**
@@ -73,6 +92,7 @@ fun MuPlayApp(
  * it: replacing this lambda with `{}` left every test in both tiers green while the back gesture
  * closed the app from the album screen.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MuPlayNavigation(
   start: NavKey,
@@ -149,8 +169,45 @@ private fun MuPlayNavigation(
     CastPickerSheet(onDismiss = { pickerOpen = false }, viewModel = castViewModel)
   }
 
+  // Which section the bar lights, and whether there is any chrome at all. Both read the whole back
+  // stack rather than only its top, so a player or the settings screen pushed from a section does
+  // not move the highlight off it -- see `selectedTab`.
+  val onScreen = backStack.lastOrNull()
+  val onPlayer = onScreen == PlayerRoute || onScreen == BookPlayerRoute
+  val tab = selectedTab(backStack)
+
   Scaffold(
     modifier = modifier,
+    topBar = {
+      // **Only on a section's own screens**, not on album, book, player or settings -- those four
+      // draw their own headers, and a second title bar above one is two answers to "where am I".
+      // A nested folder is the exception that proves it: it has no header of its own, and its own
+      // name is the only thing that says which folder is open.
+      val folder = onScreen as? FolderRoute
+      val sectionRoot = onScreen == LibraryRoute || onScreen == PlaylistsRoute ||
+        onScreen == BookshelfRoute || folder != null
+      if (tab != null && sectionRoot) {
+        TopAppBar(
+          title = {
+            // `folderTitle`, not a second copy of its arithmetic: the same title is computed
+            // inside `folderContent` from the listing, and two derivations of one string drift.
+            Text(text = if (folder != null) folderTitle(folder.path) else tab.label)
+          },
+          actions = {
+            CastButton(onClick = { pickerOpen = true }, viewModel = castViewModel)
+            // Out of the library screen's button row, where it sat between Refresh and a card
+            // opening the bookshelf. Settings is not a library action and never was.
+            IconButton(onClick = { backStack.add(SettingsRoute) }) {
+              Icon(
+                imageVector = MuPlayIcons.Settings,
+                contentDescription = SETTINGS_LABEL,
+                modifier = Modifier.size(MuPlaySpacing.xl),
+              )
+            }
+          },
+        )
+      }
+    },
     bottomBar = {
       // **Around the `NavDisplay`, not inside a destination.** A mini player that lived in the
       // library entry would be torn down and rebuilt on every navigation, and would simply not
@@ -166,9 +223,45 @@ private fun MuPlayNavigation(
       // Hidden on **both** player screens. The audiobook player is a second full player, so the
       // "two controls for one thing, and the top one wins by accident" the paragraph above
       // describes applies to it identically.
-      val onScreen = backStack.lastOrNull()
-      if (onScreen != PlayerRoute && onScreen != BookPlayerRoute) {
-        MiniPlayer(onOpenPlayer = { openPlayer() })
+      //
+      // The navigation bar sits **under** the mini player, so the bar the thumb rests on is the one
+      // that never changes and the now-playing strip floats above it. Both are hidden on a player
+      // screen: that screen is the destination, and a bar offering to leave it competes with its
+      // own back gesture.
+      Column {
+        if (!onPlayer) {
+          MiniPlayer(onOpenPlayer = { openPlayer() })
+        }
+        if (tab != null && !onPlayer) {
+          NavigationBar {
+            TopLevelDestination.entries.forEach { destination ->
+              NavigationBarItem(
+                selected = destination == tab,
+                onClick = {
+                  // Rebuilt, not pushed -- see `stackFor`. Re-tapping the section you are already
+                  // in returns to its root, which is what every other Android app does and is the
+                  // only way back out of six nested folders in one tap.
+                  backStack.clear()
+                  stackFor(destination).forEach(backStack::add)
+                },
+                // A handle for the journeys, and a necessary one rather than a convenience.
+                // `NavigationBarItem` sets `Selected` and carries its label as text, which is
+                // exactly the shape `StoreScreenshotsTest` uses to find the library chips and to
+                // read the browse list -- so without a way to tell a tab from a chip, four tabs
+                // become four libraries and four album titles. See `NAV_TAB_TAG_PREFIX`.
+                modifier = Modifier.testTag(NAV_TAB_TAG_PREFIX + destination.name),
+                icon = {
+                  Icon(
+                    imageVector = destination.icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(MuPlaySpacing.xl),
+                  )
+                },
+                label = { Text(destination.label) },
+              )
+            }
+          }
+        }
       }
     },
   ) { padding ->
@@ -191,22 +284,6 @@ private fun MuPlayNavigation(
           LibraryScreen(
             onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) },
             onOpenPlayer = { openPlayer() },
-            // Plan 6 Task 12. The settings screen is a *slot* (`:feature:settings`), so this entry
-            // names no setting and no feature that contributes one -- see `SettingsSection`.
-            onOpenSettings = { backStack.add(SettingsRoute) },
-            // Plan 4 Task 9. **The only way a user reaches an audiobook.** Everything under it --
-            // the shelf, one book, the book player, and the whole engine beneath them -- was
-            // unreachable from any screen until this line existed.
-            //
-            // A plain button rather than the plan's "selecting an AUDIOBOOKS library navigates
-            // instead of filtering", and the reason is worth recording. `LibraryScreen` switches
-            // libraries in place, so that version needs a branch on `LibraryRole` inside the
-            // chip's own `onClick` -- an arm no existing journey takes, in a file whose LINE floor
-            // (`LibraryScreenKt`, 56/62 = 0.9032 against a minimum of 0.90) clears by exactly one
-            // line and is `requiresInstrumentedData`, so this piece could not measure what it did
-            // to it. It would also make the shelf unreachable for anyone who has not tagged a
-            // library, which is precisely the user who most needs to be told the feature exists.
-            onOpenBookshelf = { backStack.add(BookshelfRoute) },
           )
         }
         // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round
@@ -229,6 +306,21 @@ private fun MuPlayNavigation(
         // 10's journeys exist -- so every line inside these lambdas is a line that floor counts
         // and cannot cover. The `entry<...>` lines themselves run on every composition and are
         // fine; it is only the bodies. See the note on `:app`'s entry in the root build script.
+        // Folders. One entry serves every depth -- the key carries the path -- so descending is a
+        // push and the system back gesture is what walks back up. See `FolderRoute`.
+        entry<FolderRoute> { route ->
+          FolderScreen(
+            path = route.path,
+            onOpenFolder = { backStack.add(FolderRoute(it)) },
+            onOpenPlayer = { openPlayer() },
+          )
+        }
+        entry<PlaylistsRoute> {
+          PlaylistsScreen(onOpenPlaylist = { backStack.add(PlaylistRoute(it)) })
+        }
+        entry<PlaylistRoute> { route ->
+          PlaylistScreen(playlistId = route.playlistId, onOpenPlayer = { openPlayer() })
+        }
         entry<BookshelfRoute> {
           BookshelfScreen(onBookClick = { backStack.add(BookRoute(it)) }, onOpenPlayer = { openPlayer() })
         }
@@ -272,3 +364,17 @@ private fun MuPlayNavigation(
     )
   }
 }
+
+/** The top bar's settings control. Its own name, because the icon carries no text. */
+private const val SETTINGS_LABEL = "Settings"
+
+/**
+ * The prefix on every navigation bar tab's test tag, followed by the [TopLevelDestination] name.
+ *
+ * `internal` so `:app`'s own instrumented tests can filter the bar out of a text or `Selected`
+ * sweep. This is the navigation bar's version of `MiniPlayer`'s `"Now playing"` content
+ * description: chrome that sits on every browse screen and carries text of its own, which any
+ * matcher over the screen underneath will otherwise read as content. `JourneyNavigation`'s
+ * `notTheMiniPlayer` records what that costs when it is missing.
+ */
+internal const val NAV_TAB_TAG_PREFIX = "nav:tab:"

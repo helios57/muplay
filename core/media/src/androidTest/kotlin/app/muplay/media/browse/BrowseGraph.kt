@@ -22,6 +22,8 @@ import app.muplay.model.AlbumListType
 import app.muplay.model.AlbumWithSongs
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
@@ -450,6 +452,9 @@ class RecordingArtSource : SubsonicSource {
   }
 
   override suspend fun capabilities(): ServerCapabilities = error("not used by the browse suite")
+  override suspend fun getPlaylists(): List<Playlist> = error("not used by the browse suite")
+  override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
+    error("not used by the browse suite")
 
   override suspend fun ping(): ServerInfo = error("not used by the browse suite")
   override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by the browse suite")

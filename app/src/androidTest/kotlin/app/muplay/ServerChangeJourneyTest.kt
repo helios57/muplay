@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
@@ -45,7 +46,7 @@ class ServerChangeJourneyTest {
   @Test
   fun theSettingsScreenNamesTheServerTheAppIsConnectedTo() {
     composeRule.reachLibraryScreen()
-    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SETTINGS_LABEL).performClick()
 
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
@@ -65,7 +66,7 @@ class ServerChangeJourneyTest {
   @Test
   fun signingOutAsksFirstAndCancellingLeavesTheServerConnected() {
     composeRule.reachLibraryScreen()
-    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SETTINGS_LABEL).performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
     }
@@ -93,7 +94,7 @@ class ServerChangeJourneyTest {
   @Test
   fun everyControlOnTheAssembledSettingsScreenIsBigEnoughToTap() {
     composeRule.reachLibraryScreen()
-    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SETTINGS_LABEL).performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
     }
@@ -111,7 +112,7 @@ class ServerChangeJourneyTest {
   @Test
   fun theSignOutConfirmationsButtonsAreBigEnoughToTap() {
     composeRule.reachLibraryScreen()
-    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SETTINGS_LABEL).performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
     }
@@ -133,7 +134,7 @@ class ServerChangeJourneyTest {
   @Test
   fun signingOutClearsTheCredentialsAndReturnsToSetup() {
     composeRule.reachLibraryScreen()
-    composeRule.onNodeWithText(SETTINGS_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(SETTINGS_LABEL).performClick()
     composeRule.waitUntil(TIMEOUT_MILLIS) {
       composeRule.onAllNodesWithText(SERVER_TITLE).fetchSemanticsNodes().isNotEmpty()
     }
@@ -195,6 +196,14 @@ class ServerChangeJourneyTest {
      * This journey's own copies, per `JourneyNavigation.kt`'s rule: a string this test makes a
      * claim about is the black-box contract with what a user sees, and sharing a constant with the
      * production source would let a wording change pass unnoticed.
+     */
+    /**
+     * The top bar's settings control -- an **icon**, matched by its `contentDescription`.
+     *
+     * It used to be a `TextButton` in the library screen's own button row and was matched by text.
+     * Settings is not a library action, so the restructure moved it to the app bar, and a
+     * `onNodeWithText` would silently stop finding it: a journey that cannot find its first control
+     * fails on that click rather than on the thing it is testing.
      */
     const val SETTINGS_LABEL = "Settings"
     const val SERVER_TITLE = "Server"

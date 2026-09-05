@@ -36,6 +36,16 @@ class LibraryNoticeTest {
   }
 
   @Test
+  fun `an empty library with an idle sync is still loading, not empty`() {
+    // `SyncProgress.Idle` is the flow's value before the engine has been asked for anything, which
+    // is what a cold launch renders for the first moments of its life. It reaches this branch only
+    // through an empty mirror, so folding it into `Empty` -- the tempting reading of "idle" -- puts
+    // "Nothing here yet." in front of a user whose first sync has not begun.
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Idle).toMessage())
+      .isEqualTo("Loading your library…")
+  }
+
+  @Test
   fun `the initial load counts the albums it has read, so the screen can be seen to move`() {
     // The defect this exists for: the first sync makes one `getAlbum` request per album and showed
     // one motionless sentence for the whole of it, which is what a hung app looks like.
@@ -190,5 +200,27 @@ class LibraryNoticeTest {
     assertThat(message).isNotEmpty()
     assertThat(message)
       .isNotEqualTo(LibraryNotice.Failed(SyncFailure.Unreachable).toMessage(hasMirror = false))
+  }
+
+  @Test
+  fun `a screen that does not sync names its own failure instead of the sync's`() {
+    // `describe`'s catch-all sentence is "The last sync did not finish", which is simply false on
+    // the playlists screens -- they fetch live and never sync anything. Every other arm names a
+    // cause that is true wherever it is shown; only this one belongs to the caller.
+    val message = SyncFailure.Unknown.describe("Could not load your playlists.")
+
+    assertThat(message).isEqualTo("Could not load your playlists.")
+    assertThat(message).doesNotContain("sync")
+  }
+
+  @Test
+  fun `naming your own fallback does not rewrite the failures that already name themselves`() {
+    // The parameter is a fallback, not an override. A rejected sign-in is a rejected sign-in on
+    // every screen, and a caller passing its own wording must not be able to bury that.
+    val rejected = SyncFailure.SignInRejected(code = 40)
+    val named = rejected.describe("Could not load your playlists.")
+
+    assertThat(named).isEqualTo(rejected.describe())
+    assertThat(named).contains("credentials")
   }
 }

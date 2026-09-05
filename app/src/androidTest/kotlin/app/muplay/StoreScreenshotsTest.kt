@@ -25,6 +25,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.library.OUT_OF_SCOPE_SUFFIX
 import app.muplay.model.LibraryRole
 import app.muplay.setup.LibraryRepositoryEntryPoint
+import app.muplay.ui.NAV_TAB_TAG_PREFIX
 import dagger.hilt.android.EntryPointAccessors
 import java.io.File
 import java.io.FileOutputStream
@@ -394,11 +395,31 @@ class StoreScreenshotsTest {
       .fetchSemanticsNodes()
       .flatMap { node -> node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() } }
 
-  /** Every string any node on screen renders. */
+  /** Every string any node on screen renders, **except** the navigation bar's. See [isNavTab]. */
   private fun visibleText(): List<String> =
     composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))
       .fetchSemanticsNodes()
+      .filterNot(::isNavTab)
       .flatMap { node -> node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text } }
+
+  /**
+   * Whether [node] is one of the four navigation bar tabs.
+   *
+   * **Not furniture that can be filtered by name.** A `NavigationBarItem` sets `Selected` *and*
+   * renders its label as text, which is precisely the shape [libraryChipLabels] uses to find the
+   * library chips and [shuffledTitles] uses to find shuffled rows -- so an unfiltered sweep reads
+   * four tabs as four extra libraries, four extra album titles, and, through
+   * [selectedLibraryLabel]'s `first { selected }`, quite possibly as *the* selected library. The
+   * bar is on every browse screen, so this is not an edge case; it is every screenshot.
+   *
+   * By tag rather than by label, deliberately: a name-based filter (`"Albums"`, `"Folders"`, ...)
+   * silently stops working the day a tab is renamed or added, and what it would then do is not
+   * fail -- it would put a tab's word into a store screenshot's caption. `MuPlayApp` tags each tab
+   * with [app.muplay.ui.NAV_TAB_TAG_PREFIX] for this, the navigation bar's answer to `MiniPlayer`'s
+   * `"Now playing"` content description.
+   */
+  private fun isNavTab(node: androidx.compose.ui.semantics.SemanticsNode): Boolean =
+    node.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith(NAV_TAB_TAG_PREFIX)
 
   /**
    * What the browse list is *showing* — album and artist names — with the screen's own furniture
@@ -421,6 +442,10 @@ class StoreScreenshotsTest {
       // and contributes no text node: this list is furniture to ignore, and an entry that matches
       // nothing costs nothing while an entry that is missing puts a control's word into a
       // screenshot's caption. `browseText` is a description of a screenshot, not a gate.
+      //
+      // `Settings` and `Books` are now in that same category and kept for the same reason:
+      // Settings is an icon in the top bar and contributes no text, and Books is a navigation tab
+      // that [isNavTab] drops before this filter ever sees it.
       PLAY_LABEL, PAUSE_LABEL,
     ) + libraryChipLabels()
     return visibleText()
@@ -430,17 +455,21 @@ class StoreScreenshotsTest {
 
   /** The library chips' labels, i.e. the library names the server reported. */
   private fun libraryChipLabels(): List<String> =
-    composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected))
-      .fetchSemanticsNodes()
+    selectableNodes()
       .flatMap { node -> node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text } }
       .distinct()
 
   private fun selectedLibraryLabel(): String =
-    composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected))
-      .fetchSemanticsNodes()
+    selectableNodes()
       .first { it.config.getOrElse(SemanticsProperties.Selected) { false } }
       .config.getOrElse(SemanticsProperties.Text) { emptyList() }
       .first().text
+
+  /** The library chips: everything carrying `Selected` that is not a navigation tab. */
+  private fun selectableNodes() =
+    composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected))
+      .fetchSemanticsNodes()
+      .filterNot(::isNavTab)
 
   /**
    * The shuffled rows: the clickable text on the browse screen that is neither a control nor an
@@ -456,6 +485,7 @@ class StoreScreenshotsTest {
         libraryChipLabels()
     return composeRule.onAllNodes(hasClickAction())
       .fetchSemanticsNodes()
+      .filterNot(::isNavTab)
       .flatMap { node -> node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text } }
       .filterNot { it in furniture || it in alreadyListed }
   }

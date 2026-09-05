@@ -135,7 +135,7 @@ internal fun LibraryNotice.toMessage(hasMirror: Boolean): String? = when (this) 
  * for a failure that is not about the connection — that phrasing sent a self-hoster to debug a
  * network that was working in four of these seven cases.
  */
-private fun SyncFailure.describe(): String = when (this) {
+internal fun SyncFailure.describe(unknown: String = "The last sync did not finish."): String = when (this) {
   is SyncFailure.SignInRejected ->
     "Could not sign in — the server rejected your credentials. Sign in again from Settings."
   is SyncFailure.ServerError -> "The server answered with an error ($status)."
@@ -146,5 +146,7 @@ private fun SyncFailure.describe(): String = when (this) {
   SyncFailure.CertificateInvalid ->
     "The server's certificate could not be trusted — it may have expired or be self-signed."
   SyncFailure.Unreachable -> "Could not reach the server."
-  SyncFailure.Unknown -> "The last sync did not finish."
+  // Named by the caller: the shared arms above are true wherever they are shown, and this one is
+  // the fallback -- "the last sync did not finish" is simply false on a screen that does not sync.
+  SyncFailure.Unknown -> unknown
 }

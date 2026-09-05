@@ -3898,8 +3898,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     ),
     // `LibraryNoticeKt` -- the three `when` cascades that decide every sentence this screen can
     // put in front of a user: `LibraryEmptyReason.toMessage`, `LibraryNotice.toMessage(hasMirror)`
-    // and the private `SyncFailure.describe` they share. **30/30 BRANCH, 28/28 LINE**, measured
-    // 2026-09-05 after four members that had no test at all were given one.
+    // and the `SyncFailure.describe` they share. **40/40 BRANCH, 33/33 LINE**, re-measured
+    // 2026-09-05 after the playlists screens became a second caller of `describe`.
+    //
+    // The numbers moved (they were 30/30 and 28/28 when this floor was written the same day) and
+    // are re-measured rather than carried forward, per this file's own rule about recorded
+    // falsifications going stale.
     //
     // **This is a fast-tier floor, and that was measured rather than assumed.** With every
     // module's `.ec` withheld -- `mergedExecutionData` hands this module the whole fleet's
@@ -3913,8 +3917,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // line 1/1; the six `data object`s carry neither counter). They cannot move this ratio, and
     // naming them is what stops `warnUngatedClasses` reporting ten types with nothing to gate.
     //
-    // Falsified, measured, not predicted: withhold all four of `LibraryNoticeTest`'s 2026-09-05
-    // tests and this reads **BRANCH 27/30 = 0.9000** (LINE 27/28), which fires.
+    // Falsified, measured, not predicted: withhold all four of `LibraryNoticeTest`'s original
+    // 2026-09-05 tests and this read **BRANCH 27/30 = 0.9000** (LINE 27/28), which fires.
+    //
+    // **And here is what a re-run of that falsification found, which is the more useful half.**
+    // `describe` grew a `unknown: String = ...` parameter so the playlists screens can name their
+    // own fallback -- "The last sync did not finish" is simply false on a screen that never syncs.
+    // Withholding the two tests written for it moves this floor **not at all**: JaCoCo filters
+    // Kotlin's default-argument bridge, so `describe("...")` and `describe()` execute the same
+    // branches. Withholding all three of that day's later tests reads **39/40 = 0.9750**, and the
+    // single branch that moves is the `SyncProgress.Idle` arm of `countSuffix`.
+    //
+    // So this floor holds the `Idle` case and does not hold the caller-named fallback. What holds
+    // that is the mutation it was written against, measured both ways on one tree: replace
+    // `SyncFailure.Unknown -> unknown` with the hardcoded sync sentence and
+    // `a screen that does not sync names its own failure instead of the sync's` goes red.
     //
     // **But note what the falsification also proved, because it is the more useful half.**
     // Withholding only `a server mid-scan is told apart from a server that failed` leaves this at
@@ -3937,6 +3954,94 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.library.LibraryNotice*",
         "app.muplay.library.LibraryEmptyReason",
         "app.muplay.library.LibraryEmptyReason*",
+      ),
+    ),
+    // ---- The folders and playlists screens (2026-09-05). ----
+    //
+    // `folderContent` is the whole of what a folder screen shows -- the title it puts in the top
+    // bar, whether Shuffle is offered, and which of the two genuinely different empty states it
+    // renders -- plus the sentences and the track count it renders them as. **26/26 BRANCH,
+    // 19/19 LINE**, measured; pure functions over a `FolderListing`, a count and an enum, so no
+    // `requiresInstrumentedData`.
+    //
+    // `toMessage`, `trackCountLabel` and `folderTitle` live in this file rather than beside the
+    // `Composable`s that render them, and that is what put them behind this floor at all:
+    // `FolderScreenKt` measures **0/190 BRANCH** on the fast tier and cannot be gated without a
+    // device. A user-visible sentence in an ungateable file is a sentence no test reads back.
+    //
+    // `FolderUiState` and `FolderEmptyReason` ride along for the reason `LibraryUiState*` does
+    // above: measured, both carry **no BRANCH counter at all** (line 8/8 and 2/2), so they cannot
+    // move this ratio, and naming them is what stops `warnUngatedClasses` reporting two types with
+    // nothing to gate.
+    //
+    // The distinction this gates is the one the empty state exists for: a folder tree that is
+    // empty because no sync has yet written a `path` is not a folder that is empty. Before
+    // `songs.path` existed every install had a `NULL` there, so an upgraded install with a full
+    // library renders an empty Folders tab until the next sync -- and "Nothing here" would be a
+    // lie told to somebody whose music is right there on the Albums tab.
+    //
+    // Falsified, measured not predicted: withholding the single test
+    // `an empty library with no paths yet says so, rather than claiming it has no folders` read
+    // **18/20 = 0.9000** against the 20-branch version of this class, which fires.
+    //
+    // The two wording functions are held by mutation rather than by this number, and both were run
+    // rather than predicted: `trackCountLabel` returning `"$count tracks"` unconditionally fails
+    // `one track is one track`, and `AwaitingSync` mapped to `EMPTY_FOLDER_LABEL` -- the two empty
+    // states saying the same thing, which is the defect the enum exists to prevent -- fails
+    // `a mirror with no paths yet is told how to get some, not that it has no folders`.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.FolderUiStateKt",
+        "app.muplay.library.FolderUiState",
+        "app.muplay.library.FolderEmptyReason",
+      ),
+    ),
+    // The three new view models' own bodies. **Exact names, not a wildcard**, for the reason the
+    // `LibraryViewModel` floor above gives at length: the nested `$1` adapters and suspend state
+    // machines measure 0/6 LINE and 4/7 or 6/12 BRANCH (Hilt-only constructors and coroutine
+    // machinery), and a wildcard that swept them in could hold no floor at all.
+    //
+    // Measured 2026-09-05: `FolderViewModel` **12/12** BRANCH (21/24 LINE -- the three are the
+    // `@Inject` secondary constructor's body, reachable only through Hilt, exactly as
+    // `LibraryViewModel`'s own note records), `PlaylistViewModel` **22/22** BRANCH (18/19 LINE,
+    // same reason). `PlaylistsViewModel` carries **no BRANCH counter** (10/11 LINE) and rides
+    // along so it is gated by name rather than left warning.
+    //
+    // Every branch here is a guard against starting playback of something that is not there, and
+    // each was falsified by mutation rather than predicted:
+    //
+    // - delete `FolderViewModel`'s `startIndex !in tracks.indices` and a stale row index starts a
+    //   queue at a position the list does not have;
+    // - weaken either range check to a length-only `startIndex >= size` and a `-1` starts a queue
+    //   at -1 -- which is why both tests tap both ends of the range;
+    // - delete `withSongsUnder`'s `path.value ?: return` and a shuffle tapped before the screen's
+    //   `LaunchedEffect` has run queries the whole library at the null path;
+    // - delete its `selectedLibraryId.first() ?: return@launch` and the same shuffle runs against
+    //   a library that does not exist;
+    // - delete `PlaylistViewModel.open`'s `openedId == playlistId` guard and every rotation
+    //   re-fetches the playlist *and* blinks the list away to Loading while it does;
+    // - delete `shuffle`'s `songs.isEmpty()` guard and an emptied playlist puts the player on
+    //   screen with nothing in it.
+    //
+    // Two guards were **removed** rather than gated, because the falsification proved no test
+    // could see them: `uiState.value?.tracks ?: return` beside a range check, and the identical
+    // pair in `PlaylistViewModel.play`. A null state and an out-of-range index are one behaviour,
+    // so the second guard was a branch nothing could ever hold. Both are now `orEmpty()`.
+    //
+    // Falsified as a floor as well as by mutation: withhold the single test
+    // `reopening the playlist already on screen does not read it again` and `PlaylistViewModel`
+    // reads **21/22 = 0.9500**, which fires.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "app.muplay.library.FolderViewModel",
+        "app.muplay.library.PlaylistViewModel",
+        "app.muplay.library.PlaylistsViewModel",
       ),
     ),
     // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that

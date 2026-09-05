@@ -6,6 +6,8 @@ import app.muplay.model.AlbumListType
 import app.muplay.model.AlbumWithSongs
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
@@ -53,6 +55,9 @@ class SetupViewModelTest {
     override fun streamUrl(songId: String, format: StreamFormat, timeOffsetSeconds: Int?): String =
       error("not used by setup")
     override suspend fun capabilities(): ServerCapabilities = error("not used by setup")
+    override suspend fun getPlaylists(): List<Playlist> = error("not used by setup")
+    override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
+      error("not used by setup")
   }
 
   /**

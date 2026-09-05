@@ -17,6 +17,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -104,6 +105,23 @@ class LibraryViewModelTest {
 
     var ids: List<Int> = emptyList()
     override suspend fun allIds(): List<Int> = ids
+
+    /**
+     * The shared selection, resolved exactly as `LibrarySelection` resolves it: an explicit choice
+     * only while that library still exists, else the first one. Resolving here rather than
+     * returning the raw choice is what keeps this fake honest -- the production seam hands the
+     * ViewModel a library that exists, and a fake that handed it a dangling id would let a
+     * `libraryContent` fallback pass for behaviour the real app never exercises.
+     */
+    private val explicit = MutableStateFlow<Int?>(null)
+    override val selectedLibraryId: Flow<Int?> =
+      combine(this.libraries, explicit) { known, chosen ->
+        known.firstOrNull { it.id == chosen }?.id ?: known.firstOrNull()?.id
+      }
+
+    override fun selectLibrary(id: Int) {
+      explicit.value = id
+    }
 
     /** Song **ids** and the start index, so a test can assert which queue was launched and from
      *  where -- not merely that something was played. */

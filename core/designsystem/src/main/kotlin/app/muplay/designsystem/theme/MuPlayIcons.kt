@@ -135,6 +135,128 @@ object MuPlayIcons {
     lineTo(CAST_ORIGIN_X + DOT_NUDGE, CAST_ORIGIN_Y)
   }
 
+  /**
+   * The browse destinations, and the actions that sit in a top bar beside them.
+   *
+   * All stroked, per this set's one rule: transport is solid because a thumb finds it by mass,
+   * and everything else is a line. A navigation bar full of filled shapes would compete with the
+   * play button for exactly the attention the play button needs.
+   */
+  val Album: ImageVector = stroked("MuPlayAlbum") {
+    circle(CENTRE, CENTRE, 8f)
+    circle(CENTRE, CENTRE, 2.4f)
+  }
+
+  val Folder: ImageVector = stroked("MuPlayFolder") {
+    moveTo(3.5f, 18.5f)
+    lineTo(3.5f, 6f)
+    lineTo(9.5f, 6f)
+    lineTo(11.5f, 8.5f)
+    lineTo(20.5f, 8.5f)
+    lineTo(20.5f, 18.5f)
+    close()
+  }
+
+  /** Three rules and a play mark: a list that is meant to be played, not merely read. */
+  val Playlist: ImageVector = stroked("MuPlayPlaylist") {
+    moveTo(4f, 7f)
+    lineTo(20f, 7f)
+    moveTo(4f, 12f)
+    lineTo(20f, 12f)
+    moveTo(4f, 17f)
+    lineTo(12.5f, 17f)
+    moveTo(16f, 13.5f)
+    lineTo(21f, 17f)
+    lineTo(16f, 20.5f)
+    close()
+  }
+
+  /** A standing book: cover and spine. The shelf destination. */
+  val Book: ImageVector = stroked("MuPlayBook") {
+    moveTo(6f, 4f)
+    lineTo(18.5f, 4f)
+    lineTo(18.5f, 20f)
+    lineTo(6f, 20f)
+    close()
+    moveTo(9.2f, 4f)
+    lineTo(9.2f, 20f)
+  }
+
+  val Search: ImageVector = stroked("MuPlaySearch") {
+    circle(10.5f, 10.5f, 6f)
+    moveTo(14.9f, 14.9f)
+    lineTo(20f, 20f)
+  }
+
+  /**
+   * Two sliders, not a gear.
+   *
+   * A gear at 24dp is a ring of teeth two pixels wide, which resolves to a grey blob; two sliders
+   * stay legible at every size this is drawn at and say the same thing.
+   */
+  val Settings: ImageVector = stroked("MuPlaySettings") {
+    moveTo(4f, 8.5f)
+    lineTo(20f, 8.5f)
+    circle(9f, 8.5f, 2.2f)
+    moveTo(4f, 15.5f)
+    lineTo(20f, 15.5f)
+    circle(15f, 15.5f, 2.2f)
+  }
+
+  /** Two paths crossing: the order is not the order the list is in. */
+  val Shuffle: ImageVector = stroked("MuPlayShuffle") {
+    moveTo(3.5f, 7f)
+    lineTo(7.5f, 7f)
+    lineTo(16f, 17f)
+    lineTo(20.5f, 17f)
+    moveTo(3.5f, 17f)
+    lineTo(7.5f, 17f)
+    lineTo(16f, 7f)
+    lineTo(20.5f, 7f)
+    moveTo(18f, 4.6f)
+    lineTo(20.5f, 7f)
+    lineTo(18f, 9.4f)
+    moveTo(18f, 14.6f)
+    lineTo(20.5f, 17f)
+    lineTo(18f, 19.4f)
+  }
+
+  /** A list with a plus: add to what is already queued, rather than replacing it. */
+  val QueueAdd: ImageVector = stroked("MuPlayQueueAdd") {
+    moveTo(4f, 6.5f)
+    lineTo(19f, 6.5f)
+    moveTo(4f, 11.5f)
+    lineTo(19f, 11.5f)
+    moveTo(4f, 16.5f)
+    lineTo(11.5f, 16.5f)
+    moveTo(16.5f, 13.5f)
+    lineTo(16.5f, 20.5f)
+    moveTo(13f, 17f)
+    lineTo(20f, 17f)
+  }
+
+  /** The queue itself: the same list without the plus, and a mark showing where it is playing. */
+  val Queue: ImageVector = stroked("MuPlayQueue") {
+    moveTo(4f, 6.5f)
+    lineTo(20f, 6.5f)
+    moveTo(4f, 11.5f)
+    lineTo(20f, 11.5f)
+    moveTo(4f, 16.5f)
+    lineTo(12f, 16.5f)
+    moveTo(15.5f, 13.5f)
+    lineTo(20.5f, 16.5f)
+    lineTo(15.5f, 19.5f)
+    close()
+  }
+
+  /** Grab handle for a row the user can drag. Two rules, deliberately not three. */
+  val DragHandle: ImageVector = stroked("MuPlayDragHandle") {
+    moveTo(6f, 9.5f)
+    lineTo(18f, 9.5f)
+    moveTo(6f, 14.5f)
+    lineTo(18f, 14.5f)
+  }
+
   /** Dismisses the sleep timer. */
   val Close: ImageVector = stroked("MuPlayClose") {
     moveTo(6.8f, 6.8f)

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.muplay.database.BrowseRepository
 import app.muplay.database.LibraryRepository
+import app.muplay.database.LibrarySelection
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.SyncEngine
 import app.muplay.database.SyncFailure
@@ -55,6 +56,19 @@ interface LibrarySource {
    * to be read *while* that suspending call is still running.
    */
   val syncProgress: Flow<SyncProgress>
+
+  /**
+   * The library the user is browsing, shared with every other browse screen and already resolved
+   * to one that exists.
+   *
+   * On the seam rather than held here, because the choice outlives this ViewModel and is made on
+   * more than one screen -- see `LibrarySelection`. A private `MutableStateFlow` here (which is
+   * what this was) meant the folders tab and the albums tab could show different libraries the
+   * moment either ViewModel was recreated.
+   */
+  val selectedLibraryId: Flow<Int?>
+  fun selectLibrary(id: Int)
+
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
   suspend fun allIds(): List<Int>
 
@@ -84,6 +98,7 @@ class LibraryViewModel(
     shuffleRepository: ShuffleRepository,
     syncEngine: SyncEngine,
     playbackLauncher: PlaybackLauncher,
+    librarySelection: LibrarySelection,
   ) : this(
     object : LibrarySource {
       override val libraries: Flow<List<MusicLibrary>> = libraryRepository.libraries
@@ -94,6 +109,8 @@ class LibraryViewModel(
         shuffleRepository.shuffle(libraryId, size)
       override suspend fun syncIfStale(): SyncState = syncEngine.syncIfStale()
       override val syncProgress: Flow<SyncProgress> = syncEngine.progress
+      override val selectedLibraryId: Flow<Int?> = librarySelection.selected
+      override fun selectLibrary(id: Int) = librarySelection.select(id)
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
       override suspend fun allIds(): List<Int> = libraryRepository.allIds()
@@ -102,7 +119,6 @@ class LibraryViewModel(
     },
   )
 
-  private val selectedLibraryId = MutableStateFlow<Int?>(null)
   private val query = MutableStateFlow("")
   private val shuffleResult = MutableStateFlow<ShuffleResult?>(null)
   private val notice = MutableStateFlow<LibraryNotice>(LibraryNotice.Idle)
@@ -132,7 +148,7 @@ class LibraryViewModel(
     }
 
   private val albums: Flow<List<Album>> =
-    combine(source.libraries, selectedLibraryId) { libraries, selected ->
+    combine(source.libraries, source.selectedLibraryId) { libraries, selected ->
       libraries.firstOrNull { it.id == selected }?.id ?: libraries.firstOrNull()?.id
     }.flatMapLatest { id ->
       if (id == null) flowOf(emptyList()) else source.albums(id)
@@ -141,7 +157,7 @@ class LibraryViewModel(
   val uiState: StateFlow<LibraryUiState> =
     combine(
       source.libraries,
-      selectedLibraryId,
+      source.selectedLibraryId,
       query,
       albums,
       combine(searchAlbums, shuffleResult, syncingNotice) { results, shuffled, currentNotice ->
@@ -164,7 +180,7 @@ class LibraryViewModel(
   }
 
   fun selectLibrary(id: Int) {
-    selectedLibraryId.value = id
+    source.selectLibrary(id)
     // A shuffle belongs to the library it was drawn from; carrying it across a switch would show
     // music tracks under the audiobook tab, which is precisely the confusion this app removes.
     shuffleResult.value = null

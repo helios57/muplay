@@ -266,7 +266,13 @@ internal fun journeyProgressDao(): MediaProgressDao =
     MediaProgressEntryPoint::class.java,
   ).mediaProgressDao()
 
-/** The library screen's button into the shelf. `LibraryScreen`'s `BOOKS_LABEL`. */
+/**
+ * The navigation bar's shelf tab. `TopLevelDestination.Books`'s label.
+ *
+ * This used to be a card in the middle of the library screen's album list. It is now one of four
+ * tabs, so it is present on every browse screen rather than only on the library screen -- which is
+ * what lets this helper reach the shelf from wherever a journey happens to be.
+ */
 private const val BOOKS_LABEL = "Books"
 
 /** `BookshelfScreen`'s loading state. The shelf renders this and nothing else until it has rows. */

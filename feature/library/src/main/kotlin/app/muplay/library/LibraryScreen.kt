@@ -44,8 +44,6 @@ import app.muplay.model.Song
 fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onOpenPlayer: () -> Unit,
-  onOpenSettings: () -> Unit,
-  onOpenBookshelf: () -> Unit,
   modifier: Modifier = Modifier,
   viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -65,15 +63,17 @@ fun LibraryScreen(
       onOpenPlayer()
     },
     coverArtUrl = viewModel::coverArtUrl,
-    onOpenSettings = onOpenSettings,
-    onOpenBookshelf = onOpenBookshelf,
     modifier = modifier,
   )
 }
 
 /**
- * The browse screen: pick a library, search it, shuffle it, or open an album — and the one door to
- * the audiobook half of the app.
+ * The browse screen: pick a library, search it, shuffle it, or open an album.
+ *
+ * It used to be the app's only screen, and carried everything that had nowhere else to go -- a card
+ * into the audiobook shelf sitting in the middle of the album list, and a row of text buttons for
+ * settings below it. Those are now the navigation bar's Books tab and the top bar's settings
+ * control. What is left here is one library and the things you do to it.
  *
  * ### What the design pass changed, and why each change is a defect rather than a preference
  *
@@ -128,8 +128,6 @@ private fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onShuffledSongClick: (Int) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
-  onOpenSettings: () -> Unit,
-  onOpenBookshelf: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // ONE `LazyColumn` for the whole screen, and this is a defect fix rather than a refactor.
@@ -195,42 +193,14 @@ private fun LibraryScreen(
           }
         }
 
-        // Plan 4 Task 9. The only route to the audiobook shelf, and therefore to the whole
-        // audiobook engine -- which shipped complete, gated, and reachable from no screen at all.
-        //
-        // `onClick = onOpenBookshelf` and not `onClick = { onOpenBookshelf() }`: a lambda body is
-        // a line this module's LINE floor then requires a *click* to cover, and no journey on the
-        // browse screen clicks it. The card renders on every journey that reaches this screen, so
-        // the lines it adds are covered lines.
-        item {
-          Surface(
-            onClick = onOpenBookshelf,
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.tertiaryContainer,
-            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Column(
-              modifier = Modifier
-                .heightIn(min = MuPlaySpacing.minTouchTarget)
-                .padding(horizontal = MuPlaySpacing.lg, vertical = MuPlaySpacing.md),
-              verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
-            ) {
-              Text(text = BOOKS_LABEL, style = MaterialTheme.typography.titleMedium)
-              Text(text = BOOKS_SUPPORTING_LABEL, style = MaterialTheme.typography.bodySmall)
-            }
-          }
-        }
-
-        // Maintenance, not navigation: the two things a user does to the app rather than to the
-        // music. Text buttons, so they sit under the two doors above without competing with them.
+        // Refresh, and only Refresh. The Books card and the Settings button that used to share
+        // this space are now the navigation bar's Books tab and the top bar's settings control:
+        // neither was a library action, and having them here was most of what made this screen
+        // read as a pile rather than as a place. What is left is the one thing a user does *to
+        // this library* -- pick up a change made on the server since the app started.
         item {
           Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
-            // The only way a user has to pick up a change made on the server after the app started.
             TextButton(onClick = onRefresh) { Text(REFRESH_LABEL) }
-            // Plan 6 Task 12. The only route to the settings screen, and therefore the only way a
-            // user reaches the renderer-direct switch.
-            TextButton(onClick = onOpenSettings) { Text(SETTINGS_LABEL) }
           }
         }
 
@@ -515,7 +485,6 @@ private fun SyncingMessage(reason: LibraryEmptyReason.Syncing, modifier: Modifie
  * fails it. Contrast [NOT_FOUND_LABEL], which is `public` precisely because the only journey that
  * names it asserts it *absent* and so has no such red available.
  */
-internal const val SETTINGS_LABEL = "Settings"
 
 /**
  * Plan 4 Task 9. The label on the only route to the audiobook shelf.
@@ -535,7 +504,6 @@ internal const val BOOKS_LABEL = "Books"
  * unvisited half of an app is exactly where a promise the app does not keep would go unnoticed.
  * The same rule `LibraryUiState.syncMessage`'s own doc states for its four wordings.
  */
-private const val BOOKS_SUPPORTING_LABEL = "Chapters, playback speed, and where you left off."
 
 private const val NO_LIBRARIES_LABEL =
   "No libraries yet. Finish setup to choose what each library is for."

@@ -12,6 +12,8 @@ import app.muplay.model.AlbumListType
 import app.muplay.model.AlbumWithSongs
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
+import app.muplay.model.Playlist
+import app.muplay.model.PlaylistWithSongs
 import app.muplay.model.ScanStatus
 import app.muplay.model.SearchResults
 import app.muplay.model.ServerCapabilities
@@ -65,6 +67,9 @@ class QueueRepositoryTest {
     // default: a call that should never happen must fail loudly rather than return something
     // plausible that the test would then be quietly asserting about.
     override suspend fun capabilities(): ServerCapabilities = error("not used by QueueRepositoryTest")
+    override suspend fun getPlaylists(): List<Playlist> = error("not used by QueueRepositoryTest")
+    override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
+      error("not used by QueueRepositoryTest")
     override suspend fun ping(): ServerInfo = error("not used by QueueRepositoryTest")
     override suspend fun getMusicFolders(): List<MusicLibrary> = error("not used by QueueRepositoryTest")
     override suspend fun getScanStatus(): ScanStatus = error("not used by QueueRepositoryTest")
