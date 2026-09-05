@@ -306,7 +306,17 @@ private fun NowReading(
           else state.positionInChapterMs.toFloat() / state.chapterDurationMs
         },
         color = MaterialTheme.colorScheme.tertiary,
-        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        // **`outlineVariant`, not `surfaceVariant`, and the difference is measured.** Light
+        // `surfaceVariant` (`#DBE5E1`) on the light surface (`#FBF9F5`) is **1.22:1** -- a track a
+        // sighted user cannot find, so how much of the chapter is left is invisible.
+        // `outlineVariant` (`#BFC9C5`) is **1.61:1**. `PlayerScreen`'s seek bar made exactly this
+        // trade and carries the full working; these three book screens were simply never brought
+        // with it. In dark the two roles are the same `#3F4946`, so nothing there changes.
+        //
+        // The fill stays clear of the track either way: `tertiary` on `outlineVariant` is 3.80:1
+        // light and 5.55:1 dark, against the 3:1 WCAG 1.4.11 asks of the boundary that carries the
+        // value. It was 5.01:1 light, which is margin this trade can afford to spend.
+        trackColor = MaterialTheme.colorScheme.outlineVariant,
         modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
       )
       // One string rather than two nodes: it reads as a fraction ("where I am, out of how

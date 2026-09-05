@@ -6,7 +6,7 @@ produced nothing; they are listed at the end as **not done**, so nobody mistakes
 absence for a clean result.
 
 **Status, re-checked against the tree on 2026-09-05 rather than remembered: all eight P0
-items are fixed, and most of P1.** What each was and what closed it is below, because a
+items are fixed, and all eleven of P1.** What each was and what closed it is below, because a
 backlog that deletes its own history stops being reviewable -- but read the marker before
 the prose. Every paragraph under a ✅ heading describes code that no longer exists; it is kept so the
 fix can be reviewed against what it was for.
@@ -14,8 +14,10 @@ fix can be reviewed against what it was for.
 The three lines that would otherwise mislead a reader of the 09-02 version:
 
 - Every P0 fix has tests, and every one of those tests was watched to fail first.
-- The P1 design-system section was written before two rounds of fixes; eight of its eleven
-  bullets are closed, one of them *as a deliberate refusal* carrying the measurement.
+- The P1 design-system section was written before two rounds of fixes; all eleven of its
+  bullets are now closed, three of them *as deliberate refusals* carrying the measurement.
+  One of the three -- the dark `surfaceVariant` collision -- was refused for the reason it
+  named and fixed one layer along, where the same colour was a real contrast defect.
 - **Nothing here has been re-audited.** These are the findings of three audits from one
   afternoon, fixed. They are not a clean bill of health, and the eight audits at the
   bottom are still the honest summary of what nobody has looked at.
@@ -136,23 +138,43 @@ happens, with no explanation.
 
 ## P1 — the design system does not hold
 
-Eight of these eleven are closed. The three that are open are named first, so a reader who
-stops after one paragraph stops in the right place.
+**All eleven are now closed.** Three were still open on 2026-09-05 and each is below with what
+settled it; two of the three turned out to be about something other than what the audit named.
 
-### Open
+### Closed 2026-09-05
 
-- **Dark `surfaceVariant` still collides with `outlineVariant`** — both `#3F4946`
-  (`Color.kt:124,162`), brighter than `surfaceContainerHighest`. `outlineVariant`'s half of
-  this is settled below *as a refusal*; the `surfaceVariant` half is not. It is the artwork
-  placeholder, so in dark **a missing cover is still the brightest thing on screen**.
-- **The library chip still contradicts what setup just taught.** Setup tints "Tag as
-  Audiobooks" `tertiaryContainer`; `LibraryChips` (`LibraryScreen.kt:300`) is a stock
-  `FilterChip` with no colours at all. The `Books` card above it *did* become
-  `tertiaryContainer`, which closes the continuity for the entry point and not for the chip.
-  **Do not reword or hide Shuffle for audiobook libraries** — `ScopedShuffleJourneyTest`
-  finds it by exact text.
-- **`displayLarge`, `displayMedium`, `headlineLarge` still have zero call sites.** Either
-  use them or delete them; a type scale nothing draws is three more numbers to keep true.
+- ✅ **Dark `surfaceVariant` colliding with `outlineVariant` is Material's own scheme, and the
+  harm the audit named had already been fixed elsewhere.** Measured in material3 1.4.0's
+  `ColorDarkTokens`: `SurfaceVariant` and `OutlineVariant` are both assigned
+  `PaletteTokens.NeutralVariant30` — one token, not two values that drifted together — and
+  `SurfaceContainerHighest` is `Neutral22`, darker. So "brighter than `surfaceContainerHighest`"
+  is the baseline's own relationship. The stated consequence, *"it is the artwork placeholder, so
+  in dark a missing cover is the brightest thing on screen"*, stopped being true at `4d20aff`:
+  `CoverArt.kt` draws its placeholder in `surfaceContainerHighest`.
+
+  What the audit was pointing at turned out to be real one layer along, and worth the trip: the
+  three **book** screens still drew their progress track in `surfaceVariant`, which in light is
+  **1.22:1** against the surface. `PlayerScreen`'s seek bar had already measured that and moved to
+  `outlineVariant` (**1.61:1**) — and moved nothing else. The three are now `outlineVariant` too,
+  held by a source scan in `BookVoiceApplicationTest` (falsified: revert one and it names the
+  file). `Color.kt` carries the measurement at the value itself.
+- ✅ **The library chip now keeps the colour setup taught for it.** `LibraryChips` tints its
+  *selected* container from `library.role`: `tertiaryContainer` for an audiobook library,
+  `primaryContainer` for music — the same pairing `SetupScreen`'s "Tag as Music" / "Tag as
+  Audiobooks" chips draw, and the same voice as the `Books` card three rows below. Unselected
+  chips stay outlines in both voices; tinting those would turn a row of libraries into a colour
+  key nobody asked for. Held by `LibraryChipVoiceTest`, a source scan for the reason
+  `BookVoiceApplicationTest` is one — there is no Compose matcher for "what colour is that chip".
+  Shuffle was not touched.
+- ✅ **`displayLarge`, `displayMedium` and `headlineLarge` stay, and `Type.kt` now says why.**
+  "Use them or delete them" has a third answer, and the arithmetic decides it: deleting a slot
+  from a `Typography` does not remove a number, it substitutes Material's. Measured in
+  `TypeScaleTokens` — `DisplayLargeWeight` is `WeightRegular` and `DisplayLargeTracking` is
+  `+0.2`, against this scale's SemiBold and negative tracking — so the choice is three numbers
+  that continue this ramp against three that argue with it, in the part of the scale where the
+  file's two stated rules bite hardest. `displaySmall` *is* drawn (the book player's remaining
+  time), and the two steps above it are what make its 34sp read as a series rather than as a
+  number somebody liked.
 
 ### Closed as a deliberate refusal, with the measurement
 

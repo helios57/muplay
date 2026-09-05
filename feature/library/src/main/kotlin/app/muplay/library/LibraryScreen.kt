@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.Album
+import app.muplay.model.LibraryRole
 import app.muplay.model.Song
 
 @Composable
@@ -287,7 +289,20 @@ private fun LibraryScreen(
   }
 }
 
-/** The library selector. Wraps, because a library's name is whoever-set-the-server-up's business. */
+/**
+ * The library selector. Wraps, because a library's name is whoever-set-the-server-up's business.
+ *
+ * **A chip is tinted by what its library holds, which is the tint the user chose in setup.**
+ * `Color.kt` reserves `primary` for music and `tertiary` for audiobooks, and setup teaches that
+ * pairing directly: its two chips are literally labelled "Tag as Music" (`primaryContainer`) and
+ * "Tag as Audiobooks" (`tertiaryContainer`). This selector was a stock `FilterChip` with no
+ * colours at all, so the first thing a user saw after being taught the pairing was the same
+ * library in neither colour -- while the `Books` card a few rows below it *is* `tertiaryContainer`.
+ * The continuity was closed for the door out of the music half and left open for the selector.
+ *
+ * Only the *selected* colours are named. An unselected chip is an outline in both voices, and
+ * tinting the outlines would turn a row of libraries into a colour key nobody asked for.
+ */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun LibraryChips(uiState: LibraryUiState.Content, onLibrarySelected: (Int) -> Unit) {
@@ -297,10 +312,23 @@ private fun LibraryChips(uiState: LibraryUiState.Content, onLibrarySelected: (In
     modifier = Modifier.fillMaxWidth(),
   ) {
     uiState.libraries.forEach { library ->
+      val audiobooks = library.role == LibraryRole.AUDIOBOOKS
       FilterChip(
         selected = library.id == uiState.selectedLibraryId,
         onClick = { onLibrarySelected(library.id) },
         label = { Text(library.name) },
+        colors = FilterChipDefaults.filterChipColors(
+          selectedContainerColor = if (audiobooks) {
+            MaterialTheme.colorScheme.tertiaryContainer
+          } else {
+            MaterialTheme.colorScheme.primaryContainer
+          },
+          selectedLabelColor = if (audiobooks) {
+            MaterialTheme.colorScheme.onTertiaryContainer
+          } else {
+            MaterialTheme.colorScheme.onPrimaryContainer
+          },
+        ),
       )
     }
   }

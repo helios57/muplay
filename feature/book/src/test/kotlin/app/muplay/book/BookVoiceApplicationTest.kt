@@ -57,6 +57,46 @@ class BookVoiceApplicationTest {
     }
   }
 
+  /**
+   * **Every book screen's progress track is `outlineVariant`, and none is `surfaceVariant`.**
+   *
+   * `PlayerScreen`'s seek bar carries the measurement: light `surfaceVariant` on the light surface
+   * is **1.22:1**, which is a track a sighted user cannot find, and `outlineVariant` is 1.61:1.
+   * That change landed on the seek bar and on nothing else, so the three book screens kept drawing
+   * the version it replaced for weeks. A colour assertion cannot see this -- there is no Compose
+   * matcher for "what colour is that track" -- and the roles are identical in dark, so even a
+   * screenshot would only show it in one theme.
+   *
+   * Comments are stripped first. The comment beside each of these very lines names
+   * `surfaceVariant` in prose, and a raw-text scan would report itself -- the self-matching failure
+   * this repository has now paid for five times.
+   */
+  @Test
+  fun `no audiobook screen draws its progress track in the role that cannot be seen`() {
+    val tracks = screens.map { (file, _) -> file to trackColoursIn(file) }
+
+    // Non-vacuity, and it is the half that would rot: a renamed file or a fourth book screen with
+    // no bar leaves the assertion below true and meaningless.
+    assertThat(tracks.flatMap { it.second })
+      .describedAs("every `trackColor =` in the three book screens")
+      .hasSize(3)
+
+    assertThat(tracks.filterNot { (_, roles) -> roles.all { it == "outlineVariant" } }.map { it.first })
+      .describedAs("book screens drawing a progress track in a role other than outlineVariant")
+      .isEmpty()
+  }
+
+  /** The colour-scheme role named by each `trackColor =` in [file], comments removed. */
+  private fun trackColoursIn(file: String): List<String> {
+    val source = File("src/main/kotlin/app/muplay/book/$file")
+    assertThat(source).describedAs("source file %s", file).exists()
+    val code = source.readText()
+      .replace(Regex("""/\*[\s\S]*?\*/"""), "")
+      .replace(Regex("""//.*"""), "")
+    return Regex("""trackColor\s*=\s*MaterialTheme\.colorScheme\.(\w+)""")
+      .findAll(code).map { it.groupValues[1] }.toList()
+  }
+
   /** The text between [signature]'s opening `) {` and the first column-0 `}` after it. */
   private fun bodyOf(file: String, signature: String): String {
     val source = File("src/main/kotlin/app/muplay/book/$file")

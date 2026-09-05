@@ -29,6 +29,26 @@ import androidx.compose.ui.unit.sp
  * finder while a screen reader spelled the result out letter by letter. Tracking and weight buy the
  * same eyebrow effect and cost nothing. (Tracking is applied by the style, so the semantics text is
  * untouched: `onNodeWithText("Continue listening")` still matches.)
+ *
+ * ### `displayLarge`, `displayMedium` and `headlineLarge` are drawn by nothing, and they stay
+ *
+ * An audit found the three and asked for the usual verdict: use them or delete them, since "a type
+ * scale nothing draws is three more numbers to keep true". Measured before answering, and the
+ * arithmetic goes the other way. Deleting a slot from a `Typography` does not remove a number; it
+ * substitutes **Material's** number, because `Typography()` defaults every slot it is not given.
+ * Read out of material3 1.4.0's own `TypeScaleTokens`: `DisplayLargeWeight` is
+ * `TypefaceTokens.WeightRegular` and `DisplayLargeTracking` is `0.2` — Regular where this scale
+ * sets SemiBold, and tracking that is slightly **positive** where rule one sets it negative. The
+ * substitutes contradict both rules stated above, in the part of the scale where the rules bite
+ * hardest. So the choice is not "three numbers or none". It is three numbers that continue this
+ * ramp against three that argue with it, and the argument would only become visible on the day
+ * somebody finally reached for `displayLarge`.
+ *
+ * That is also the honest reason a ramp has unused steps: it is a ramp. `displaySmall` *is* drawn
+ * (the book player's remaining-time), so the two sizes above it are what make its 34sp read as the
+ * third step of a series rather than as a number somebody liked. Keeping a scale whole is the
+ * cheapest way to make the next screen's choice obvious, and this whole file exists because the
+ * alternative — three slots overridden and the rest left at the baseline — is what it replaced.
  */
 val MuPlayTypography = Typography(
   displayLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 52.sp, lineHeight = 60.sp, letterSpacing = (-0.03).em),

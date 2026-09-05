@@ -170,7 +170,8 @@ internal fun BookContent(
               LinearProgressIndicator(
                 progress = { state.book.progressFraction.toFloat() },
                 color = MaterialTheme.colorScheme.tertiary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                // `outlineVariant`, not `surfaceVariant`: see BookPlayerScreen's progress bar for the numbers.
+                trackColor = MaterialTheme.colorScheme.outlineVariant,
                 modifier = Modifier.fillMaxWidth().height(PROGRESS_HEIGHT_DP.dp),
               )
             }

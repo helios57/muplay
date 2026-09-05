@@ -121,6 +121,22 @@ val MuPlayBackgroundDark = Color(0xFF0E1413)
 val MuPlayOnBackgroundDark = Color(0xFFDEE4E1)
 val MuPlaySurfaceDark = Color(0xFF0E1413)
 val MuPlayOnSurfaceDark = Color(0xFFDEE4E1)
+/**
+ * The same `#3F4946` as [MuPlayOutlineVariantDark], and brighter than
+ * [MuPlaySurfaceContainerHighestDark]. An audit called both of those a defect. **Material 3 does
+ * exactly the same thing**, which was measured rather than argued: in material3 1.4.0's own
+ * `ColorDarkTokens`, `SurfaceVariant` and `OutlineVariant` are both assigned
+ * `PaletteTokens.NeutralVariant30` — literally one token — while `SurfaceContainerHighest` is
+ * `Neutral22`, darker. This scheme reproduces the baseline's relationship, and departing from it
+ * would put one role off Material's neutral ramp to fix an appearance nothing in this app draws.
+ *
+ * Nothing in this app draws it, and that is the other half. The harm the audit named was the
+ * artwork placeholder — "in dark a missing cover is the brightest thing on screen" — and
+ * `CoverArt.kt` has used [MuPlaySurfaceContainerHighestDark] since `4d20aff`. The three book
+ * screens' progress tracks were the last explicit callers and are now `outlineVariant`, for the
+ * contrast reason `PlayerScreen`'s seek bar records. What is left is the slot itself, which
+ * `ColorScheme` requires and Material components consult by default.
+ */
 val MuPlaySurfaceVariantDark = Color(0xFF3F4946)
 val MuPlayOnSurfaceVariantDark = Color(0xFFBEC9C4)
 val MuPlayOutlineDark = Color(0xFF89938F)

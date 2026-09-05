@@ -234,7 +234,8 @@ private fun BookRow(
             // narrowing at the source would lose the distinction between 0.0 and "not quite 0".
             progress = { book.progressFraction.toFloat() },
             color = MaterialTheme.colorScheme.tertiary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            // `outlineVariant`, not `surfaceVariant`: see BookPlayerScreen's progress bar for the numbers.
+            trackColor = MaterialTheme.colorScheme.outlineVariant,
             modifier = Modifier
               .fillMaxWidth()
               .padding(top = MuPlaySpacing.xs)
