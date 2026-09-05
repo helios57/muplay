@@ -2,6 +2,7 @@ package app.muplay.library
 
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.SyncFailure
+import app.muplay.database.SyncProgress
 import app.muplay.database.SyncState
 import app.muplay.database.dao.MirrorReplacement
 import app.muplay.model.Album
@@ -91,6 +92,10 @@ class LibraryViewModelTest {
       return syncAnswer()
     }
 
+    /** Writable, so a test can move it *while* [syncIfStale] is parked -- which is the only
+     *  moment at which any value of it is true. */
+    override val syncProgress = MutableStateFlow<SyncProgress>(SyncProgress.Idle)
+
     val coverArtCalls = mutableListOf<Pair<String, Int>>()
     override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String {
       coverArtCalls += coverArtId to sizePx
@@ -130,6 +135,42 @@ class LibraryViewModelTest {
   }
 
   private fun content(vm: LibraryViewModel) = vm.uiState.value as LibraryUiState.Content
+
+  /**
+   * The wiring behind the first run's progress bar: what `SyncEngine` publishes has to reach the
+   * screen *during* the sync, which is the only time it is true.
+   *
+   * `LibraryNoticeTest` proves what each progress value says and `SyncEngineTest` proves the engine
+   * publishes them; neither would notice if this view model dropped the flow on the floor, which
+   * is what it did before -- the screen's one motionless sentence was correct code doing nothing.
+   */
+  @Test
+  fun `a running sync's progress reaches the screen while it is still running`() =
+    runTest(dispatcher) {
+      val fake = FakeLibrarySource(listOf(music))
+      val parked = CompletableDeferred<Unit>()
+      fake.syncAnswer = { parked.await(); SyncState.UpToDate }
+      val vm = warm(fake)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      // The mirror is empty and the sync from `init` is still in flight: this is the first-run
+      // screen, and the empty state is what it renders.
+      assertThat(content(vm).emptyReason)
+        .isEqualTo(LibraryEmptyReason.Syncing(SyncProgress.Preparing))
+
+      fake.syncProgress.value = SyncProgress.Reading(done = 3, total = 9)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(content(vm).emptyReason)
+        .isEqualTo(LibraryEmptyReason.Syncing(SyncProgress.Reading(done = 3, total = 9)))
+
+      parked.complete(Unit)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      // And it stops claiming to be syncing once the sync is over, rather than leaving the last
+      // progress value on screen.
+      assertThat(content(vm).emptyReason).isEqualTo(LibraryEmptyReason.Empty)
+    }
 
   @Test
   fun `selecting a library shows that library's own albums, not the previous selection's`() =

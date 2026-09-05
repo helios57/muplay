@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.muplay.designsystem.component.Message
+import app.muplay.database.fraction
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.Album
 import app.muplay.model.LibraryRole
@@ -156,7 +158,7 @@ private fun LibraryScreen(
     contentPadding = PaddingValues(bottom = MuPlaySpacing.lg),
   ) {
     when (uiState) {
-      LibraryUiState.Loading -> item { Message(text = LOADING_LABEL, loading = true) }
+      LibraryUiState.Loading -> item { Message(text = LIBRARY_LOADING_LABEL, loading = true) }
       LibraryUiState.NoLibraries ->
         // Distinct from "this library is empty": the fix is finishing setup, not syncing.
         item { Message(text = NO_LIBRARIES_LABEL) }
@@ -277,7 +279,13 @@ private fun LibraryScreen(
           // running, a sync that failed, and a library that really is empty each say their own
           // thing. See `LibraryEmptyReason`.
           item {
-            Text(text = emptyReason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // The first run is the one empty state that is *going somewhere*, and the only one a
+            // user is asked to wait through. It gets a bar; the other three are answers, not waits.
+            if (emptyReason is LibraryEmptyReason.Syncing) {
+              SyncingMessage(emptyReason)
+            } else {
+              Text(text = emptyReason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
           }
         } else {
           items(uiState.albums, key = { "album:" + it.id }) { album ->
@@ -463,6 +471,40 @@ private const val SHUFFLE_LABEL = "Shuffle this library"
 internal const val REFRESH_LABEL = "Refresh library"
 
 /**
+ * The first sync, with something that moves.
+ *
+ * **Why a bar and not just the sentence.** A first sync makes one `getAlbum` round trip per album,
+ * so a real library keeps this screen for minutes; it used to be one motionless line of text,
+ * which is what a hung app looks like. A user who force-stops it here gets nothing at all, because
+ * `SyncEngine` commits its watermark last and a half-finished reconcile is deliberately discarded.
+ *
+ * **Determinate only when it honestly can be.** `SyncProgress.fraction` is `null` for every state
+ * that cannot count itself, and the indeterminate bar is not a lesser fallback there -- it is the
+ * true statement: something is happening, and how much is left is not yet known. Substituting a
+ * plausible number would make the bar the one thing on this screen that lies, on the screen whose
+ * whole design note is that everything it shows must be true at the moment it is shown.
+ *
+ * Neither the bar nor the text carries a `contentDescription`: the sentence is real text carrying
+ * the same counts, so TalkBack reads "37 of 412 albums" rather than "progress bar".
+ */
+@Composable
+private fun SyncingMessage(reason: LibraryEmptyReason.Syncing, modifier: Modifier = Modifier) {
+  Column(
+    modifier = modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+  ) {
+    Text(text = reason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val fraction = reason.progress.fraction
+    if (fraction == null) {
+      LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    } else {
+      // The lambda overload, not the deprecated `Float` one.
+      LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+    }
+  }
+}
+
+/**
  * Plan 6 Task 12. The label on the only route to the settings screen.
  *
  * `internal` rather than `private`, on the same reasoning as [REFRESH_LABEL] -- but note what that
@@ -495,7 +537,6 @@ internal const val BOOKS_LABEL = "Books"
  */
 private const val BOOKS_SUPPORTING_LABEL = "Chapters, playback speed, and where you left off."
 
-private const val LOADING_LABEL = "Loading your library…"
 private const val NO_LIBRARIES_LABEL =
   "No libraries yet. Finish setup to choose what each library is for."
 private const val SHUFFLE_HEADING = "Shuffled"

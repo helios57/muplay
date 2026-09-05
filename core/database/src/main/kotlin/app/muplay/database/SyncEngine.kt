@@ -5,9 +5,13 @@ import app.muplay.database.dao.MirrorReplacement
 import app.muplay.database.dao.SyncWatermarkDao
 import app.muplay.model.Album
 import app.muplay.model.AlbumListType
+import app.muplay.model.Song
 import app.muplay.network.SubsonicClient
 import app.muplay.network.SubsonicSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Keeps the local mirror in step with the server.
@@ -24,6 +28,23 @@ class SyncEngine(
   private val sourceProvider: SubsonicSourceProvider,
   private val albumPageSize: Int,
 ) {
+
+  private val _progress = MutableStateFlow<SyncProgress>(SyncProgress.Idle)
+
+  /**
+   * How far the sync currently running has got — [SyncProgress.Idle] when none is.
+   *
+   * A flow rather than something [syncIfStale] returns, because every value of it that matters is
+   * true only *while* that call is still suspended. The browse screen draws its first-run progress
+   * bar from this; see [SyncProgress] for why the counters are per library and why the states that
+   * cannot count themselves say so instead of guessing.
+   *
+   * There is one of these per [SyncEngine], and `DataModule` provides the engine as a `@Singleton`,
+   * so every screen observing it sees the same sync. Nothing here serialises two concurrent
+   * [syncIfStale] calls, and nothing needs to: the only caller is `LibraryViewModel`, which starts
+   * one from `init` and one per Refresh tap.
+   */
+  val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
   init {
     // F-3 in task-6-review.md: `fetchAllAlbums`'s "was that the last page" check compares the
@@ -47,6 +68,9 @@ class SyncEngine(
    * becomes [SyncState.Failed].
    */
   suspend fun syncIfStale(): SyncState = try {
+    // Before the first round trip: `sourceProvider.current()` and `getScanStatus` are themselves a
+    // wait the user is looking at, and an up-to-date sync never gets past them.
+    _progress.value = SyncProgress.Preparing
     val source = sourceProvider.current()
     when (val decision = SyncDecision.decide(watermarkDao.read(), source.getScanStatus())) {
       SyncDecision.UpToDate -> SyncState.UpToDate
@@ -58,6 +82,12 @@ class SyncEngine(
     throw e
   } catch (e: Exception) {
     SyncState.Failed(e)
+  } finally {
+    // `finally`, so a failure and a cancellation clear it too. A progress value left behind is a
+    // bar frozen part-way for the life of the process, saying "still working" over a sync that
+    // has already given up and reported why -- see
+    // `SyncEngineTest.aFailedSyncLeavesNoProgressRunningBehindIt`.
+    _progress.value = SyncProgress.Idle
   }
 
   private suspend fun reconcile(source: SubsonicSource, watermark: String?): SyncState {
@@ -112,7 +142,16 @@ class SyncEngine(
    */
   private suspend fun reconcileLibrary(source: SubsonicSource, libraryId: Int): MirrorReplacement {
     val albums = fetchAllAlbums(source, libraryId)
-    val songs = albums.flatMap { source.getAlbum(it.id, libraryId).songs }
+
+    // One round trip per album, and the reason [progress] exists: this loop is where a first sync
+    // spends nearly all of its time, and it is the only part of a sync whose remaining work is
+    // known. A `flatMap` said the same thing in one line and could not be counted.
+    val songs = mutableListOf<Song>()
+    albums.forEachIndexed { index, album ->
+      _progress.value = SyncProgress.Reading(done = index, total = albums.size)
+      songs += source.getAlbum(album.id, libraryId).songs
+    }
+    _progress.value = SyncProgress.Reading(done = albums.size, total = albums.size)
 
     // One transaction per library: a failure reconciling the audiobook library must not be able
     // to empty the music library, and a library is the unit the user actually reasons about.
@@ -145,6 +184,9 @@ class SyncEngine(
     val albums = mutableListOf<Album>()
     var page = 0
     while (page < MAX_PAGES) {
+      // How many have been listed, never how many remain: this loop learns it was on the last page
+      // only by getting a short one back, so there is no honest denominator to publish here.
+      _progress.value = SyncProgress.Listing(found = albums.size)
       val batch = source.getAlbumList2(
         musicFolderId = libraryId,
         type = AlbumListType.ALPHABETICAL_BY_NAME,

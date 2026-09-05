@@ -1,6 +1,7 @@
 package app.muplay.library
 
 import app.muplay.database.SyncFailure
+import app.muplay.database.SyncProgress
 
 /**
  * **Why the album list is empty** — one of four genuinely different situations that used to render
@@ -16,8 +17,15 @@ sealed interface LibraryEmptyReason {
   /** A search ran and matched nothing. [query] is what was searched for. */
   data class SearchNoMatch(val query: String) : LibraryEmptyReason
 
-  /** A sync is in flight and the mirror has nothing in it yet. */
-  data object Syncing : LibraryEmptyReason
+  /**
+   * A sync is in flight and the mirror has nothing in it yet — the first run, and the longest
+   * wait this app ever asks for.
+   *
+   * @property progress how far that sync has got. It carries the progress rather than the screen
+   *   reading it from somewhere else so that the sentence and the bar above it cannot disagree:
+   *   both come from this one value, decided in [toMessage] and unit-tested there.
+   */
+  data class Syncing(val progress: SyncProgress) : LibraryEmptyReason
 
   /** The mirror is empty because the sync that would have filled it failed. */
   data class SyncFailed(val failure: SyncFailure) : LibraryEmptyReason
@@ -29,10 +37,33 @@ sealed interface LibraryEmptyReason {
 /** What the browse screen says when [this] is why its list is empty. */
 internal fun LibraryEmptyReason.toMessage(): String = when (this) {
   is LibraryEmptyReason.SearchNoMatch -> "No albums match “$query”."
-  LibraryEmptyReason.Syncing -> "Loading your library…"
   // Never "Nothing here yet": the library is not known to be empty, only unfetched.
+  is LibraryEmptyReason.Syncing -> LIBRARY_LOADING_LABEL + progress.countSuffix()
   is LibraryEmptyReason.SyncFailed -> failure.describe()
   LibraryEmptyReason.Empty -> "Nothing here yet."
+}
+
+/**
+ * The one wording for "the library is on its way", shared by [LibraryEmptyReason.Syncing] and by
+ * `LibraryScreen`'s [LibraryUiState.Loading] branch — which are the same sentence to a user and
+ * were two copies of it in two files.
+ */
+internal const val LIBRARY_LOADING_LABEL = "Loading your library…"
+
+/**
+ * `" 37 of 412 albums."` when the sync can honestly count itself, and `""` when it cannot.
+ *
+ * The empty cases are the point. [SyncProgress.Listing] has no denominator to offer — the paging
+ * loop learns it was on the last page only by getting a short one back — so this never invents one
+ * there. And a zero is suppressed rather than printed: `"0 albums so far"` and `"0 of 0 albums"`
+ * are both reachable (before the first page lands, and for a library the server reports as empty,
+ * which `SyncEngine` mirrors rather than skips), and both read as a defect in the app rather than
+ * as an answer about the library.
+ */
+private fun SyncProgress.countSuffix(): String = when (this) {
+  SyncProgress.Idle, SyncProgress.Preparing -> ""
+  is SyncProgress.Listing -> if (found > 0) " $found albums so far." else ""
+  is SyncProgress.Reading -> if (total > 0) " $done of $total albums." else ""
 }
 
 /**
@@ -54,8 +85,16 @@ sealed interface LibraryNotice {
   /** Nothing to say. */
   data object Idle : LibraryNotice
 
-  /** A sync is running. */
-  data object Syncing : LibraryNotice
+  /**
+   * A sync is running.
+   *
+   * @property progress how far it has got. It lives here, on the member that already means "a sync
+   *   is in flight", so that the two cannot be shown disagreeing — there is no state in which the
+   *   screen reports a sync and a progress drawn from different moments. `LibraryViewModel` keeps
+   *   it current from `SyncEngine`'s own flow; see [LibraryEmptyReason.Syncing], which is what the
+   *   first run actually renders.
+   */
+  data class Syncing(val progress: SyncProgress) : LibraryNotice
 
   /** The server is mid-scan, so the mirror may be incomplete through no fault of this app. */
   data object ScanInProgress : LibraryNotice
@@ -81,7 +120,7 @@ sealed interface LibraryNotice {
  */
 internal fun LibraryNotice.toMessage(hasMirror: Boolean): String? = when (this) {
   LibraryNotice.Idle -> null
-  LibraryNotice.Syncing -> "Checking the server for changes…"
+  is LibraryNotice.Syncing -> "Checking the server for changes…"
   LibraryNotice.ScanInProgress ->
     "The server is still scanning, so some albums may be missing. Tap $REFRESH_LABEL when it has finished."
   is LibraryNotice.Failed ->

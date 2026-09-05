@@ -107,7 +107,7 @@ private fun emptyReasonFor(
 ): LibraryEmptyReason? = when {
   shown.isNotEmpty() -> null
   searching -> LibraryEmptyReason.SearchNoMatch(query)
-  notice is LibraryNotice.Syncing -> LibraryEmptyReason.Syncing
+  notice is LibraryNotice.Syncing -> LibraryEmptyReason.Syncing(notice.progress)
   notice is LibraryNotice.Failed -> LibraryEmptyReason.SyncFailed(notice.failure)
   else -> LibraryEmptyReason.Empty
 }

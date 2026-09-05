@@ -7,6 +7,7 @@ import app.muplay.database.LibraryRepository
 import app.muplay.database.ShuffleRepository
 import app.muplay.database.SyncEngine
 import app.muplay.database.SyncFailure
+import app.muplay.database.SyncProgress
 import app.muplay.database.SyncState
 import app.muplay.media.PlaybackLauncher
 import app.muplay.model.Album
@@ -46,6 +47,14 @@ interface LibrarySource {
   suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults
   suspend fun shuffle(libraryId: Int, size: Int): ShuffleResult
   suspend fun syncIfStale(): SyncState
+
+  /**
+   * How far the running sync has got, or [SyncProgress.Idle] between syncs.
+   *
+   * A flow beside [syncIfStale] rather than a value it returns, because the whole point of it is
+   * to be read *while* that suspending call is still running.
+   */
+  val syncProgress: Flow<SyncProgress>
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
   suspend fun allIds(): List<Int>
 
@@ -84,6 +93,7 @@ class LibraryViewModel(
       override suspend fun shuffle(libraryId: Int, size: Int): ShuffleResult =
         shuffleRepository.shuffle(libraryId, size)
       override suspend fun syncIfStale(): SyncState = syncEngine.syncIfStale()
+      override val syncProgress: Flow<SyncProgress> = syncEngine.progress
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
       override suspend fun allIds(): List<Int> = libraryRepository.allIds()
@@ -98,6 +108,29 @@ class LibraryViewModel(
   private val notice = MutableStateFlow<LibraryNotice>(LibraryNotice.Idle)
   private val searchAlbums = MutableStateFlow<List<Album>>(emptyList())
 
+  /**
+   * [notice] with a running sync's progress kept current from the engine.
+   *
+   * [refresh] can only state that a sync has *started*; how far it has got arrives afterwards, on
+   * its own flow, while `syncIfStale` is still suspended. Folding the two here rather than
+   * combining them into `uiState` separately keeps `libraryContent`'s signature -- and every
+   * caller of it -- unchanged, and means there is no state in which the screen could show "syncing"
+   * and a progress figure taken from two different moments.
+   */
+  private val syncingNotice: Flow<LibraryNotice> =
+    combine(notice, source.syncProgress) { current, progress ->
+      // `Idle` means *no sync is running*, which contradicts a notice that says one is -- and the
+      // notice is the half that knows, because [refresh] sets it before the engine has been
+      // reached at all. So the engine's value is taken only when it has something to say. Without
+      // this the first-run screen spends the gap between "a sync started" and the engine's first
+      // emission reporting `Syncing(Idle)`, a state that means two opposite things at once.
+      if (current is LibraryNotice.Syncing && progress != SyncProgress.Idle) {
+        LibraryNotice.Syncing(progress)
+      } else {
+        current
+      }
+    }
+
   private val albums: Flow<List<Album>> =
     combine(source.libraries, selectedLibraryId) { libraries, selected ->
       libraries.firstOrNull { it.id == selected }?.id ?: libraries.firstOrNull()?.id
@@ -111,7 +144,7 @@ class LibraryViewModel(
       selectedLibraryId,
       query,
       albums,
-      combine(searchAlbums, shuffleResult, notice) { results, shuffled, currentNotice ->
+      combine(searchAlbums, shuffleResult, syncingNotice) { results, shuffled, currentNotice ->
         Triple(results, shuffled, currentNotice)
       },
     ) { libraries, selected, currentQuery, currentAlbums, extras ->
@@ -186,7 +219,9 @@ class LibraryViewModel(
    */
   fun refresh() {
     viewModelScope.launch {
-      notice.value = LibraryNotice.Syncing
+      // `Preparing`, not a guess: nothing countable exists until the engine has answered, and
+      // `syncingNotice` replaces this the moment it does.
+      notice.value = LibraryNotice.Syncing(SyncProgress.Preparing)
       notice.value = when (val state = source.syncIfStale()) {
         SyncState.UpToDate, is SyncState.Synced -> LibraryNotice.Idle
         SyncState.ScanInProgress -> LibraryNotice.ScanInProgress

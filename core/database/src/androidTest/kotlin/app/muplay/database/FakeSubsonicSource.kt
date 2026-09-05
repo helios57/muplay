@@ -51,7 +51,18 @@ class FakeSubsonicSource : SubsonicSource {
 
   val callLog: MutableList<String> = mutableListOf()
 
+  /**
+   * Run just before each call is answered, with the call's name.
+   *
+   * The only way to observe something that is true *during* a sync and false once it returns --
+   * `SyncEngine.progress` being the case this was added for. Sampling after `syncIfStale()` has
+   * returned can only ever see the final value, which is precisely the value a progress bar must
+   * not be judged by.
+   */
+  var beforeCall: ((String) -> Unit)? = null
+
   private fun record(call: String) {
+    beforeCall?.invoke(call)
     callLog += call
     failWith?.let { throw it }
     val limit = failAfterCalls

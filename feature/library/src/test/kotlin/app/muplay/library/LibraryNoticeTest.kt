@@ -1,6 +1,7 @@
 package app.muplay.library
 
 import app.muplay.database.SyncFailure
+import app.muplay.database.SyncProgress
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -30,7 +31,40 @@ class LibraryNoticeTest {
 
   @Test
   fun `a library that is still syncing says it is still working`() {
-    assertThat(LibraryEmptyReason.Syncing.toMessage()).isEqualTo("Loading your library…")
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Preparing).toMessage())
+      .isEqualTo("Loading your library…")
+  }
+
+  @Test
+  fun `the initial load counts the albums it has read, so the screen can be seen to move`() {
+    // The defect this exists for: the first sync makes one `getAlbum` request per album and showed
+    // one motionless sentence for the whole of it, which is what a hung app looks like.
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Reading(done = 37, total = 412)).toMessage())
+      .isEqualTo("Loading your library… 37 of 412 albums.")
+    // Zero read out of a known total is worth printing: the total is the reassuring half.
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Reading(done = 0, total = 412)).toMessage())
+      .isEqualTo("Loading your library… 0 of 412 albums.")
+  }
+
+  @Test
+  fun `a listing pass says what it has found and never what remains`() {
+    // `fetchAllAlbums` learns it is on the last page only by getting a short one back, so a
+    // message shaped "128 of 412" here would be a denominator nobody measured.
+    val message = LibraryEmptyReason.Syncing(SyncProgress.Listing(found = 128)).toMessage()
+
+    assertThat(message).isEqualTo("Loading your library… 128 albums so far.")
+    assertThat(message).doesNotContain(" of ")
+  }
+
+  @Test
+  fun `a count of nothing is left unsaid rather than printed as zero`() {
+    // Both are reachable -- `Listing(0)` before the first page lands, `Reading(0, 0)` for a library
+    // the server reports as empty, which `SyncEngine` mirrors rather than skips. "0 of 0 albums"
+    // reads as a defect in the app rather than as a library with nothing in it.
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Listing(found = 0)).toMessage())
+      .isEqualTo("Loading your library…")
+    assertThat(LibraryEmptyReason.Syncing(SyncProgress.Reading(done = 0, total = 0)).toMessage())
+      .isEqualTo("Loading your library…")
   }
 
   @Test

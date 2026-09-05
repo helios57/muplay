@@ -105,6 +105,55 @@ class SyncEngineTest {
     db.close()
   }
 
+  /**
+   * The first sync is the longest wait this app asks of anyone -- one `getAlbum` round trip per
+   * album -- and the browse screen showed one motionless sentence for the whole of it. These two
+   * tests are what make a moving bar possible, and what stop it lying.
+   *
+   * Sampled through [FakeSubsonicSource.beforeCall], because every interesting value of
+   * `progress` is gone by the time `syncIfStale()` returns.
+   */
+  @Test
+  fun theProgressOfARunningSyncIsReadableWhileItIsStillRunning() = runTest {
+    val seen = mutableListOf<SyncProgress>()
+    source.beforeCall = { seen += engine.progress.value }
+
+    engine.syncIfStale()
+
+    // Library 1 holds two albums and the page size is one, so the listing pass runs three times
+    // and the reading pass twice -- and the reading pass is the one that can be counted.
+    assertThat(seen).containsSubsequence(
+      SyncProgress.Preparing,
+      SyncProgress.Listing(found = 0),
+      SyncProgress.Listing(found = 1),
+      SyncProgress.Reading(done = 0, total = 2),
+      SyncProgress.Reading(done = 1, total = 2),
+    )
+    // The second library re-counts against its own total rather than carrying the first one's.
+    assertThat(seen).containsSubsequence(
+      SyncProgress.Reading(done = 1, total = 2),
+      SyncProgress.Reading(done = 0, total = 1),
+    )
+    // Sampled before each call, so a `done` that had reached `total` would mean the counter had
+    // overshot the work actually left to do.
+    assertThat(seen.filterIsInstance<SyncProgress.Reading>())
+      .isNotEmpty
+      .allMatch { it.done in 0 until it.total }
+    assertThat(engine.progress.value).isEqualTo(SyncProgress.Idle)
+  }
+
+  @Test
+  fun aFailedSyncLeavesNoProgressRunningBehindIt() = runTest {
+    // Otherwise the bar the screen draws from this is frozen part-way for the life of the process,
+    // which says "still working" over a sync that has already given up and reported why.
+    source.failAfterCalls = 3
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Failed::class.java)
+    assertThat(engine.progress.value).isEqualTo(SyncProgress.Idle)
+  }
+
   @Test
   fun theFirstSyncMirrorsEveryLibrary() = runTest {
     val state = engine.syncIfStale()
