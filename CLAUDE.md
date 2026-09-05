@@ -1193,6 +1193,11 @@ the real defects above were fixed:
 | 2 | 0/54 | 1/352 | `BrowseSearchBrowserTest.onSearchReportsTheCount…` |
 | 3 | 0/54 | 0/352 | — |
 | 4 | 1/54 | 1/352 | `MuPlaybackServiceTest.theSessionOffersTheTransportCommands…`, `MediaCacheTest.theProductionCacheLivesInAKnownDirectory…` |
+| 5 (2026-09-05) | 0/68 | 0/371 | — |
+
+Row 5 is a later tree with both suites grown (54 -> 68, 352 -> 371) and is the second
+clean full run recorded here. It does not retire the rows above it: a green run is exactly
+what an order-dependent flake produces most of the time, which is the whole difficulty.
 
 **Every one of them passes when its class runs alone** — checked for all four:
 `MediaCacheTest` 15/15, `MuPlaybackServiceTest` 16/16, `BrowseSearchBrowserTest`

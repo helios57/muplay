@@ -1,19 +1,34 @@
-# Audit backlog — 2026-09-02
+# Audit backlog — opened 2026-09-02, status 2026-09-05
 
 Findings from three completed audits (UI after two design rounds, theming/dark mode,
-failure and empty states). Eight further audits — accessibility, Compose performance,
-vacuous assertions, coverage, dead code, docs coherence, remaining security surface,
-audiobook domain — were cut off by a session rate limit and produced nothing. They are
-listed at the end as **not done**, so nobody mistakes their absence for a clean result.
+failure and empty states). Eight further audits were cut off by a session rate limit and
+produced nothing; they are listed at the end as **not done**, so nobody mistakes their
+absence for a clean result.
 
-Everything below was read out of the source. Nothing here has been fixed, and nothing
-here has been verified on a device.
+**Status, re-checked against the tree on 2026-09-05 rather than remembered: all eight P0
+items are fixed, and most of P1.** What each was and what closed it is below, because a
+backlog that deletes its own history stops being reviewable -- but read the marker before
+the prose. Every paragraph under a ✅ heading describes code that no longer exists; it is kept so the
+fix can be reviewed against what it was for.
+
+The three lines that would otherwise mislead a reader of the 09-02 version:
+
+- Every P0 fix has tests, and every one of those tests was watched to fail first.
+- The P1 design-system section was written before two rounds of fixes; eight of its eleven
+  bullets are closed, one of them *as a deliberate refusal* carrying the measurement.
+- **Nothing here has been re-audited.** These are the findings of three audits from one
+  afternoon, fixed. They are not a clean bill of health, and the eight audits at the
+  bottom are still the honest summary of what nobody has looked at.
 
 ---
 
 ## P0 — defects a user meets
 
-### 1. Opening a book while the server is down crashes the app
+### 1. ✅ FIXED — Opening a book while the server is down crashes the app
+
+*`BookUiState.Chapters` is now `Reading | Ready | Unavailable`, and the screen offers a
+retry. `BookContentTest` drives all three on a device.*
+
 `feature/book/.../BookViewModel.kt:147`, `BookPlayerViewModel.kt:202` call `timeline()`
 inside `viewModelScope.launch` with **no catch**. `ChapterReader.kt:73` throws
 `ExecutionException`/`TimeoutException`. Its own KDoc (`:101-105`) claims this "surfaces
@@ -26,7 +41,12 @@ Worse, it repeats: `ChapterRepository.kt:54` stores the scan row only on success
 Fix: `BookUiState.Content.chapters: ChapterLoad` (`Loading | Ready(list) | Failed`), and
 replace the bare `Text` at `BookScreen.kt:246` with a `Message(..., onRetry = …)`.
 
-### 2. Credentials can never be changed, and one failure strands the user permanently
+### 2. ✅ FIXED — Credentials can never be changed, and one failure strands the user
+
+*`ServerSection` pushes `SetupRoute` from settings and calls `CredentialStore.clear()`.
+`:app`'s `ServerChangeJourneyTest` walks it end to end against the real container, and
+`:feature:setup`'s `ServerSectionTest` (added 2026-09-05) holds the section itself.*
+
 `SetupRoute` is reachable **only** as the start destination (`MuPlayApp.kt:62,180`), and
 `CredentialStore.clear()` (`CredentialStore.kt:63`) has **no caller anywhere**. So a user
 whose server password changed is stuck on a stale mirror forever.
@@ -39,7 +59,11 @@ bricked.
 Fix: a "Server" `SettingsSection` that pushes `SetupRoute`; save credentials only after a
 successful refresh, or make the empty state route to setup.
 
-### 3. A shuffle makes the library screen unreachable
+### 3. ✅ FIXED — A shuffle makes the library screen unreachable
+
+*The library screen is one `LazyColumn`; nothing renders rows into an unscrollable
+`Column` any more.*
+
 `feature/library/.../LibraryScreen.kt:220-248`: `uiState.shuffled.forEachIndexed` renders
 up to `DEFAULT_SHUFFLE_SIZE = 100` rows of 48dp into a **`Column` with no
 `verticalScroll`**, above the album `LazyColumn`. One tap on "Shuffle this library" pushes
@@ -51,7 +75,12 @@ Fix: one `LazyColumn` for the whole screen, with chips/search/shuffle/Books as `
 **Cost: needs test changes** — `PlaybackJourneyTest.shuffledRows` walks composed nodes and
 would need `performScrollTo`. No label moves.
 
-### 4. Mid-track failure is invisible, and Play then does nothing
+### 4. ✅ FIXED — Mid-track failure is invisible, and Play then does nothing
+
+*`PlaybackFailure` exists, `core/media` listens for `onPlayerError`, and the mapping is a
+function over an `Int?` error code so the fast tier can gate it -- see CLAUDE.md on why a
+Media3 `PlaybackException` cannot be constructed on the JVM.*
+
 There is **no `onPlayerError` anywhere** in `core/media/src/main`; `PlaybackState.kt:23-56`
 has no error field. When the server vanishes, ExoPlayer exhausts its retry policy, goes
 `STATE_IDLE`, and the screen shows a *paused* track. `PlayerViewModel.playPause`
@@ -61,7 +90,12 @@ the button does nothing, forever.
 An expired token is worse: `/rest/stream` answers `200` with JSON, and `ParserException`
 fails immediately with no retry at all.
 
-### 5. A plain-HTTP LAN address reads as "check your connection"
+### 5. ✅ FIXED — A plain-HTTP LAN address reads as "check your connection"
+
+*`SetupFailureReason.CleartextForbidden` names the scheme and the host. Note what was
+measured while fixing it: a release build **can** do cleartext to `localhost`, and only
+there (CLAUDE.md).*
+
 Navidrome's default is `http://host:4533`, and release builds forbid cleartext. The
 `UnknownServiceException` is caught as a generic `Exception` (`SetupViewModel.kt:73-97`)
 and rendered as `Unreachable` (`SetupFailureReason.kt:50`). Nothing tells the user the
@@ -70,19 +104,30 @@ and rendered as `Unreachable` (`SetupFailureReason.kt:50`). Nothing tells the us
 Fix: check the scheme before `ping()` and add `SetupFailureReason.CleartextForbidden(host)`
 naming HTTPS, a reverse proxy, or Tailscale.
 
-### 6. "Nothing here yet." is four different states
+### 6. ✅ FIXED — "Nothing here yet." is four different states
+
+*`LibraryEmptyReason` and `LibraryNotice` split them; `LibraryNoticeTest` asserts the
+other three never say that sentence.*
+
 `LibraryScreen.kt:543-544` renders the same bare `Text` for: a search with no match; a
 first sync still running; a sync that failed against an empty mirror; and a genuinely
 empty library. **This is the typo'd-URL-looks-like-a-broken-app case.** `syncMessage` even
 says "Showing your last synced library" when there is none.
 
-### 7. Every post-setup failure collapses to one sentence
+### 7. ✅ FIXED — Every post-setup failure collapses to one sentence
+
+*`SyncFailure` types them, with its own test.*
+
 `LibraryViewModel.kt:181` flattens `SyncState.Failed(cause)`: a changed password (code 40),
 Navidrome down behind a proxy (502), an expired certificate, `EmptyLibraryListException`
 and `NotConfiguredException` all render identically — and `NotConfiguredException`'s KDoc
 (`:6-9`) explicitly says the UI must distinguish it.
 
-### 8. Shuffle failure is silent
+### 8. ✅ FIXED — Shuffle failure is silent
+
+*`LibraryViewModel.shuffle` now `runCatching`s into a notice; its KDoc names the defect it
+replaced.*
+
 `LibraryViewModel.kt:154-156` swallows any exception into an empty result and
 `LibraryScreen.kt:525` renders nothing for empty. Server asleep → tap Shuffle → nothing
 happens, with no explanation.
@@ -91,54 +136,67 @@ happens, with no explanation.
 
 ## P1 — the design system does not hold
 
-- **The cold-start window is the Compose template.** `app/src/main/res/values/colors.xml:14-15`
-  and `values-night/colors.xml:6` use `#FFFBFE`/`#1C1B1F` — baseline Material purple-tinted
-  surfaces — while MuPlay's are `#FBF9F5`/`#0E1413`. The splash field `#4F378B` is baseline
-  M3 primary purple. Every dark launch steps from L≈11 to L=6, in the template's brand.
-- **Dark `surfaceVariant` is mis-toned and collides with `outlineVariant`** — both `#3F4946`
-  (`Color.kt:124,127`), brighter than `surfaceContainerHighest`. It is the artwork
-  placeholder and the progress track, so in dark **a missing cover is the brightest thing on
-  screen**, and a hairline and a fill are the same colour.
-- **`outlineVariant` on dark surface is ~2.0:1** — the `Slider` inactive track and
-  `ProgressRule` at 3dp are near-invisible. (A ~1.1:1 track was already fixed on the player;
-  this is its sibling.)
-- **The audiobook half leaks teal through Material defaults.** Unstyled `OutlinedButton`,
-  `Switch`, every `TextButton`, and `Message`'s spinner all draw `primary`. So the book
-  screens are amber where hand-coloured and music-blue everywhere else — 24 explicit
-  `tertiary` sites fighting the defaults. Proposed: a `BookVoice {}` wrapper that maps
-  `primary → tertiary` for the three book screens, then delete the overrides.
-- **`MiniPlayer` speaks the music voice under a book** (`MiniPlayer.kt:208-227`) — it ignores
-  `isAudiobook`, which `PlaybackState` already carries. A teal hairline under an amber shelf
-  is the one place "what is playing follows you" is visibly wrong.
-- **The library chip contradicts what setup just taught**: setup tints "Tag as Audiobooks"
-  `tertiaryContainer`, then the browse screen renders the selected Audiobooks library chip in
-  default `secondaryContainer`. **Do not reword or hide Shuffle for audiobook libraries** —
-  `ScopedShuffleJourneyTest:100-105` finds it by exact text.
-- **`Type.kt:54` names `MuPlaySectionHeader`, which does not exist.** There are three private
-  section headers, two without the hairline rule the KDoc promises. Both audits found this
-  independently.
-- **`displayLarge`, `displayMedium`, `headlineLarge` have zero call sites.**
-- **`Message` does not own its centring** — four callers wrap it, three do not, so states are
-  centred in one half of the app and top-aligned in the other. **`Message.onRetry` has zero
-  callers anywhere**, while three screens hand-roll their own retry.
-- **`:feature:castpicker` and `:feature:requests` use no `MuPlaySpacing` at all** and received
-  neither design round; several rows there are ~32dp tap targets.
-- Dead elevation: `MiniPlayer.kt:151-152` passes both `color = surfaceContainer` and
-  `tonalElevation = 3.dp`; M3 tints only when the colour is `surface`, so it does nothing.
+Eight of these eleven are closed. The three that are open are named first, so a reader who
+stops after one paragraph stops in the right place.
+
+### Open
+
+- **Dark `surfaceVariant` still collides with `outlineVariant`** — both `#3F4946`
+  (`Color.kt:124,162`), brighter than `surfaceContainerHighest`. `outlineVariant`'s half of
+  this is settled below *as a refusal*; the `surfaceVariant` half is not. It is the artwork
+  placeholder, so in dark **a missing cover is still the brightest thing on screen**.
+- **The library chip still contradicts what setup just taught.** Setup tints "Tag as
+  Audiobooks" `tertiaryContainer`; `LibraryChips` (`LibraryScreen.kt:300`) is a stock
+  `FilterChip` with no colours at all. The `Books` card above it *did* become
+  `tertiaryContainer`, which closes the continuity for the entry point and not for the chip.
+  **Do not reword or hide Shuffle for audiobook libraries** — `ScopedShuffleJourneyTest`
+  finds it by exact text.
+- **`displayLarge`, `displayMedium`, `headlineLarge` still have zero call sites.** Either
+  use them or delete them; a type scale nothing draws is three more numbers to keep true.
+
+### Closed as a deliberate refusal, with the measurement
+
+- **`outlineVariant` on dark surface is ~2.0:1**, and it is staying that way. `Color.kt`
+  carries the working: a track has two contrast obligations that pull against each other,
+  exactly one value on the neutral ramp clears 3:1 in dark, and **no** value clears it in
+  light -- brute-forced over all 256 greys, the best achievable worst case is 3.18:1 and only
+  at `#000000`. The real fix is a track colour role of its own, outside `ColorScheme`.
+  Worth doing; not worth doing halfway. **Do not "fix" this by nudging one theme.**
+
+### Closed
+
+- ✅ The cold-start window is no longer the Compose template: `#FBF9F5`/`#0E1413` and a
+  `#005048` splash.
+- ✅ `BookVoice` maps `primary → tertiary` for the three book screens, with tests in both
+  `:core:designsystem` and `:feature:book`; the hand-rolled `tertiary` overrides are gone.
+- ✅ `MiniPlayer` reads `isAudiobook`, so the bar follows what is playing.
+- ✅ `Type.kt` no longer names a `MuPlaySectionHeader` that never existed; the comment now
+  says what actually draws the eyebrow.
+- ✅ `Message` owns its centring (`fillMaxWidth` + `CenterHorizontally`) and `onRetry` has
+  callers.
+- ✅ `:feature:castpicker` and `:feature:requests` use `MuPlaySpacing` throughout, and their
+  ~32dp rows are fixed and swept -- see `TapTargets.kt` in five modules and CLAUDE.md's
+  "A Compose tap-target assertion is wrong in both obvious directions".
+- ✅ `MiniPlayer`'s dead `tonalElevation` is gone, with a comment recording why it did
+  nothing.
 
 ---
 
 ## P2 — assets and consistency
 
-- **The seven store screenshots are one design round stale.** Regenerated at `976b0bc`
-  (2026-08-31), *between* the two rounds: they still show `Open` buttons under rows, a
-  three-across button row, a teal artist line and the cast icon pushing play off-axis — none
-  of which exists in the code now. `StoreListingTest` checks names, not pixels, so nothing
-  goes red. Regenerate with `ci/store-screenshots.sh` before any submission.
-- Two players use two chassis; album and book detail are two layouts for one job;
-  `CoverArt.kt:38,60` hardcodes `RoundedCornerShape(4.dp)` while book covers use the shape
-  scale; progress bars are 5dp and 6dp; `BookScreen.kt:176-209` puts two pills of different
-  heights side by side, with a restart action co-equal to the primary one.
+- **OPEN, and a release blocker: the seven store screenshots are one design round stale.**
+  Regenerated at `976b0bc` (2026-08-31), *between* the two rounds: they still show `Open`
+  buttons under rows, a three-across button row, a teal artist line and the cast icon pushing
+  play off-axis — none of which exists in the code now. `StoreListingTest` checks names, not
+  pixels, so nothing goes red. Regenerate with `ci/store-screenshots.sh` before any
+  submission.
+- **OPEN:** two players use two chassis; album and book detail are two layouts for one job;
+  `BookScreen.kt:176-209` puts two pills of different heights side by side, with a restart
+  action co-equal to the primary one.
+- ✅ `CoverArt.kt` no longer hardcodes a corner radius; it uses the shape scale.
+- **Investigated, no change:** "progress bars are 5dp and 6dp" is two different components
+  with documented reasons -- `ProgressRule` is a 3dp hand-drawn rule with no semantics node,
+  `BookPlayerScreen` uses a 6dp `LinearProgressIndicator`.
 
 ---
 
@@ -164,3 +222,11 @@ classes) · dead code and reachability · docs coherence · remaining security s
 
 The security and vacuous-assertion sweeps are the two worth running first: both target
 defect classes this repository has already shipped more than once.
+
+**One of the eight has been partly overtaken, and only partly.** The 48dp half of the
+accessibility audit was done on 2026-09-05: every clickable node on eight screens across
+five modules is now swept for touch-target size and crowding, two real ~32dp defects were
+fixed, and what the sweep can and cannot catch is measured rather than argued (CLAUDE.md,
+"A Compose tap-target assertion is wrong in both obvious directions"). **TalkBack ordering,
+semantic roles, state descriptions and contrast were not looked at.** Do not read the
+sweeps as an accessibility pass; they are one rule, falsified, on one axis.

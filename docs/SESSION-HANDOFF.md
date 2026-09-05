@@ -10,7 +10,71 @@ master had moved on — the same stale-measurement defect `CLAUDE.md` records
 against floor comments and lane reports. The current commit lives in the dated
 section below, where the date makes it checkable.)*
 
-## Where the plans stand — 2026-08-28
+## Status — 2026-09-05
+
+**Both full device suites are green on this tree, run today, whole rather than filtered:**
+
+| suite | result | wall clock |
+| --- | --- | --- |
+| `:app` | **68/68** | 6m 03s |
+| `:core:media` | **371/371** | 8m 46s |
+
+That is worth stating precisely because of what this file records two sections down: a
+single red in a full device run has repeatedly been an order-dependent flake rather than a
+defect, and the failing test moved between runs. This run had none, on suites that have
+grown from the 54 and 352 in that table.
+
+`./gradlew check` is green, and `ConventionTest` was re-run with `--rerun` (a repo-wide
+rule is skipped as UP-TO-DATE when you edit a file outside `:app`, so a plain green there
+is not evidence — CLAUDE.md).
+
+**Eleven modules now have a device tier**, 851 instrumented tests in total. Run today:
+`:app` 68, `:core:media` 371, `:feature:book` 52, `:feature:requests` 45,
+`:feature:castpicker` 31, `:feature:setup` 10. Not re-run today, unaffected by the day's
+changes: `:core:database` 182, `:feature:player` 43, `:integrations:core` 41,
+`:integrations:requests` 5, `:feature:settings` 3.
+
+`:feature:setup` is the newest of the eleven and was added on 2026-09-05: `ServerSection`
+destroys the AndroidKeystore key and had no device tier at all, so its three documented
+decisions — collect the identity rather than read it once, ask before destroying, sign out
+*before* navigating and on the main thread — were held only by the comments describing
+them. Each is now a test, and each was watched to fail against the mutation it describes.
+
+### What is actually left
+
+`docs/AUDIT-BACKLOG.md` is the list, and it was re-checked against the tree on 2026-09-05
+rather than remembered. In short:
+
+- **All eight P0 defects are fixed**, with tests that were watched to fail first.
+- **Eight of eleven P1 items are closed**, one of them as a deliberate refusal that carries
+  its own contrast measurement. Three remain: dark `surfaceVariant` still collides with
+  `outlineVariant` (so a missing cover is the brightest thing on a dark screen), the library
+  chip still does not carry the tint setup taught, and three type styles have no call sites.
+- **One release blocker:** the seven store screenshots are one design round stale. They
+  exist; they show UI that no longer does. `StoreListingTest` checks names, not pixels.
+- **Eight audits have still never run** — accessibility (its 48dp half is now done and only
+  that half), Compose performance, vacuous assertions, coverage's 92 ungated classes, dead
+  code, docs coherence, remaining security surface *including a possible SSRF in the
+  `muplay-art:` scheme*, and audiobook domain. Their absence is not a clean result.
+- The order-dependent device flakes below are documented and **not fixed**. The fix is to
+  make each of those tests set up the state it depends on, not to add sleeps.
+- Nothing is pushed. `origin/master` is at `7be51e2`, more than twenty commits behind.
+
+### What this file is, and is not
+
+The plan/lane framing below is retired. It describes a fleet of parallel agents that no
+longer runs, and its status lines have twice been read as current when they were a week
+old — the same stale-measurement defect CLAUDE.md records against floor comments and lane
+reports. **Dated sections only, from here on.** Everything below this line is kept for the
+defects and measurements it records, not for its status.
+
+---
+
+## Where the plans stand — 2026-08-28 (HISTORICAL — see the status section above)
+
+*Kept as written. The plan/lane framing below describes a fleet that no longer runs, and
+the module counts are a week stale: there are now eleven modules with a device tier, not
+the set named here. Read it for the four defects it records, not for its status.*
 
 Master is green: `--no-build-cache check`, androidTest compiling for all ten
 modules, `:build-logic:convention:test`, and `ci/probe-preflight.py` at 491 probes
@@ -58,20 +122,26 @@ making those tests set up the state they depend on — has not been done.
 both workflow module lists (the union resolution of four lanes' hand-edits, checked
 by `ConventionTest`), but their device suites have not been run here.
 
-### P8 T6 is the one lane still out
+### P8 T6 — LANDED. Both halves are on master; one is stale rather than missing
 
-`p8t6-branch` is complete except the seven phone screenshots.
-`ci/store-screenshots.sh` gets past the launch crash now but times out at step 7,
-waiting for the library's shuffle label after a global BACK from the player
-(`StoreScreenshotsTest.kt:207`). Back-navigation is structurally fine, so this is
-the capture harness needing an update for the merged UI — not proven either way.
+*Corrected 2026-09-05. Everything below the first paragraph was true on 08-28 and is not
+true now, which is exactly the failure mode this file keeps recording against other
+people's notes.*
 
-Its `StoreListingTest` also correctly reports that `docs/STORE-LISTING.md` still
-disclaims five capabilities that now ship (casting, playback speed, Lidarr/Bindery
-requests, the Wear OS app, exact-second book resume). The listing edits were written
-and are **not** on master; they are in the session scratchpad under
-`keep/STORE-LISTING.md`. Merging p8t6 without them, or them without the screenshots,
-leaves `check` red either way.
+`docs/STORE-LISTING.md` **is** on master, gated by `StoreListingTest`, and no longer
+disclaims the five capabilities: it claims casting to Sonos and DLNA, per-book speed and
+silence skipping, and Lidarr/Bindery requests, and it correctly says there is **no** Wear
+OS app, because no watch artifact is built or signed. `app/build.gradle.kts` declares the
+listing, the release workflow and `play/` as inputs of that test, after it was measured
+running `FROM-CACHE` over an edit to the very document it gates.
+
+The seven phone screenshots are captured and committed under `play/screenshots/phone/`.
+What is wrong with them is not that they are missing: they were regenerated at `976b0bc`
+**between** the two design rounds, so they show `Open` buttons under rows, a three-across
+button row, a teal artist line and an off-axis play control, none of which exists in the
+code. `StoreListingTest` checks names, not pixels, so nothing goes red. **Regenerate with
+`ci/store-screenshots.sh` before any submission** — this is the one item in this file that
+blocks a Play release.
 
 ## Remaining waves
 
