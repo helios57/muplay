@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -23,6 +24,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
@@ -32,11 +35,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.fastScrollBuckets
+import app.muplay.designsystem.component.listIndexOf
 import app.muplay.designsystem.theme.BookVoice
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.BookSummary
+import kotlinx.coroutines.launch
 
 /**
  * The audiobook shelf: what the listener is part-way through, then everything else.
@@ -93,28 +100,59 @@ internal fun BookshelfContent(
     when (state) {
       BookshelfUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOKS_LABEL, loading = true) }
       BookshelfUiState.Empty -> Centred(modifier) { Message(text = NO_BOOKS_LABEL) }
-      is BookshelfUiState.Content -> LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-          horizontal = MuPlaySpacing.lg,
-          vertical = MuPlaySpacing.md,
-        ),
-        verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-      ) {
-        // Both headers are conditional, and both conditions are real: a listener who has started
-        // everything has no second group, and one who has started nothing has no first. A header
-        // over an empty list is a heading for nothing.
-        if (state.continueListening.isNotEmpty()) {
-          item { SectionHeader(CONTINUE_LISTENING_LABEL) }
-          items(state.continueListening, key = { it.bookId }) { book ->
-            BookRow(book, onBookClick, onResume, coverArtUrl)
+      is BookshelfUiState.Content -> {
+        val listState = rememberLazyListState()
+        val scope = rememberCoroutineScope()
+        // `rest` and `continueListening` are computed properties over `books`, so each read filters
+        // the whole shelf again. Read once.
+        val continueListening = state.continueListening
+        val rest = state.rest
+        Box(modifier = modifier.fillMaxSize()) {
+          LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+              horizontal = MuPlaySpacing.lg,
+              vertical = MuPlaySpacing.md,
+            ),
+            verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+          ) {
+            // Both headers are conditional, and both conditions are real: a listener who has
+            // started everything has no second group, and one who has started nothing has no
+            // first. A header over an empty list is a heading for nothing.
+            if (continueListening.isNotEmpty()) {
+              item { SectionHeader(CONTINUE_LISTENING_LABEL) }
+              items(continueListening, key = { it.bookId }) { book ->
+                BookRow(book, onBookClick, onResume, coverArtUrl)
+              }
+            }
+            if (rest.isNotEmpty()) {
+              item { SectionHeader(BOOKSHELF_TITLE) }
+              items(rest, key = { it.bookId }) { book ->
+                BookRow(book, onBookClick, onResume, coverArtUrl)
+              }
+            }
           }
-        }
-        if (state.rest.isNotEmpty()) {
-          item { SectionHeader(BOOKSHELF_TITLE) }
-          items(state.rest, key = { it.bookId }) { book ->
-            BookRow(book, onBookClick, onResume, coverArtUrl)
-          }
+          // Over the second group only, and that is the whole shelf's order being honest about
+          // itself. `BookSummaries.order` groups before it sorts -- in progress by how recently
+          // you listened, then never opened alphabetically, then finished by recency -- so the
+          // shelf as a whole is not an A-Z and an index over it would be a lie in three places.
+          // The never-opened group *is* alphabetical, and it is the group that gets long: it is a
+          // whole library minus the handful you are part-way through. `offersFastScroll` withdraws
+          // the bar again once finished books have collected at the bottom of it, which is right
+          // -- by then the tail is ordered by date and `Z` no longer means the end.
+          FastScrollBar(
+            buckets = remember(rest) { fastScrollBuckets(rest.map { it.title }) },
+            itemCount = rest.size,
+            onBucketSelected = { bucket ->
+              scope.launch {
+                listState.scrollToItem(
+                  listIndexOf(bucket, listState.layoutInfo.totalItemsCount, rest.size),
+                )
+              }
+            },
+            modifier = Modifier.align(Alignment.CenterEnd),
+          )
         }
       }
     }

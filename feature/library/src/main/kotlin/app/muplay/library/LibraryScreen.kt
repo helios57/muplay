@@ -2,6 +2,7 @@ package app.muplay.library
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -25,6 +27,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
@@ -33,12 +37,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.fastScrollBuckets
+import app.muplay.designsystem.component.listIndexOf
 import app.muplay.database.fraction
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.Album
 import app.muplay.model.LibraryRole
 import app.muplay.model.Song
+import kotlinx.coroutines.launch
 
 @Composable
 fun LibraryScreen(
@@ -146,124 +154,149 @@ private fun LibraryScreen(
   // Everything is an `item` now, so the header scrolls away with the content. That is the second
   // benefit: the primary action used to sit under ~300dp of always-visible furniture, at the far
   // end of a thumb's reach on the one screen used while walking.
-  LazyColumn(
-    modifier = modifier.padding(
-      start = MuPlaySpacing.gutter,
-      end = MuPlaySpacing.gutter,
-      top = MuPlaySpacing.md,
-    ),
-    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
-    contentPadding = PaddingValues(bottom = MuPlaySpacing.lg),
-  ) {
-    when (uiState) {
-      LibraryUiState.Loading -> item { Message(text = LIBRARY_LOADING_LABEL, loading = true) }
-      LibraryUiState.NoLibraries ->
-        // Distinct from "this library is empty": the fix is finishing setup, not syncing.
-        item { Message(text = NO_LIBRARIES_LABEL) }
-      is LibraryUiState.Content -> {
-        // `FlowRow`, not `Row`. A `Row` clips rather than wraps, and library names here are not
-        // the app's to choose -- they are whatever the person who set the server up typed, and this
-        // container's two seeded ones ("Music", "Audiobooks") are the short case rather than the
-        // representative one. A clipped chip is a library the user cannot select at all, on the one
-        // screen whose job is selecting one.
-        item { LibraryChips(uiState, onLibrarySelected) }
+  // The rows the A-Z bar indexes, and the only rows it may index: an album shelf is ordered by the
+  // mirror's `sortName`, everything above it on this screen is not a shelf, and a search or an
+  // empty state replaces the shelf entirely. `emptyReason != null` is precisely "there are no
+  // albums drawn", so taking the list from there rather than from `albums` keeps the bar's idea of
+  // the list identical to the list.
+  val shelf = (uiState as? LibraryUiState.Content)?.takeIf { it.emptyReason == null }?.albums.orEmpty()
+  val listState = rememberLazyListState()
+  val scope = rememberCoroutineScope()
 
-        item {
-          OutlinedTextField(
-            value = uiState.query,
-            onValueChange = onQueryChanged,
-            label = { Text(SEARCH_LABEL) },
-            singleLine = true,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
+  Box(modifier = modifier) {
+    LazyColumn(
+      state = listState,
+      modifier = Modifier.padding(
+        start = MuPlaySpacing.gutter,
+        end = MuPlaySpacing.gutter,
+        top = MuPlaySpacing.md,
+      ),
+      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.md),
+      contentPadding = PaddingValues(bottom = MuPlaySpacing.lg),
+    ) {
+      when (uiState) {
+        LibraryUiState.Loading -> item { Message(text = LIBRARY_LOADING_LABEL, loading = true) }
+        LibraryUiState.NoLibraries ->
+          // Distinct from "this library is empty": the fix is finishing setup, not syncing.
+          item { Message(text = NO_LIBRARIES_LABEL) }
+        is LibraryUiState.Content -> {
+          // `FlowRow`, not `Row`. A `Row` clips rather than wraps, and library names here are not
+          // the app's to choose -- they are whatever the person who set the server up typed, and this
+          // container's two seeded ones ("Music", "Audiobooks") are the short case rather than the
+          // representative one. A clipped chip is a library the user cannot select at all, on the one
+          // screen whose job is selecting one.
+          item { LibraryChips(uiState, onLibrarySelected) }
 
-        // The primary action, and the only filled control on the screen: full width so its label
-        // sets on one line. It used to be a third of a row, which is what wrapped
-        // "Shuffle this library" onto two lines in the published store screenshot.
-        item {
-          Button(
-            onClick = onShuffle,
-            shape = MaterialTheme.shapes.medium,
-            contentPadding = PaddingValues(vertical = MuPlaySpacing.md),
-            modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
-          ) {
-            Text(text = SHUFFLE_LABEL, style = MaterialTheme.typography.titleSmall)
-          }
-        }
-
-        // Refresh, and only Refresh. The Books card and the Settings button that used to share
-        // this space are now the navigation bar's Books tab and the top bar's settings control:
-        // neither was a library action, and having them here was most of what made this screen
-        // read as a pile rather than as a place. What is left is the one thing a user does *to
-        // this library* -- pick up a change made on the server since the app started.
-        item {
-          Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
-            TextButton(onClick = onRefresh) { Text(REFRESH_LABEL) }
-          }
-        }
-
-        // `onSurfaceVariant`, not `error`. All four of this string's values are *states* -- checking,
-        // the server is mid-scan, the server was unreachable, or nothing to say -- and three of them
-        // are ordinary. Painting "the server is scanning" red tells the user something is broken
-        // when nothing is.
-        uiState.syncMessage?.let {
           item {
-            Text(
-              text = it,
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            OutlinedTextField(
+              value = uiState.query,
+              onValueChange = onQueryChanged,
+              label = { Text(SEARCH_LABEL) },
+              singleLine = true,
+              shape = MaterialTheme.shapes.medium,
+              modifier = Modifier.fillMaxWidth(),
             )
           }
-        }
 
-        if (uiState.shuffled.isNotEmpty()) {
-          item { SectionHeader(SHUFFLE_HEADING) }
-          // `itemsIndexed`, and the index is the row's own position in the very list this screen
-          // is rendering -- so "the third row" and "the third song of the shuffle" cannot drift
-          // apart. Passing `song.id` and having the view model look it up again would be a second
-          // lookup to get wrong.
-          //
-          // Keyed on the id, and the key is prefixed. A `LazyColumn` key must be unique across the
-          // WHOLE list, and this list also renders albums; a bare id would collide the moment a
-          // track and an album shared one. That exact collision crashed the requests screen once
-          // (`Key "LIDARR:mb-album-1" was already used`), so the prefixes are not decoration.
-          itemsIndexed(uiState.shuffled, key = { _, song -> "shuffled:" + song.id }) { index, song ->
-            ShuffledRow(song = song, onClick = { onShuffledSongClick(index) })
+          // The primary action, and the only filled control on the screen: full width so its label
+          // sets on one line. It used to be a third of a row, which is what wrapped
+          // "Shuffle this library" onto two lines in the published store screenshot.
+          item {
+            Button(
+              onClick = onShuffle,
+              shape = MaterialTheme.shapes.medium,
+              contentPadding = PaddingValues(vertical = MuPlaySpacing.md),
+              modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
+            ) {
+              Text(text = SHUFFLE_LABEL, style = MaterialTheme.typography.titleSmall)
+            }
           }
-          if (uiState.discardedOutOfScope > 0) {
+
+          // Refresh, and only Refresh. The Books card and the Settings button that used to share
+          // this space are now the navigation bar's Books tab and the top bar's settings control:
+          // neither was a library action, and having them here was most of what made this screen
+          // read as a pile rather than as a place. What is left is the one thing a user does *to
+          // this library* -- pick up a change made on the server since the app started.
+          item {
+            Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
+              TextButton(onClick = onRefresh) { Text(REFRESH_LABEL) }
+            }
+          }
+
+          // `onSurfaceVariant`, not `error`. All four of this string's values are *states* -- checking,
+          // the server is mid-scan, the server was unreachable, or nothing to say -- and three of them
+          // are ordinary. Painting "the server is scanning" red tells the user something is broken
+          // when nothing is.
+          uiState.syncMessage?.let {
             item {
               Text(
-                text = "${uiState.discardedOutOfScope} $OUT_OF_SCOPE_SUFFIX",
+                text = it,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
           }
-        }
 
-        val emptyReason = uiState.emptyReason
-        if (emptyReason != null) {
-          // Not one sentence for four situations: a search that matched nothing, a sync still
-          // running, a sync that failed, and a library that really is empty each say their own
-          // thing. See `LibraryEmptyReason`.
-          item {
-            // The first run is the one empty state that is *going somewhere*, and the only one a
-            // user is asked to wait through. It gets a bar; the other three are answers, not waits.
-            if (emptyReason is LibraryEmptyReason.Syncing) {
-              SyncingMessage(emptyReason)
-            } else {
-              Text(text = emptyReason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+          if (uiState.shuffled.isNotEmpty()) {
+            item { SectionHeader(SHUFFLE_HEADING) }
+            // `itemsIndexed`, and the index is the row's own position in the very list this screen
+            // is rendering -- so "the third row" and "the third song of the shuffle" cannot drift
+            // apart. Passing `song.id` and having the view model look it up again would be a second
+            // lookup to get wrong.
+            //
+            // Keyed on the id, and the key is prefixed. A `LazyColumn` key must be unique across the
+            // WHOLE list, and this list also renders albums; a bare id would collide the moment a
+            // track and an album shared one. That exact collision crashed the requests screen once
+            // (`Key "LIDARR:mb-album-1" was already used`), so the prefixes are not decoration.
+            itemsIndexed(uiState.shuffled, key = { _, song -> "shuffled:" + song.id }) { index, song ->
+              ShuffledRow(song = song, onClick = { onShuffledSongClick(index) })
+            }
+            if (uiState.discardedOutOfScope > 0) {
+              item {
+                Text(
+                  text = "${uiState.discardedOutOfScope} $OUT_OF_SCOPE_SUFFIX",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
             }
           }
-        } else {
-          items(uiState.albums, key = { "album:" + it.id }) { album ->
-            AlbumRow(album = album, coverArtUrl = coverArtUrl, onClick = { onAlbumClick(album.id) })
+
+          val emptyReason = uiState.emptyReason
+          if (emptyReason != null) {
+            // Not one sentence for four situations: a search that matched nothing, a sync still
+            // running, a sync that failed, and a library that really is empty each say their own
+            // thing. See `LibraryEmptyReason`.
+            item {
+              // The first run is the one empty state that is *going somewhere*, and the only one a
+              // user is asked to wait through. It gets a bar; the other three are answers, not waits.
+              if (emptyReason is LibraryEmptyReason.Syncing) {
+                SyncingMessage(emptyReason)
+              } else {
+                Text(text = emptyReason.toMessage(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+            }
+          } else {
+            items(uiState.albums, key = { "album:" + it.id }) { album ->
+              AlbumRow(album = album, coverArtUrl = coverArtUrl, onClick = { onAlbumClick(album.id) })
+            }
           }
         }
       }
     }
+
+    FastScrollBar(
+      buckets = remember(shelf) { fastScrollBuckets(shelf.map { it.name }) },
+      itemCount = shelf.size,
+      onBucketSelected = { bucket ->
+        scope.launch {
+          listState.scrollToItem(
+            listIndexOf(bucket, listState.layoutInfo.totalItemsCount, shelf.size),
+          )
+        }
+      },
+      modifier = Modifier.align(Alignment.CenterEnd),
+    )
   }
 }
 
@@ -474,36 +507,11 @@ private fun SyncingMessage(reason: LibraryEmptyReason.Syncing, modifier: Modifie
   }
 }
 
-/**
- * Plan 6 Task 12. The label on the only route to the settings screen.
- *
- * `internal` rather than `private`, on the same reasoning as [REFRESH_LABEL] -- but note what that
- * does **not** buy, because this KDoc used to claim it did: Kotlin's `internal` is visible to this
- * module's own test source sets and to nothing outside the module, so `:app`'s journeys cannot
- * import it and do not. `ServerChangeJourneyTest` declares its own `"Settings"`, which is the
- * retyping convention working exactly as intended -- it clicks the button, so a wording change
- * fails it. Contrast [NOT_FOUND_LABEL], which is `public` precisely because the only journey that
- * names it asserts it *absent* and so has no such red available.
- */
-
-/**
- * Plan 4 Task 9. The label on the only route to the audiobook shelf.
- *
- * `internal`, like the two above, so this module's own tests can find the button by the string the
- * screen renders. `:feature:book` declares its own `BOOKSHELF_TITLE` with the same text and they
- * are deliberately two constants: a journey duplicates a string rather than sharing it, so a
- * wording change is caught rather than silently followed.
- */
-internal const val BOOKS_LABEL = "Books"
-
-/**
- * What is behind the [BOOKS_LABEL] door, in one line.
- *
- * Every clause is a thing the audiobook half actually does — `BookScreen` lists chapters,
- * `SpeedStepper` sets the rate, and `ProgressWriter` stores the position — because a door into an
- * unvisited half of an app is exactly where a promise the app does not keep would go unnoticed.
- * The same rule `LibraryUiState.syncMessage`'s own doc states for its four wordings.
- */
+// The Settings button, the Books door and the line of copy under it left this file when the four
+// tabs landed: settings is the top bar's control and books is a navigation destination, so neither
+// is a string this screen renders any more. Their three KDoc blocks outlived them by one commit,
+// two of them documenting whatever declaration happened to follow. Deleted rather than reassigned
+// -- a doc comment that survives its subject is worse than none, because it reads as current.
 
 private const val NO_LIBRARIES_LABEL =
   "No libraries yet. Finish setup to choose what each library is for."

@@ -3820,6 +3820,40 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       // Withhold the instrumented execution data and every one of them fails this rule at 0.00.
       requiresInstrumentedData = true,
     ),
+    // The fast scroll's arithmetic: which letters an A-Z bar offers over a list, whether the bar
+    // is worth drawing at all, and which row of a `LazyColumn` a tapped letter names. All of it is
+    // plain functions over a `List<String>` and three `Int`s, deliberately -- `FastScrollBar` is
+    // the composable and it holds no decision of its own, so every rule this feature has is gated
+    // on the fast tier and none of it waits for an emulator.
+    //
+    // MEASURED 22/22 BRANCH and 24/24 LINE from `:core:designsystem:test` alone, so BRANCH at the
+    // full 1.00. `FastScrollBarKt` is deliberately **not** in this rule: it is a Composable file,
+    // measures 0/56 BRANCH from the JVM, and the module's other Composable floor is the LINE rule
+    // above -- which this cannot join, because that one is `requiresInstrumentedData` and this must
+    // not be.
+    //
+    // FALSIFIED, and the result is worth reading rather than filing. Withholding
+    // `a name that is nothing but a combining mark still has somewhere to go` drops it to **0.90**
+    // and the floor fires; so does withholding `a list that is not in alphabetical order gets no
+    // bar`. Two others do **not**, and both are informative:
+    //
+    //  - `an accent is not a bucket of its own` leaves it at 1.00, because the combining-mark test
+    //    above walks the same fold. Each still earns its place -- one proves `\u00c4` lands under `A`,
+    //    the other proves a label with nothing left after the fold lands under `#` -- but neither
+    //    is held here by a number, and the next person to delete one on this floor's say-so learns
+    //    nothing from the green.
+    //  - `a list that has not been laid out yet is scrolled to its top` leaves it at 1.00 too, and
+    //    that is the `coerceIn`/`coerceAtLeast` blindness this repository has already paid for
+    //    twice (see CLAUDE.md). `listIndexOf`'s two clamps compile to `Math.max`/`Math.min`, which
+    //    carry no JaCoCo branch counter at all, so the tests that prove a jump cannot land past the
+    //    end of the list move no number here. They are not redundant; this floor simply cannot see
+    //    them, and saying so is the only thing that stops them being deleted as uncovered weight.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.designsystem.component.FastScrollIndexKt"),
+    ),
   ),
   // Plan 2 Task 9 (:feature:library), floors 2 and 3 added in its review round 1 (N-7). Every
   // number below is measured from `./gradlew :feature:library:test :feature:library:jacocoTestReport`

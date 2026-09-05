@@ -2,6 +2,7 @@ package app.muplay.library
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -20,16 +22,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.fastScrollBuckets
+import app.muplay.designsystem.component.listIndexOf
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.Playlist
 import app.muplay.model.Song
+import kotlinx.coroutines.launch
 
 /**
  * The user's server-side playlists.
@@ -51,16 +59,40 @@ fun PlaylistsScreen(
       Message(text = state.failure.describe(PLAYLISTS_UNKNOWN_FAILURE_LABEL))
       TextButton(onClick = viewModel::refresh) { Text(RETRY_LABEL) }
     }
-    is PlaylistsUiState.Content -> LazyColumn(
-      modifier = modifier.fillMaxWidth(),
-      contentPadding = PaddingValues(MuPlaySpacing.gutter),
-      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-    ) {
-      if (state.playlists.isEmpty()) {
-        item { Message(text = NO_PLAYLISTS_LABEL) }
-      }
-      items(state.playlists, key = { "playlist:" + it.id }) { playlist ->
-        PlaylistRow(playlist = playlist, onClick = { onOpenPlaylist(playlist.id) })
+    is PlaylistsUiState.Content -> {
+      val listState = rememberLazyListState()
+      val scope = rememberCoroutineScope()
+      Box(modifier = modifier.fillMaxWidth()) {
+        LazyColumn(
+          state = listState,
+          modifier = Modifier.fillMaxWidth(),
+          contentPadding = PaddingValues(MuPlaySpacing.gutter),
+          verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+        ) {
+          if (state.playlists.isEmpty()) {
+            item { Message(text = NO_PLAYLISTS_LABEL) }
+          }
+          items(state.playlists, key = { "playlist:" + it.id }) { playlist ->
+            PlaylistRow(playlist = playlist, onClick = { onOpenPlaylist(playlist.id) })
+          }
+        }
+        // Whether this bar appears is the server's decision, not this screen's: playlist order is
+        // whatever `getPlaylists` returned, and `offersFastScroll` shows the bar only over a list
+        // that really is alphabetical. A user with a hundred playlists on a Navidrome that sorts
+        // them by name gets an index; one whose server sorts by changed-date is not offered a
+        // control that would jump somewhere arbitrary.
+        FastScrollBar(
+          buckets = remember(state.playlists) { fastScrollBuckets(state.playlists.map { it.name }) },
+          itemCount = state.playlists.size,
+          onBucketSelected = { bucket ->
+            scope.launch {
+              listState.scrollToItem(
+                listIndexOf(bucket, listState.layoutInfo.totalItemsCount, state.playlists.size),
+              )
+            }
+          },
+          modifier = Modifier.align(Alignment.CenterEnd),
+        )
       }
     }
   }

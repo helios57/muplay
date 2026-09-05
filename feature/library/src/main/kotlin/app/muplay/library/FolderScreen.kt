@@ -2,6 +2,7 @@ package app.muplay.library
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -20,16 +22,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.fastScrollBuckets
+import app.muplay.designsystem.component.listIndexOf
 import app.muplay.designsystem.theme.MuPlayIcons
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.model.FolderNode
 import app.muplay.model.Song
+import kotlinx.coroutines.launch
 
 /**
  * Browsing the library by folder, and shuffling a folder with everything under it.
@@ -78,41 +86,68 @@ private fun FolderScreen(
   onTrackClick: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  LazyColumn(
-    modifier = modifier.fillMaxWidth(),
-    contentPadding = PaddingValues(MuPlaySpacing.gutter),
-    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-  ) {
-    if (uiState.canShuffle) {
-      item {
-        Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
-          // Shuffle first and filled: it is what the user asked this screen for, and on a folder
-          // of a hundred files it is the only one of the two anybody taps.
-          Button(onClick = onShuffle) {
-            Icon(MuPlayIcons.Shuffle, contentDescription = null, modifier = Modifier.size(ICON_DP))
-            Text(
-              text = SHUFFLE_FOLDER_LABEL,
-              modifier = Modifier.padding(start = MuPlaySpacing.sm),
-            )
+  // Subfolders and then tracks, as one list, because that is what the `LazyColumn` below draws and
+  // an index over half of a list would jump to the wrong half. `FolderPaths` sorts subfolders
+  // case-insensitively by name, so a folder that holds only folders -- an `Artists` directory, the
+  // usual reason anybody opens this screen -- gets a working A-Z. A folder that also holds tracks
+  // usually does not: tracks are ordered by path and labelled by title, and those two disagree the
+  // moment a filename starts with a track number. `offersFastScroll` is what decides, per folder,
+  // per composition, rather than this screen guessing on behalf of a library it cannot see.
+  val labels = uiState.folders.map { it.name } + uiState.tracks.map { it.title }
+  val listState = rememberLazyListState()
+  val scope = rememberCoroutineScope()
+
+  Box(modifier = modifier.fillMaxWidth()) {
+    LazyColumn(
+      state = listState,
+      modifier = Modifier.fillMaxWidth(),
+      contentPadding = PaddingValues(MuPlaySpacing.gutter),
+      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+    ) {
+      if (uiState.canShuffle) {
+        item {
+          Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
+            // Shuffle first and filled: it is what the user asked this screen for, and on a folder
+            // of a hundred files it is the only one of the two anybody taps.
+            Button(onClick = onShuffle) {
+              Icon(MuPlayIcons.Shuffle, contentDescription = null, modifier = Modifier.size(ICON_DP))
+              Text(
+                text = SHUFFLE_FOLDER_LABEL,
+                modifier = Modifier.padding(start = MuPlaySpacing.sm),
+              )
+            }
+            OutlinedButton(onClick = onPlayAll) { Text(PLAY_FOLDER_LABEL) }
           }
-          OutlinedButton(onClick = onPlayAll) { Text(PLAY_FOLDER_LABEL) }
         }
+      }
+
+      if (uiState.emptyReason != null) {
+        item { Message(text = uiState.emptyReason.toMessage()) }
+      }
+
+      items(uiState.folders, key = { "folder:" + it.path }) { folder ->
+        FolderRow(folder = folder, onClick = { onOpenFolder(folder.path) })
+      }
+
+      // Indexed so a tap can name its own row, which is what makes the queue start on the song the
+      // user pointed at rather than on the first one.
+      itemsIndexed(uiState.tracks, key = { _, song -> "track:" + song.id }) { index, song ->
+        FolderTrackRow(song = song, onClick = { onTrackClick(index) })
       }
     }
 
-    if (uiState.emptyReason != null) {
-      item { Message(text = uiState.emptyReason.toMessage()) }
-    }
-
-    items(uiState.folders, key = { "folder:" + it.path }) { folder ->
-      FolderRow(folder = folder, onClick = { onOpenFolder(folder.path) })
-    }
-
-    // Indexed so a tap can name its own row, which is what makes the queue start on the song the
-    // user pointed at rather than on the first one.
-    itemsIndexed(uiState.tracks, key = { _, song -> "track:" + song.id }) { index, song ->
-      FolderTrackRow(song = song, onClick = { onTrackClick(index) })
-    }
+    FastScrollBar(
+      buckets = remember(labels) { fastScrollBuckets(labels) },
+      itemCount = labels.size,
+      onBucketSelected = { bucket ->
+        scope.launch {
+          listState.scrollToItem(
+            listIndexOf(bucket, listState.layoutInfo.totalItemsCount, labels.size),
+          )
+        }
+      },
+      modifier = Modifier.align(Alignment.CenterEnd),
+    )
   }
 }
 
