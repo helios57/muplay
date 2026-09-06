@@ -1543,6 +1543,106 @@ KDoc — **that is now four self-matching checks in this repository.** Before ru
 a pattern over process lists or source, ask whether the thing doing the asking
 contains the pattern. Prefer an explicit PID from a prior `pgrep`, read and checked.
 
+## A device stuck at `offline` for days was `adbd` never starting, and only `-show-kernel` says so
+
+Measured 2026-09-06. `adb devices` reported `emulator-5554 offline` across every
+session for a day and a half. Everything this file tells you to check said the
+emulator was fine:
+
+    qemu process           alive, 177-379% CPU, RSS climbing 1.6 -> 5.3 GB
+    guest /proc/uptime     advancing in step with the host clock
+    emulator log           no "hanging thread", no segfault, no error at all
+    /dev/kvm               ACL grants helios, `emulator -accel-check` says usable
+    ci-navidrome-1         Up (healthy), host `curl /ping` 200
+
+So none of the three recorded failure shapes fitted -- not the dead adb server,
+not the replaced-with-wrong-flags emulator, not the in-guest reboot. Waiting
+longer did nothing: **29 minutes** in one boot, `offline` throughout.
+
+The one cheap signal that separates a booting guest from a stuck one is disk
+I/O, and it is worth taking first:
+
+    read +0 KiB/10s, write +128 KiB/10s, while burning 339% CPU
+
+A guest doing first-boot package optimisation reads *heavily*. Zero reads means
+it is not booting, whatever the CPU is doing.
+
+**Restart with `-show-kernel` and the answer is in the log.** The guest had
+booted perfectly -- `init: processing action (sys.boot_completed=1)` at 84 s --
+and then:
+
+    init: processing action (sys.usb.config=none && sys.usb.configfs=0)
+    init: processing action (init.svc.adbd=stopped) from init.usb.configfs.rc:14
+
+`sys.usb.config` was **`none`**, so the `on property:sys.usb.config=adb` trigger
+never fired and **`adbd` was never started** -- there is no `starting service
+'adbd'` line anywhere in that boot. `offline` is precisely what adb reports when
+it reaches the emulator's forwarded port and nothing completes the handshake:
+
+    ss -ltnp | grep 5555
+    LISTEN 6  5  127.0.0.1:5555   <- six queued connections, backlog five, nobody accepting
+
+`sys.usb.config` comes from `persist.sys.usb.config`, which lives in
+`/data/property/persistent_properties`. That file was never written, because the
+`-wipe-data` boot recorded in this file on 2026-09-05 was killed before init got
+that far -- `userdata-qemu.img`'s mtime was still frozen at **22:29 that night**.
+Every boot afterwards inherited a `/data` with no persistent properties and so
+had no adb, permanently.
+
+**The cure is a `-wipe-data` boot that is allowed to finish.** It booted in
+110 s, `sys.usb.config=adb`, adbd started, `adb devices` -> `device`, and
+`ci/prepare-emulator.sh` passed including `gralloc=minigbm`. The next ordinary
+boot (no wipe) came up in 70 s with adb working, which is what proves the repair
+is on disk rather than in that one run.
+
+Two things generalise, and the second is the reason this took an hour:
+
+- **A half-finished `-wipe-data` is worse than no wipe**, because it leaves a
+  `/data` that mounts, boots and looks healthy while missing the properties the
+  device is reached through. If you wipe, watch it to `sys.boot_completed=1`.
+- Every liveness check available here answered "the emulator is up", and each was
+  telling the truth about the thing it measured. This file already records four
+  checks that could not report "dead"; this is the other half of the same
+  pattern -- **checks that correctly report "alive" about a device that cannot be
+  used.** `adb devices` saying `offline` is not a transient on the way to
+  `device`; treat it as a diagnosis to be made, and reach for `-show-kernel`
+  early, because it is the only thing here that observes the guest directly.
+
+## The emulator wedges after a few minutes of UI testing, and it is not your test
+
+Measured 2026-09-06 on the repaired emulator above, four runs on one tree:
+
+| run                            | tests before death | emulator |
+|--------------------------------|--------------------|----------|
+| `QueueScreenTest` alone (76 s) | 10/10, 0 failures  | survived |
+| `:feature:player` full         | 16 of 54           | died     |
+| `:feature:player` full         | 30 of 54           | died     |
+| `:feature:player` full, 2 vCPU | 43 of 54           | died     |
+
+Death is always the same and is a **qemu-level** hang, with nothing wrong in the
+guest -- no abort, no tombstone, no OOM (79 GB available), steal 0-2%:
+
+    ERROR | detected a hanging thread 'QEMU2 main loop'.  No response for 15003 ms
+    ERROR | detected a hanging thread 'QEMU2 CPU0..CPU5 thread'. No response for 15003 ms
+
+then crashpad fails to ptrace its own dead process and qemu is gone.
+
+`-cores 2` moved 30 -> 43 tests and did not fix it, so it is work-over-time
+rather than core count. **What it looks like from Gradle is a product defect**:
+the in-flight test is reported as
+
+    <testcase name="aSecondSpeakerGetsASecondLine" ...><failure></failure></testcase>
+    <system-err>... device 'emulator-5554' not found
+
+-- an empty `<failure>` with no stack trace, exactly the signature this file
+already attributes to a concurrent agent reinstalling underneath you. Check the
+`<system-err>` for `device ... not found` before believing any of it; every test
+that actually *executed* in all four runs passed.
+
+Until the host problem is understood, run **one class per invocation** and copy
+each XML out before the next run -- `connectedDebugAndroidTest` clears its output
+directory, so a per-class loop that does not copy keeps only the last class.
+
 ## A repo-wide `ConventionTest` rule can be skipped as UP-TO-DATE while it is being violated
 
 Measured 2026-08-30, falsifying a new rule in `ConventionTest`. With the violating
@@ -1788,3 +1888,112 @@ no `requiresInstrumentedData` floor can be measured. **Get the device runs in ea
 kept its results only because the four module suites had been run and their XML read (with mtimes
 checked) before the emulator went; the one thing lost was a final whole-`:app` pass and fresh
 `.ec` coverage, which is why two new classes here carry no floor rather than an invented one.
+
+## A `@Singleton` browse selection leaks between instrumented test classes
+
+`LibrarySelection` is a `@Singleton` holding which library is being browsed, deliberately -- its
+own KDoc says *"in memory and process-scoped ... it is a browsing position, not a setting"*, and
+that is right for the product: picking a library on the albums tab is still the library the folders
+tab shows. Every `androidTest` class shares one process, so it is also **state one test class hands
+to the next**, and nothing resets it between classes.
+
+Measured on `muplay37`, both directions on the identical tree:
+
+    BrowseJourneyTest#theLibraryScreenListsTheAlbumsOfTheSelectedLibrary
+      -> green, alone
+    ...#switchingLibraryShowsTheOtherLibrarysContentAndOnlyThat, then that same test
+      -> red: 30 s waiting for "Test Album", which the audiobook library does not contain
+
+Three `:app` journeys switch library (`ScopedShuffleJourneyTest` twice, `BrowseJourneyTest`,
+`AlbumRouteJourneyTest`) and **none of them can put it back on the others' behalf**, because the
+leak crosses class boundaries and JUnit gives no ordering. The fix is in the one funnel every
+journey already goes through -- `JourneyNavigation.reachLibraryScreen()` now taps the music chip
+as its third step, which is what a user has and needs no test-only entry point.
+
+Two things that make this more than bookkeeping:
+
+- **The wait after the tap must be on the new library's *content*, not on the chip's `selected`
+  state.** `LibraryViewModel` combines the selection with an `albums` flow that `flatMapLatest`es
+  into a Room query, so the first `Content` after a switch carries the **new selection beside the
+  previous library's album list**. A caller that reads "there are Open buttons" in that window
+  clicks a book.
+- This is the same shape as `MuPlayLibraryCallback`'s cancelled `@Singleton` scope already recorded
+  above. **Any `@Singleton` that holds a position, a selection or a cursor is shared test fixture,**
+  and the symptom is always a class that is green alone and red after a specific sibling.
+
+## A defaulted constructor parameter can switch off the very capability a test is about
+
+`TranscodeSeekSessionTest` hand-built the thing under test:
+
+    PlaybackLauncher(queueRepository(), connection).play(listOf(opus), 0)
+
+`PlaybackLauncher`'s third parameter is `transcodeSeek: TranscodeSeekSupport = TranscodeSeekSupport.None`.
+So the two-argument call compiles, reads like the real thing, and silently constructs a launcher
+whose capability negotiation is a no-op -- in the one test whose whole subject is that negotiation.
+
+It had **never** passed alone. Instrumented with the seam logged, running that class by itself
+produced three command announcements reading `method=NotOffered` / `InPlace` with
+`superSeekCmd=false`, and `MuPlayer.seekTo` was never called once -- while the container advertises
+`transcodeOffset` and `:core:media`'s `TranscodeSeekPlaybackTest` was 18/18 green. In a full run
+some earlier class had negotiated on its behalf, so it passed for reasons that had nothing to do
+with it.
+
+The fix is to reach the **application's own** singleton through the debug entry point
+(`PlaybackEntryPoint.playbackLauncher()`) rather than build a second one. Generally: **in an
+instrumented test, construct nothing that Hilt already provides.** A hand-built copy differs from
+the shipped object exactly where the defaults are, and defaults are chosen to be inert.
+
+Related, from the other side, and already recorded above: a defaulted parameter no caller omits
+compiles to a synthetic constructor no test can reach and measures as permanently uncovered lines.
+
+## `touchBoundsInRoot` reports `0.00dp x 0.00dp` for a node that has left the tree
+
+The tap-target sweep reads `fetchSemanticsNodes()` and then geometry off each node. Between those
+two, a node can be detached -- a recomposition, a dialog opening, a list scrolling -- and Compose
+answers the geometry query with an empty rectangle rather than throwing. Measured on
+`ServerChangeJourneyTest` in a full `:app` run:
+
+    Expecting empty but was: ["settings:integrations: 0.00dp x 0.00dp"]
+
+with the same class **5/5 green alone**. That reads exactly like a 0dp tap target, which is a real
+defect class, so it is worth being able to tell them apart: a genuinely tiny control has a small
+*non-zero* size, and `0.00 x 0.00` on a control that is plainly on the screen is this instead.
+
+`TapTargets` now snapshots each node's geometry once, into a `Target`, and keeps only nodes that
+are attached **and placed** and whose touch bounds are non-empty. All three are needed and the
+first two alone were measured insufficient -- `layoutInfo.isAttached` on its own let the same
+`0.00dp x 0.00dp` through on a later run, because a node can be attached and not yet placed, and
+an unplaced node answers every geometry query with `Rect.Zero` rather than throwing.
+
+Two things worth keeping:
+
+- **The snapshot matters as much as the filter.** Reading `touchBoundsInRoot` twice -- once to
+  filter, once to report -- is two chances to catch a node mid-exit.
+- **Check that a filter cannot hide the defect before adding it.** Here it cannot: Compose grows a
+  small target's touch bounds to 48dp on its own, so a *placed* control cannot report zero however
+  small it is drawn. Zero means "not on the screen", which is a different assertion's job.
+
+## `uiAutomation.performGlobalAction(GLOBAL_ACTION_BACK)` does not always reach the app
+
+`StoreScreenshotsTest` backed out of the player with the accessibility global action and hung there.
+Measured 2026-09-06, deterministically, **alone as well as in a full run** -- fifteen seconds after
+the action the dump is still the whole player:
+
+    text on screen: [0:05, 0:30, Offset Track, Test Album, Test Artist]
+    content descriptions: [Cast, Cover art, Next, Pause, Play queue, Previous]
+
+The position had advanced `0:00 -> 0:05`, so the app was alive and playing; the back simply never
+arrived. **The product is not what is broken, and that was checked rather than assumed:** driving
+the same journey by hand over `adb` -- shuffle, tap a track, `input keyevent KEYCODE_BACK` --
+returns to the library with the `Now playing` bar up, in one press. `Espresso.pressBack()` injects
+that same real key event and the class went green.
+
+`BrowseJourneyTest.backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp` still uses the
+accessibility action and still passes, so this is about this screen, or about what is running behind
+it -- the emulator logged a `System UI isn't responding` ANR in the same window, and a wedged
+SystemUI is a plausible way for a *global* action to be dropped while injected input still works.
+Either way, **prefer `Espresso.pressBack()`**: four other journeys here already do.
+
+Read that ANR finding with the section above about a stale ANR dialog outliving its app. Both are
+the same instruction: when a device reading contradicts what the code says should be true, find out
+what else on that device was broken at the time before rewriting the code.

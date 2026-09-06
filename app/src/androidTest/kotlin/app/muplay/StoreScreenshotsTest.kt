@@ -1,6 +1,5 @@
 package app.muplay
 
-import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -20,6 +19,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.muplay.library.OUT_OF_SCOPE_SUFFIX
@@ -237,8 +237,27 @@ class StoreScreenshotsTest {
     capture(output, "06-now-playing")
 
     // ---- 7. The mini player over the library --------------------------------------------------
-    InstrumentationRegistry.getInstrumentation().uiAutomation
-      .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+    // `Espresso.pressBack()`, and **not**
+    // `uiAutomation.performGlobalAction(GLOBAL_ACTION_BACK)`, which is what this line used to be
+    // and which does not come back from *this* screen.
+    //
+    // Measured on `muplay37`, twice, deterministically -- the class fails alone, not only in a
+    // full run. Fifteen seconds after the global action the dump is still the whole player:
+    //
+    //     text on screen: [0:05, 0:30, Offset Track, Test Album, Test Artist]
+    //     content descriptions: [Cast, Cover art, Next, Pause, Play queue, Previous]
+    //
+    // The position had advanced 0:00 -> 0:05, so the app was alive and playing; the back simply
+    // never arrived. The product is not what is broken, and that was checked rather than assumed:
+    // driving the same journey by hand over `adb` -- shuffle, tap a track, `input keyevent
+    // KEYCODE_BACK` -- returns to the library with the `Now playing` bar up, on this build, in one
+    // press. `Espresso.pressBack()` injects the same real key event, which is why it works here.
+    //
+    // `BrowseJourneyTest.backFromAnAlbumReturnsToTheLibraryRatherThanLeavingTheApp` still uses the
+    // accessibility action and still passes, so the difference is this screen (or what is running
+    // behind it -- the emulator logged a `System UI isn't responding` ANR in the same window), not
+    // the API being generally broken. Four other journeys already press back the Espresso way.
+    Espresso.pressBack()
     await(SETTLE_TIMEOUT_MILLIS, "the $MINI_PLAYER_LABEL bar over the library") {
       composeRule.onAllNodes(hasContentDescriptionOf(MINI_PLAYER_LABEL)).fetchSemanticsNodes().isNotEmpty()
     }

@@ -104,7 +104,7 @@ class TranscodeSeekSessionTest {
    */
   @Test
   fun aControllerCanSeekAForcedTranscodeAndTheSessionReportsWhereItLanded() {
-    runBlocking { PlaybackLauncher(queueRepository(), connection).play(listOf(opus), 0) }
+    runBlocking { playbackLauncher().play(listOf(opus), 0) }
     awaitPositionAtLeast(500L)
 
     // First: the command reached the controller at all. Without this the position assertion below
@@ -192,8 +192,23 @@ class TranscodeSeekSessionTest {
     return result as T
   }
 
-  private fun queueRepository() =
-    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).queueRepository()
+  /**
+   * The app's own [PlaybackLauncher], and **not** `PlaybackLauncher(queueRepository(), connection)`.
+   *
+   * That two-argument hand construction is what this class shipped with, and it takes
+   * `PlaybackLauncher`'s inert `TranscodeSeekSupport.None` default -- so `refreshIfUnknown()`, which
+   * this class's own documentation calls the one place the capability is ever negotiated, was never
+   * called at all. The gate then answered "not supported", `MuPlayer` withdrew the seek command,
+   * and `MediaControllerImplBase.seekTo` returned before the player was reached. Measured alone:
+   * `MuPlayer.seekTo` never ran, and the assertion that failed was the position rather than the
+   * command -- the diagnostic this class's `describedAs` chain exists to separate, defeated by the
+   * one line that fed it.
+   *
+   * It passed in a full suite because `TranscodeOffsetSupport` is a `@Singleton` and some earlier
+   * class had negotiated through the real launcher first. See `PlaybackEntryPoint.playbackLauncher`.
+   */
+  private fun playbackLauncher() =
+    EntryPointAccessors.fromApplication(context, PlaybackEntryPoint::class.java).playbackLauncher()
 
   private fun credentialStore() =
     EntryPointAccessors.fromApplication(context, CredentialStoreEntryPoint::class.java)

@@ -40,6 +40,32 @@ interface PlaybackEntryPoint {
   fun queueRepository(): QueueRepository
 
   /**
+   * The **application's own** singleton [PlaybackLauncher] -- the one a tap on a track goes
+   * through, with the real `TranscodeOffsetSupport` in it.
+   *
+   * `TranscodeSeekSessionTest` needs this one specifically, and hand-building a launcher instead
+   * silently removed the feature it was written to prove. `PlaybackLauncher`'s `transcodeSeek`
+   * parameter defaults to the inert [TranscodeSeekSupport.None] so that this suite's other two
+   * hand-constructions -- which play no transcode -- keep compiling, and a two-argument call
+   * therefore negotiates nothing. `TranscodeOffsetSupport` then answers "this server cannot start
+   * a transcode part-way through" for the whole process, `MuPlayer` withdraws
+   * `COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM`, and `MediaControllerImplBase.seekTo` returns before the
+   * player is reached.
+   *
+   * Measured on `muplay37` with the seam logged: running that class **alone**, the only three
+   * command announcements of the whole run read `method=NotOffered` / `InPlace` with
+   * `superSeekCmd=false`, and `MuPlayer.seekTo` was never called once -- while the container
+   * advertises `transcodeOffset` and `:core:media`'s `TranscodeSeekPlaybackTest` was 18/18 green.
+   * It passed in a full suite only because some earlier class had played through the real
+   * launcher and negotiated on its behalf: a test whose subject is supplied by whichever class
+   * ran before it.
+   *
+   * Reached from the running graph, the object under test is the object the app has -- the same
+   * argument [sleepTimerController] and [shakeSensor] are here for, and the same defect.
+   */
+  fun playbackLauncher(): PlaybackLauncher
+
+  /**
    * The **application's own** singleton [PlaybackConnection] — not one the test built.
    *
    * Needed for exactly one thing, and it is a fact about this process rather than about any test:

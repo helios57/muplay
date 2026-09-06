@@ -36,8 +36,8 @@ import kotlinx.coroutines.runBlocking
  * what a user sees and a shared constant would let a wording change pass unnoticed. See
  * `BrowseJourneyTest`'s own note.
  *
- * Two things this does that a naive version does not, both required against the real app rather
- * than against a description of it:
+ * Three things this does that a naive version does not, all three required against the real app
+ * rather than against a description of it:
  *
  *  1. **It waits for the start destination to be decided before reading it.**
  *     `StartDestinationViewModel` opens on `StartDestination.Loading`, which renders nothing at
@@ -47,6 +47,9 @@ import kotlinx.coroutines.runBlocking
  *  2. **It waits for the launch sync to settle.** `LibraryViewModel.init` calls `refresh()`, and
  *     on a first run that is what populates the mirror. Returning as soon as the Shuffle button
  *     exists hands the caller a screen whose album list is still empty.
+ *  3. **It puts the browse selection back on the music library.** Which library is being browsed
+ *     is process state, not screen state, so without this a journey opens on whichever library the
+ *     journey before it last tapped. See the comment at that step for the measurement.
  *
  * The role chips are found by their own `"Tag as …"` labels, not by the bare library names:
  * `SetupScreen` deliberately labels them distinctly, so `onAllNodesWithText("Music")` matches
@@ -84,6 +87,42 @@ internal fun ComposeTestRule.reachLibraryScreen() {
   waitUntil("the launch sync to commit a watermark", JOURNEY_TIMEOUT_MILLIS) {
     runBlocking { journeyWatermarkDao().read() } != null
   }
+
+  // Point 3, and it is the reason this helper is not simply "wait for the Shuffle button": the
+  // library being browsed is **process state**, so which library a journey opens on depends on
+  // which journey ran before it.
+  //
+  // `LibrarySelection` is a `@Singleton` -- one instance for the whole process, shared so that
+  // picking a library on the albums tab is still the library the folders tab shows. Instrumented
+  // tests all run in one process and the choice outlives the activity, so a journey that taps the
+  // Audiobooks chip leaves every journey after it browsing audiobooks: the rest of its own class,
+  // and every class the runner happens to schedule later.
+  //
+  // Measured on `muplay37`, both directions on the identical tree:
+  //
+  //     BrowseJourneyTest#theLibraryScreenListsTheAlbumsOfTheSelectedLibrary
+  //       -> green, alone
+  //     ...#switchingLibraryShowsTheOtherLibrarysContentAndOnlyThat then that same test
+  //       -> red: 30 s waiting for "Test Album", which the audiobook library does not contain
+  //
+  // Three journeys switch (`ScopedShuffleJourneyTest` twice, `BrowseJourneyTest`,
+  // `AlbumRouteJourneyTest`) and none of them can put it back on the others' behalf, because the
+  // leak crosses class boundaries. This funnel is the only place that sees all twelve callers.
+  //
+  // Tapped, not reset through an entry point: a chip is what a user has, and a journey that
+  // arranges its starting state by reaching into a singleton is a journey that can pass on a
+  // screen nobody could operate. The tap is unconditional -- re-selecting the library already
+  // selected is what a user re-tapping a chip gets, and it costs one recomposition.
+  onAllNodesWithText(MUSIC_LIBRARY).notTheMiniPlayer()[LIBRARY_CHIP].performClick()
+
+  // **Not the chip's own `selected` state, which flips one emission too early.** `LibraryViewModel`
+  // combines the selection with an `albums` flow that `flatMapLatest`es into a Room query, so the
+  // first `Content` after a switch carries the new selection beside the *previous* library's album
+  // list. A caller that reads "there are Open buttons" in that window clicks a book. The seeded
+  // music album is in the emission after it, and only in that one.
+  waitUntil("the music library's own albums to be the list on screen", JOURNEY_TIMEOUT_MILLIS) {
+    onAllNodesWithText(MUSIC_ALBUM).notTheMiniPlayer().fetchSemanticsNodes().isNotEmpty()
+  }
 }
 
 /** The real singleton [SyncWatermarkDao] the app itself syncs through. */
@@ -118,6 +157,22 @@ private const val SHUFFLE_LABEL = "Shuffle this library"
 /** Row positions in the tagging list, not roles -- see `FirstRunJourneyTest`'s own note. */
 private const val MUSIC_ROW_CHIP = 0
 private const val AUDIOBOOKS_ROW_CHIP = 1
+
+/**
+ * The music library's chip on the library screen, and the one album `ci/seed-fixtures.sh` puts in
+ * it -- what this helper taps and then waits for, to undo the selection an earlier journey left
+ * behind. Duplicated from `BrowseJourneyTest` and `AlbumRouteJourneyTest` rather than shared with
+ * them, the same rule [SHUFFLE_LABEL] follows: these journeys are a black-box walk through what a
+ * user sees, and one shared constant would let a change to that pass unnoticed in all three.
+ *
+ * `ci/configure-libraries.sh` renames Navidrome's pinned library 1 to "Music"; the chip carries the
+ * library's own name, so this is the server's string rather than the app's.
+ */
+private const val MUSIC_LIBRARY = "Music"
+private const val MUSIC_ALBUM = "Test Album"
+
+/** The chip, not the label inside it -- `AlbumRouteJourneyTest`'s own note on why an index. */
+private const val LIBRARY_CHIP = 0
 
 /** Generous: a first sync fetches every album and every album's tracks over the loopback. */
 private const val JOURNEY_TIMEOUT_MILLIS = 30_000L
