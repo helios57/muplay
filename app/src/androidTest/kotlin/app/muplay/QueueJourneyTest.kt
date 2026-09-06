@@ -1,5 +1,6 @@
 package app.muplay
 
+import android.Manifest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.rule.GrantPermissionRule
 import app.muplay.designsystem.component.ADD_TO_QUEUE_LABEL
 import app.muplay.designsystem.component.PLAY_NEXT_LABEL
 import app.muplay.designsystem.component.QUEUE_MENU_LABEL
@@ -95,7 +97,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class QueueJourneyTest {
 
-  @get:Rule
+  /**
+   * Ordered before the activity launches, because from API 33 [MainActivity] asks for
+   * `POST_NOTIFICATIONS` on start and an ungranted permission puts a **system dialog** over the
+   * whole UI. Measured on a device with the permission revoked: this class failed with
+   * `IllegalStateException: No compose hierarchies found in the app`, from the first
+   * `waitUntil` in `reachLibraryScreen` -- a message that names Compose and the activity and says
+   * nothing about a permission.
+   */
+  @get:Rule(order = 0)
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  @get:Rule(order = 1)
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   /**

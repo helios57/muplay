@@ -1,5 +1,6 @@
 package app.muplay
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
@@ -13,6 +14,7 @@ import androidx.media3.session.SessionToken
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import app.muplay.database.MediaProgressEntryPoint
 import app.muplay.database.dao.MediaProgressDao
 import app.muplay.database.entity.MediaProgressEntity
@@ -80,6 +82,18 @@ import org.junit.runner.RunWith
 class CarResumeJourneyTest {
 
   /**
+   * Ordered before the activity launches, because from API 33 [MainActivity] asks for
+   * `POST_NOTIFICATIONS` on start and an ungranted permission puts a **system dialog** over the
+   * whole UI. Measured on a device with the permission revoked: this class failed with
+   * `IllegalStateException: No compose hierarchies found in the app`, from the first
+   * `waitUntil` in `reachLibraryScreen` -- a message that names Compose and the activity and says
+   * nothing about a permission.
+   */
+  @get:Rule(order = 0)
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  /**
    * The app itself, walked to a settled library screen.
    *
    * Not decoration and not a UI test: [reachLibraryScreen] is what establishes the credentials, the
@@ -87,7 +101,7 @@ class CarResumeJourneyTest {
    * every tab below is empty and every assertion in this file is vacuous. It is also the only path
    * that goes through the real setup flow rather than writing the app's own state behind its back.
    */
-  @get:Rule
+  @get:Rule(order = 1)
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   private lateinit var context: Context

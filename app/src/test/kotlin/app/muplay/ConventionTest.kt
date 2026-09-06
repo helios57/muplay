@@ -2596,4 +2596,96 @@ class ConventionTest {
       .isEmpty()
   }
 
+
+  /**
+   * A runtime permission this app *declares* must also be *asked for*, somewhere in `src/main`.
+   *
+   * `POST_NOTIFICATIONS` is `dangerous` from API 33: declaring it in a manifest grants nothing, and
+   * an app that never calls for it simply never posts a notification. For a media app that is the
+   * whole product -- no lock-screen transport, nothing for a paired watch or a car to mirror, and
+   * a foreground service running invisibly -- and it fails **silently**, with no exception, no lint
+   * warning and nothing in logcat.
+   *
+   * It shipped that way. The permission has been in `core/media`'s manifest since the service was
+   * written, and nothing under any `src/main` ever requested it; the only thing that ever granted
+   * it was `GrantPermissionRule` in the instrumented tests, which is the shape this repository
+   * keeps rediscovering -- **the test harness satisfying the very condition the tests exist to
+   * check**, so that no test could observe the omission. Every notification assertion in
+   * `MuPlaybackServiceTest` passed throughout.
+   *
+   * The declared set is read from the manifests rather than written here, so declaring a *new*
+   * runtime permission and forgetting to request it goes red on the fast tier. [RUNTIME_PERMISSIONS]
+   * is the one hand-written half and is deliberately small: it names the permissions that are
+   * `dangerous` on this project's supported API range, which a JVM test cannot ask the platform for.
+   */
+  @Test
+  fun `every runtime permission this app declares is requested somewhere in src main`() {
+    val root = repoRoot()
+    val manifests = root.walkTopDown()
+      .onEnter { it.name != "build" && it.name != ".git" && it.name != ".claude" }
+      .filter { it.name == "AndroidManifest.xml" }
+      .toList()
+    assertThat(manifests).describedAs("AndroidManifest.xml files").isNotEmpty()
+
+    val declared = manifests
+      .flatMap { DECLARED_PERMISSION.findAll(it.readText()).map { m -> m.groupValues[1] } }
+      .toSet()
+    // Non-vacuity: this project declares at least one runtime permission, and a rule that silently
+    // had nothing to check would be indistinguishable from a rule that passed.
+    val declaredRuntime = declared.filter { it in RUNTIME_PERMISSIONS }
+    assertThat(declaredRuntime)
+      .describedAs("runtime permissions declared across all manifests; declared set was $declared")
+      .isNotEmpty()
+
+    // `build-logic` is excluded, and finding that out cost the first run of this rule. Its
+    // `AndroidApplicationConventionPlugin` carries the literal
+    // `android:name="android.permission.POST_NOTIFICATIONS"` -- as the needle of the merged-manifest
+    // gate that checks the permission is *declared* -- so a scan over the whole repository matched
+    // the build tool asserting on the string and reported the app as compliant. A rule that is
+    // satisfied by another gate's source text is the fifth self-matching check in this repository.
+    val sources = root.walkTopDown()
+      .onEnter {
+        it.name != "build" && it.name != ".git" && it.name != ".claude" && it.name != "build-logic"
+      }
+      .filter { it.extension == "kt" && it.invariantSeparatorsPath.contains("/src/main/") }
+      .toList()
+    assertThat(sources).describedAs("Kotlin sources under */src/main, excluding build-logic")
+      .isNotEmpty()
+    val code = sources.joinToString("\n") { kotlinCode(it.readText()) }
+
+    // By short name, because that is how Kotlin addresses it -- `Manifest.permission.X`. Matching
+    // the fully-qualified string would be an absence probe that can never fire, which this
+    // repository has shipped before; see CLAUDE.md, "An absence probe written as a Java setter call
+    // can never match Kotlin".
+    val unrequested = declaredRuntime.filterNot { code.contains(it.substringAfterLast('.')) }
+
+    assertThat(unrequested)
+      .describedAs(
+        "Declared in a manifest and never requested at runtime. On API 33+ the permission is not " +
+          "granted at install, so the capability it guards is silently absent on every device -- " +
+          "for POST_NOTIFICATIONS that means no media notification, no lock-screen transport, and " +
+          "nothing for a watch or a car to mirror.",
+      )
+      .isEmpty()
+  }
+
+  private companion object {
+    val DECLARED_PERMISSION =
+      Regex("""<uses-permission[^>]*android:name="([^"]+)"""")
+
+    /**
+     * Permissions that are `dangerous` between `minSdk` 26 and `targetSdk` 36, so declaring one
+     * is not enough. Only the ones this project could plausibly reach are listed; the point of the
+     * set is to be *intersected* with what the manifests declare, so an entry that never appears
+     * costs nothing and a declared permission missing from it is simply not checked.
+     */
+    val RUNTIME_PERMISSIONS = setOf(
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.READ_MEDIA_AUDIO",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.ACTIVITY_RECOGNITION",
+    )
+  }
 }

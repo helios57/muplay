@@ -1,5 +1,6 @@
 package app.muplay
 
+import android.Manifest
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import app.muplay.model.LibraryRole
 import app.muplay.model.MusicLibrary
 import app.muplay.setup.LibraryRepositoryEntryPoint
@@ -85,6 +87,18 @@ class FirstRunJourneyTest {
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   /**
+   * Ordered before the activity launches, because from API 33 [MainActivity] asks for
+   * `POST_NOTIFICATIONS` on start and an ungranted permission puts a **system dialog** over the
+   * whole UI. Measured on a device with the permission revoked: this class failed with
+   * `IllegalStateException: No compose hierarchies found in the app`, from the first
+   * `waitUntil` in `reachLibraryScreen` -- a message that names Compose and the activity and says
+   * nothing about a permission.
+   */
+  @get:Rule(order = 0)
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  /**
    * **The reset has to happen before the Activity is created, which is why this is a `RuleChain`
    * and not a `@Before` method any more.**
    *
@@ -95,7 +109,7 @@ class FirstRunJourneyTest {
    * this class opened on the library screen instead of on setup and died looking for a "Server
    * URL" field. `RuleChain.outerRule(...)` is what puts the reset genuinely first.
    */
-  @get:Rule
+  @get:Rule(order = 1)
   val rules: RuleChain = RuleChain.outerRule(ResetLibraryTagging()).around(composeRule)
 
   /**

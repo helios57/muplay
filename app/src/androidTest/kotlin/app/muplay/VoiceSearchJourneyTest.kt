@@ -1,5 +1,6 @@
 package app.muplay
 
+import android.Manifest
 import android.app.SearchManager
 import android.content.ComponentName
 import android.content.Context
@@ -16,6 +17,7 @@ import androidx.media3.session.SessionToken
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import app.muplay.media.MuPlaybackService
 import app.muplay.model.browse.BrowseSurfaces
 import com.google.common.util.concurrent.ListenableFuture
@@ -66,13 +68,25 @@ import org.junit.runner.RunWith
 class VoiceSearchJourneyTest {
 
   /**
+   * Ordered before the activity launches, because from API 33 [MainActivity] asks for
+   * `POST_NOTIFICATIONS` on start and an ungranted permission puts a **system dialog** over the
+   * whole UI. Measured on a device with the permission revoked: this class failed with
+   * `IllegalStateException: No compose hierarchies found in the app`, from the first
+   * `waitUntil` in `reachLibraryScreen` -- a message that names Compose and the activity and says
+   * nothing about a permission.
+   */
+  @get:Rule(order = 0)
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  /**
    * The app itself, walked to a settled library screen.
    *
    * [reachLibraryScreen] is what establishes the credentials, the two `LibraryRole` tags and a
    * committed sync; the browse tree reads the mirror, so without it every assertion here is
    * vacuous. It also puts the app in the foreground, which is what makes `startService` legal.
    */
-  @get:Rule
+  @get:Rule(order = 1)
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   private lateinit var context: Context

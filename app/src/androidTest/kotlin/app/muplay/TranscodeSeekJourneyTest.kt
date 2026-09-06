@@ -1,5 +1,6 @@
 package app.muplay
 
+import android.Manifest
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.test.rule.GrantPermissionRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Rule
@@ -54,7 +56,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TranscodeSeekJourneyTest {
 
-  @get:Rule
+  /**
+   * Ordered before the activity launches, because from API 33 [MainActivity] asks for
+   * `POST_NOTIFICATIONS` on start and an ungranted permission puts a **system dialog** over the
+   * whole UI. Measured on a device with the permission revoked: this class failed with
+   * `IllegalStateException: No compose hierarchies found in the app`, from the first
+   * `waitUntil` in `reachLibraryScreen` -- a message that names Compose and the activity and says
+   * nothing about a permission.
+   */
+  @get:Rule(order = 0)
+  val notificationPermission: GrantPermissionRule =
+    GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+
+  @get:Rule(order = 1)
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   /**
