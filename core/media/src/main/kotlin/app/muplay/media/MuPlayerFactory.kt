@@ -212,6 +212,23 @@ class MuPlayerFactory @Inject constructor(
       // stalls mid-track. Both are released the moment playback stops, by Media3, so this is not a
       // battery decision made once for the process.
       .setWakeMode(C.WAKE_MODE_NETWORK)
+      // **Without this a watch, a car and the system volume row cannot touch the volume**, and
+      // nothing says so. `ExoPlayer.Builder.deviceVolumeControlEnabled` defaults to `false`, and
+      // `ExoPlayerImpl`'s constructor adds all five volume commands with
+      // `Player.Commands.Builder.addIf(command, deviceVolumeControlEnabled)` -- commands 23, 25,
+      // 26, 33 and 34, read out of `media3-exoplayer-1.11.0.aar`'s bytecode rather than from the
+      // docs. A controller cannot even *draw* a volume slider without `COMMAND_GET_DEVICE_VOLUME`,
+      // so the failure is a dead control rather than an error.
+      //
+      // Measured before this line existed: a `MediaController` over real IPC reported
+      // `[false, false, false, false, false]` for those five, while every transport command it
+      // asked about was true. `MuPlaybackServiceTest.theSessionOffersTheVolumeCommandsAWatchNeeds`
+      // is that measurement.
+      //
+      // What it grants is control of the *device* volume -- the music stream -- which is what a
+      // remote controller means by "volume". It is not the per-player `volume` the sleep timer
+      // ramps; that is `Player.setVolume` and is unaffected.
+      .setDeviceVolumeControlEnabled(true)
       .build()
       .also { player ->
         player.addListener(ContentTypeSwitcher(player))

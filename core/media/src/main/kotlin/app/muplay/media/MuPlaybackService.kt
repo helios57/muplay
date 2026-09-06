@@ -246,6 +246,11 @@ class MuPlaybackService : MediaLibraryService() {
     )
 
     session = MediaLibrarySession.Builder(this, player, libraryCallback)
+      // What every *remote* surface draws -- the notification, the lock screen, a car's transport
+      // row, and the media card a paired watch renders. Media3's default is three buttons and no
+      // seek pair; see `TransportButtons` for what that cost and why this is set on the session
+      // rather than by subclassing the notification provider.
+      .setMediaButtonPreferences(TransportButtons.preferences(this))
       // **Without this, no surface shows cover art at all**, because the item's `artworkUri` is a
       // `muplay-art:` URI no general-purpose loader can dereference -- which is exactly the point
       // of it (see `ArtworkUri`). Media3 wraps whatever loader it is given in

@@ -2,6 +2,7 @@ package app.muplay
 
 import android.Manifest
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,6 +14,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -33,6 +35,7 @@ import app.muplay.model.SubsonicCredentials
 import app.muplay.network.SubsonicClient
 import dagger.hilt.android.EntryPointAccessors
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -256,7 +259,127 @@ class MuPlaybackServiceTest {
         Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
         Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
       ).map { commands.contains(it) },
-    ).containsExactly(true, true, true, true, true)
+    )
+      // The whole granted set, by number, because the interesting failure here is *which* of the
+      // five is missing and nothing else in the report would say.
+      .describedAs(
+        "get/set/setWithFlags/adjust/adjustWithFlags device volume; granted commands are " +
+          (0 until commands.size()).map { commands.get(it) },
+      )
+      .containsExactly(true, true, true, true, true)
+  }
+
+  /**
+   * The volume half of the same question, and it has a **two-sided** answer that cost a device run
+   * to find. Both sides are needed and neither is visible from the other.
+   *
+   * **Session side.** `ExoPlayer.Builder.deviceVolumeControlEnabled` defaults to `false`, and
+   * `ExoPlayerImpl`'s constructor adds all five device-volume commands -- 23, 25, 26, 33, 34 -- with
+   * `Player.Commands.Builder.addIf(command, deviceVolumeControlEnabled)`, read out of
+   * `media3-exoplayer-1.11.0.aar`'s bytecode. A session built without the setter offers *no*
+   * controller any way to read or change the volume, silently: nothing throws, the notification
+   * still draws, and every other transport command works. [MuPlayerFactory] sets it.
+   *
+   * **Controller side, and this is the part that is not guessable.** Media3 then takes four of the
+   * five *back*, on the controller, for local playback.
+   * `MediaControllerImplBase.createIntersectedCommandsWithControllerOverrides` computes
+   *
+   *     remove = playerInfo.deviceInfo.playbackType == PLAYBACK_TYPE_LOCAL
+   *              && !allowDeviceVolumeCommandsForLocalPlayback
+   *
+   * and then `removeIf`s 25, 33, 26 and 34 -- every setter, keeping only the getter 23. So an
+   * ordinary controller over a phone-local session reports
+   * `[true, false, false, false, false]`, which is what this test measured before it was rewritten,
+   * and no amount of session-side configuration changes it. The opt-in is
+   * `MediaController.Builder.setAllowDeviceVolumeCommandsForLocalPlayback`, and it belongs to
+   * whoever *builds* the controller.
+   *
+   * **Which is why this test builds its own controller rather than using [connection]'s.** The
+   * app's own controller does not opt in and should not: on this phone the hardware keys and the
+   * system volume row already own the local stream. What the opt-in lets this test do is observe
+   * the session-side property through the only door Media3 leaves open -- delete
+   * `setDeviceVolumeControlEnabled(true)` from [MuPlayerFactory] and all five go false here, opt-in
+   * or not, which is the falsification this assertion exists for.
+   *
+   * **A paired watch needs none of this.** Its volume keys drive the phone's `STREAM_MUSIC` through
+   * the platform session, which reports `volumeType=LOCAL` in `dumpsys media_session` precisely
+   * because `deviceInfo.playbackType` is local; that path never consults a Media3 player command.
+   * The commands here are what a controller that wants to *draw a volume slider* needs -- a car head
+   * unit, or a remote-playback session where `playbackType` is not local and Media3 removes nothing.
+   */
+  @Test
+  fun theSessionsPlayerOffersDeviceVolumeControlToAControllerThatOptsIn() {
+    setQueueAndPlay(songs.take(2))
+    awaitPositionAtLeast(500L)
+
+    val token = SessionToken(context, ComponentName(context, MuPlaybackService::class.java))
+    // Built on the main thread and read there too: a `MediaController` may only be touched from the
+    // thread it was created on, and `buildAsync` completes on that thread's looper -- so the `get`
+    // has to happen off it, which is where the instrumentation thread this test runs on comes in.
+    val future = onMain {
+      MediaController.Builder(context, token)
+        .setAllowDeviceVolumeCommandsForLocalPlayback(true)
+        .buildAsync()
+    }
+    val opted = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    try {
+      val commands = onMain { opted.availableCommands }
+      // The exact list, for the reason the test above gives: an `anyMatch` over an empty command set
+      // is vacuously false and an `allMatch` vacuously true.
+      assertThat(
+        listOf(
+          Player.COMMAND_GET_DEVICE_VOLUME,
+          Player.COMMAND_SET_DEVICE_VOLUME,
+          Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+          Player.COMMAND_ADJUST_DEVICE_VOLUME,
+          Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS,
+        ).map { commands.contains(it) },
+      )
+        // The whole granted set, by number, because the interesting failure here is *which* of the
+        // five is missing and nothing else in the report would say. It is what turned this test
+        // from "Media3 is filtering something" into the two-sided note above.
+        .describedAs(
+          "get/set/setWithFlags/adjust/adjustWithFlags device volume; granted commands are " +
+            (0 until commands.size()).map { commands.get(it) },
+        )
+        .containsExactly(true, true, true, true, true)
+    } finally {
+      // Or the next class inherits a live binding to this service; see [tearDown]'s note.
+      onMain { opted.release() }
+    }
+  }
+
+  /**
+   * What a watch, a car and a lock screen actually *draw* -- which is not the command set above.
+   *
+   * Media3 renders the notification, Android Auto's transport row and a bridged watch media card
+   * from the session's **media button preferences**, and `DefaultMediaNotificationProvider`'s own
+   * default is three buttons: previous, play/pause, next. Measured on the emulator against a
+   * four-track queue mid-playback, `dumpsys notification` reported exactly
+   * `[0] "Seek to previous item" [1] "Pause" [2] "Seek to next item"` -- no rewind and no fast
+   * forward, on an app whose audiobook screen is built around a ten-second rewind.
+   *
+   * Asserted against the notification the `NotificationManager` is holding rather than against the
+   * preferences list this app supplies, because the second is what we said and the first is what a
+   * remote surface receives.
+   */
+  @Test
+  fun theNotificationCarriesTheFullTransportAWatchAndACarCanDraw() {
+    // Three tracks and a seek onto the middle one: at either end of a queue Media3 correctly drops
+    // the button that cannot act, so a queue position where *every* button is legal is what makes
+    // this assertion about the button set rather than about the queue.
+    setQueueAndPlay(songs.take(3), startIndex = 1)
+    awaitPositionAtLeast(500L)
+
+    val titles = awaitNotificationActions()
+    assertThat(titles).describedAs("the transport a remote controller is offered")
+      .containsExactlyInAnyOrder(
+        "Seek to previous item",
+        "Seek back",
+        "Pause",
+        "Seek forward",
+        "Seek to next item",
+      )
   }
 
   @Test
@@ -918,6 +1041,28 @@ class MuPlaybackServiceTest {
     // empty array and a helper that returned null would let every notification assertion pass on
     // nothing. This message is what that failure has to look like.
     throw AssertionError("no notification was ever posted by ${context.packageName}")
+  }
+
+  /**
+   * The action titles on the posted notification, once the set has stopped growing.
+   *
+   * Media3 rebuilds the notification on every command-set change, and the command set changes twice
+   * on the way into steady playback -- a queue arrives, then the current window becomes seekable.
+   * Reading once therefore reads a real notification from the wrong moment, which is the trap
+   * CLAUDE.md records against the ANR dialog and the build cache under a different name. So this
+   * polls until the titles are the same twice running, and reports whatever it last saw when they
+   * never settle.
+   */
+  private fun awaitNotificationActions(): List<String> {
+    val deadline = System.currentTimeMillis() + TIMEOUT_MS
+    var previous: List<String>? = null
+    while (System.currentTimeMillis() < deadline) {
+      val titles = awaitNotification().notification.actions.orEmpty().map { it.title.toString() }
+      if (titles.isNotEmpty() && titles == previous) return titles
+      previous = titles
+      Thread.sleep(POLL_MS)
+    }
+    throw AssertionError("notification actions never settled; last seen $previous")
   }
 
   /**
