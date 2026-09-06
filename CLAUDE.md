@@ -1464,6 +1464,87 @@ unreachable -- so 3/4 or 19/20 is the honest ceiling, not a rounded-down number.
 `SetupFailureReasonKt` (0.85) are the same shape; check for one before assuming a
 floor a branch or two short is a missing test.
 
+## Media3 drops a `CommandButton` that has no slot it recognises, silently
+
+Measured in 1.11.0 while giving the notification a rewind and a fast-forward. Reading
+`CommandButton.getCustomLayoutFromMediaButtonPreferences`'s bytecode, media button preferences
+resolve in exactly three steps: element 0 is the first button whose slots contain `SLOT_BACK`,
+element 1 the first containing `SLOT_FORWARD`, and then **only** those remaining buttons whose
+slots contain `SLOT_OVERFLOW` are appended. `DefaultMediaNotificationProvider.getMediaButtons`
+then draws back / central / forward and appends the rest.
+
+So a button declared with `setSlots(SLOT_BACK_SECONDARY)` alone -- which reads exactly right, and
+is what the API's own naming suggests -- matches none of the three and is **dropped on the floor**.
+No warning, no log, no lint. The notification was byte-identical to the one before the feature
+existed: `["Seek to previous item", "Pause", "Seek to next item"]`. Always give a button
+`SLOT_OVERFLOW` as its last slot, and put the specific slot first.
+
+**And do not declare previous/next as preferences at all.** Media3 already draws both from
+`COMMAND_SEEK_TO_PREVIOUS`/`COMMAND_SEEK_TO_NEXT`. Declaring them replaces those defaults and
+republishes them to the platform session as *custom actions* -- measured,
+`custom actions=[Action:mName='Seek to previous item', Action:mName='Seek to next item']` -- which
+moves the two most standard controls in media playback out of the `ACTION_SKIP_TO_*` bits every
+remote surface knows how to draw and into an app-specific list each one must opt into
+understanding. Declare only what Media3 does not already offer.
+
+### A `@IntDef` vararg loses its annotation through a spread, and only lint sees it
+
+`.setSlots(*slots)` over an `IntArray` compiles clean, passes every test, and fails `lintDebug`:
+
+    Error: Must be one of: CommandButton.SLOT_CENTRAL, CommandButton.SLOT_BACK, ... [WrongConstant]
+
+Same family as `@UnstableApi` above, running the other way: there the compiler cannot see an
+annotation lint enforces; here a spread *erases* one lint enforces. State the constants literally
+at the call site and keep the helper for everything else.
+
+## Media3 takes four device-volume commands back **on the controller**, not on the session
+
+`ExoPlayer.Builder.deviceVolumeControlEnabled` defaults to `false` and gates all five device-volume
+commands with `addIf`. Setting it is necessary and **not sufficient**: a controller over a
+phone-local session still reports
+
+    [COMMAND_GET_DEVICE_VOLUME=true, SET=false, SET_WITH_FLAGS=false, ADJUST=false, ADJUST_WITH_FLAGS=false]
+
+which reads like a Media3 bug and sends you into the session code, where there is nothing to find.
+It is `MediaControllerImplBase.createIntersectedCommandsWithControllerOverrides`:
+
+    remove = playerInfo.deviceInfo.playbackType == PLAYBACK_TYPE_LOCAL
+             && !allowDeviceVolumeCommandsForLocalPlayback
+    ... .removeIf(25, remove).removeIf(33, remove).removeIf(26, remove).removeIf(34, remove)
+
+-- every setter, keeping only the getter. The opt-in is
+`MediaController.Builder.setAllowDeviceVolumeCommandsForLocalPlayback`, and it belongs to whoever
+*builds the controller*, so no amount of session-side configuration moves it.
+
+Two things follow. **A test that wants to observe the session-side property has to build its own
+opted-in controller** -- the app's own controller does not opt in and should not, since the hardware
+keys already own the local stream. And **a paired watch needs none of these commands**: its volume
+keys drive the phone's `STREAM_MUSIC` through the platform session, which reports `volumeType=LOCAL`
+for the very same reason Media3 removes them.
+
+**Read the constant values before reasoning about a command set.** `COMMAND_SET_VOLUME` is 24 and
+`COMMAND_SET_DEVICE_VOLUME` is 25; an hour went into "24 is present, so the setter is granted" over
+two different commands whose names differ by one word. `javap -p -constants` on `Player.class`
+settles it in one command.
+
+## A scan for "is this declared thing also wired?" can be satisfied by the gate that checks it
+
+`ConventionTest`'s new `every runtime permission this app declares is requested somewhere in src
+main` passed on its first run, over a tree where `POST_NOTIFICATIONS` was declared in a manifest and
+requested **nowhere**. `build-logic`'s `AndroidApplicationConventionPlugin` contains the literal
+`android:name="android.permission.POST_NOTIFICATIONS"` -- as the *needle* of the merged-manifest gate
+that checks the permission is declared -- and the walk over the repository root found it.
+
+That is the fifth self-matching check recorded in this file, after the `pgrep` that matched its own
+command line, the nav-entry rule that reported its own KDoc, `VerifyMergedManifestTask`'s required
+half, and `pkill -f`. Exclude `build-logic` from any repo-root scan about application code, and ask
+of every new scan: *does the thing doing the asking contain the pattern?*
+
+Note also what the defect was, because it is this repository's own recurring shape from the other
+side: the **only** thing that ever granted that permission was `GrantPermissionRule` in the
+instrumented tests, so every notification assertion passed against a permission the shipped app
+never asked for. The harness satisfied the condition the tests existed to check.
+
 ## An ANR dialog outlives the app, so a UI dump can report a crash that already ended
 
 Measured 2026-08-30 while smoke-testing the audiobook UI. `uiautomator dump` after
@@ -1487,8 +1568,13 @@ rendering normally, on the identical APK.
 
 Two things follow, and the second is the general one:
 
-- **Dismiss or uninstall before you dump.** A `force-stop` is not enough, and the
-  reading it produces is confidently wrong rather than empty.
+- **Dismiss or uninstall before you dump.** A `force-stop` of *your own* app is not enough, and
+  the reading it produces is confidently wrong rather than empty. What does clear it is
+  force-stopping **the package that is ANRing**, which is not always yours: a stale
+  *"Pixel Launcher isn't responding"* dialog survived `KEYCODE_BACK` and a tap on its own
+  dumped "Wait" bounds, and went away on
+  `adb shell am force-stop com.google.android.apps.nexuslauncher`. Read the dialog's text for
+  the owner before reaching for the app you are testing.
 - This is the same shape as every other stale-measurement trap in this file — the
   build-cache serving another worktree's failure, a floor comment describing a run
   that no longer happens, a lane's report describing master as it was at its last

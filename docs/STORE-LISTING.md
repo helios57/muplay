@@ -214,10 +214,13 @@ checklist and its own rejection path. Plan 8 Task 10 owns walking that checklist
 
 **Wear OS is the row most likely to be got wrong, so read what decides it.** This repository used
 to contain a `:wear` application module and a `:core:watchlink` sync engine. Both were **deleted**:
-a paired watch controls MuPlay through Wear OS's own notification bridging — a `MediaStyle`
-notification backed by a `MediaSession`, which the watch renders as a media card with transport
-buttons — and that is a platform feature needing no watch app, no Data Layer and no Play services.
-Spotify and Symfonium ship no watch APK for the same reason.
+a paired watch controls MuPlay through the phone's **`MediaSession`** — a system component on the
+watch republishes the phone's active session locally and draws its transport actions and metadata,
+authorised by notification-listener access on the phone — and that is a platform feature needing no
+watch app, no Data Layer and no Play services. (An earlier version of this paragraph credited Wear
+OS *notification bridging*; that is not the mechanism, and MuPlay's media notification is ongoing,
+which is not bridged at all. It also claimed Symfonium ships no watch APK, which is false — it has
+one since v2.0.0. Needing no watch app is a fact about this build, not a rule other apps follow.)
 
 So the answer is **No**, and it is now No for the simplest possible reason: there is no watch
 module, nothing declares `wearApp(...)`, and `.github/workflows/release.yml` assembles and signs
@@ -295,7 +298,7 @@ audit that produced this list.
 | Casting an audiobook | The cast button is in `PlayerScreen`'s slot and `:app` routes a book to `BookPlayerScreen`, which has no cast anything. So the capability exists and a book cannot reach it. |
 | Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. No selection, no pinning, no queue. |
 | Scrobbling / play counts sent back to the server | Never, and structurally: `SubsonicApi` declares eight read endpoints and no write one, and `core/network`'s own `LocalOnlyProgressTest` fails the build if one is added. |
-| Wear OS app | There is no watch module at all: `:wear` and `:core:watchlink` were deleted, nothing declares `wearApp(...)`, and `release.yml` assembles and signs `:app` and only `:app`. A watch controls playback through Wear OS notification bridging, which ships no APK. |
+| Wear OS app | There is no watch module at all: `:wear` and `:core:watchlink` were deleted, nothing declares `wearApp(...)`, and `release.yml` assembles and signs `:app` and only `:app`. A watch controls playback by rendering the phone's `MediaSession`, which ships no APK. |
 | Material You / dynamic colour | Light and dark only, from a fixed palette that follows the system setting. |
 
 

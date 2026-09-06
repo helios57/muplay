@@ -602,28 +602,40 @@ class ConventionTest {
    * line, the nav-entry rule above, and `VerifyMergedManifestTask`'s required half.
    */
   /**
-   * Controlling playback from a paired watch is a PLATFORM feature, and this rule protects the one
-   * line that would silently switch it off.
+   * Controlling playback from a paired watch is a PLATFORM feature, and this rule protects one line
+   * that would opt the media notification out of every connected surface at once.
    *
-   * Spotify and Symfonium do not install anything on a Galaxy Watch to be controllable from it.
-   * Wear OS bridges the phone's notifications to the watch, and a `MediaStyle` notification backed
-   * by a `MediaSession` is rendered there as a media card with real transport buttons. MuPlay gets
-   * this for free: `MuPlaybackService` installs Media3's `DefaultMediaNotificationProvider`, and
-   * `MuPlaybackServiceTest.theSessionOffersTheTransportCommandsALockScreenNeeds` pins the exact
-   * command set such a controller needs -- the same set a lock screen needs, which is why one test
-   * covers both surfaces.
+   * **The mechanism, corrected.** An earlier version of this comment said the watch renders our
+   * *notification*, bridged by Wear OS. That is not what carries media controls. The watch's media
+   * card is built from the phone's **`MediaSession`**: a system component on the watch
+   * (`com.google.android.wearable.media.sessions`) republishes the phone's active session locally
+   * and draws its `PlaybackState` actions and metadata, and the phone-side hop is authorised by
+   * *enabled notification-listener status*, not by anything about the notification itself. The
+   * previous reasoning could not have been right about this app in any case: MuPlay's media
+   * notification is **ongoing** (`FLAG_NO_CLEAR`, which `MediaSessionService` sets while playing),
+   * and an ongoing notification is not bridged. So the thing that was credited with making the
+   * watch work was structurally incapable of it.
    *
-   * `NotificationCompat.Builder.setLocalOnly(true)` is the switch. It marks a notification as not
-   * for bridging, Wear then never shows it, and **nothing anywhere goes red**: the phone behaves
-   * identically, every test here passes, and the only symptom is a watch that stopped offering
-   * controls. It is also a plausible thing to add by accident -- it reads like a privacy or
-   * tidiness improvement.
+   * What actually has to hold is therefore about the *session*, and is pinned elsewhere:
+   * `MuPlaybackServiceTest.theSessionOffersTheTransportCommandsALockScreenNeeds` fixes the command
+   * set, and `theNotificationCarriesTheFullTransportAWatchAndACarCanDraw` the button list
+   * [TransportButtons] adds to it. Both are device tests against a real session.
+   *
+   * **The claim about other apps was also wrong and is dropped.** Symfonium *does* ship a Wear OS
+   * APK (since v2.0.0). "No watch app is needed" remains true of MuPlay -- nothing declares
+   * `wearApp(...)` and `release.yml` signs `:app` alone -- but it is a statement about this build,
+   * not a rule other media apps follow.
+   *
+   * **Why the rule survives its own rationale.** `NotificationCompat.Builder.setLocalOnly(true)`
+   * marks a notification as not for any connected device, and for a media notification that is
+   * never what anyone means -- it reads like a privacy or tidiness improvement and it silently
+   * removes the app from surfaces nobody re-checks. It remains absent from this tree, and nothing
+   * anywhere would go red if it appeared: the phone behaves identically and every test passes.
    *
    * This is deliberately a source scan and not a behavioural test, because the behaviour needs two
    * physically paired devices and there is no emulator pair that fakes it. A cheap rule that names
    * the trap beats an expensive one nobody can run. If a future change genuinely needs a local-only
-   * notification, it will not be the media one -- carve that case out by name here, with the
-   * measurement that shows the media notification still bridges.
+   * notification, it will not be the media one -- carve that case out by name here.
    */
   @Test
   fun `nothing marks a notification local-only, which would stop a watch controlling playback`() {
