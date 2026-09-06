@@ -1813,6 +1813,47 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // class that carries a floor, re-measure the floor's comment in the same task. It is one report
   // read, and it is the only thing standing between this table and a gate nobody can trust.
   ":core:media" to listOf(
+    // `QueueEditor` -- the class that actually edits the media session's timeline, and until
+    // 2026-09-06 the one part of the play-queue feature no test on any tier reached. Its three
+    // neighbours were all floored and all green while this read **0/22 BRANCH and 8/41 LINE**:
+    // `QueueSnapshotKt` proves the index guards as pure functions, `QueueViewModel` the mapping,
+    // `QueueScreen` the screen against a recording fake. None of them calls `addMediaItems`,
+    // `moveMediaItem`, `removeMediaItem` or `seekToDefaultPosition`, so an `enqueue` that appended
+    // nothing would have left every one of them green. `QueueJourneyTest` (`:app`) now drives all
+    // five edits against the real session.
+    //
+    // MEASURED 11/22 = 0.5000 BRANCH, 38/41 = 0.9268 LINE.
+    //
+    // FALSIFIED by stashing `:app`'s `.ec` and re-running the report on the identical tree:
+    // **0/22 and 0/41**, both floors red. So this is entirely held by the `:app` device tier, which
+    // is why `requiresInstrumentedData` is set on both -- and it is held by that one journey
+    // specifically, measured rather than assumed: before it existed the full 69-test `:app` suite
+    // was green over 0/22 BRANCH and 8/41 LINE (construction and injection, nothing else).
+    //
+    // 0.50 BRANCH is the honest number, not a low bar. Every one of the eleven missed branches is
+    // a guard *refusing* -- `songs.isEmpty()`, `wasEmpty`, and the three `canRemoveFrom`/
+    // `canMoveWithin` rejections -- and a journey that drives the real screen cannot make an
+    // illegal edit: there is no button for "remove row 97". Those refusals are held on the fast
+    // tier by `QueueSnapshotTest`, over the same predicates, which is the right place for them.
+    // Raising this floor would ask the device tier to prove something the device cannot do.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("0.50"),
+      includes = listOf("app.muplay.media.QueueEditor"),
+      requiresInstrumentedData = true,
+    ),
+    // The three missed lines are the closing braces of `remove`, `move` and `jumpTo` -- the
+    // `return@onController` and lambda-epilogue artefacts this repository has met before at
+    // `CoverArtCacheKeyKt` and `SetupFailureReasonKt`. 38/41 is the ceiling, so 0.92 is one line of
+    // slack and not a rounded-down guess.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.92"),
+      includes = listOf("app.muplay.media.QueueEditor"),
+      requiresInstrumentedData = true,
+    ),
     // `ArtworkUri` -- the object that keeps a non-expiring Subsonic password equivalent off the
     // platform media session, and until 2026-09-05 a class no floor reached. `MediaItems.of` used
     // to put `SubsonicClient.coverArtUrl`'s `u`/`s`/`t` on every item's `artworkUri`, which any app
