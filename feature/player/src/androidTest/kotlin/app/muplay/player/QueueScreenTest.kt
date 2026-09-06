@@ -1,5 +1,6 @@
 package app.muplay.player
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -150,6 +151,29 @@ class QueueScreenTest {
    * stops before and every case above starts after: `uiState` out of the view model, into the
    * stateless overload, and each control back into a view-model method.
    */
+  /**
+   * The header counts, and it counts on the screen rather than only in `QueueUiStateTest`.
+   *
+   * What is only observable here is that the sentence the state computes is the sentence the screen
+   * draws -- a header wired to `rows.size` alone, or to a string built somewhere else, passes every
+   * assertion on the state's side.
+   */
+  @Test
+  fun theHeaderSaysWhereInTheQueuePlaybackIs() {
+    show(threeTracks)
+
+    composeRule.onNodeWithText("2 of 3").assertIsDisplayed()
+  }
+
+  /** An empty queue has no position and no count worth reading; the message below says it all. */
+  @Test
+  fun anEmptyQueueDrawsNoCountAtAll() {
+    show(QueueSnapshot.EMPTY)
+
+    composeRule.onAllNodesWithText("0 tracks").assertCountEquals(0)
+    composeRule.onAllNodesWithText("0 of 0").assertCountEquals(0)
+  }
+
   @Test
   fun theHiltBoundScreenFollowsItsViewModelAndItsControlsReachItAgain() {
     val controls = RecordingQueueControls()

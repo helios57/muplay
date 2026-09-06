@@ -270,6 +270,21 @@ object MuPlayIcons {
     lineTo(18f, 9.5f)
   }
 
+  /**
+   * Up, out of a folder.
+   *
+   * A shaft as well as a chevron, unlike [ArrowUp] and [ArrowDown] beside it, because those two are
+   * a *pair* in one row and read as a pair; this one appears alone at the start of a title bar,
+   * where the platform's own back arrow is what a user is looking for.
+   */
+  val ArrowBack: ImageVector = stroked("MuPlayArrowBack") {
+    moveTo(19f, 12f)
+    lineTo(5f, 12f)
+    moveTo(11.5f, 5.5f)
+    lineTo(5f, 12f)
+    lineTo(11.5f, 18.5f)
+  }
+
   /** Dismisses the sleep timer. */
   val Close: ImageVector = stroked("MuPlayClose") {
     moveTo(6.8f, 6.8f)

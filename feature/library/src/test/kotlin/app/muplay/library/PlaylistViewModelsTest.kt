@@ -354,6 +354,55 @@ class PlaylistViewModelsTest {
     assertThat(source.playNextCalls).isEmpty()
   }
 
+  // ---- the whole playlist at once ---------------------------------------------------------------
+
+  @Test
+  fun `adding the whole playlist to the queue queues every track in order and starts nothing`() =
+    runTest {
+      val source = FakePlaylistSource()
+      source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"), song("c"))) }
+      val vm = PlaylistViewModel(source)
+      vm.open("p1")
+      advanceUntilIdle()
+
+      vm.enqueueAll()
+      advanceUntilIdle()
+
+      assertThat(source.enqueueCalls).containsExactly(listOf("a", "b", "c"))
+      assertThat(source.playNextCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `playing the whole playlist next inserts every track in order and starts nothing`() =
+    runTest {
+      val source = FakePlaylistSource()
+      source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"))) }
+      val vm = PlaylistViewModel(source)
+      vm.open("p1")
+      advanceUntilIdle()
+
+      vm.playAllNext()
+      advanceUntilIdle()
+
+      assertThat(source.playNextCalls).containsExactly(listOf("a", "b"))
+      assertThat(source.enqueueCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `queueing the whole playlist before it has loaded touches nothing`() = runTest {
+    val source = FakePlaylistSource()
+    val vm = PlaylistViewModel(source)
+
+    vm.enqueueAll()
+    vm.playAllNext()
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
   /** `play`'s range guard, on the queue path, which is a different one. */
   @Test
   fun `queueing a row the playlist does not have touches nothing`() = runTest {

@@ -11,6 +11,7 @@ import app.muplay.database.SyncFailure
 import app.muplay.database.SyncProgress
 import app.muplay.database.SyncState
 import app.muplay.media.PlaybackLauncher
+import app.muplay.media.QueueEditor
 import app.muplay.model.Album
 import app.muplay.model.MusicLibrary
 import app.muplay.model.SearchResults
@@ -42,7 +43,7 @@ import kotlinx.coroutines.launch
  * four classes above by the `@Inject` secondary constructor below, the same shape
  * `:feature:setup`'s `SetupCredentialSink`/`SetupLibrarySink` split already established.
  */
-interface LibrarySource {
+interface LibrarySource : QueueSink {
   val libraries: Flow<List<MusicLibrary>>
   fun albums(libraryId: Int): Flow<List<Album>>
   suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults
@@ -99,8 +100,9 @@ class LibraryViewModel(
     syncEngine: SyncEngine,
     playbackLauncher: PlaybackLauncher,
     librarySelection: LibrarySelection,
+    queueEditor: QueueEditor,
   ) : this(
-    object : LibrarySource {
+    object : LibrarySource, QueueSink by QueueEditorSink(queueEditor) {
       override val libraries: Flow<List<MusicLibrary>> = libraryRepository.libraries
       override fun albums(libraryId: Int): Flow<List<Album>> = browseRepository.albums(libraryId)
       override suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults =
@@ -265,6 +267,31 @@ class LibraryViewModel(
     val content = uiState.value as? LibraryUiState.Content ?: return
     viewModelScope.launch { source.play(content.shuffled, startIndex) }
   }
+
+  /**
+   * Adds the tapped shuffle row to the end of the queue, and **changes nothing about what is
+   * playing** -- the same promise every other queue control in this app makes.
+   *
+   * One song and not the shuffle: the shuffle *result* is what [playShuffled] launches, and a row's
+   * queue button that quietly queued forty tracks would be the same control saying two things.
+   *
+   * The guards are [playShuffled]'s and they earn their own tests: a tap arriving in a non-`Content`
+   * state (see that method's doc for how) and a row a newer shuffle no longer has are two different
+   * paths through this one line.
+   */
+  fun enqueueShuffled(index: Int) {
+    shuffledAt(index)?.let { song -> viewModelScope.launch { source.enqueue(listOf(song)) } }
+  }
+
+  /** Inserts the tapped shuffle row directly after whatever is playing. See [enqueueShuffled]. */
+  fun playShuffledNext(index: Int) {
+    shuffledAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
+  }
+
+  /** `orEmpty` and not a second `?.`: `Content.shuffled` is non-null, so `?.shuffled?.getOrNull(..)`
+   *  emits a null check no input can take -- the branch that reddened three floors in this module. */
+  private fun shuffledAt(index: Int): Song? =
+    (uiState.value as? LibraryUiState.Content)?.shuffled.orEmpty().getOrNull(index)
 
   private suspend fun currentLibraryId(): Int? =
     (uiState.value as? LibraryUiState.Content)?.selectedLibraryId

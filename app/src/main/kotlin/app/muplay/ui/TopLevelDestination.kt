@@ -65,3 +65,19 @@ fun selectedTab(backStack: List<NavKey>): TopLevelDestination? =
  */
 fun stackFor(tab: TopLevelDestination): List<NavKey> =
   if (tab == TopLevelDestination.Albums) listOf(LibraryRoute) else listOf(LibraryRoute, tab.key)
+
+/**
+ * Whether the top bar should draw a back arrow for [onScreen].
+ *
+ * True for a folder inside the library and nothing else. The bar renders only for the four section
+ * roots and for a folder (see `MuPlayApp`'s `topBar`), and a section root's parent is the navigation
+ * bar -- an arrow there would offer to leave a section by the same tap that entered it. A nested
+ * folder is the one screen the bar draws that has somewhere above it, and the one screen in this app
+ * with no header of its own to carry the affordance.
+ *
+ * A function here rather than an expression in the `topBar` lambda, for the reason `selectedTab` is
+ * one: nothing on the JVM tier composes `MuPlayApp`, so a navigation decision written inline is a
+ * decision only a device can check -- and this project's device tier is the one that disappears.
+ */
+fun offersBackUp(onScreen: NavKey?): Boolean =
+  onScreen is FolderRoute && onScreen.path.isNotEmpty()

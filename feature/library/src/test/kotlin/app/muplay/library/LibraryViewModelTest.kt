@@ -125,6 +125,16 @@ class LibraryViewModelTest {
 
     /** Song **ids** and the start index, so a test can assert which queue was launched and from
      *  where -- not merely that something was played. */
+    val enqueueCalls = mutableListOf<List<String>>()
+    override suspend fun enqueue(songs: List<Song>) {
+      enqueueCalls += songs.map { it.id }
+    }
+
+    val playNextCalls = mutableListOf<List<String>>()
+    override suspend fun playNext(songs: List<Song>) {
+      playNextCalls += songs.map { it.id }
+    }
+
     val playCalls = mutableListOf<Pair<List<String>, Int>>()
     override suspend fun play(songs: List<Song>, startIndex: Int) {
       playCalls += songs.map { it.id } to startIndex
@@ -674,6 +684,89 @@ class LibraryViewModelTest {
     advanceUntilIdle()
 
     assertThat(source.playCalls.single().first).containsExactly("s1", "s2")
+  }
+
+  // ---- queueing a shuffled row --------------------------------------------------------------
+  //
+  // The shuffle list was the one track list in this app whose rows could only be played. Every
+  // other list -- album, playlist, folder -- has offered the two queue edits since the control was
+  // written, and a row that behaves differently from every visually identical row above it is the
+  // kind of inconsistency a user reads as a bug in the app rather than a decision.
+
+  @Test
+  fun `queueing a shuffled row queues that one track and starts nothing`() = runTest(dispatcher) {
+    val source = FakeLibrarySource(listOf(music))
+    source.shuffleAnswer = {
+      ShuffleResult(
+        listOf(song("s1", "One", 1), song("s2", "Two", 1), song("s3", "Three", 1)),
+        discardedOutOfScope = 0,
+      )
+    }
+    val vm = warm(source)
+    advanceUntilIdle()
+    vm.shuffle()
+    advanceUntilIdle()
+
+    vm.enqueueShuffled(1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).containsExactly(listOf("s2"))
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  @Test
+  fun `playing a shuffled row next inserts that one track and starts nothing`() =
+    runTest(dispatcher) {
+      val source = FakeLibrarySource(listOf(music))
+      source.shuffleAnswer = {
+        ShuffleResult(listOf(song("s1", "One", 1), song("s2", "Two", 1)), discardedOutOfScope = 0)
+      }
+      val vm = warm(source)
+      advanceUntilIdle()
+      vm.shuffle()
+      advanceUntilIdle()
+
+      vm.playShuffledNext(0)
+      advanceUntilIdle()
+
+      assertThat(source.playNextCalls).containsExactly(listOf("s1"))
+      assertThat(source.enqueueCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `queueing a shuffled row before the library has loaded touches nothing`() =
+    runTest(dispatcher) {
+      val source = FakeLibrarySource()
+      val vm = warm(source)
+      advanceUntilIdle()
+
+      vm.enqueueShuffled(0)
+      vm.playShuffledNext(0)
+      advanceUntilIdle()
+
+      assertThat(source.enqueueCalls).isEmpty()
+      assertThat(source.playNextCalls).isEmpty()
+    }
+
+  @Test
+  fun `queueing a shuffled row the list does not have touches nothing`() = runTest(dispatcher) {
+    val source = FakeLibrarySource(listOf(music))
+    source.shuffleAnswer = {
+      ShuffleResult(listOf(song("s1", "One", 1)), discardedOutOfScope = 0)
+    }
+    val vm = warm(source)
+    advanceUntilIdle()
+    vm.shuffle()
+    advanceUntilIdle()
+
+    vm.enqueueShuffled(4)
+    vm.playShuffledNext(-1)
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
   }
 
   /** A tap that arrives while the screen is not `Content` -- see `playShuffled`'s own doc for how

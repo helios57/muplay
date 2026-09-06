@@ -457,6 +457,58 @@ class AlbumViewModelTest {
     assertThat(source.playNextCalls).isEmpty()
   }
 
+  // ---- the whole album at once -----------------------------------------------------------------
+  //
+  // The per-row control queues one song; these queue the record. Both assert on the **order** and
+  // on `playCalls` being empty, because the failure worth catching is an implementation that
+  // reached for `play` -- which is the method sitting right beside it that takes the same list.
+
+  @Test
+  fun `adding the whole album to the queue queues every track in order and starts nothing`() =
+    runTest(dispatcher) {
+      val source = loadedAlbum()
+      val vm = warm(source)
+      vm.load("a")
+      advanceUntilIdle()
+
+      vm.enqueueAll()
+      advanceUntilIdle()
+
+      assertThat(source.enqueueCalls).containsExactly(listOf("s1", "s2", "s3"))
+      assertThat(source.playNextCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `playing the whole album next inserts every track in order and starts nothing`() =
+    runTest(dispatcher) {
+      val source = loadedAlbum()
+      val vm = warm(source)
+      vm.load("a")
+      advanceUntilIdle()
+
+      vm.playAllNext()
+      advanceUntilIdle()
+
+      assertThat(source.playNextCalls).containsExactly(listOf("s1", "s2", "s3"))
+      assertThat(source.enqueueCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `queueing the whole album before it has loaded touches nothing`() = runTest(dispatcher) {
+    val source = loadedAlbum()
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    vm.enqueueAll()
+    vm.playAllNext()
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
   private fun loadedAlbum() = FakeAlbumSource().apply {
     albumsById["a"] = album("a", "First", 1)
     setSongs("a", listOf(song("s1", "One", "a", 1), song("s2", "Two", "a", 1), song("s3", "Three", "a", 1)))

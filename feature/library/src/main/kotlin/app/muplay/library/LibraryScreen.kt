@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
 import app.muplay.designsystem.component.fastScrollBuckets
@@ -70,6 +71,10 @@ fun LibraryScreen(
       viewModel.playShuffled(index)
       onOpenPlayer()
     },
+    // No `onOpenPlayer()`: queueing leaves the user in the shuffle they are adding from, which is
+    // the distinction the control exists for and the shape the other three track lists already use.
+    onShuffledPlayNext = viewModel::playShuffledNext,
+    onShuffledAddToQueue = viewModel::enqueueShuffled,
     coverArtUrl = viewModel::coverArtUrl,
     modifier = modifier,
   )
@@ -135,6 +140,8 @@ private fun LibraryScreen(
   onRefresh: () -> Unit,
   onAlbumClick: (String) -> Unit,
   onShuffledSongClick: (Int) -> Unit,
+  onShuffledPlayNext: (Int) -> Unit,
+  onShuffledAddToQueue: (Int) -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
 ) {
@@ -249,7 +256,12 @@ private fun LibraryScreen(
             // track and an album shared one. That exact collision crashed the requests screen once
             // (`Key "LIDARR:mb-album-1" was already used`), so the prefixes are not decoration.
             itemsIndexed(uiState.shuffled, key = { _, song -> "shuffled:" + song.id }) { index, song ->
-              ShuffledRow(song = song, onClick = { onShuffledSongClick(index) })
+              ShuffledRow(
+                song = song,
+                onClick = { onShuffledSongClick(index) },
+                onPlayNext = { onShuffledPlayNext(index) },
+                onAddToQueue = { onShuffledAddToQueue(index) },
+              )
             }
             if (uiState.discardedOutOfScope > 0) {
               item {
@@ -375,30 +387,44 @@ private fun SectionHeader(text: String) {
  * that journey assert on artist names.
  */
 @Composable
-private fun ShuffledRow(song: Song, onClick: () -> Unit) {
-  Column(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onClick)
-      .heightIn(min = MuPlaySpacing.minTouchTarget)
-      .padding(vertical = MuPlaySpacing.sm),
-    verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
-  ) {
-    Text(
-      text = song.title,
-      style = MaterialTheme.typography.titleSmall,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-    )
-    song.artistName?.let {
+private fun ShuffledRow(
+  song: Song,
+  onClick: () -> Unit,
+  onPlayNext: () -> Unit,
+  onAddToQueue: () -> Unit,
+) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    // **The tap target is this column, not the whole row**, and the queue button is its sibling
+    // rather than its child. `Modifier.clickable` merges its descendants, so a button nested inside
+    // the clickable area would be tappable by a finger and invisible to TalkBack and to every
+    // merged-tree matcher -- including `PlaybackJourneyTest.shuffledRows`, which reads each row's
+    // identity as `SemanticsProperties.Text.first()` off exactly this node. The same shape
+    // `AlbumScreen`'s `TrackRow` and the queue screen's own rows carry.
+    Column(
+      modifier = Modifier
+        .weight(1f)
+        .clickable(onClick = onClick)
+        .heightIn(min = MuPlaySpacing.minTouchTarget)
+        .padding(vertical = MuPlaySpacing.sm),
+      verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
+    ) {
       Text(
-        text = it,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        text = song.title,
+        style = MaterialTheme.typography.titleSmall,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
+      song.artistName?.let {
+        Text(
+          text = it,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
     }
+    AddToQueueButton(onPlayNext = onPlayNext, onAddToQueue = onAddToQueue)
   }
 }
 

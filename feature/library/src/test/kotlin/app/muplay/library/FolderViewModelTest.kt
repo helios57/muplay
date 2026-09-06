@@ -219,6 +219,80 @@ class FolderViewModelTest {
     assertThat(source.songsUnderCalls).isEmpty()
   }
 
+  // ---- the whole folder at once ------------------------------------------------------------------
+  //
+  // From `songsUnder` and **not** from the listing, which is the opposite of what the per-row
+  // control does and is deliberate: "add this folder to the queue" means the folder, and this app's
+  // folder feature is recursive by the user's own asking. The subtree track is first in the fixture
+  // so that an implementation reading the listing instead is caught by the contents, not just by
+  // the length.
+
+  @Test
+  fun `adding the whole folder to the queue queues everything beneath it and starts nothing`() =
+    runTest {
+      val source = FakeFolderSource()
+      val tracks = listOf(song("a", "F/01.mp3"), song("b", "F/02.mp3"))
+      source.setListing(1, "F", FolderListing("F", emptyList(), tracks))
+      source.songsUnderAnswer = listOf(song("z", "F/sub/99.mp3")) + tracks
+      val vm = warm(source)
+      vm.open("F")
+      advanceUntilIdle()
+
+      vm.enqueueAll()
+      advanceUntilIdle()
+
+      assertThat(source.enqueueCalls).containsExactly(listOf("z", "a", "b"))
+      assertThat(source.playNextCalls).isEmpty()
+      assertThat(source.playCalls).isEmpty()
+    }
+
+  @Test
+  fun `playing the whole folder next inserts everything beneath it and starts nothing`() = runTest {
+    val source = FakeFolderSource()
+    source.songsUnderAnswer = listOf(song("z", "F/sub/99.mp3"), song("a", "F/01.mp3"))
+    val vm = warm(source)
+    vm.open("F")
+    advanceUntilIdle()
+
+    vm.playAllNext()
+    advanceUntilIdle()
+
+    assertThat(source.playNextCalls).containsExactly(listOf("z", "a"))
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playCalls).isEmpty()
+  }
+
+  @Test
+  fun `queueing a folder with nothing beneath it touches nothing`() = runTest {
+    val source = FakeFolderSource()
+    source.songsUnderAnswer = emptyList()
+    val vm = warm(source)
+    vm.open("Empty")
+    advanceUntilIdle()
+
+    vm.enqueueAll()
+    vm.playAllNext()
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+  }
+
+  @Test
+  fun `queueing a whole folder before one is open touches nothing`() = runTest {
+    val source = FakeFolderSource()
+    source.songsUnderAnswer = listOf(song("a", "F/01.mp3"))
+    val vm = warm(source)
+
+    vm.enqueueAll()
+    vm.playAllNext()
+    advanceUntilIdle()
+
+    assertThat(source.enqueueCalls).isEmpty()
+    assertThat(source.playNextCalls).isEmpty()
+    assertThat(source.songsUnderCalls).isEmpty()
+  }
+
   @Test
   fun `a shuffle with nothing beneath it starts no playback at all`() = runTest {
     // Rather than launching an empty queue, which puts the player on screen showing nothing.

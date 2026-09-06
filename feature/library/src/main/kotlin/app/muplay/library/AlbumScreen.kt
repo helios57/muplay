@@ -4,7 +4,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,8 +27,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.ADD_ALL_TO_QUEUE_LABEL
 import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.PLAY_ALL_NEXT_LABEL
+import app.muplay.designsystem.component.QUEUE_ALL_MENU_LABEL
 import app.muplay.designsystem.theme.MuPlaySpacing
 import app.muplay.designsystem.theme.MuPlayTimecode
 import app.muplay.model.Song
@@ -109,19 +114,35 @@ fun AlbumScreen(
           urlProvider = viewModel::coverArtUrl,
           modifier = Modifier.size(COVER_DETAIL_DP.dp),
         )
-        Text(
-          text = content.album.name,
-          style = MaterialTheme.typography.headlineSmall,
-          modifier = Modifier.semantics { heading() },
-        )
-        content.album.artistName?.let {
-          Text(
-            text = it,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = MuPlaySpacing.sm),
+        // Title, artist, and the one control that queues the **whole record**. It sits on the
+        // title's line rather than above the track list, so that the header's action is attached to
+        // the thing it acts on -- and so the three per-row buttons below stay the only controls in
+        // the list, which is what keeps `onNodeWithContentDescription(QUEUE_MENU_LABEL)` in the
+        // journeys unambiguous now that a second queue control is on this screen.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = content.album.name,
+              style = MaterialTheme.typography.headlineSmall,
+              modifier = Modifier.semantics { heading() },
+            )
+            content.album.artistName?.let {
+              Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+          AddToQueueButton(
+            onPlayNext = viewModel::playAllNext,
+            onAddToQueue = viewModel::enqueueAll,
+            menuLabel = QUEUE_ALL_MENU_LABEL,
+            playNextLabel = PLAY_ALL_NEXT_LABEL,
+            addToQueueLabel = ADD_ALL_TO_QUEUE_LABEL,
           )
         }
+        Spacer(Modifier.height(MuPlaySpacing.sm))
         // The index is this row's position in the list being rendered, so the track that plays
         // is the track that was tapped -- see `LibraryScreen`'s own note. Play first, then
         // navigate, for the same `stateIn(WhileSubscribed)` reason.

@@ -9,12 +9,16 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -41,6 +45,8 @@ import app.muplay.library.PlaylistsScreen
 import app.muplay.library.folderTitle
 import app.muplay.player.MiniPlayer
 import app.muplay.player.PlayerScreen
+import app.muplay.player.QUEUE_VIEW_LABEL
+import app.muplay.player.QueueFeedbackViewModel
 import app.muplay.player.QueueScreen
 import app.muplay.requests.IntegrationsPresenceViewModel
 import app.muplay.requests.IntegrationsRoute
@@ -178,8 +184,38 @@ private fun MuPlayNavigation(
   val onPlayer = onScreen == PlayerRoute || onScreen == BookPlayerRoute
   val tab = selectedTab(backStack)
 
+  // **"Add to queue" is the one control here whose whole point is that nothing you can see
+  // changes.** Without a line of confirmation it is indistinguishable from a tap that missed, so
+  // every edit the queue editor actually made is reported once, with a way to go and look at it --
+  // which is also how a user finds the queue screen without first opening the player.
+  //
+  // Hosted here rather than in a screen because the edit is started from four different screens
+  // and lands in one timeline; a snackbar per screen would be four of them. `Scaffold` puts it
+  // above the bottom bar, so it never covers the mini player it is talking about.
+  val queueFeedback: QueueFeedbackViewModel = hiltViewModel()
+  val snackbarHostState = remember { SnackbarHostState() }
+  LaunchedEffect(queueFeedback) {
+    queueFeedback.messages.collect { message ->
+      val result = snackbarHostState.showSnackbar(
+        message = message,
+        // No action while the queue is already on screen: an offer to go where you are is a
+        // control that does nothing, which this codebase treats as worse than no control.
+        actionLabel = if (backStack.lastOrNull() == QueueRoute) null else QUEUE_VIEW_LABEL,
+        withDismissAction = true,
+      )
+      // Guarded rather than trusted: the snackbar outlives the frame it was posted from, so the
+      // user can reach the queue by other means while it is up. Two identical `data object` keys
+      // on one back stack are the same key twice, which is not a stack Navigation 3 should be
+      // asked to make sense of.
+      if (result == SnackbarResult.ActionPerformed && backStack.lastOrNull() != QueueRoute) {
+        backStack.add(QueueRoute)
+      }
+    }
+  }
+
   Scaffold(
     modifier = modifier,
+    snackbarHost = { SnackbarHost(snackbarHostState) },
     topBar = {
       // **Only on a section's own screens**, not on album, book, player or settings -- those four
       // draw their own headers, and a second title bar above one is two answers to "where am I".
@@ -194,6 +230,21 @@ private fun MuPlayNavigation(
             // `folderTitle`, not a second copy of its arithmetic: the same title is computed
             // inside `folderContent` from the listing, and two derivations of one string drift.
             Text(text = if (folder != null) folderTitle(folder.path) else tab.label)
+          },
+          navigationIcon = {
+            // Only inside a folder -- `offersBackUp` owns that decision and is held to it on the
+            // JVM tier. It is the one screen this bar draws that has somewhere above it *and* no
+            // header of its own, so before this a user three folders deep could see no way out of
+            // them. System back always worked; nothing on the screen said so.
+            if (offersBackUp(onScreen)) {
+              IconButton(onClick = { backStack.removeLastOrNull() }) {
+                Icon(
+                  imageVector = MuPlayIcons.ArrowBack,
+                  contentDescription = BACK_LABEL,
+                  modifier = Modifier.size(MuPlaySpacing.xl),
+                )
+              }
+            }
           },
           actions = {
             CastButton(onClick = { pickerOpen = true }, viewModel = castViewModel)
@@ -375,6 +426,16 @@ private fun MuPlayNavigation(
 
 /** The top bar's settings control. Its own name, because the icon carries no text. */
 private const val SETTINGS_LABEL = "Settings"
+
+/**
+ * The top bar's back control, on a nested folder.
+ *
+ * `internal` and not private: `:app`'s journeys find it by this name, and a retyped copy in a test
+ * goes on passing after the bar stops saying it -- the mechanism `AlbumScreen`'s `NOT_FOUND_LABEL`
+ * records at length. "Up" rather than "Back" because that is what it does: it climbs one folder,
+ * which on a nested path is not always where the user came from.
+ */
+internal const val BACK_LABEL = "Up one folder"
 
 /**
  * The prefix on every navigation bar tab's test tag, followed by the [TopLevelDestination] name.

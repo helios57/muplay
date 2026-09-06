@@ -88,4 +88,36 @@ class QueueUiStateTest {
   }
 
   private fun contentOf(snapshot: QueueSnapshot) = queueUiState(snapshot) as QueueUiState.Content
+
+  // ---- what the header says, and where the list opens ------------------------------------------
+  //
+  // Both read the same `currentPosition`, which is why it is a field and not two independent
+  // searches through `rows`: a header that says "2 of 3" while the list opens on row 5 is worse
+  // than either mistake alone.
+
+  @Test
+  fun `the header counts the playing row from one`() {
+    assertThat(contentOf(snapshotOf(1, "First", "Second", "Third")).summary).isEqualTo("2 of 3")
+  }
+
+  @Test
+  fun `a queue with nothing playing is counted rather than positioned`() {
+    assertThat(contentOf(snapshotOf(7, "First", "Second")).summary).isEqualTo("2 tracks")
+  }
+
+  @Test
+  fun `one track with nothing playing is a track and not a tracks`() {
+    assertThat(contentOf(snapshotOf(7, "Only")).summary).isEqualTo("1 track")
+  }
+
+  @Test
+  fun `the list opens on the row that is playing`() {
+    assertThat(contentOf(snapshotOf(2, "First", "Second", "Third")).currentPosition).isEqualTo(2)
+  }
+
+  @Test
+  fun `a queue with nothing playing opens at the top`() {
+    assertThat(contentOf(snapshotOf(7, "First", "Second")).currentPosition).isNull()
+  }
+
 }

@@ -161,6 +161,25 @@ class PlaylistViewModel(
     songAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
   }
 
+  /**
+   * Puts the **whole playlist** on the end of the queue, in the playlist's own order.
+   *
+   * Not `play(0)` and not `shuffle()`: the promise every queue control in this app makes is that it
+   * leaves what is playing alone, and the two methods above it are exactly the ones an
+   * implementation would reach for by mistake. The order is the playlist's, because a playlist is
+   * an order -- that is what distinguishes it from the album it was assembled from.
+   */
+  fun enqueueAll() {
+    songsOnScreen()?.let { songs -> viewModelScope.launch { source.enqueue(songs) } }
+  }
+
+  /** Inserts the whole playlist directly after whatever is playing. See [enqueueAll]. */
+  fun playAllNext() {
+    songsOnScreen()?.let { songs -> viewModelScope.launch { source.playNext(songs) } }
+  }
+
+  private fun songsOnScreen(): List<Song>? = (state.value as? PlaylistUiState.Content)?.songs
+
   /** `orEmpty` rather than a second `?.`, for the reason [play] states: `Content.songs` is
    *  non-null, so a null check on it is a branch nothing can take. Measured at 29/32 before. */
   private fun songAt(index: Int): Song? =

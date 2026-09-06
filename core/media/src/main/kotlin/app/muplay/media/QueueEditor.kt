@@ -3,6 +3,10 @@ package app.muplay.media
 import app.muplay.model.Song
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Everything that changes the queue without replacing it.
@@ -28,12 +32,37 @@ import javax.inject.Singleton
  * time the tap arrives here a track can have ended or a car can have skipped, and Media3 answers an
  * out-of-range index with `IllegalSeekPositionException` rather than by ignoring it. So the guards
  * below read `mediaItemCount` off the live player and a tap that lost its race does nothing.
+ *
+ * ### It says what it did, and only once it has done it
+ *
+ * "Add to queue" is the one control in this app whose effect is, by design, invisible: the point of
+ * it is that nothing about what you are hearing changes. So [edits] carries a [QueueEdit] for every
+ * append and every insert, emitted **after** the controller took it, and `MuPlayApp` turns that
+ * into one line of confirmation with a way to go and look. A message raised at the tap instead
+ * would keep saying "Added to queue" for the empty list that added nothing.
  */
 @Singleton
 class QueueEditor @Inject constructor(
   private val playbackConnection: PlaybackConnection,
   private val queueRepository: QueueRepository,
 ) {
+
+  private val _edits = MutableSharedFlow<QueueEdit>(
+    // Never suspends and never blocks a queue edit on a listener: a confirmation is worth less than
+    // the thing it confirms. `extraBufferCapacity` because a `MutableSharedFlow` with no buffer and
+    // no subscriber drops on `tryEmit`, and the subscriber here is a composition that may be a
+    // frame late; one slot is enough for the taps a thumb can produce.
+    extraBufferCapacity = 1,
+    onBufferOverflow = BufferOverflow.DROP_OLDEST,
+  )
+
+  /**
+   * Every edit that reached the timeline, for the one surface that reports them.
+   *
+   * No replay. A confirmation is about a tap that just happened, and a snackbar replayed onto a
+   * screen the user came back to hours later is a lie about the present tense.
+   */
+  val edits: SharedFlow<QueueEdit> = _edits.asSharedFlow()
 
   /** Appends [songs] to the end of whatever is queued. */
   suspend fun enqueue(songs: List<Song>) {
@@ -43,6 +72,7 @@ class QueueEditor @Inject constructor(
       controller.addMediaItems(items)
       if (wasEmpty) controller.prepare()
     }
+    _edits.tryEmit(QueueEdit.Appended(items.size))
   }
 
   /** Inserts [songs] directly after whatever is playing. */
@@ -56,6 +86,7 @@ class QueueEditor @Inject constructor(
       )
       if (wasEmpty) controller.prepare()
     }
+    _edits.tryEmit(QueueEdit.InsertedNext(items.size))
   }
 
   suspend fun remove(index: Int) {

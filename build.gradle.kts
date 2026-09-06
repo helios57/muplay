@@ -3851,6 +3851,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // same class of thing: the `withContext(mainDispatcher)` hop `onController` exists to make, so
     // that every edit above reaches the controller on the thread the player was built on. Nothing
     // off a device can execute it.
+    //
+    // `QueueEdit.Appended` and `QueueEdit.InsertedNext` (LINE 0/1 each, no branches) are ungated
+    // for a third reason, and it is the one worth writing down. They are *exercised* -- six tests
+    // in `:feature:player`'s `QueueFeedbackTest` construct them -- but that is another module's
+    // JVM tier, and `jacocoTestReport` here merges only this module's execution data. So the two
+    // classes read 0/1 in this report and 1/1 in the run that actually covers them. A floor here
+    // would be gating `:core:media` on `:feature:player`'s suite without saying so, which is the
+    // dependency this table's own doc warns about; the sentences those two arms produce are
+    // floored where they are decided, at `app.muplay.player.QueueFeedbackKt`.
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
@@ -4987,10 +4996,63 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "app.muplay.player.QueueViewModel.1",
       ),
     ),
-    // `QueueScreenKt` (LINE 0/80, BRANCH 0/182) and `QueueViewModel$1` (LINE 0/7) carry **no rule
-    // on purpose**, and both go on being reported by `warnUngatedClasses` until a device is
-    // available. `feature/player/src/androidTest/.../QueueScreenTest.kt` exists, compiles and has
-    // eight tests; **it has never been executed** -- the shared emulator was replaced mid-session
+    // `QueueFeedbackKt` -- `queueEditMessage`, the sentence a queue edit is confirmed with.
+    //
+    // MEASURED 2026-09-06 from the JVM tier alone (`QueueFeedbackTest`, six tests):
+    // **6/6 = 1.0000 BRANCH**, 6/6 LINE. Six branches: the `when` over the two `QueueEdit` arms,
+    // and a singular/plural `if` inside each.
+    //
+    // FALSIFIED, and the result is the reason this is 1.00 rather than the house-usual 0.90 --
+    // **no single withheld test moves it at all**:
+    //
+    //  * withhold `an appended album is reported with the number of tracks it added` -> 6/6, green.
+    //  * withhold `several tracks inserted next are reported with their number`      -> 6/6, green.
+    //  * withhold both                                                               -> 6/6, green.
+    //
+    // Because two other tests are second callers of the same plural arms: the distinctness test
+    // compares `Appended(4)` with `InsertedNext(4)`, and the view-model test emits `Appended(2)`.
+    // Withholding all three plural-reaching cases leaves **5/6 = 0.8333** (only `InsertedNext`'s
+    // plural arm goes, the view model still covering `Appended`'s), and `@Disabled` on the whole
+    // class gives **0/6 = 0.0000**. A 0.90 floor would therefore have been satisfied by exactly the
+    // state this floor exists to refuse, and 0.8333 is the nearest a partial withholding gets to
+    // it. Read that as this table's standing warning: a floor is not evidence about any one test.
+    //
+    // Note what the floor does *not* hold. The **words** are the behaviour here -- a mapping that
+    // said "Added to the queue" for a "play next" is 6/6 covered -- and what refuses that is
+    // `QueueFeedbackTest` asserting on the literal sentences. Measured against three mutations:
+    // both arms made identical -> 4 failures; the count dropped from the appended arm -> 2;
+    // the view model reporting a constant -> 1.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf("app.muplay.player.QueueFeedbackKt"),
+    ),
+    // `QueueFeedbackViewModel` and the class kotlinx-coroutines generates behind its `map`.
+    //
+    // MEASURED 2026-09-06, JVM tier alone: the view model **3/4 = 0.7500 LINE** (the missing line
+    // is the `@Inject` secondary constructor, which only Hilt's graph builds -- the same three
+    // lines `QueueViewModel` is short for the same reason), `$special$$inlined$map$1` **2/3 =
+    // 0.6667** and `$special$$inlined$map$1$2` 2/2. The 0.6667 is not a missing test: that class is
+    // compiled from kotlinx-coroutines' own `SafeCollector.common.kt` and its missed line is
+    // `collect`'s normal return, which a flow the test cancels never reaches. So 0.65 is the
+    // ceiling this set can be held to, and one rule with no excludes holds all three -- `element =
+    // "CLASS"` checks each individually, so the view model cannot be dragged along by the others.
+    //
+    // FALSIFIED 2026-09-06: `@Disabled` on `the view model reports one message per edit, in order`
+    // alone sends every class in this set to **0.0000** and the rule names each one. The other five
+    // tests in the file are pure-function tests and touch none of it.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf("app.muplay.player.QueueFeedbackViewModel*"),
+    ),
+    // `QueueScreenKt` (LINE 0/93, BRANCH 0/188 -- re-measured 2026-09-06 after the header and the
+    // open-on-the-playing-row effect landed; it was 0/80 and 0/182) and `QueueViewModel$1` (LINE
+    // 0/7) carry **no rule on purpose**, and both go on being reported by `warnUngatedClasses`
+    // until a device is available. `feature/player/src/androidTest/.../QueueScreenTest.kt` exists,
+    // compiles and has ten tests; **it has never been executed** -- the shared emulator was replaced mid-session
     // with one started without `-feature Minigbm`, so `ci/prepare-emulator.sh` correctly refuses
     // and the whole instrumented tier is unavailable. CLAUDE.md's ruling for exactly this state is
     // to write the tests and *not* invent the floors. When the emulator is back:
@@ -5001,7 +5063,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //      separate invocations, nothing touching `feature/player/build/outputs/` in between, and
     //      confirm the `.ec` exists before reading any ratio.
     //   2. Read `QueueScreenKt`'s LINE ratio and expect it below the three Composable files above:
-    //      `QueueScreenTest` composes the stateless overload for seven of its eight tests.
+    //      `QueueScreenTest` composes the stateless overload for nine of its ten tests.
     //   3. Falsify with JUnit 4's **`@Ignore`** (this source set is JUnit 4) and a **fresh
     //      `connectedDebugAndroidTest`** -- re-reading the report measures nothing, because JaCoCo
     //      matches the previous run's `.ec` to the unchanged production class by class id.

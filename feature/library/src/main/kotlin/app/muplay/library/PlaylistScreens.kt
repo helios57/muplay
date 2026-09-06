@@ -29,9 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.ADD_ALL_TO_QUEUE_LABEL
 import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.PLAY_ALL_NEXT_LABEL
+import app.muplay.designsystem.component.QUEUE_ALL_MENU_LABEL
 import app.muplay.designsystem.component.fastScrollBuckets
 import app.muplay.designsystem.component.listIndexOf
 import app.muplay.designsystem.theme.MuPlayIcons
@@ -124,9 +127,25 @@ fun PlaylistScreen(
     ) {
       if (state.songs.isNotEmpty()) {
         item {
-          Button(onClick = { viewModel.shuffle(); onOpenPlayer() }) {
-            Icon(MuPlayIcons.Shuffle, contentDescription = null, modifier = Modifier.size(MuPlaySpacing.xl))
-            Text(text = SHUFFLE_FOLDER_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+          // Shuffle takes over playback; the queue control beside it deliberately does not. Both
+          // act on the whole playlist, so they belong on one line -- and the gap between them is
+          // `sm` rather than nothing because two 48dp-minimum targets touching is the collision
+          // `TapTargets`' sweep exists to catch.
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+          ) {
+            Button(onClick = { viewModel.shuffle(); onOpenPlayer() }) {
+              Icon(MuPlayIcons.Shuffle, contentDescription = null, modifier = Modifier.size(MuPlaySpacing.xl))
+              Text(text = SHUFFLE_FOLDER_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+            }
+            AddToQueueButton(
+              onPlayNext = viewModel::playAllNext,
+              onAddToQueue = viewModel::enqueueAll,
+              menuLabel = QUEUE_ALL_MENU_LABEL,
+              playNextLabel = PLAY_ALL_NEXT_LABEL,
+              addToQueueLabel = ADD_ALL_TO_QUEUE_LABEL,
+            )
           }
         }
       } else {

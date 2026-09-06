@@ -31,31 +31,43 @@ import app.muplay.designsystem.theme.MuPlaySpacing
  * The row's own tap still plays immediately; nothing here changes that. That is the distinction the
  * user asked for -- "enqueue a song instead of playing it directly" -- and it stays a distinction
  * only while the direct path is left alone.
+ *
+ * ### The three labels are parameters because the same control queues one track and a whole record
+ *
+ * An album, a playlist and a folder each render this twice: once per row, and once in the header
+ * for the collection. Both are the same affordance and must look and behave identically, but they
+ * cannot *say* the same thing -- "Add to queue" on a header a finger has just landed on beside
+ * three rows offering "Add to queue" is a control that does not say what it adds. So the wording is
+ * supplied and the behaviour is not, which is the only split that keeps one control and two
+ * sentences. Defaults are the per-row wording, since that is the caller there are three of.
  */
 @Composable
 fun AddToQueueButton(
   onPlayNext: () -> Unit,
   onAddToQueue: () -> Unit,
   modifier: Modifier = Modifier,
+  menuLabel: String = QUEUE_MENU_LABEL,
+  playNextLabel: String = PLAY_NEXT_LABEL,
+  addToQueueLabel: String = ADD_TO_QUEUE_LABEL,
 ) {
   var open by remember { mutableStateOf(false) }
   IconButton(onClick = { open = true }, modifier = modifier) {
     Icon(
       imageVector = MuPlayIcons.QueueAdd,
-      contentDescription = QUEUE_MENU_LABEL,
+      contentDescription = menuLabel,
       modifier = Modifier.size(MuPlaySpacing.xl),
     )
   }
   DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
     DropdownMenuItem(
-      text = { Text(PLAY_NEXT_LABEL) },
+      text = { Text(playNextLabel) },
       onClick = {
         open = false
         onPlayNext()
       },
     )
     DropdownMenuItem(
-      text = { Text(ADD_TO_QUEUE_LABEL) },
+      text = { Text(addToQueueLabel) },
       onClick = {
         open = false
         onAddToQueue()
@@ -76,3 +88,15 @@ const val QUEUE_MENU_LABEL: String = "Queue options"
 const val PLAY_NEXT_LABEL: String = "Play next"
 
 const val ADD_TO_QUEUE_LABEL: String = "Add to queue"
+
+/**
+ * The same three, for the header control that queues the whole album, playlist or folder.
+ *
+ * Written out rather than composed from the row's wording plus the word "all", because they are
+ * what the journeys search for and a string built at runtime cannot be found by reading the source.
+ */
+const val QUEUE_ALL_MENU_LABEL: String = "Queue all options"
+
+const val PLAY_ALL_NEXT_LABEL: String = "Play all next"
+
+const val ADD_ALL_TO_QUEUE_LABEL: String = "Add all to queue"

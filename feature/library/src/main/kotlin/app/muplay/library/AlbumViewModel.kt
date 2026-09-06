@@ -175,6 +175,30 @@ class AlbumViewModel(
   }
 
   /**
+   * Puts the **whole album** on the end of the queue, in the order the screen is showing.
+   *
+   * The single-row control is what the user asked for; this is what they reach for next, and it is
+   * one tap rather than a track's worth of them. It is deliberately not `play(0)`: nothing about
+   * queueing an album may interrupt what is playing, which is the property [enqueue] documents and
+   * the one an implementation is most likely to break by reusing the method beside it.
+   *
+   * Nothing queued when the album has not arrived. There is no empty-list guard because there is
+   * nothing to guard against -- `source.enqueue(emptyList())` reaches [app.muplay.media.QueueEditor],
+   * which builds no media items for it and returns without touching the timeline or announcing an
+   * edit, and an album row with no songs is not a state this screen can reach anyway.
+   */
+  fun enqueueAll() {
+    songsOnScreen()?.let { songs -> viewModelScope.launch { source.enqueue(songs) } }
+  }
+
+  /** Inserts the whole album directly after whatever is playing. See [enqueueAll]. */
+  fun playAllNext() {
+    songsOnScreen()?.let { songs -> viewModelScope.launch { source.playNext(songs) } }
+  }
+
+  private fun songsOnScreen(): List<Song>? = (uiState.value as? AlbumUiState.Content)?.songs
+
+  /**
    * `orEmpty` and not a second `?.`, for the reason `play` above states and `PlaylistViewModel` and
    * `FolderViewModel` both repeat: `Content.songs` is non-null, so `?.songs?.getOrNull(..)` emits a
    * null check on it that no input can take -- a branch this module's 1.00 BRANCH floor can never

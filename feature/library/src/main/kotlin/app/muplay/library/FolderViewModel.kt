@@ -149,17 +149,47 @@ class FolderViewModel(
     trackAt(index)?.let { song -> viewModelScope.launch { source.playNext(listOf(song)) } }
   }
 
+  /**
+   * Puts **everything beneath this folder** on the end of the queue, in path order.
+   *
+   * From `songsUnder` and not from the listing -- the opposite of [enqueue] right above, and the
+   * distinction is the point. A row is a track a user is pointing at; a folder in this app is the
+   * subtree, because that is the feature as asked for. [playFolder] queues the same list, and this
+   * one does it without taking over what is playing.
+   */
+  fun enqueueAll() {
+    songsUnderThen { songs -> source.enqueue(songs) }
+  }
+
+  /** Inserts everything beneath this folder directly after whatever is playing. See [enqueueAll]. */
+  fun playAllNext() {
+    songsUnderThen { songs -> source.playNext(songs) }
+  }
+
   /** `orEmpty` rather than a second `?.`, exactly as [playTrack] above does and for the same
    *  measured reason: `FolderUiState.tracks` is non-null, so `?.tracks?.getOrNull(..)` emits a null
    *  check nothing can take, and this class read 18/20 against a 1.00 floor until it went. */
   private fun trackAt(index: Int): Song? = uiState.value?.tracks.orEmpty().getOrNull(index)
 
   private fun withSongsUnder(arrange: (List<Song>) -> List<Song>) {
+    songsUnderThen { songs -> source.play(arrange(songs), 0) }
+  }
+
+  /**
+   * The three preconditions every whole-folder action shares: a folder is open, a library is
+   * selected, and there is something beneath it.
+   *
+   * One place rather than four, so that [shuffleFolder], [playFolder], [enqueueAll] and
+   * [playAllNext] cannot drift into disagreeing about which of them a closed folder or an empty
+   * subtree is allowed to reach. `arrange` is applied by the caller and never changes the count, so
+   * checking emptiness here is checking the same thing the old body checked after arranging.
+   */
+  private fun songsUnderThen(act: suspend (List<Song>) -> Unit) {
     val at = path.value ?: return
     viewModelScope.launch {
       val libraryId = source.selectedLibraryId.first() ?: return@launch
-      val songs = arrange(source.songsUnder(libraryId, at))
-      if (songs.isNotEmpty()) source.play(songs, 0)
+      val songs = source.songsUnder(libraryId, at)
+      if (songs.isNotEmpty()) act(songs)
     }
   }
 

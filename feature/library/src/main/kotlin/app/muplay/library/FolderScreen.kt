@@ -4,13 +4,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,9 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.muplay.designsystem.component.ADD_ALL_TO_QUEUE_LABEL
 import app.muplay.designsystem.component.AddToQueueButton
 import app.muplay.designsystem.component.FastScrollBar
 import app.muplay.designsystem.component.Message
+import app.muplay.designsystem.component.PLAY_ALL_NEXT_LABEL
+import app.muplay.designsystem.component.QUEUE_ALL_MENU_LABEL
 import app.muplay.designsystem.component.fastScrollBuckets
 import app.muplay.designsystem.component.listIndexOf
 import app.muplay.designsystem.theme.MuPlayIcons
@@ -77,6 +80,8 @@ fun FolderScreen(
     // No `onOpenPlayer()`: queueing leaves the user in the folder they are adding from.
     onTrackPlayNext = viewModel::playNext,
     onTrackAddToQueue = viewModel::enqueue,
+    onFolderPlayNext = viewModel::playAllNext,
+    onFolderAddToQueue = viewModel::enqueueAll,
     modifier = modifier,
   )
 }
@@ -90,6 +95,8 @@ private fun FolderScreen(
   onTrackClick: (Int) -> Unit,
   onTrackPlayNext: (Int) -> Unit,
   onTrackAddToQueue: (Int) -> Unit,
+  onFolderPlayNext: () -> Unit,
+  onFolderAddToQueue: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // Subfolders and then tracks, as one list, because that is what the `LazyColumn` below draws and
@@ -112,7 +119,10 @@ private fun FolderScreen(
     ) {
       if (uiState.canShuffle) {
         item {
-          Row(horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm)) {
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
             // Shuffle first and filled: it is what the user asked this screen for, and on a folder
             // of a hundred files it is the only one of the two anybody taps.
             Button(onClick = onShuffle) {
@@ -123,6 +133,16 @@ private fun FolderScreen(
               )
             }
             OutlinedButton(onClick = onPlayAll) { Text(PLAY_FOLDER_LABEL) }
+            // Third and unlabelled, because it is the only one of the three that does not take
+            // over playback -- and `canShuffle` already guarantees there is something beneath this
+            // folder to queue, which is the same precondition the two buttons beside it need.
+            AddToQueueButton(
+              onPlayNext = onFolderPlayNext,
+              onAddToQueue = onFolderAddToQueue,
+              menuLabel = QUEUE_ALL_MENU_LABEL,
+              playNextLabel = PLAY_ALL_NEXT_LABEL,
+              addToQueueLabel = ADD_ALL_TO_QUEUE_LABEL,
+            )
           }
         }
       }

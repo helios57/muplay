@@ -93,4 +93,32 @@ class TopLevelDestinationTest {
     assertThat(keys).doesNotHaveDuplicates()
     assertThat(TopLevelDestination.entries.map { it.label }).doesNotHaveDuplicates()
   }
+  // ---- the way back up out of a folder ----------------------------------------------------------
+  //
+  // Folders are the one section whose detail screen has no header of its own: the top bar carries
+  // the folder's name, and before this there was nothing on it that went up. System back worked, so
+  // nothing was *broken* -- and a user three folders deep could see no way out of them.
+
+  @Test
+  fun `a folder inside the library offers a way back up`() {
+    assertThat(offersBackUp(FolderRoute("Fourth Author/Book"))).isTrue()
+    assertThat(offersBackUp(FolderRoute("Fourth Author"))).isTrue()
+  }
+
+  @Test
+  fun `the folders tab root offers none, because there is nothing above it`() {
+    // Its parent is the tab bar. A back arrow there would leave the section from a screen the user
+    // reached by tapping the very tab it would leave -- which is what the navigation bar is for.
+    assertThat(offersBackUp(FolderRoute(""))).isFalse()
+  }
+
+  @Test
+  fun `no other screen the top bar draws offers one`() {
+    // The bar renders for the four section roots and for a folder. The three non-folder roots are
+    // tabs, and a null screen is the state before the first composition.
+    assertThat(offersBackUp(LibraryRoute)).isFalse()
+    assertThat(offersBackUp(PlaylistsRoute)).isFalse()
+    assertThat(offersBackUp(BookshelfRoute)).isFalse()
+    assertThat(offersBackUp(null)).isFalse()
+  }
 }

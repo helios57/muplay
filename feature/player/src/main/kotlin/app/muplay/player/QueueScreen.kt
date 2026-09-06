@@ -6,19 +6,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +76,21 @@ internal fun QueueScreen(
   onMoveDown: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val listState = rememberLazyListState()
+  // **Once per visit, and only once.** The queue arrives after the screen does -- `Empty` first,
+  // then the timeline -- so there is nothing to scroll to at composition and this cannot be a
+  // `LaunchedEffect(Unit)`. Scrolling on every change instead would be worse than not scrolling at
+  // all: a track ending while the list is open would yank it out from under a reading finger.
+  // `rememberSaveable`, so a rotation is not a second visit either.
+  var hasScrolledToCurrent by rememberSaveable { mutableStateOf(false) }
+  val currentPosition = (uiState as? QueueUiState.Content)?.currentPosition
+  LaunchedEffect(currentPosition) {
+    if (!hasScrolledToCurrent && currentPosition != null) {
+      hasScrolledToCurrent = true
+      listState.scrollToItem(currentPosition)
+    }
+  }
+
   Column(
     modifier = modifier
       .fillMaxSize()
@@ -78,9 +100,21 @@ internal fun QueueScreen(
       text = QUEUE_TITLE,
       style = MaterialTheme.typography.headlineSmall,
       modifier = Modifier
-        .padding(vertical = MuPlaySpacing.lg)
+        .padding(top = MuPlaySpacing.lg)
         .semantics { heading() },
     )
+    // "2 of 3" under the title. It is drawn from the same `currentPosition` the list scrolls to,
+    // and it is absent rather than blank on an empty queue: there is no position and no count worth
+    // reading when the next thing on the screen already says "Nothing is queued yet."
+    if (uiState is QueueUiState.Content) {
+      Text(
+        text = uiState.summary,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = MuPlaySpacing.xs),
+      )
+    }
+    Spacer(Modifier.height(MuPlaySpacing.lg))
     when (uiState) {
       // The app's one way of saying "nothing here"; see `PlayerScreen`'s own empty state.
       QueueUiState.Empty -> Box(
@@ -91,6 +125,7 @@ internal fun QueueScreen(
       }
 
       is QueueUiState.Content -> LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.xs),
       ) {
