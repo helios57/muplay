@@ -872,6 +872,20 @@ Where a test genuinely needs one *kind* of track, filter rather than count:
 `RealTrackBytes.bytesOf` already does `musicTracks().first { it.suffix == "mp3" }`
 and was unaffected.
 
+### And the hardcoded thing that hurts most is a *shape*, not a number
+
+Measured writing `QueueJourneyTest`. Its first version hardcoded three tracks, and the album
+has four. The count assertion failed honestly (`1 of 5` where it wanted `1 of 4`) — and the
+**order** assertion beside it had *passed*, because the walk collected rows by matching titles
+beginning `"Track "` and the fourth fixture is called `Offset Track`. A filter that silently
+drops a row makes a queue of five look like the queue of four the test was written against, so
+the list it compares is the list it built, and it agrees with itself.
+
+A wrong count goes red and sends you to the corpus. A wrong *filter* goes green and does not,
+so it survives every run until some later change happens to move the row it was hiding. Derive
+the rows from the screen (`rowTexts()`), not from what you expect them to be called; a
+title-shaped predicate over a fixture corpus is a hardcoded count wearing a disguise.
+
 ## A `Flow` operator inside a `@Composable` is a lint **error**, not a warning
 
 `androidx.compose.runtime`'s `FlowOperatorInvokedInComposition` fails `lintDebug` on
@@ -1997,3 +2011,35 @@ Either way, **prefer `Espresso.pressBack()`**: four other journeys here already 
 Read that ANR finding with the section above about a stale ANR dialog outliving its app. Both are
 the same instruction: when a device reading contradicts what the code says should be true, find out
 what else on that device was broken at the time before rewriting the code.
+
+## A `waitUntil` timeout is the least diagnostic red this tier can produce
+
+`composeRule.waitUntil { queueRowTitles() == expected }` is the natural way to await a list, and
+when it is wrong it reports:
+
+    androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 15000 ms
+
+which names neither the list on screen nor the list wanted. Measured writing `QueueJourneyTest`:
+fifteen seconds of waiting, then one sentence that rules nothing out — the product, the fixture
+corpus, the tap, the expectation and the emulator are all still live suspects.
+
+Catch it and re-raise it as the comparison it was:
+
+    try {
+      composeRule.waitUntil(UI_TIMEOUT_MILLIS) { queueRowTitles() == expected }
+    } catch (timeout: ComposeTimeoutException) {
+      assertThat(queueRowTitles()).describedAs(what).isEqualTo(expected)
+      throw timeout   // the condition became true between the two reads; say so rather than pass
+    }
+
+The rethrow matters: without it, a condition that settles in the millisecond between the timeout
+and the re-read turns a red into a green.
+
+**What it was hiding here was an expectation the test computed wrongly**, which is the failure this
+tier cannot tell from a product defect. Kotlin evaluates arguments left to right, so
+
+    appended.toMutableList().apply { add(size - 1, removeAt(lastIndex)) }
+
+reads `size - 1` **before** `removeAt` shortens the list, and re-inserts the element where it
+already was. The expectation was the unmutated list, the screen was the correctly reordered one,
+and the only evidence either way was that timeout. Two statements, and the diff says so instantly.
