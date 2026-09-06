@@ -1575,6 +1575,25 @@ Two things follow, and the second is the general one:
   dumped "Wait" bounds, and went away on
   `adb shell am force-stop com.google.android.apps.nexuslauncher`. Read the dialog's text for
   the owner before reaching for the app you are testing.
+
+**During a suite it does not look like a dialog at all -- it looks like Espresso.** Measured
+2026-09-07, three times in one session on a freshly booted `muplay37`:
+
+    androidx.test.espresso.base.RootViewPicker$RootViewWithoutFocusException: Waited for the root
+    of the view hierarchy to have window focus and not request layout for 10 seconds.
+    Root{... has-window-focus=false, layout-params-type=1 ...}
+
+Nothing in that message names a dialog, a package, or the launcher, and it points at the *app's
+own* window -- so it reads as "my activity is broken" or "Espresso picked the wrong root". The
+window that actually held focus was
+
+    mCurrentFocus=Window{... Application Not Responding: com.google.android.apps.nexuslauncher}
+
+`QueueJourneyTest` failed 2/2 with it, alone as well as in a batch, and went 13/13 in a batch the
+moment the launcher was force-stopped. `dumpsys window | grep mCurrentFocus` is the one-command
+diagnosis and is worth taking **before** re-running anything -- it costs a second and the re-run
+costs three minutes. Expect it to come back: it reappeared once more in the same session, two
+suites later.
 - This is the same shape as every other stale-measurement trap in this file — the
   build-cache serving another worktree's failure, a floor comment describing a run
   that no longer happens, a lane's report describing master as it was at its last
