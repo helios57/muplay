@@ -619,6 +619,33 @@ explain is much cheaper than a colleague's suite you destroyed. Wait, and meanwh
 what you already measured — a green suite from earlier on the same tree is still evidence,
 and a partial run killed by the replacement measured nothing at all.
 
+## Starting the emulator with `run_in_background` makes it the harness's to kill
+
+Measured 2026-09-07, and it is the section below compounded with the one above it. The emulator was
+restarted -- correctly, with the documented flags under `sg kvm` -- as a `run_in_background`
+command. Ninety minutes later the harness stopped that command with *"the system is running low on
+memory"*, and **the emulator went with it**: `adb devices` empty, no `muplay37` qemu anywhere. The
+host at that moment had **80 GiB available**, 22 GiB free, and `dmesg | grep -c CONSTRAINT_MEMCG`
+returned **0**. Nothing was out of memory; the watchdog fires on this machine's shape, as the next
+section records.
+
+The cost is not the emulator, which restarts in 90 s. It is that the kill arrives *between* two
+device suites, so the next thing to run reports `device 'emulator-5554' not found` inside an empty
+`<failure></failure>` -- the signature this file already attributes to a concurrent agent
+reinstalling underneath you, and to a qemu hang. Three different causes, one indistinguishable
+symptom.
+
+Launch it detached from the harness instead, so no tool-call lifetime owns it:
+
+    setsid sg kvm -c "$ANDROID_HOME/emulator/emulator -avd muplay37 -no-window ..." \
+      < /dev/null > /path/to/emu.log 2>&1 &
+    disown
+
+Then **verify it outlived the call** in the *next* command -- `ps -eo pid,ppid,args` should show the
+qemu reparented to a session leader that is not the harness shell. This is not the same as the
+`nohup ... &` this file warns about elsewhere: `nohup` only ignores SIGHUP, while `setsid` moves the
+process out of the harness's process group, which is what the kill targets. Measured both ways here.
+
 ## A background device run can be killed for "low memory" on a host with 30 GB free
 
 Twice in one afternoon, `run_in_background` device suites were stopped by the harness with
