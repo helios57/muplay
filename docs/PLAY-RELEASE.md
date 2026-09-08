@@ -74,7 +74,8 @@ changing the key is disruptive rather than free.
 ## Order of operations
 
 1. Create the app in Play Console.
-2. **Set the app signing key.** Before any bundle, any track, any release.
+2. **Set the app signing key.** Before any bundle, any track, any release — and nothing in the
+   console will remind you, because creating the app has already silently done it for you.
 3. Configure the four repository secrets.
 4. Tag, and let CI build and sign.
 5. Upload to internal testing.
@@ -91,7 +92,17 @@ The submit button is never disabled even with required fields empty, so its enab
 evidence the form is valid — the red validation error is. If a submit fails, re-read the app list
 before retrying, or you risk creating a duplicate.
 
-### 2. Set the app signing key — the step the form does not offer
+### 2. Set the app signing key — the step nothing will prompt you for
+
+**Assume you will not be reminded.** The key page is not part of the creation flow, so no screen
+puts this decision in front of you: the app is created, a key is generated and activated, and the
+console reports success. There is no warning to dismiss and nothing to get wrong — the failure mode
+is not choosing badly, it is never seeing that there was a choice.
+
+Measured from the other side (**sibling session, 2026-09-08**): they nearly missed it too, on an app
+where the same interoperation concern applied, and looked only because it happened to be in their
+head already. An app where nobody happens to be carrying that concern is an app where nobody looks.
+That is the whole reason this step has a heading rather than a sentence.
 
 Go to `…/app/<appId>/keymanagement` and read the current SHA-256 **before uploading anything**.
 Then *Change key* → *Export and upload a key from Java KeyStore* (PEPK). The two warnings it shows —
