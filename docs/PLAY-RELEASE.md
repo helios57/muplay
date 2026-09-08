@@ -1,0 +1,171 @@
+# Play Console — getting MuPlay onto Play
+
+The sibling documents cover *what to say*: `STORE-LISTING.md` is the listing copy,
+`PLAY-DATA-SAFETY.md` the declaration, `REVIEWER-ACCESS.md` how a reviewer signs in to a server they
+do not have. This one covers *how the binary gets there*, and one decision that is permanent.
+
+Facts marked **measured** were executed against this repository or this host on the date given.
+Facts marked **read** come from a source file named beside them. Everything else is marked
+inferred, because an instruction nobody walked is the failure mode this project is built against.
+
+The console procedure below was measured end-to-end on 2026-09-08 by a sibling session doing the
+same thing for another app (`github.com/helios57/familyguard`, `DEPLOYMENT.md` → *Publishing to
+Google Play*, commit `a254c1d`). What is written here is that procedure **plus** what changes for
+MuPlay, which is not a detail — see the signing section.
+
+---
+
+## Measured state of this repository, 2026-09-08
+
+| | |
+|---|---|
+| `applicationId` | `app.muplay` — permanent once the Play app is created (**read**, `app/build.gradle.kts:14`) |
+| Next release | `versionCode = 200`, `versionName = "0.2.0"` (**read**, same file) |
+| Spent version codes | one: `1 / 0.1.0`, *"never uploaded anywhere"* (**read**, `app/release-history.tsv`) |
+| Tags pushed | none matching `v*` (**measured**, `git tag -l`) |
+| GitHub Releases | none (**measured**, `gh release list` is empty) |
+| Repository secrets | **none configured** (**measured**, `gh secret list` is empty) |
+| Upload keystore | exists outside the repo, `muplay-upload`, created 2026-08-31, valid to 2054-01-16 (**measured**, `keytool -list`) |
+| Its certificate SHA-256 | `97:D1:B2:C6:16:EC:15:C7:48:C2:99:C5:D7:FE:9B:FF:67:FD:F9:91:76:F9:2B:2E:D7:7E:1E:5E:31:A1:F5:E6` |
+| Declared permissions | `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS` (**measured**, grep over every `AndroidManifest.xml`) |
+
+Two consequences follow immediately. **Nothing signed by this key has ever left the machine** — no
+release, no tester, no installed base anywhere. And **`release.yml` cannot run today**: its first
+step fails naming the four missing secrets, by design (**read**, *"Require the signing secrets"*).
+
+---
+
+## The signing decision, and why the generic answer is wrong for MuPlay
+
+Play App Signing splits one key into two. The **upload key** signs the bundle you upload and only
+authenticates the upload; Google strips it and re-signs each delivered APK with the **app signing
+key**. Google generates that second key when the app is created, and the create-app form does not
+mention it.
+
+The usual rule of thumb is *"no installed base yet, so let Google generate it"*. MuPlay has no
+installed base, and that rule still gives the wrong answer here, for a reason specific to this
+project:
+
+**MuPlay is deliberately dual-distributed.** `release.yml` attaches the signed APK to a public
+GitHub Release, and says why at length: *"MuPlay is distributed to people who are not on Google
+Play, and an artifact nobody can download is not a distribution"* (**read**, its `permissions:`
+block). If Google holds the app signing key, the GitHub APK and the Play install carry **different
+certificates** — so Android refuses to update one with the other, in both directions. A listener who
+sideloaded the APK and later wants the Play build has to uninstall first.
+
+For most apps that is an inconvenience. For this one it is data loss: **book positions are local
+only and never sent to the server** — the constraint the whole audiobook feature is built around —
+so an uninstall drops every resume point permanently, with no server-side copy to sync back.
+
+So the recommendation is to **upload the existing `upload-keystore.jks` as the app signing key**,
+which keeps both channels on one certificate and keeps `release.yml`'s promise true. What it costs,
+stated plainly: the account holder then owns the app signing key forever, with no Google-held copy
+to fall back on, so losing that file or its passphrase ends the ability to ship updates under this
+package name. Back it up before starting. *(Inferred from how Play App Signing works, not measured
+here — the fingerprint comparison in step 2 is what turns it into a measurement.)*
+
+**The window for this is before the first upload and before any track exists.** After that,
+changing the key is disruptive rather than free.
+
+---
+
+## Order of operations
+
+1. Create the app in Play Console.
+2. **Set the app signing key.** Before any bundle, any track, any release.
+3. Configure the four repository secrets.
+4. Tag, and let CI build and sign.
+5. Upload to internal testing.
+
+Steps 1, 2 and 5 need the console and the account holder. Steps 3 and 4 need the keystore.
+
+### 1. Create the app
+
+Play Console → *Create app*. Three choices are permanent: the package name, free vs paid, and the
+app's existence — there is no delete, only unpublish. Press *Check availability* on `app.muplay`
+first; it must match `applicationId` character for character.
+
+The submit button is never disabled even with required fields empty, so its enabled state is not
+evidence the form is valid — the red validation error is. If a submit fails, re-read the app list
+before retrying, or you risk creating a duplicate.
+
+### 2. Set the app signing key — the step the form does not offer
+
+Go to `…/app/<appId>/keymanagement` and read the current SHA-256 **before uploading anything**.
+Then *Change key* → *Export and upload a key from Java KeyStore* (PEPK). The two warnings it shows —
+testers lose updates, uploaded versions become unusable — are void while no track and no upload
+exist, which is the whole reason this step comes second.
+
+PEPK dies with a `NullPointerException` in `KeystoreHelper.loadKeystore` when stdin is a pipe,
+because `System.console()` is null; it reads like a corrupt keystore rather than a missing terminal.
+Run it under a pty (**measured** by the sibling session, 2026-09-08):
+
+    printf '%s\n%s\n' "$PW" "$PW" | script -qec "java -jar pepk.jar \
+      --keystore=… --alias=muplay-upload --output=output.zip \
+      --include-cert --rsa-aes-encryption --encryption-key-path=./encryption-public-key.pem" /dev/null
+
+The pty **echoes the passphrase** into whatever captures that output. Check the log with `grep -qF`
+for the password before printing it anywhere, and shred the log afterwards.
+
+After saving, reload the page and check **both halves**: the fingerprint above is present *and*
+Google's generated one is gone. "Ours is present" alone cannot tell a replacement from an addition.
+
+### 3. Configure the four repository secrets
+
+`release.yml` reads `MUPLAY_KEYSTORE_BASE64`, `MUPLAY_KEYSTORE_PASSWORD`, `MUPLAY_KEY_ALIAS` and
+`MUPLAY_KEY_PASSWORD` (**read**). None are set today. The keystore goes in base64; the workflow
+materialises it into `RUNNER_TEMP`, outside the workspace, and shreds it on `always()`.
+
+### 4. Tag
+
+Pushing `v0.2.0` is the entire interface — there is no local release step and nobody needs the key
+on a laptop. The tag must match `versionName` or `verifyReleaseTag` refuses the build. CI produces
+the signed `.aab`, the `mapping.txt`, and a public GitHub Release carrying the APK.
+
+Append the spent code to `app/release-history.tsv` in the same commit that moves the version.
+
+### 5. Upload to internal testing
+
+`…/tracks/internal-testing` → *Create new release*. Internal testing needs **no** store listing, no
+content rating and no data-safety declaration — a bundle and a release name are enough. It is by far
+the cheapest way to get something published.
+
+One trap: the required *Release name* field, when empty, disables *Next* and reads exactly like the
+bundle having been rejected. Fill the name and re-read the button. A genuinely refused bundle looks
+different — it surfaces at the review step as *"You need to upload an APK or Android App Bundle for
+this app"* with no bundles listed.
+
+Upload `mapping.txt` alongside **this exact bundle**; a mapping file from any other build
+deobfuscates nothing.
+
+---
+
+## Permissions
+
+A bundle can be refused outright over a permission, with no help link and no declaration form —
+measured by the sibling session on `UPDATE_PACKAGES_WITHOUT_USER_ACTION`, proven as a clean A/B on
+one tree.
+
+**MuPlay declares nothing in that class** (**measured**, above). The one that needs paperwork later
+is `FOREGROUND_SERVICE_MEDIA_PLAYBACK`: Play requires a foreground-service-type declaration under
+*App content* for production, though not for internal testing. `POST_NOTIFICATIONS` is a normal
+runtime permission and needs no declaration — it is requested at launch (`MainActivity`) and held
+there by `ConventionTest`'s *every runtime permission this app declares is requested somewhere in
+src main*.
+
+---
+
+## Open question, unanswered
+
+Whether publishing to Play makes a **sideloaded** build of the same package and key stop being
+flagged by Play Protect. Google's guidance says nothing about signing certificates, developer
+reputation or install volume, so there is no authority to read — it has to be measured on a real
+handset. It matters here precisely because of the dual distribution above; it does not matter for a
+Play-only app.
+
+---
+
+## What only the account holder can do
+
+Creating the app, checking name availability, the key upload, the secrets, and every console step.
+This document does not make the signing decision — it makes it real, and recommends one.
