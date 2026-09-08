@@ -321,9 +321,34 @@ deobfuscates nothing.
   Turning it on would quietly make that false. If anyone ever turns it on, `release.yml`'s
   `permissions:` block is the comment that stops being true.
 
-**What is left, and it is one thing: testers.** The track needs an email list before it can roll
-out, and which addresses go on it is not a decision this repository can make. Everything else on
-the internal-testing path is done.
+- **The internal test is live.** The five tester addresses the account holder supplied are an
+  account-level email list (*MuPlay internal testers*, 5 users), ticked for this track, and the
+  release was published on 2026-09-08 at 18:54: *Aktiv — Für interne Tester verfügbar*, one version
+  code, *Nicht überprüft*. Version code **201 is now spent** and `app/release-history.tsv` says so.
+- **The opt-in link** testers must open before the Play Store will show them the app is
+  `https://play.google.com/apps/internaltest/4700194580516551844`. It is inert until a tester's
+  Google account is on that list, so it is not a secret, but it is also not a download link: each
+  tester opens it, accepts, and only then does the store page exist for them.
+- **Testers see a placeholder name.** Play says so itself: *"Der temporäre Name deiner App ist
+  `io.github.helios57.muplay (unreviewed)`"*. That is not a defect and no store listing fixes it on
+  the internal track -- it is what an unreviewed app is called until the *App content* forms and the
+  listing are completed, which is the production path below, not this one.
+
+**Two console findings worth keeping, because both cost a wrong diagnosis first.**
+
+The email-list dialog saves behind a **second, stacked confirmation dialog** (*"E-Mail-Liste
+erstellen? Diese E-Mail-Liste steht dir dann für alle Apps in deinem Entwicklerkonto zur
+Verfügung."*). Until it is answered, the testers tab still reads *"Create an email list to add
+users that have access to this testing program"* -- which reads exactly like the save having failed
+validation, and sent two retries of the whole form. The tab is telling the truth about a list that
+does not exist yet; the dialog underneath is where the list is.
+
+And a **substring match on an accessible name clicks the wrong button**. `Erstellen` matched the
+page's disabled *"Neuen Release erstellen"* before the dialog's *"Erstellen"*, and earlier in this
+same session a substring `Weiter` navigated away from the draft release entirely and lost it. Match
+the accessible name **exactly**, and prefer the last enabled match, which is the topmost dialog's.
+This is the same shape as every self-matching check in `CLAUDE.md`: the query returned a real
+observation of the wrong thing.
 
 
 ## Permissions
