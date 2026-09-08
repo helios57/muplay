@@ -22,11 +22,11 @@ detail — see the signing section.
 | | |
 |---|---|
 | `applicationId` | `io.github.helios57.muplay` — permanent once the Play app is created (**read**, `app/build.gradle.kts:14`). Changed from `app.muplay` on 2026-09-08; see *The rename* below. |
-| Next release | `versionCode = 200`, `versionName = "0.2.0"` (**read**, same file) |
-| Spent version codes | one: `1 / 0.1.0`, *"never uploaded anywhere"* (**read**, `app/release-history.tsv`) |
-| Tags pushed | none matching `v*` (**measured**, `git tag -l`) |
-| GitHub Releases | none (**measured**, `gh release list` is empty) |
-| Repository secrets | **none configured** (**measured**, `gh secret list` is empty) |
+| Next release | `versionCode = 202`, `versionName = "0.2.2"` would be next; 200 and 201 are spent (**read**, `app/release-history.tsv`) |
+| Spent version codes | `1 / 0.1.0` (never uploaded), `200 / 0.2.0` (GitHub Release), `201 / 0.2.1` (uploaded to Play) |
+| Tags pushed | `v0.2.0` and `v0.2.1`, both built green (**measured**, `gh run list`) |
+| GitHub Releases | `v0.2.0`, public, carrying `app-release.apk` (**measured**, `gh release view`) |
+| Repository secrets | all four set 2026-09-08 (**measured**, `gh secret list`) |
 | Upload keystore | exists outside the repo, `muplay-upload`, created 2026-08-31, valid to 2054-01-16 (**measured**, `keytool -list`) |
 | Its certificate SHA-256 | `97:D1:B2:C6:16:EC:15:C7:48:C2:99:C5:D7:FE:9B:FF:67:FD:F9:91:76:F9:2B:2E:D7:7E:1E:5E:31:A1:F5:E6` |
 | Declared permissions | `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS` (**measured**, grep over every `AndroidManifest.xml`) |
@@ -263,13 +263,25 @@ Chrome relaunches against that same profile directory with `--remote-debugging-p
 somewhere you can find them. Remove `Singleton*` from the profile first or Chrome refuses to open
 it.
 
-### 3. Configure the four repository secrets
+### 3. Configure the four repository secrets — done 2026-09-08
 
 `release.yml` reads `MUPLAY_KEYSTORE_BASE64`, `MUPLAY_KEYSTORE_PASSWORD`, `MUPLAY_KEY_ALIAS` and
 `MUPLAY_KEY_PASSWORD` (**read**). None are set today. The keystore goes in base64; the workflow
 materialises it into `RUNNER_TEMP`, outside the workspace, and shreds it on `always()`.
 
-### 4. Tag
+All four are set (`gh secret set`, values from the keystore directory; `gh secret list` shows the
+four names and nothing else). The base64 was checked to decode byte-identically to the `.jks` before
+it became a secret -- a mis-encoded one reaches AGP as *"keystore was tampered with, or password was
+incorrect"*, which names the wrong cause. The store and key passphrases are the same string here,
+which is worth knowing rather than assuming, because `release.yml` keeps them as two secrets:
+`keytool -certreq -storepass X -keypass X` is the one-command check.
+
+**Run CI's exact Gradle line locally before spending a tag.** It is one command with five environment
+variables and it costs 3-5 minutes, against a tag that is awkward to unspend. Doing that is what
+caught `verifyReleaseArtifact` reading the applicationId (see *The rename*); a green local run then
+made the real tag uneventful.
+
+### 4. Tag — done, twice
 
 Pushing `v0.2.0` is the entire interface — there is no local release step and nobody needs the key
 on a laptop. The tag must match `versionName` or `verifyReleaseTag` refuses the build. CI produces
@@ -292,6 +304,27 @@ Upload `mapping.txt` alongside **this exact bundle**; a mapping file from any ot
 deobfuscates nothing.
 
 ---
+
+### Where this actually got to, 2026-09-08
+
+- **v0.2.0** tagged and built (6 min). Public GitHub Release with `app-release.apk`, private
+  workflow artifact with the `.aab`, `mapping.txt` and both gate censuses.
+- **v0.2.1** tagged after the namespace rename; this is the build that went to Play.
+- **The bundle is uploaded to the internal test track** as a saved draft: `201 (0.2.1)`, release
+  notes written, Play parsing it as *API 26 or higher, target 36, 4 ABIs*. That Play accepted the
+  upload at all is the end-to-end proof of step 2 -- an upload signed by anything other than the
+  registered key is rejected at this exact point.
+- **Two of Play's own "optimisations" are offered and only one is on.** *Releases are signed by
+  Google Play* is active, which is step 2. *Automatischer Schutz* (automatic integrity protection)
+  is deliberately **off**: it rewrites the delivered artifact, and this project's whole
+  dual-distribution promise is that the APK on GitHub and the build on Play are the same code.
+  Turning it on would quietly make that false. If anyone ever turns it on, `release.yml`'s
+  `permissions:` block is the comment that stops being true.
+
+**What is left, and it is one thing: testers.** The track needs an email list before it can roll
+out, and which addresses go on it is not a decision this repository can make. Everything else on
+the internal-testing path is done.
+
 
 ## Permissions
 

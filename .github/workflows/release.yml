@@ -32,8 +32,13 @@ concurrency:
 # code.
 #
 # `mapping.txt` is still NOT published, and that half of the original reasoning stands unchanged: it
-# is a complete list of this application's class and method names, it is useful only to whoever
-# uploads it to Play alongside this exact bundle, and there is no reason for it to be public. It
+# is a complete list of this application's class and method names, and there is no reason for it to
+# be public. One clause of it was wrong and is corrected here: nobody uploads it to Play "alongside
+# this exact bundle", because AGP already puts it *inside* the bundle. Measured on v0.2.1's .aab --
+# `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map`, 65,079,373 bytes, the same
+# byte count as the `mapping.txt` this job archives -- and the Play Console offers no deobfuscation
+# upload for a bundle, because it does not need one. The native debug symbols ride along the same
+# way, under `com.android.tools.build.debugsymbols/`. It
 # stays in the workflow's own artifact storage, visible to repository collaborators and nobody else.
 # The `.aab` stays there too -- it is useless to an end user (Play unpacks it into per-device APKs)
 # and publishing it would invite someone to try to sideload it.
@@ -199,9 +204,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: muplay-${{ github.ref_name }}
-          # The bundle is what goes to Play. `mapping.txt` is what makes a crash report from a
-          # minified build readable, and it has to be uploaded to Play *for this exact bundle* --
-          # a mapping file from a later build deobfuscates nothing. `release-artifact.txt` and
+          # The bundle is what goes to Play, and it carries its own copy of `mapping.txt` inside
+          # (see the `permissions:` block). The copy kept here is for *this* side of the wall: it
+          # is what makes a crash report from a minified build readable without unzipping an 8 MB
+          # bundle, and it is worthless against any other build. `release-artifact.txt` and
           # `release-signing.txt` are the two gates' own censuses, kept beside the artifact so the
           # numbers behind a release are recoverable a year later.
           path: |
