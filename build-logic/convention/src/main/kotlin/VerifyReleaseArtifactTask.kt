@@ -85,7 +85,14 @@ abstract class VerifyReleaseArtifactTask : DefaultTask() {
   @get:PathSensitive(PathSensitivity.RELATIVE)
   abstract val nonDebugSources: ConfigurableFileCollection
 
-  /** `app.muplay` — the package whose classes the minification census is about. */
+  /**
+   * `app.muplay` — the package whose classes the minification census is about.
+   *
+   * The **namespace**, which since 2026-09-08 is no longer the same string as the `applicationId`
+   * (`io.github.helios57.muplay`). The name of this property predates that split and is now
+   * slightly misleading; what it holds is the package the classes are in. See the comment at its
+   * one call site in `ReleaseGates` for what wiring it to the applicationId measured.
+   */
   @get:Input
   abstract val applicationPackage: Property<String>
 

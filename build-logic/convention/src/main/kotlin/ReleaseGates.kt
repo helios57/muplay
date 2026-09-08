@@ -59,9 +59,24 @@ internal fun Project.configureReleaseGates(extension: ApplicationExtension) {
       )
       debugSources.from(repositorySources("debug"))
       nonDebugSources.from(repositorySources("main"), repositorySources("release"))
+      // The **namespace**, not the `applicationId`. Those were the same string (`app.muplay`) until
+      // 2026-09-08, when the Play package name became `io.github.helios57.muplay` and the two
+      // diverged -- which is the normal Android arrangement, not an anomaly to repair.
+      //
+      // Everything this property feeds is about the package the *classes* are in: the census counts
+      // entries in `mapping.txt`, whose left-hand side is the source class name, and
+      // `packageDescriptorPrefix` builds a DEX type descriptor. Both are namespace-shaped. Measured
+      // on the first release build after the rename, where the applicationId wiring produced
+      //
+      //   mapping.txt names no io.github.helios57.muplay class at all
+      //
+      // and the gate was right: under that name there is nothing to check. Note that it failed
+      // *loudly and accurately*, naming both candidate causes, which is why this needs no new rule
+      // guarding it -- `check` cannot see this task (it is a `releaseCheck` gate, 4 m 28 s), but
+      // nothing can reach Play without passing through it.
       applicationPackage.set(
-        extension.defaultConfig.applicationId
-          ?: error("app/build.gradle.kts must declare an applicationId in defaultConfig"),
+        extension.namespace
+          ?: error("app/build.gradle.kts must declare a namespace in the android block"),
       )
       // The same two attributes `verifyReleaseManifest` forbids in the merged manifest, plus
       // `debuggable` -- which cannot appear there today (AGP writes it only for a debuggable build
