@@ -8,9 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import io.github.helios57.muplay.designsystem.theme.MuPlayTheme
 import io.github.helios57.muplay.ui.MuPlayApp
@@ -36,15 +33,32 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    // Edge-to-edge is enforced at API 35+; Scaffold below handles the resulting insets.
+    // Edge-to-edge is enforced at API 35+. `MuPlayApp` owns the one `Scaffold` in this app and
+    // that is what handles the resulting insets -- see [setContent]'s note below for what a second
+    // one cost.
     enableEdgeToEdge()
     askForNotificationPermission()
 
+    // **One `Scaffold`, and it is `MuPlayApp`'s.** This used to wrap it in a second one and hand
+    // its `innerPadding` down, which reads like ordinary edge-to-edge boilerplate and quietly
+    // consumed every system-bar inset *twice*: the outer `Scaffold` padded the content in by the
+    // 24dp navigation-bar inset, and the `NavigationBar` inside the inner one then applied its own
+    // `NavigationBarDefaults.windowInsets` again on top of that.
+    //
+    // Measured on the emulator at 420dpi before the fix: the bottom chrome ran 1888..2337 of a
+    // 2400px screen while the gesture bar itself occupies only 2337..2400 -- 48dp of gesture-bar
+    // padding for a 24dp gesture bar, and the same 24dp doubled under the status bar at the top.
+    // 48dp of a 914dp screen, spent on nothing, which is what "on the bottom there is too much
+    // space wasted" was pointing at.
+    //
+    // Nothing is lost by removing it: `Scaffold`'s own `contentWindowInsets` defaults to
+    // `WindowInsets.systemBars`, so the inner one still pads content away from the status bar on
+    // the screens that draw no top bar, and still pads it away from the gesture bar on the player
+    // screens that draw no bottom bar. `ConventionTest`'s `the app composes exactly one Scaffold`
+    // is what keeps a second one from coming back.
     setContent {
       MuPlayTheme {
-        Scaffold { innerPadding ->
-          MuPlayApp(modifier = Modifier.padding(innerPadding))
-        }
+        MuPlayApp()
       }
     }
   }

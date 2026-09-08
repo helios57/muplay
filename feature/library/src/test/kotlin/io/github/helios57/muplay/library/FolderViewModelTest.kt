@@ -2,6 +2,8 @@ package io.github.helios57.muplay.library
 
 import io.github.helios57.muplay.model.FolderListing
 import io.github.helios57.muplay.model.FolderNode
+import io.github.helios57.muplay.model.LibraryRole
+import io.github.helios57.muplay.model.MusicLibrary
 import io.github.helios57.muplay.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,9 @@ import org.junit.jupiter.api.Test
  */
 class FolderViewModelTest {
 
+  private val music = MusicLibrary(1, "Music", LibraryRole.MUSIC)
+  private val books = MusicLibrary(2, "Books", LibraryRole.AUDIOBOOKS)
+
   private fun song(id: String, path: String) = Song(
     id = id,
     libraryId = 1,
@@ -46,8 +51,16 @@ class FolderViewModelTest {
     path = path,
   )
 
-  private class FakeFolderSource : FolderSource {
+  private class FakeFolderSource(libraries: List<MusicLibrary> = emptyList()) : FolderSource {
+    override val libraries = MutableStateFlow(libraries)
     override val selectedLibraryId = MutableStateFlow<Int?>(1)
+
+    /** The shared selection, as this fake sees it -- a tap on a chip has to move the same flow the
+     *  listing is read from, or the folders tab would light a chip and go on showing the old
+     *  library. */
+    override fun selectLibrary(id: Int) {
+      selectedLibraryId.value = id
+    }
 
     val listings = mutableMapOf<Pair<Int, String>, MutableStateFlow<FolderListing>>()
     val listingCalls = mutableListOf<Pair<Int, String>>()
@@ -158,6 +171,57 @@ class FolderViewModelTest {
 
     assertThat(source.listingCalls).isEmpty()
     assertThat(vm.uiState.value).isNull()
+  }
+
+  // ---- the library filter ------------------------------------------------------------------------
+  //
+  // The same chip row the albums tab has always drawn, on the folders tab -- asked for as *"I want
+  // to be able to filter playlists and folders by library"*. It is a `LibraryFilterSource` on the
+  // seam rather than three members here, so what these two tests hold is the wiring: that this
+  // screen reads the shared selection and that a tap on a chip writes it.
+
+  @Test
+  fun `the folders tab offers the libraries the mirror knows, with the shared one lit`() = runTest {
+    val source = FakeFolderSource(listOf(music, books))
+    source.selectedLibraryId.value = 2
+    val vm = warm(source)
+    backgroundScope.launch { vm.libraryFilter.collect {} }
+    advanceUntilIdle()
+
+    assertThat(vm.libraryFilter.value.libraries.map { it.name }).containsExactly("Music", "Books")
+    assertThat(vm.libraryFilter.value.selectedLibraryId).isEqualTo(2)
+    assertThat(vm.libraryFilter.value.offersChoice).isTrue()
+  }
+
+  @Test
+  fun `tapping a chip here moves the selection the listing is read from`() = runTest {
+    // The defect worth naming: a chip row that lights up and leaves the list alone. Both halves are
+    // asserted -- the selection moved *and* the new library's folders were read -- because a
+    // `selectLibrary` wired to nothing satisfies the first on its own.
+    val source = FakeFolderSource(listOf(music, books))
+    source.setListing(1, "", FolderListing("", listOf(FolderNode("Music", "Music", 2)), emptyList()))
+    source.setListing(2, "", FolderListing("", listOf(FolderNode("Books", "Books", 5)), emptyList()))
+    val vm = warm(source)
+    vm.open("")
+    advanceUntilIdle()
+
+    vm.selectLibrary(2)
+    advanceUntilIdle()
+
+    assertThat(source.selectedLibraryId.value).isEqualTo(2)
+    assertThat(vm.uiState.value?.folders?.map { it.name }).containsExactly("Books")
+  }
+
+  @Test
+  fun `a server with one library offers no choice, so the row is not drawn`() = runTest {
+    // Most installs. A chip that cannot be unselected is a row of screen spent saying nothing, and
+    // this app is short of vertical space -- which is the other half of the same request.
+    val source = FakeFolderSource(listOf(music))
+    val vm = warm(source)
+    backgroundScope.launch { vm.libraryFilter.collect {} }
+    advanceUntilIdle()
+
+    assertThat(vm.libraryFilter.value.offersChoice).isFalse()
   }
 
   @Test

@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -258,6 +259,30 @@ class MiniPlayerTest {
     composeRule.onNodeWithContentDescription(PAUSE_LABEL)
       .assertWidthIsAtLeast(MuPlaySpacing.minTouchTarget)
       .assertHeightIsAtLeast(MuPlaySpacing.minTouchTarget)
+  }
+
+  /**
+   * The bar is exactly 56dp tall, and this is the one assertion in the suite that wants an
+   * equality rather than a floor.
+   *
+   * Every other measurement here asks "is this big enough to hit". This one asks the opposite
+   * question, because the bar sits between the browse list and the navigation bar and its height is
+   * pure cost to whatever is above it: the two together plus the gesture inset were 171dp of a
+   * 914dp screen, measured on the emulator at 420dpi, which is what "on the bottom there is too
+   * much space wasted" was about.
+   *
+   * 56dp is `2 * MuPlaySpacing.xs + minTouchTarget` -- the artwork and the play button are both
+   * exactly one touch target, so the vertical padding is the only number that can move and 4dp is
+   * the last step above zero on this scale. A floor of 48dp would be satisfied by the 64dp this bar
+   * used to be, so it would not have noticed the padding going back; that is why this is an
+   * equality and why it names the arithmetic rather than a literal.
+   */
+  @Test
+  fun theBarIsExactlyFiftySixDpTall() {
+    show(content(PLAYING.copy(isPlaying = true)))
+
+    composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL)
+      .assertHeightIsEqualTo(MuPlaySpacing.minTouchTarget + MuPlaySpacing.xs + MuPlaySpacing.xs)
   }
 
   /**

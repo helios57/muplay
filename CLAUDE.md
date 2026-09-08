@@ -2215,3 +2215,45 @@ tier cannot tell from a product defect. Kotlin evaluates arguments left to right
 reads `size - 1` **before** `removeAt` shortens the list, and re-inserts the element where it
 already was. The expectation was the unmutated list, the screen was the correctly reordered one,
 and the only evidence either way was that timeout. Two statements, and the diff says so instantly.
+
+## A connected run uninstalls the app afterwards, so a two-phase device measurement needs `am instrument`
+
+Measured 2026-09-09, answering *"I had to enter the login data again after installing a new
+version"*. The obvious harness is two filtered `connectedDebugAndroidTest` invocations with an
+`adb install -r` between them: write the credentials through the shipped `CredentialStore`, update
+the APK, read them back. The read came back **null**, which reads exactly like "an update loses the
+login" -- the very defect being investigated, apparently reproduced on the first try.
+
+It was AGP's own teardown. `AndroidTestApkInstallerPlugin` uninstalls both APKs when the run ends,
+so between the two invocations the package was gone -- data directory and Keystore entries with it
+-- and the `adb install -r` in the middle was a **fresh install** of an app that had never stored
+anything. The observation that settles it costs one command and names nothing about tests:
+
+    adb shell dumpsys package io.github.helios57.muplay    # empty: not installed at all
+
+Drive the instrumentation yourself when the thing under test spans installs. Nothing about it needs
+Gradle, and both APKs are already built:
+
+    adb install -r app-0.2.2.apk
+    adb install -r app-debug-androidTest.apk
+    adb shell am instrument -w -e class '<class>#writeTheCredentials' \
+      io.github.helios57.muplay.test/androidx.test.runner.AndroidJUnitRunner
+    adb install -r app-0.2.3.apk     # the update -- data preserved, and this is the step under test
+    adb shell am instrument -w -e class '<class>#readTheCredentialsBack' \
+      io.github.helios57.muplay.test/androidx.test.runner.AndroidJUnitRunner
+
+Done that way the answer is the opposite one, and it is the answer the product needs: across
+versionCode 202 -> 203, same `applicationId` and same signing key, `files/credentials.preferences_pb`
+survived byte-identical and the sealed password still opened with its Keystore key. **Credentials
+survive an update; they do not survive an uninstall, and a change of `applicationId` is an
+uninstall in everything but name.**
+
+Two housekeeping notes from the same hour:
+
+- **Put the device back as you found it.** A locally installed *higher* `versionCode` makes the next
+  Gradle install fail with `INSTALL_FAILED_VERSION_DOWNGRADE`, on somebody else's lane. Uninstall
+  both packages when the probe is done; the next connected run installs what it needs.
+- `adb root` is available on this `google_apis` image and is what lets you read
+  `/data/data/<pkg>/files/`. `adb unroot` afterwards, for the same reason. Both restart `adbd`, and
+  a reverse forward belongs to the running `adbd` -- so run `ci/prepare-emulator.sh` again before
+  the next device suite rather than finding out from a suite that times out reaching Navidrome.

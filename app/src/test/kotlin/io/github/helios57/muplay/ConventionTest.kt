@@ -2681,6 +2681,68 @@ class ConventionTest {
       .isEmpty()
   }
 
+  /**
+   * Exactly one `Scaffold` is composed in this application's shipped code, and it is `MuPlayApp`'s.
+   *
+   * ### What a second one costs, measured rather than reasoned
+   *
+   * `MainActivity` used to wrap `MuPlayApp` in a `Scaffold` of its own and hand the `innerPadding`
+   * down, which is the shape every edge-to-edge sample on the internet has. Both `Scaffold`s
+   * default their `contentWindowInsets` to `WindowInsets.systemBars`, and `NavigationBar` applies
+   * `NavigationBarDefaults.windowInsets` on top of whichever one contains it -- so every system-bar
+   * inset was consumed twice.
+   *
+   * On the emulator at 420dpi, before the fix: the bottom chrome occupied y 1888..2337 of a 2400px
+   * screen while the gesture bar itself is only 2337..2400. That is 48dp of gesture-bar padding for
+   * a 24dp gesture bar, and the same 24dp doubled under the status bar -- 48dp of a 914dp screen,
+   * spent on nothing, on every screen in the app.
+   *
+   * ### Why a rule and not a comment
+   *
+   * Nothing else can see it. It compiles, every JVM test passes, every instrumented test passes --
+   * a Compose test has no system bars, so the insets it double-counts are both zero -- and the only
+   * evidence is a pixel measurement on a real device that nobody takes twice. That is the same
+   * shape as the duplicate navigation entry this file already scans for, and it gets the same
+   * treatment.
+   *
+   * The rule is stated as a count rather than as "MainActivity has none", because the defect is
+   * nesting and the file it appears in is incidental. One `Scaffold` cannot nest inside another.
+   */
+  @Test
+  fun `the app composes exactly one Scaffold, because two of them consume every inset twice`() {
+    val root = repoRoot()
+    val sources = root.walkTopDown()
+      .onEnter {
+        it.name != "build" && it.name != ".git" && it.name != ".claude" && it.name != "build-logic"
+      }
+      .filter { it.extension == "kt" && it.invariantSeparatorsPath.contains("/src/main/") }
+      .toList()
+    // Non-vacuity, and this rule needs it twice over: a walk that read nothing would report "no
+    // Scaffold" exactly as a tree with none does, and the assertion below would then fail for the
+    // wrong reason and send the reader looking at `MuPlayApp`.
+    assertThat(sources).describedAs("Kotlin sources under */src/main, excluding build-logic")
+      .isNotEmpty()
+
+    // A *call*, not an import and not `ScaffoldDefaults`: `Scaffold(` or `Scaffold {`. Comments
+    // are stripped by `kotlinCode`, which matters here more than usual -- both `MainActivity` and
+    // `MiniPlayer` explain themselves in prose that names the composable, and a raw-text scan
+    // would report the two files documenting this rule as its only offenders. That is the
+    // self-matching failure this file has now recorded five times.
+    val callSites = sources
+      .filter { Regex("""\bScaffold\s*[({]""").containsMatchIn(kotlinCode(it.readText())) }
+      .map { it.relativeTo(root).invariantSeparatorsPath }
+
+    assertThat(callSites)
+      .describedAs(
+        "A second Scaffold around the first pads the content by every system-bar inset a second " +
+          "time -- 48dp of a 914dp screen on the emulator, at the top and the bottom of every " +
+          "screen in the app. It compiles, and no test on either tier can see it because a " +
+          "Compose test has no system bars. Give the one Scaffold whatever the new screen needs " +
+          "instead of wrapping it in another.",
+      )
+      .containsExactly("app/src/main/kotlin/io/github/helios57/muplay/ui/MuPlayApp.kt")
+  }
+
   private companion object {
     val DECLARED_PERMISSION =
       Regex("""<uses-permission[^>]*android:name="([^"]+)"""")

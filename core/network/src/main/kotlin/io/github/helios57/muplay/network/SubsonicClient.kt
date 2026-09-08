@@ -379,6 +379,7 @@ class SubsonicClient(
     durationSeconds = duration,
     owner = owner,
     coverArtId = coverArt,
+    changed = changed,
   )
 
   /**

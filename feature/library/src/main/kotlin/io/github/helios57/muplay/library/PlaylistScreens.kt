@@ -73,8 +73,15 @@ fun PlaylistsScreen(
           contentPadding = PaddingValues(MuPlaySpacing.gutter),
           verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
         ) {
-          if (state.playlists.isEmpty()) {
-            item { Message(text = NO_PLAYLISTS_LABEL) }
+          // Above the list and inside it, so it scrolls away with the rows rather than pinning a
+          // filter over a long list -- the same arrangement the albums tab uses, drawn by the same
+          // `LibraryChips`. Behind `offersChoice`: one library is not a filter, it is a row of
+          // screen spent saying so.
+          if (state.filter.offersChoice) {
+            item { LibraryChips(state = state.filter, onLibrarySelected = viewModel::selectLibrary) }
+          }
+          state.emptyReason?.let { reason ->
+            item { Message(text = reason.toMessage()) }
           }
           items(state.playlists, key = { "playlist:" + it.id }) { playlist ->
             PlaylistRow(playlist = playlist, onClick = { onOpenPlaylist(playlist.id) })
@@ -237,6 +244,8 @@ private fun PlaylistSongRow(
 
 internal const val PLAYLISTS_LOADING_LABEL = "Loading…"
 internal const val NO_PLAYLISTS_LABEL = "No playlists on the server yet."
+internal const val NO_PLAYLISTS_IN_LIBRARY_LABEL =
+  "None of your playlists are in this library."
 internal const val EMPTY_PLAYLIST_LABEL = "This playlist is empty."
 internal const val RETRY_LABEL = "Try again"
 internal const val PLAYLISTS_UNKNOWN_FAILURE_LABEL = "Could not load your playlists."

@@ -4166,6 +4166,66 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "io.github.helios57.muplay.library.FolderEmptyReason",
       ),
     ),
+    // `PlaylistsContentKt` -- which playlists the chosen library leaves on screen, and which of the
+    // two empty sentences is shown when it leaves none.
+    //
+    // The decision is pure and lives in its own file for the reason `FolderUiStateKt` above does:
+    // `PlaylistScreensKt` measures **0/194 BRANCH** on the fast tier and cannot be gated without a
+    // device, and a rule about what the user sees, sitting in an ungateable file, is a rule no test
+    // reads back.
+    //
+    // Measured 2026-09-08: **20/20 BRANCH, 22/22 LINE**. No LINE rule of its own -- every line is
+    // covered, and a second counter over the same twelve statements adds nothing the BRANCH rule
+    // does not already hold.
+    //
+    // The riders carry no BRANCH counter at all (measured: `PlaylistsUiState.Content` line 4/4,
+    // `PlaylistsFetch.Loaded` 3/3, `PlaylistsEmptyReason` 2/2, the three `data object`s neither
+    // counter) and so cannot move this ratio. `LibraryFilterState` is **not** a rider: it carries
+    // 2/2 BRANCH of its own -- `offersChoice`'s `libraries.size > 1`, which is what decides whether
+    // any of the three browse tabs draws a chip row at all.
+    //
+    // What this gates is the rule that a **derived** scope must not become a filter that deletes
+    // playlists. Subsonic answers nothing about which library a playlist belongs to -- `getPlaylists`
+    // accepts `musicFolderId` and ignores it, measured twice against the CI Navidrome -- so the scope
+    // comes from `PlaylistRepository.librariesOf`, and an empty answer means "could not place it".
+    //
+    // Falsified, measured not predicted -- and the first attempt was wrong, which is the useful
+    // half. Withholding `a playlist whose scope is unknown is shown everywhere rather than hidden
+    // everywhere` **alone leaves this at 20/20 and green**: the test beside it, `a playlist the
+    // derivation never mentioned is unplaced, not excluded`, executes the same `scope.isEmpty()`
+    // arm. Two tests, one branch -- the second-caller shape CLAUDE.md records at length, arriving
+    // inside a single test class this time. Withheld **together** they read **18/20 = 0.9000**,
+    // which fires.
+    //
+    // A single withholding that does fire: `two libraries with none of them chosen yet filters
+    // nothing` reads **19/20 = 0.9500**. Its branch is reachable only through that test, because
+    // `before any library is known nothing is filtered` short-circuits on `!offersChoice` and never
+    // evaluates the null check.
+    //
+    // What no number here holds is `the other library shows the other playlist, so the filter is
+    // not a constant`, which is the one that stops a `filter { true }` passing -- withhold it and
+    // the ratio does not move, because its neighbour executes the same arms on the same fixture.
+    // It is held by mutation instead: drop the filter entirely, returning `fetch.playlists`, and
+    // **four** tests go red together (that one, `only the playlists whose tracks live in the
+    // chosen library are shown`, `a playlist the derivation never mentioned is unplaced, not
+    // excluded`, and `playlists that all belong to the other library is a different sentence`).
+    // Run rather than predicted; the first draft of this line claimed one.
+    CoverageFloor(
+      counter = "BRANCH",
+      element = "CLASS",
+      minimum = BigDecimal("1.00"),
+      includes = listOf(
+        "io.github.helios57.muplay.library.PlaylistsContentKt",
+        "io.github.helios57.muplay.library.LibraryFilterState",
+        "io.github.helios57.muplay.library.LibraryFilterState.Companion",
+        "io.github.helios57.muplay.library.LibraryFilterSource",
+        "io.github.helios57.muplay.library.PlaylistsUiState",
+        "io.github.helios57.muplay.library.PlaylistsUiState.*",
+        "io.github.helios57.muplay.library.PlaylistsFetch",
+        "io.github.helios57.muplay.library.PlaylistsFetch.*",
+        "io.github.helios57.muplay.library.PlaylistsEmptyReason",
+      ),
+    ),
     // The three new view models' own bodies. **Exact names, not a wildcard**, for the reason the
     // `LibraryViewModel` floor above gives at length: the nested `$1` adapters and suspend state
     // machines measure 0/6 LINE and 4/7 or 6/12 BRANCH (Hilt-only constructors and coroutine
@@ -4211,34 +4271,97 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         "io.github.helios57.muplay.library.PlaylistsViewModel",
       ),
     ),
-    // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that
-    // BrowseJourneyTest and ScopedShuffleJourneyTest compose and exercise them for real. ----
+    // ---- The browse screens' own Composable file-classes, which only a device can reach. ----
     //
-    // LINE, not BRANCH, per this table's own doc: `LibraryScreenKt` measures 91/158 = 0.5759
-    // BRANCH and `AlbumScreenKt` 28/58 = 0.4828, and essentially all of that shortfall is Compose
+    // LINE, not BRANCH, per this table's own doc: `LibraryScreenKt` measures 215/362 = 0.5939
+    // BRANCH and `AlbumScreenKt` 61/124 = 0.4919, and essentially all of that shortfall is Compose
     // codegen -- every `@Composable` call site compiles to `$changed`-bitmask branches and skipping
     // checks that no user-reachable behaviour corresponds to. Gating those would be gating the
     // Compose compiler. LINE is the counter that answers the question worth asking of a screen:
     // did this row, this message, this control actually render on a device.
     //
-    // Measured from a merged JVM + instrumented report after the journeys landed:
-    //   LibraryScreenKt   56/62 = 0.9032 LINE
-    //   AlbumScreenKt     23/24 = 0.9583 LINE
+    // **Re-measured 2026-09-09 from a fresh 76-test `:app` run, because both numbers had moved and
+    // the old note described a file a third of the current size.** The recorded figures were
+    // `LibraryScreenKt` 56/62 and `AlbumScreenKt` 23/24; the screens have since grown the shelf
+    // layout, the A-Z fast scroll and the per-row queue actions, and the chip row has *left*
+    // `LibraryScreen.kt` for `LibraryChips.kt`. Now:
+    //   LibraryScreenKt   182/193 = 0.9430 LINE
+    //   AlbumScreenKt      88/90  = 0.9778 LINE
+    //   LibraryChipsKt     25/26  = 0.9615 LINE
     //
-    // **`LibraryScreenKt` clears 0.90 by one line, and that is worth knowing before somebody is
-    // surprised by it.** The six lines it misses are: the private `LibraryScreen` overload's own
-    // declaration line and its closing brace (the same two-line artifact `SetupScreenKt` carries,
-    // documented on that floor above); the `NoLibraries` message, which no journey can reach
-    // because reaching the library screen at all requires tagged libraries; and the three lines of
-    // the `discardedOutOfScope > 0` warning, which is unreachable precisely *because* the scoping
-    // works -- `ScopedShuffleJourneyTest` exists to prove nothing is ever discarded. A seventh
-    // missed line drops this to 0.8871 and fails, which is the intended behaviour: somebody should
-    // look.
+    // The eleven lines `LibraryScreenKt` misses, read off the report rather than guessed: the
+    // private `LibraryScreen` overload's declaration line and `ShuffledRow`'s (the declaration-line
+    // artifact `SetupScreenKt` carries, documented on that floor above); the `NoLibraries` message,
+    // unreachable because reaching this screen at all requires tagged libraries; the five lines of
+    // the `discardedOutOfScope > 0` warning, unreachable precisely *because* the scoping works --
+    // `ScopedShuffleJourneyTest` exists to prove nothing is ever discarded; the shuffled row's
+    // `onPlayNext`/`onAddToQueue` lambdas; and the fast scroll's `scope.launch { scrollToItem(..) }`,
+    // which no journey drags the A-Z rail far enough to fire.
+    //
+    // `LibraryChipsKt`'s single missed line is its own `internal fun LibraryChips(` declaration:
+    // every one of the three call sites omits the defaulted `modifier`, so the non-default entry
+    // point is never called. That is the synthetic-default shape CLAUDE.md records at `CastRoute`,
+    // and it means 25/26 is this file's ceiling rather than a missing test.
+    //
+    // `LibrarySelectionFilter` -- the one implementation all three browse tabs reach
+    // `LibrarySelection` through -- rides here at 5/5 rather than being left to warn: it is a
+    // delegate with no branch of its own, and nothing on the JVM tier constructs it.
+    //
+    // **Falsified 2026-09-09, run rather than predicted:** with `:app`'s `coverage.ec` moved aside
+    // and `:feature:library:jacocoTestReport` re-run on the identical tree, every class named here
+    // reads **0** -- `LibraryScreenKt` 0/193, `AlbumScreenKt` 0/90, `LibraryChipsKt` 0/26,
+    // `LibrarySelectionFilter` 0/5 -- so this floor fires the moment the device tier stops
+    // covering these screens. The same run left `PlaylistsContentKt` at 20/20, which is what
+    // proves that floor genuinely is a fast-tier one and this one genuinely is not.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("io.github.helios57.muplay.library.LibraryScreenKt", "io.github.helios57.muplay.library.AlbumScreenKt"),
+      includes = listOf(
+        "io.github.helios57.muplay.library.LibraryScreenKt",
+        "io.github.helios57.muplay.library.AlbumScreenKt",
+        "io.github.helios57.muplay.library.LibraryChipsKt",
+        "io.github.helios57.muplay.library.LibrarySelectionFilter",
+      ),
+      requiresInstrumentedData = true,
+    ),
+    // The folders and playlists tabs, which `BrowseFilterJourneyTest` is the first thing in `:app`
+    // ever to open -- both read **0/127 and 0/126 LINE** before it existed, measured, which is why
+    // neither had a floor. Two entries rather than one, because their ceilings are a long way
+    // apart and a single minimum low enough for both would gate nothing on the higher one.
+    //
+    // Measured 2026-09-09 from the same 76-test run:
+    //   FolderScreenKt     90/127 = 0.7087 LINE
+    //   PlaylistScreensKt  32/126 = 0.2540 LINE
+    //
+    // **`PlaylistScreensKt` is low for a reason that is about the fixtures, not the tests.** The
+    // shared CI Navidrome is seeded with **no playlists**, and creating one would mutate a
+    // container every other lane is using -- so the journey can prove the tab loads, that the chip
+    // row is drawn on it and that it is not in its failure state, and nothing below that: no row,
+    // no playlist detail screen, no queue action. Raising this above the low twenties would buy a
+    // permanently red gate rather than a test, which is how a gate gets switched off. What 0.20
+    // still catches is the regression that matters here: if the tab stops being composed at all --
+    // a broken route, a crash on entry, the journey deleted -- it goes to 0.
+    //
+    // `FolderScreenKt` is the same shape with a real library behind it: the journey walks both
+    // libraries' trees, so the rows, the empty states and the top bar all execute; the missing
+    // third is the queue actions and the shuffle/play-all controls, which `FolderViewModelTest`
+    // holds on the fast tier instead.
+    //
+    // **Falsified the same way as the floor above, and in the same run:** with `:app`'s
+    // `coverage.ec` moved aside both classes read **0/127** and **0/126** and both entries fire.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.65"),
+      includes = listOf("io.github.helios57.muplay.library.FolderScreenKt"),
+      requiresInstrumentedData = true,
+    ),
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.20"),
+      includes = listOf("io.github.helios57.muplay.library.PlaylistScreensKt"),
       requiresInstrumentedData = true,
     ),
     // `CoverArtKt` -- what is left in `CoverArt.kt` once `coverArtCacheKey` moved out: the
@@ -4290,6 +4413,30 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `excludes` names the three file-classes explicitly: a `"...Kt*"` include matches the bare
     // `"...Kt"` too (JaCoCo's `*` matches the empty string), and folding them in here would drop
     // all three from their own floors above to this one.
+    //
+    // ### This floor is currently RED, it has been since 2026-09-06, and the hole is real
+    //
+    // Measured 2026-09-09 against a fresh 76-test `:app` run. Three nested classes read **0.00**:
+    //
+    //   LibraryScreenKt.LibraryScreen.10.1.1.7.2.1   the shuffled row's `onPlayNext` lambda
+    //   LibraryScreenKt.LibraryScreen.10.1.1.7.3.1   the shuffled row's `onAddToQueue` lambda
+    //   LibraryScreenKt.LibraryScreen.10.3.1.1       the A-Z rail's `scope.launch { scrollToItem }`
+    //
+    // None of them is Compose codegen -- they are author-written callbacks, from `a060e96`
+    // ("the queue tells you what it did", 2026-09-06) and `c04a942` ("an A-Z bar that refuses to
+    // appear over a list it would lie about", the same day). **They predate the browse-filter work
+    // that found them**, and the reason nobody noticed is the one this file records at length: this
+    // rule is `requiresInstrumentedData`, so it is evaluated only in the emulator job, and its
+    // recorded measurement still named `LibraryScreen$7$5$1$2$2$1` from a version of the screen
+    // three features ago.
+    //
+    // **Deliberately not repaired by lowering the minimum or by excluding the three.** A minimum
+    // cannot be lowered under 0.00, and excluding author-written callbacks is precisely the silent
+    // hole the paragraph above refuses. What closes it is a device test: tap the queue button on a
+    // shuffle-result row (`:app`'s `ScopedShuffleJourneyTest` already stands on that shelf), and
+    // drag the A-Z rail far enough to fire a jump. Both were out of reach on the day this was
+    // measured -- the shared emulator was producing `Process system isn't responding` under a host
+    // load average of 47 -- and an invented floor would have been worse than a red one.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",

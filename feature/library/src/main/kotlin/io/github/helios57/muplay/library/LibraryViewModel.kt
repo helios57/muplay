@@ -13,7 +13,6 @@ import io.github.helios57.muplay.database.SyncState
 import io.github.helios57.muplay.media.PlaybackLauncher
 import io.github.helios57.muplay.media.QueueEditor
 import io.github.helios57.muplay.model.Album
-import io.github.helios57.muplay.model.MusicLibrary
 import io.github.helios57.muplay.model.SearchResults
 import io.github.helios57.muplay.model.ShuffleResult
 import io.github.helios57.muplay.model.Song
@@ -43,8 +42,7 @@ import kotlinx.coroutines.launch
  * four classes above by the `@Inject` secondary constructor below, the same shape
  * `:feature:setup`'s `SetupCredentialSink`/`SetupLibrarySink` split already established.
  */
-interface LibrarySource : QueueSink {
-  val libraries: Flow<List<MusicLibrary>>
+interface LibrarySource : QueueSink, LibraryFilterSource {
   fun albums(libraryId: Int): Flow<List<Album>>
   suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults
   suspend fun shuffle(libraryId: Int, size: Int): ShuffleResult
@@ -57,18 +55,6 @@ interface LibrarySource : QueueSink {
    * to be read *while* that suspending call is still running.
    */
   val syncProgress: Flow<SyncProgress>
-
-  /**
-   * The library the user is browsing, shared with every other browse screen and already resolved
-   * to one that exists.
-   *
-   * On the seam rather than held here, because the choice outlives this ViewModel and is made on
-   * more than one screen -- see `LibrarySelection`. A private `MutableStateFlow` here (which is
-   * what this was) meant the folders tab and the albums tab could show different libraries the
-   * moment either ViewModel was recreated.
-   */
-  val selectedLibraryId: Flow<Int?>
-  fun selectLibrary(id: Int)
 
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
   suspend fun allIds(): List<Int>
@@ -102,8 +88,13 @@ class LibraryViewModel(
     librarySelection: LibrarySelection,
     queueEditor: QueueEditor,
   ) : this(
-    object : LibrarySource, QueueSink by QueueEditorSink(queueEditor) {
-      override val libraries: Flow<List<MusicLibrary>> = libraryRepository.libraries
+    object :
+      LibrarySource,
+      QueueSink by QueueEditorSink(queueEditor),
+      // The chip row this screen has always drawn, now shared with the folders and playlists tabs
+      // -- see `LibraryFilterSource`. Delegated rather than overridden here so that all three
+      // seams reach `LibrarySelection` through one implementation.
+      LibraryFilterSource by LibrarySelectionFilter(libraryRepository, librarySelection) {
       override fun albums(libraryId: Int): Flow<List<Album>> = browseRepository.albums(libraryId)
       override suspend fun search(libraryId: Int, query: String, limit: Int): SearchResults =
         browseRepository.search(libraryId, query, limit)
@@ -111,8 +102,6 @@ class LibraryViewModel(
         shuffleRepository.shuffle(libraryId, size)
       override suspend fun syncIfStale(): SyncState = syncEngine.syncIfStale()
       override val syncProgress: Flow<SyncProgress> = syncEngine.progress
-      override val selectedLibraryId: Flow<Int?> = librarySelection.selected
-      override fun selectLibrary(id: Int) = librarySelection.select(id)
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
       override suspend fun allIds(): List<Int> = libraryRepository.allIds()

@@ -1,13 +1,17 @@
 package io.github.helios57.muplay.library
 
 import io.github.helios57.muplay.database.SyncFailure
+import io.github.helios57.muplay.model.LibraryRole
+import io.github.helios57.muplay.model.MusicLibrary
 import io.github.helios57.muplay.model.Playlist
 import io.github.helios57.muplay.model.PlaylistWithSongs
 import io.github.helios57.muplay.model.Song
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -54,14 +58,38 @@ class PlaylistViewModelsTest {
     coverArtId = null,
   )
 
-  private class FakePlaylistSource : PlaylistSource {
+  private val bedtime = Playlist(
+    id = "p2",
+    name = "Bedtime",
+    songCount = 3,
+    durationSeconds = 900,
+    owner = "admin",
+    coverArtId = null,
+  )
+
+  private class FakePlaylistSource(libraries: List<MusicLibrary> = emptyList()) : PlaylistSource {
+    override val libraries = MutableStateFlow(libraries)
     override val selectedLibraryId = MutableStateFlow<Int?>(7)
+
+    override fun selectLibrary(id: Int) {
+      selectedLibraryId.value = id
+    }
 
     var playlistsAnswer: () -> List<Playlist> = { emptyList() }
     var playlistsCallCount = 0
     override suspend fun playlists(): List<Playlist> {
       playlistsCallCount++
       return playlistsAnswer()
+    }
+
+    /** What the mirror says each playlist's tracks belong to, and **how often it was asked** --
+     *  the derivation costs a request per uncached playlist, so "was it asked at all" is as much
+     *  the subject here as what it answered. */
+    var librariesOfAnswer: Map<String, Set<Int>> = emptyMap()
+    var librariesOfCallCount = 0
+    override suspend fun librariesOf(playlists: List<Playlist>): Map<String, Set<Int>> {
+      librariesOfCallCount++
+      return librariesOfAnswer
     }
 
     val playlistCalls = mutableListOf<Pair<String, Int>>()
@@ -88,31 +116,46 @@ class PlaylistViewModelsTest {
     }
   }
 
+  private val music = MusicLibrary(1, "Music", LibraryRole.MUSIC)
+  private val books = MusicLibrary(2, "Audiobooks", LibraryRole.AUDIOBOOKS)
+
   private val dispatcher = StandardTestDispatcher()
 
   @BeforeEach fun setUp() = Dispatchers.setMain(dispatcher)
 
   @AfterEach fun tearDown() = Dispatchers.resetMain()
 
+  /**
+   * `uiState` is `WhileSubscribed`, so it holds its initial `Loading` until somebody collects --
+   * which is what the screen does and what a test that reads `.value` cold silently does not.
+   */
+  private fun TestScope.warm(source: FakePlaylistSource): PlaylistsViewModel {
+    val vm = PlaylistsViewModel(source)
+    backgroundScope.launch { vm.uiState.collect {} }
+    return vm
+  }
+
   @Test
   fun `the list is read once the screen exists`() = runTest {
-    val source = FakePlaylistSource()
+    val source = FakePlaylistSource(listOf(music))
     source.playlistsAnswer = { listOf(roadTrip) }
 
-    val vm = PlaylistsViewModel(source)
+    val vm = warm(source)
     advanceUntilIdle()
 
-    assertThat(vm.uiState.value).isEqualTo(PlaylistsUiState.Content(listOf(roadTrip)))
+    val state = vm.uiState.value as PlaylistsUiState.Content
+    assertThat(state.playlists).containsExactly(roadTrip)
+    assertThat(state.emptyReason).isNull()
   }
 
   @Test
   fun `a failure to load the list is reported, not rendered as an empty library`() = runTest {
     // The defect named in this class's doc. `Failed` and `Content(emptyList())` are two different
     // things and only one of them is the user's fault to fix.
-    val source = FakePlaylistSource()
+    val source = FakePlaylistSource(listOf(music))
     source.playlistsAnswer = { throw IOException("no route to host") }
 
-    val vm = PlaylistsViewModel(source)
+    val vm = warm(source)
     advanceUntilIdle()
 
     assertThat(vm.uiState.value).isEqualTo(PlaylistsUiState.Failed(SyncFailure.Unreachable))
@@ -120,28 +163,87 @@ class PlaylistViewModelsTest {
 
   @Test
   fun `a server with no playlists is content, not a failure`() = runTest {
-    val source = FakePlaylistSource()
+    val source = FakePlaylistSource(listOf(music))
     source.playlistsAnswer = { emptyList() }
 
-    val vm = PlaylistsViewModel(source)
+    val vm = warm(source)
     advanceUntilIdle()
 
-    assertThat(vm.uiState.value).isEqualTo(PlaylistsUiState.Content(emptyList()))
+    val state = vm.uiState.value as PlaylistsUiState.Content
+    assertThat(state.playlists).isEmpty()
+    assertThat(state.emptyReason).isEqualTo(PlaylistsEmptyReason.NoneAtAll)
   }
 
   @Test
   fun `refreshing asks the server again`() = runTest {
     // The point of not mirroring playlists: a listener who just added a track needs a way to see
     // it that does not involve a library rescan.
-    val source = FakePlaylistSource()
+    val source = FakePlaylistSource(listOf(music))
     source.playlistsAnswer = { listOf(roadTrip) }
-    val vm = PlaylistsViewModel(source)
+    val vm = warm(source)
     advanceUntilIdle()
 
     vm.refresh()
     advanceUntilIdle()
 
     assertThat(source.playlistsCallCount).isEqualTo(2)
+  }
+
+  // ---- the library filter --------------------------------------------------------------------
+  //
+  // Asked for as *"I want to be able to filter playlists and folders by library"*. The rule itself
+  // is `playlistsContent`'s and is unit tested there; what these hold is the wiring -- that the
+  // derivation is paid for only when it can change something, and that switching library re-folds
+  // the answer rather than re-reading the server.
+
+  @Test
+  fun `a two-library server places its playlists and shows only the chosen one`() = runTest {
+    val source = FakePlaylistSource(listOf(music, books))
+    source.selectedLibraryId.value = 1
+    source.playlistsAnswer = { listOf(roadTrip, bedtime) }
+    source.librariesOfAnswer = mapOf("p1" to setOf(1), "p2" to setOf(2))
+
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    assertThat(source.librariesOfCallCount).isEqualTo(1)
+    assertThat((vm.uiState.value as PlaylistsUiState.Content).playlists).containsExactly(roadTrip)
+  }
+
+  @Test
+  fun `a one-library server never pays for the derivation`() = runTest {
+    // Placing a playlist costs a `getPlaylist` for each one the repository has not cached. With one
+    // library the answer cannot change what is shown, so asking would be N requests spent on a
+    // value nothing reads -- on most installs, every time this screen opens.
+    val source = FakePlaylistSource(listOf(music))
+    source.playlistsAnswer = { listOf(roadTrip, bedtime) }
+
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    assertThat(source.librariesOfCallCount).isZero
+    assertThat((vm.uiState.value as PlaylistsUiState.Content).playlists)
+      .containsExactly(roadTrip, bedtime)
+  }
+
+  @Test
+  fun `switching library re-folds the answer instead of re-reading the server`() = runTest {
+    // The defect this guards: a filter wired as a re-fetch. Every tap on a chip would issue a
+    // `getPlaylists` plus one `getPlaylist` per playlist, on a screen whose whole reason for
+    // existing is that it talks to the server live.
+    val source = FakePlaylistSource(listOf(music, books))
+    source.selectedLibraryId.value = 1
+    source.playlistsAnswer = { listOf(roadTrip, bedtime) }
+    source.librariesOfAnswer = mapOf("p1" to setOf(1), "p2" to setOf(2))
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    vm.selectLibrary(2)
+    advanceUntilIdle()
+
+    assertThat((vm.uiState.value as PlaylistsUiState.Content).playlists).containsExactly(bedtime)
+    assertThat(source.playlistsCallCount).isEqualTo(1)
+    assertThat(source.librariesOfCallCount).isEqualTo(1)
   }
 
   @Test

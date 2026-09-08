@@ -3,6 +3,7 @@ package io.github.helios57.muplay.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.helios57.muplay.database.FolderRepository
+import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.LibrarySelection
 import io.github.helios57.muplay.media.PlaybackLauncher
 import io.github.helios57.muplay.media.QueueEditor
@@ -27,8 +28,7 @@ import kotlinx.coroutines.launch
  * is Room-backed and `PlaybackLauncher` needs a bound media session, so neither can be constructed
  * on the JVM, and this project bans mock frameworks.
  */
-interface FolderSource : QueueSink {
-  val selectedLibraryId: Flow<Int?>
+interface FolderSource : QueueSink, LibraryFilterSource {
   fun listing(libraryId: Int, path: String): Flow<FolderListing>
   fun pathedSongCount(libraryId: Int): Flow<Int>
   suspend fun songsUnder(libraryId: Int, path: String): List<Song>
@@ -55,12 +55,15 @@ class FolderViewModel(
   @Inject
   constructor(
     folderRepository: FolderRepository,
+    libraryRepository: LibraryRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
     queueEditor: QueueEditor,
   ) : this(
-    object : FolderSource, QueueSink by QueueEditorSink(queueEditor) {
-      override val selectedLibraryId: Flow<Int?> = librarySelection.selected
+    object :
+      FolderSource,
+      QueueSink by QueueEditorSink(queueEditor),
+      LibraryFilterSource by LibrarySelectionFilter(libraryRepository, librarySelection) {
       override fun listing(libraryId: Int, path: String): Flow<FolderListing> =
         folderRepository.listing(libraryId, path)
       override fun pathedSongCount(libraryId: Int): Flow<Int> =
@@ -93,6 +96,32 @@ class FolderViewModel(
         }
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), null)
+
+  /**
+   * The chip row this screen draws at its root, and nowhere below it.
+   *
+   * Same shape as `LibraryViewModel`'s: the two flows are combined here rather than each collected
+   * by the composable, so a recomposition cannot show a library list and a selection from two
+   * different moments -- which is what draws a row with nothing lit.
+   *
+   * `Unknown` until the mirror answers, which renders nothing. On a first run that is the honest
+   * state: there is no library to offer yet, and an empty row would be a filter the user cannot
+   * use rather than a filter that is loading.
+   */
+  val libraryFilter: StateFlow<LibraryFilterState> =
+    combine(source.libraries, source.selectedLibraryId, ::LibraryFilterState)
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), LibraryFilterState.Unknown)
+
+  /**
+   * Switches library, for every screen at once -- see `LibrarySelection`.
+   *
+   * The folder screen the user is standing in keeps its **path** across the switch, which is
+   * deliberate: `uiState` re-reads that path in the new library, so a shared prefix like
+   * `Artists` survives and a path the other library does not have shows as an empty folder rather
+   * than as a crash. Popping back to the root instead would throw away a position the user did not
+   * ask to leave.
+   */
+  fun selectLibrary(id: Int) = source.selectLibrary(id)
 
   /** Called from the screen's `LaunchedEffect(path)`, the way `AlbumViewModel.load` is. */
   fun open(at: String) {

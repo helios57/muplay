@@ -57,10 +57,14 @@ class LibraryChipVoiceTest {
 
   /** The body of `LibraryChips`, from its signature to the next column-0 `}`, comments removed. */
   private fun libraryChipsBody(): String {
-    val source = File("src/main/kotlin/io/github/helios57/muplay/library/LibraryScreen.kt")
-    assertThat(source).describedAs("LibraryScreen.kt").exists()
+    // `LibraryChips.kt`, not `LibraryScreen.kt`: the composable moved out of the albums screen
+    // when the folders and playlists tabs became callers of it, and this scan moved with it. That
+    // is the whole reason for the `isNotBlank` guard in the test above -- a scan pointed at the
+    // wrong file reports "clean" rather than "I could not look".
+    val source = File("src/main/kotlin/io/github/helios57/muplay/library/LibraryChips.kt")
+    assertThat(source).describedAs("LibraryChips.kt").exists()
     val lines = source.readLines()
-    val start = lines.indexOfFirst { it.startsWith("private fun LibraryChips(") }
+    val start = lines.indexOfFirst { it.startsWith("internal fun LibraryChips(") }
     assertThat(start).describedAs("the LibraryChips declaration").isNotEqualTo(-1)
     val close = (start + 1 until lines.size).first { lines[it] == "}" }
     return lines.subList(start + 1, close).joinToString("\n")

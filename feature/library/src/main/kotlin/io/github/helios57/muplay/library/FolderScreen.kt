@@ -65,6 +65,7 @@ fun FolderScreen(
 ) {
   LaunchedEffect(path) { viewModel.open(path) }
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+  val libraryFilter by viewModel.libraryFilter.collectAsStateWithLifecycle()
 
   val state = uiState
   if (state == null) {
@@ -73,6 +74,8 @@ fun FolderScreen(
   }
   FolderScreen(
     uiState = state,
+    libraryFilter = libraryFilter,
+    onLibrarySelected = viewModel::selectLibrary,
     onOpenFolder = onOpenFolder,
     onShuffle = { viewModel.shuffleFolder(); onOpenPlayer() },
     onPlayAll = { viewModel.playFolder(); onOpenPlayer() },
@@ -89,6 +92,8 @@ fun FolderScreen(
 @Composable
 private fun FolderScreen(
   uiState: FolderUiState,
+  libraryFilter: LibraryFilterState,
+  onLibrarySelected: (Int) -> Unit,
   onOpenFolder: (String) -> Unit,
   onShuffle: () -> Unit,
   onPlayAll: () -> Unit,
@@ -117,6 +122,17 @@ private fun FolderScreen(
       contentPadding = PaddingValues(MuPlaySpacing.gutter),
       verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
     ) {
+      // **At the root only.** Below it the screen is showing one library's subtree, and a chip row
+      // there would offer to swap the tree out from under a path the user walked down -- which
+      // `FolderViewModel.selectLibrary` will honour, and which reads as the folder having emptied
+      // itself. The tab bar is one tap away and lands here, so nothing is unreachable.
+      //
+      // `parentPath` rather than `path.isEmpty()`: the same fact, read off the one place that
+      // already decides it -- see `folderContent`.
+      if (uiState.parentPath == null && libraryFilter.offersChoice) {
+        item { LibraryChips(state = libraryFilter, onLibrarySelected = onLibrarySelected) }
+      }
+
       if (uiState.canShuffle) {
         item {
           Row(

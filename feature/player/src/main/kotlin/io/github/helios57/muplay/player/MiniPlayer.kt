@@ -176,7 +176,17 @@ private fun MiniPlayerBar(
               stateDescription = spoken
             }
           }
-          .padding(MuPlaySpacing.sm),
+          // **4dp above and below, 8dp either side, and the asymmetry is the whole change.**
+          // The bar's height is `2 * verticalPadding + 48dp` -- the artwork and the play button
+          // are both exactly one minimum touch target -- so the vertical pad is the only number
+          // here that costs screen. At `sm` it made the bar 64dp; at `xs` it is 56dp, and nothing
+          // inside it shrinks: the artwork is still 48dp, the button is still
+          // [MuPlaySpacing.minTouchTarget], and the row itself is still comfortably above the
+          // 48dp a thumb needs. `MiniPlayerTest.theBarIsExactlyFiftySixDpTall` holds it there.
+          //
+          // Horizontal stays at `sm`, because that pad is beside the artwork rather than under it
+          // and buys nothing back.
+          .padding(horizontal = MuPlaySpacing.sm, vertical = MuPlaySpacing.xs),
       ) {
         Artwork(
           uri = content.playback.artworkUri,

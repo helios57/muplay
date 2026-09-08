@@ -251,5 +251,7 @@ data class PlaylistBody(
   val duration: Int = 0,
   val owner: String? = null,
   val coverArt: String? = null,
+  /** The server's "last edited" stamp — see [io.github.helios57.muplay.model.Playlist.changed]. */
+  val changed: String? = null,
   val entry: List<ChildBody> = emptyList(),
 )

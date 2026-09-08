@@ -84,6 +84,29 @@ resume positions, which exist nowhere else by design. Reinstalling is the whole 
 is a handful of test positions -- but it is the same data-loss shape the signing section is about,
 and it should be a decision rather than a surprise.
 
+**The saved server login goes with it, and that is what the owner noticed.** Two independent
+mechanisms, both one-time and both in that day's rename: the new `applicationId` is a different app,
+so it does not inherit `files/credentials.preferences_pb`; and the Keystore alias moved with the
+package in the same commit (`app.muplay.credentials` -> `io.github.helios57.muplay.credentials`),
+which on its own would have made an existing sealed password unopenable. Neither is recoverable and
+neither needs to be: Android Keystore entries are scoped to the installing app, so the old app's key
+was never reachable from the new one, and no fallback alias could have read it.
+
+**Ordinary updates keep the login, and that is measured rather than asserted.** Installed 0.2.2,
+saved credentials through the shipped `CredentialStore`, `adb install -r` of 0.2.3, read them back:
+the DataStore file was byte-identical and the sealed password still opened with its Keystore key.
+`CLAUDE.md`'s *"A connected run uninstalls the app afterwards"* section records how to run that
+measurement, and why the first attempt at it produced the opposite answer. Three tests hold the
+three identities it depends on -- `CredentialStoreTest` pins the alias and the three preference keys
+as literals, and `DataModuleTest.theProvidedCredentialDataStoreWritesWhereTheAppExpects` pins the
+file name -- so a rename of any of them is a build failure rather than a silent sign-out.
+
+What is deliberately **not** preserved is a reinstall: `allowBackup="false"` plus non-exportable
+Keystore keys means an uninstall, a new device or a Play restore all start at the login screen. The
+password is stored only because Subsonic token auth needs the plaintext to compute
+`md5(password + salt)` per request, and a copy that could be restored elsewhere is the thing that
+protects.
+
 **Whether the rename was necessary was never measured, and that question is now closed.** It was
 requested, not forced. The sibling session's `io.github.helios57.familyguard` *was* forced -- an
 installed base on a child's phone pinned it to an existing `applicationId` -- and that session is

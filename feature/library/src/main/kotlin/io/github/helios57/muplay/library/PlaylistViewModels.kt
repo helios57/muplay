@@ -2,6 +2,7 @@ package io.github.helios57.muplay.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.LibrarySelection
 import io.github.helios57.muplay.database.PlaylistRepository
 import io.github.helios57.muplay.database.SyncFailure
@@ -12,11 +13,13 @@ import io.github.helios57.muplay.model.PlaylistWithSongs
 import io.github.helios57.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -25,18 +28,19 @@ import kotlinx.coroutines.launch
  * Both are on one seam because they read the same two calls and fail the same way; splitting them
  * would be two interfaces with one implementation each and the same fake written twice.
  */
-interface PlaylistSource : QueueSink {
-  val selectedLibraryId: Flow<Int?>
+interface PlaylistSource : QueueSink, LibraryFilterSource {
   suspend fun playlists(): List<Playlist>
+
+  /**
+   * Which libraries each of these playlists' tracks are mirrored in -- `PlaylistRepository`.
+   *
+   * On this seam rather than derived on the screen because it costs one `getPlaylist` per playlist
+   * the repository has not already cached, and because the answer is a fact about the mirror rather
+   * than a decision about the UI. What is done with it is [playlistsContent]'s, and pure.
+   */
+  suspend fun librariesOf(playlists: List<Playlist>): Map<String, Set<Int>>
   suspend fun playlist(playlistId: String, fallbackLibraryId: Int): PlaylistWithSongs
   suspend fun play(songs: List<Song>, startIndex: Int)
-}
-
-/** The playlist list. */
-sealed interface PlaylistsUiState {
-  data object Loading : PlaylistsUiState
-  data class Content(val playlists: List<Playlist>) : PlaylistsUiState
-  data class Failed(val failure: SyncFailure) : PlaylistsUiState
 }
 
 /** One playlist. */
@@ -64,19 +68,38 @@ class PlaylistsViewModel(
   @Inject
   constructor(
     playlistRepository: PlaylistRepository,
+    libraryRepository: LibraryRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
     queueEditor: QueueEditor,
   ) : this(
-    PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher, queueEditor),
+    PlaylistRepositorySource(
+      playlistRepository,
+      libraryRepository,
+      librarySelection,
+      playbackLauncher,
+      queueEditor,
+    ),
   )
 
-  private val state = MutableStateFlow<PlaylistsUiState>(PlaylistsUiState.Loading)
-  val uiState: StateFlow<PlaylistsUiState> = state.asStateFlow()
+  /**
+   * The server's answer, before the library filter -- which is a separate flow and must not
+   * re-fetch when it changes. Switching library re-folds this value; it does not re-read the
+   * server, and a user flicking between two chips would otherwise issue a `getPlaylists` per tap.
+   */
+  private val fetch = MutableStateFlow<PlaylistsFetch>(PlaylistsFetch.Loading)
+
+  val uiState: StateFlow<PlaylistsUiState> =
+    combine(fetch, source.libraries, source.selectedLibraryId) { answer, libraries, selected ->
+      playlistsContent(answer, LibraryFilterState(libraries, selected))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), PlaylistsUiState.Loading)
 
   init {
     refresh()
   }
+
+  /** Switches library, for every browse screen at once -- see `LibrarySelection`. */
+  fun selectLibrary(id: Int) = source.selectLibrary(id)
 
   /**
    * Re-reads the list from the server.
@@ -87,12 +110,24 @@ class PlaylistsViewModel(
    */
   fun refresh() {
     viewModelScope.launch {
-      state.value = runCatching { source.playlists() }
-        .fold(
-          onSuccess = { PlaylistsUiState.Content(it) },
-          onFailure = { PlaylistsUiState.Failed(SyncFailure.of(it)) },
-        )
+      fetch.value = runCatching {
+        val playlists = source.playlists()
+        // **Only when there is a choice to make.** Placing a playlist costs a `getPlaylist` for
+        // every one the repository has not already cached, and on a single-library server the
+        // answer cannot change anything: `playlistsContent` filters nothing at all in that case,
+        // so paying for the derivation would be N requests spent on a value nobody reads.
+        val libraries =
+          if (source.libraries.first().size > 1) source.librariesOf(playlists) else emptyMap()
+        PlaylistsFetch.Loaded(playlists, libraries)
+      }.fold(
+        onSuccess = { it },
+        onFailure = { PlaylistsFetch.Failed(SyncFailure.of(it)) },
+      )
     }
+  }
+
+  private companion object {
+    const val STOP_TIMEOUT_MILLIS = 5_000L
   }
 }
 
@@ -105,11 +140,18 @@ class PlaylistViewModel(
   @Inject
   constructor(
     playlistRepository: PlaylistRepository,
+    libraryRepository: LibraryRepository,
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
     queueEditor: QueueEditor,
   ) : this(
-    PlaylistRepositorySource(playlistRepository, librarySelection, playbackLauncher, queueEditor),
+    PlaylistRepositorySource(
+      playlistRepository,
+      libraryRepository,
+      librarySelection,
+      playbackLauncher,
+      queueEditor,
+    ),
   )
 
   private val state = MutableStateFlow<PlaylistUiState>(PlaylistUiState.Loading)
@@ -194,12 +236,16 @@ class PlaylistViewModel(
  */
 private class PlaylistRepositorySource(
   private val playlistRepository: PlaylistRepository,
+  libraryRepository: LibraryRepository,
   librarySelection: LibrarySelection,
   private val playbackLauncher: PlaybackLauncher,
   queueEditor: QueueEditor,
-) : PlaylistSource, QueueSink by QueueEditorSink(queueEditor) {
-  override val selectedLibraryId: Flow<Int?> = librarySelection.selected
+) : PlaylistSource,
+  QueueSink by QueueEditorSink(queueEditor),
+  LibraryFilterSource by LibrarySelectionFilter(libraryRepository, librarySelection) {
   override suspend fun playlists(): List<Playlist> = playlistRepository.playlists()
+  override suspend fun librariesOf(playlists: List<Playlist>): Map<String, Set<Int>> =
+    playlistRepository.librariesOf(playlists)
   override suspend fun playlist(playlistId: String, fallbackLibraryId: Int): PlaylistWithSongs =
     playlistRepository.playlist(playlistId, fallbackLibraryId)
   override suspend fun play(songs: List<Song>, startIndex: Int) =
