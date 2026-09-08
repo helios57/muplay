@@ -18,21 +18,44 @@ import retrofit2.http.GET
  *
  * ### What is actually being kept out
  *
- * Subsonic's write surface for listening state is `scrobble`, `savePlayQueue`,
- * `savePlayQueueByIndex`, `createBookmark`, `star` and `setRating`. None of them is declared
- * anywhere in this module, and that is a **non-goal of this project rather than an omission**:
- * every one of them puts a listener's position, or what they are listening to, on a server.
+ * Subsonic's write surface for listening state is `scrobble`, `nowPlaying`, `savePlayQueue`,
+ * `savePlayQueueByIndex` and `createBookmark`. None of them is declared anywhere in this module, and
+ * that is a **non-goal of this project rather than an omission**: every one of them puts a
+ * listener's position, or what they are listening to *right now*, on a server.
  *
  * Spec section 4 records the specific hazard that makes the write path worse than useless anyway:
  * `createBookmark.position` is documented in **milliseconds** while `bookmarkPosition` on a `Child`
  * is documented in **seconds**, so a sync built on the pair puts every resume out by 1000x.
+ *
+ * ### The constraint is a position, not a write, and that distinction was bought
+ *
+ * This file used to assert that the client declared **no writes at all**, and named `setRating`
+ * among the forbidden endpoints. That was an accurate description of the code and a slightly wrong
+ * statement of the rule, and the difference surfaced the moment the thumbs landed (`de3d8df`): the
+ * app now calls `setRating`, `createPlaylist` and `updatePlaylist`, deliberately and at the user's
+ * request -- *"I need a thumbs up and down for each song while playing ... promoted are played
+ * twice as much and added to a special playlist (promoted-username), so each user has his promoted
+ * songs"*.
+ *
+ * A rating is a **statement about the music**; a position is **a private detail of how far somebody
+ * got**. Subsonic's rating is per authenticated user by construction, which is what makes "each
+ * user has his promoted songs" true with no user model of this app's own -- and it is exactly the
+ * opposite decision from the one taken for audiobook positions, on purpose. What the three writes
+ * put on a server is a star on a track, a playlist name, and track ids; none of them carries a
+ * time, and none of them is issued while a book is playing.
+ *
+ * That correction does not weaken this file. The gate was never "the count of writes is zero" -- it
+ * is "the set is exactly this, and growing it is a decision somebody had to type out". Every
+ * assertion below is still an exact set over what reflection finds now.
  *
  * ### Why the exact lists, and not a scanner
  *
  * The lists below are what this module actually declares, read back by reflection at the moment the
  * test runs. Adding a method to [SubsonicSource] or an endpoint to [SubsonicApi] fails this file
  * with a message naming the constraint -- which is the point: the failure is a decision point, not
- * a bug report. If the new method is a read, add it to the list deliberately.
+ * a bug report. The endpoint assertion is split into reads and writes so the decision cannot be
+ * made by reflex: a new endpoint has to be classified before it compiles green, and classifying one
+ * as a write is where somebody stops to ask what it sends.
  */
 class LocalOnlyProgressTest {
 
@@ -43,11 +66,12 @@ class LocalOnlyProgressTest {
    * one whose message gets read.
    */
   private val why =
-    "Book positions are LOCAL ONLY (spec sections 2, 4 and 11; docs/PRIVACY.md). If the member you " +
-      "just added is scrobble / nowPlaying / savePlayQueue / savePlayQueueByIndex / createBookmark " +
-      "/ star / setRating -- or any other way to send a listening position or a now-playing state " +
-      "to a server -- stop: that is a non-goal of this project, not an omission. If it is a read, " +
-      "add it to the list in this test deliberately."
+    "Book positions and now-playing state are LOCAL ONLY (spec sections 2, 4 and 11; " +
+      "docs/PRIVACY.md). If the member you just added is scrobble / nowPlaying / savePlayQueue / " +
+      "savePlayQueueByIndex / createBookmark -- or any other way to send a listening position or " +
+      "what is playing right now to a server -- stop: that is a non-goal of this project, not an " +
+      "omission. Anything else is a decision: add it to the list in this test, on the reads or the " +
+      "writes side, and say in the commit message what it puts on somebody's server."
 
   @Test
   fun `the Subsonic port declares exactly these operations and no way to write progress`() {
@@ -73,6 +97,11 @@ class LocalOnlyProgressTest {
       "coverArtUrl",
       "streamUrl",
       "capabilities",
+      // The three writes the thumbs need. See the class doc: a rating and a playlist of track ids,
+      // no time in any of them.
+      "setRating",
+      "createPlaylist",
+      "updatePlaylist",
     )
   }
 
@@ -106,36 +135,29 @@ class LocalOnlyProgressTest {
       "streamUrl",
       "capabilities",
       "getOpenSubsonicExtensions",
+      "setRating",
+      "createPlaylist",
+      "updatePlaylist",
     )
   }
 
   @Test
-  fun `every declared endpoint is one of these reads`() {
+  fun `every declared endpoint is one of these reads, or one of these three writes`() {
     // The wire, which is the layer that actually matters: a method on the port could be
-    // implemented against any endpoint at all, and these are the only eight this app can reach.
+    // implemented against any endpoint at all, and these are the only ones this app can reach.
     //
     // Note what is NOT here: `rest/getCoverArt`. Cover art and stream URLs are *built* rather than
     // fetched -- they are handed to an image loader and to Media3, which use their own HTTP stacks
     // -- so they are not Retrofit endpoints and never appear in this list. The plan for this task
     // expected `getCoverArt` here, and expected these values without their `rest/` prefix; both
     // were wrong about the code.
-    val paths = SubsonicApi::class.java.declaredMethods
-      .mapNotNull { it.getAnnotation(GET::class.java)?.value }
-      .distinct()
-      .sorted()
-
-    assertThat(paths).describedAs("reflection found no endpoints at all; %s", why).isNotEmpty
-    assertThat(paths).describedAs(why).containsExactly(
+    val reads = listOf(
       "rest/getAlbum",
       "rest/getAlbumList2",
       "rest/getMusicFolders",
       "rest/getOpenSubsonicExtensions",
-      // Reads, added deliberately, and in sorted position because this assertion is ordered.
-      // `getPlaylist`/`getPlaylists` open and list a server-side playlist; neither has a write
-      // counterpart here. Subsonic's playlist *writes* -- `createPlaylist`, `updatePlaylist`,
-      // `deletePlaylist` -- are absent on purpose: this app reads playlists and does not edit
-      // them, so the surface stays free of a command that could reorder or delete somebody's
-      // playlist. Adding one is a decision, not a fill-in.
+      // `getPlaylist`/`getPlaylists` open and list a server-side playlist. They were here before
+      // the app could write one, and they are still reads.
       "rest/getPlaylist",
       "rest/getPlaylists",
       "rest/getRandomSongs",
@@ -143,6 +165,36 @@ class LocalOnlyProgressTest {
       "rest/ping",
       "rest/search3",
     )
+
+    // Every endpoint that changes something on somebody else's machine, and the whole list of them.
+    // Each is here because the thumbs feature asked for it, and each is bounded:
+    //
+    //  - `setRating` sends a track id and a number from 0 to 5. Per authenticated user, so it is
+    //    what makes "each user has his promoted songs" true without this app inventing users.
+    //  - `createPlaylist` sends a name and track ids -- the `promoted-<username>` playlist, made
+    //    once, on the first thumb up.
+    //  - `updatePlaylist` sends a playlist id, track ids to add and *indexes* to remove, which is
+    //    the only removal Subsonic offers.
+    //
+    // None carries a position, a timestamp or a now-playing state, and no audiobook path reaches
+    // any of them. A fourth entry in this list is a change to what MuPlay puts on a stranger's
+    // server, and `docs/PRIVACY.md`, `docs/PLAY-DATA-SAFETY.md` and `docs/REVIEWER-ACCESS.md` all
+    // describe this list to people who will never read the code.
+    val writes = listOf(
+      "rest/createPlaylist",
+      "rest/setRating",
+      "rest/updatePlaylist",
+    )
+
+    val paths = SubsonicApi::class.java.declaredMethods
+      .mapNotNull { it.getAnnotation(GET::class.java)?.value }
+      .distinct()
+      .sorted()
+
+    assertThat(paths).describedAs("reflection found no endpoints at all; %s", why).isNotEmpty
+    // One assertion over the union rather than two subset checks: an endpoint that is in neither
+    // list has to fail, and a subset check would let it through on the other list's behalf.
+    assertThat(paths).describedAs(why).containsExactlyElementsOf((reads + writes).sorted())
   }
 
   @Test

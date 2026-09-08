@@ -228,9 +228,16 @@ class PlayerViewModel(
    * mid-request cannot redirect the rating onto the song that followed. A failure sets
    * [PlayerUiState.Content.ratingFailed] rather than throwing: the write is the listener's, not the
    * app's, and a crash is not a reasonable answer to a server that said no.
+   *
+   * **From `controls.state`, not from [uiState].** The two carry the same id, and routing through
+   * the UI type was the first version of this line -- `(uiState.value as? Content)?.playback?.mediaId`
+   * -- which reads fine and is worse in two ways. [uiState] is `WhileSubscribed`, so it can be a
+   * five-second-old `NothingPlaying` while audio is playing; and `Content` exists only where
+   * `playback.mediaId` is non-null, so two of that chain's four null checks were unreachable, which
+   * is a branch counter nothing can ever move (CLAUDE.md records the shape).
    */
   fun thumb(tapped: SongRating) {
-    val mediaId = (uiState.value as? PlayerUiState.Content)?.playback?.mediaId ?: return
+    val mediaId = controls.state.value.mediaId ?: return
     viewModelScope.launch {
       val outcome = runCatching { ratings.rate(mediaId, tapped) }
       ratingFailed.value = outcome.isFailure

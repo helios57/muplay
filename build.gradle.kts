@@ -4782,10 +4782,26 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // (`PlayerViewModelTest`, thirteen tests, no emulator) -- which is the whole reason the class
     // is constructed over a `PlaybackControls` seam rather than over `PlaybackConnection` directly.
     //
-    //   `PlayerViewModel`                 2/2 -- `commitScrub`'s `?: return` (the tap that moved
-    //                                     nothing must not seek) and `scrubTo`'s coerce-at-zero.
+    //   `PlayerViewModel`                 4/4 -- `commitScrub`'s `?: return` (the tap that moved
+    //                                     nothing must not seek) and `thumb`'s (a thumb with
+    //                                     nothing playing rates nothing).
     //   `PlayerViewModel$playPause$1`     2/2 -- pause-if-playing / play-if-paused, the one
     //                                     decision in the class a user meets on every tap.
+    //
+    // It read 2/2 until the thumbs landed, and the line above it used to name `scrubTo`'s
+    // coerce-at-zero as the second pair. That was wrong, and wrong in this repository's
+    // most-recorded way: `coerceAtLeast` compiles to `Math.max`, which carries no JaCoCo branch
+    // counter at all (CLAUDE.md), so the test that proves a scrub cannot go negative moves nothing
+    // here and never did. The pair actually counted was `commitScrub`'s elvis. Said plainly because
+    // the next person to withhold `a scrub before the start of the track is clamped to zero` on
+    // this comment's say-so would see green and learn the wrong lesson.
+    //
+    // `thumb`'s guard reads `controls.state.value.mediaId ?: return`. Its first version went
+    // through `uiState` -- `(uiState.value as? Content)?.playback?.mediaId ?: return` -- which put
+    // this class at 8/10 and red, because `Content` exists only where `playback.mediaId` is
+    // non-null and two of that chain's four null checks were therefore unreachable. The fix was to
+    // read the live state rather than to lower the floor: an unreachable branch is a counter no
+    // test can ever move, and a floor written around one gates nothing.
     //
     // **Exact names beside a narrow wildcard, not `"PlayerViewModel*"`** -- the same ruling
     // `:feature:library` records for its own two view models. That wildcard cannot hold a BRANCH
@@ -4842,7 +4858,31 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       excludes = listOf(
         "io.github.helios57.muplay.player.PlayerViewModel",
         "io.github.helios57.muplay.player.PlayerViewModel.1",
+        // `map`'s collector adapter, floored just below at its own ceiling. See there.
+        "io.github.helios57.muplay.player.PlayerViewModel.special..inlined.map.1",
       ),
+    ),
+    // `PlayerViewModel$special$$inlined$map$1` -- the collector adapter Kotlin generates for the
+    // `.map { it.mediaId }` in front of the rating subscription. **2/3 LINE, and that is its
+    // ceiling**: this table already records the identical class at the identical ratio for
+    // `:core:database`'s `CastSettings`, where it stays 2/3 even with the connected `.ec` merged
+    // in. The third line is `map`'s own `collect` return, which nothing this side of the flow
+    // machinery executes.
+    //
+    // Its own floor at 0.60 rather than an exclusion, for the reason that entry gives: the
+    // question a LINE floor over generated machinery answers is whether it *ran*, and 0.60 is
+    // under the 0.6667 ceiling and over nothing. It arrived here when the thumbs added the flow;
+    // before that this family had no `map` in it and the 0.90 rule covered every member.
+    //
+    // Falsified by withholding `PlayerViewModelTest`: `lines covered ratio is 0.00, but expected
+    // minimum is 0.60`.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.60"),
+      // Dots, not `$`: JaCoCo presents the class as `PlayerViewModel.special..inlined.map.1` and a
+      // literal `$` in a pattern never matches. This table's own doc, gotcha 3.
+      includes = listOf("io.github.helios57.muplay.player.PlayerViewModel.special..inlined.map.1"),
     ),
     // `PlayerViewModel$1`, the anonymous `PlaybackControls` adapter the `@Inject` constructor
     // builds: **15/15 LINE = 1.0000**, measured 2026-09-05. It is excluded from the rule above and

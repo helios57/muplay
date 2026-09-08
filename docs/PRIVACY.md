@@ -1,6 +1,6 @@
 # MuPlay — Privacy Policy
 
-**Last updated: 26 August 2026**
+**Last updated: 9 September 2026**
 
 MuPlay is a free, open-source music and audiobook player for Android. It plays from a
 [Navidrome](https://www.navidrome.org/) or Subsonic-compatible server **that you run and that you
@@ -23,6 +23,7 @@ MuPlay talks to are ones whose addresses you typed in yourself.
 | Playback settings (speed, silence skipping, volume levelling) | App-private database | No |
 | Cached audio | App-private cache | No |
 | Credentials for optional integrations (Lidarr, Bindery) | Encrypted, one Keystore key per service | Only as authentication to *your* service |
+| Your thumbs up and down | **On your server**, as its own star rating | **Yes — to your server, on purpose** |
 
 All of it is removed when you uninstall the app. `android:allowBackup` is `false`, so none of it is
 copied into a cloud backup.
@@ -31,14 +32,27 @@ copied into a cloud backup.
 
 **To your media server, and only when you have configured one:** requests to list your libraries and
 albums, to search, and to stream audio and cover art. These carry your credentials because your
-server requires them. MuPlay uses only read-only endpoints — it never writes to your server, never
-reports what you played, and never uploads a playback position. The Subsonic `scrobble`,
-`nowPlaying` and `savePlayQueue` endpoints exist and MuPlay deliberately does not call them.
+server requires them.
 
-That paragraph is **checked by the build**, not just written down here:
+**MuPlay never reports what you played and never uploads a playback position.** The Subsonic
+`scrobble`, `nowPlaying`, `savePlayQueue` and `createBookmark` endpoints exist for exactly that, and
+MuPlay does not call any of them. Where you are in each book is written to your phone and nowhere
+else.
+
+**Three things do go to your server, and only because you asked for them by tapping.** When you
+thumb a track up or down, MuPlay saves that as a star rating on your server (`setRating`), and adds
+a thumbed-up track to a playlist called `promoted-<your username>`, creating it the first time
+(`createPlaylist`, `updatePlaylist`). That is the whole write list. A rating and a playlist belong to
+the account you signed in as, which is what makes your thumbs yours and not your household's — and
+it means your other Subsonic apps can see them too, which is the point of keeping them on the server
+rather than on this phone. None of the three sends a position, a timestamp, or what you are playing
+right now.
+
+Those paragraphs are **checked by the build**, not just written down here:
 `core/network/src/test/kotlin/io/github/helios57/muplay/network/LocalOnlyProgressTest.kt` asserts the exact set of
-operations the Subsonic client declares and the exact set of endpoints it can reach, so adding any
-way to send a listening position to a server fails `check` with a message naming this document.
+operations the Subsonic client declares and the exact set of endpoints it can reach, split into
+reads and writes, so a fourth write — or any way at all to send a listening position — fails `check`
+with a message naming this document.
 
 **To your local network, only while you are casting:** to play on a Sonos or DLNA speaker, MuPlay
 finds speakers by sending a standard discovery message on your local network, and serves the audio

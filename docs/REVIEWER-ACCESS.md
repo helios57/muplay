@@ -247,8 +247,10 @@ Select **"All or some functionality is restricted"** and add one instruction set
 > 8. Tap the "Review Audiobooks" chip to switch libraries; "Shuffle this library" draws only from
 >    the selected library.
 >
-> The app talks to no server other than the one entered here. This demonstration account is
-> read-only in effect: MuPlay calls only read endpoints and never writes to the server.
+> The app talks to no server other than the one entered here. MuPlay never sends a listening
+> position or a now-playing report anywhere. The only things it writes to the server are the ones a
+> tap asks for: a thumb up or down saves a star rating, and a thumb up adds the track to a playlist
+> named after the signed-in user. The steps above do not tap either.
 
 <!-- reviewer-taps:end -->
 

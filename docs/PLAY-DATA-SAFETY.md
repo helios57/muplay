@@ -24,10 +24,19 @@ dependency in the project. The version catalogue declares 51 libraries and none 
 this is checkable in `gradle/libs.versions.toml` and worth re-checking whenever a dependency is
 added.
 
-**No listening history leaves the device.** The Subsonic protocol offers `scrobble`, `nowPlaying`
-and `savePlayQueue`. MuPlay declares none of them; the endpoints it declares are `ping`, `search`,
-`getMusicFolders`, `getAlbumList`, `getAlbum`, `getRandomSongs`, `getScanStatus` and
-`getOpenSubsonicExtensions`, plus stream and cover-art URLs. All are read-only.
+**No listening history leaves the device.** The Subsonic protocol offers `scrobble`, `nowPlaying`,
+`savePlayQueue` and `createBookmark`. MuPlay declares none of them. The endpoints it declares are
+the reads `ping`, `search3`, `getMusicFolders`, `getAlbumList2`, `getAlbum`, `getPlaylist`,
+`getPlaylists`, `getRandomSongs`, `getScanStatus` and `getOpenSubsonicExtensions`, plus stream and
+cover-art URLs, and exactly three writes: `setRating`, `createPlaylist` and `updatePlaylist`.
+
+**The three writes are the thumbs, and they go to the user's own server.** A thumb up or down is
+saved as that server's own star rating, and a thumb up adds the track to a `promoted-<username>`
+playlist. They are per authenticated user, they carry a track id and a name and nothing else, and
+they are issued only when the user taps. Under Play's definitions this is still not collection or
+sharing: the destination is a server the user operates, not the developer and not a third party the
+developer chose. `LocalOnlyProgressTest` pins the read list and the write list separately, so a
+fourth write cannot be added without editing a file that says so.
 
 **Audiobook positions are local-only.** This is a product requirement, not an implementation
 detail: positions are written to an app-private table and `ProgressWriter` records in its own
@@ -52,5 +61,7 @@ binary does.
 
 1. Re-read Play's current Data safety definitions — they change.
 2. Re-run the dependency check above; a new library is the most likely way this becomes untrue.
-3. Confirm no new Subsonic write endpoint has been added.
+3. Confirm the Subsonic write list is still exactly `setRating`, `createPlaylist` and
+   `updatePlaylist` — `LocalOnlyProgressTest` fails `check` if it is not, but read the list
+   yourself before answering a form with it.
 4. Confirm the cleartext exception is still debug-only.

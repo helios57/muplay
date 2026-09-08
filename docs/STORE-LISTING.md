@@ -36,21 +36,25 @@ Music and audiobooks from the Navidrome or Subsonic server you run yourself.
 MuPlay plays the music and audiobooks that are already on your own server.
 
 It is a client, not a service: no catalogue, no account, no subscription. It plays what is on the
-Navidrome server — or any Subsonic / OpenSubsonic compatible server — that you run. If you do not
-run one, MuPlay has nothing to play. Start at navidrome.org, then come back.
+Navidrome — or any Subsonic / OpenSubsonic — server you run. If you do not run one, MuPlay has
+nothing to play. Start at navidrome.org, then come back.
 
 MUSIC AND AUDIOBOOKS, KEPT APART
 
 Tell MuPlay once which of your server's libraries hold music and which hold audiobooks. After that,
-Shuffle means "shuffle this library" — shuffling your music can never pull an audiobook into the
-middle of it. Tracks from another library are dropped before they reach the queue, and MuPlay says
-so rather than quietly playing them.
+Shuffle means "shuffle this library" — shuffling music can never pull an audiobook into it. Tracks from another library are dropped before they reach the queue, and MuPlay
+says so.
 
 BROWSING THAT DOES NOT WAIT FOR THE NETWORK
 
-Your library is mirrored onto the phone, so opening it, scrolling and searching are immediate
-rather than a round trip. Browse albums with their cover art, open one, start from any track.
+Your library is mirrored onto the phone, so opening it, scrolling and searching are immediate,
+not a round trip. Browse albums with their cover art, open one, start from any track.
 Refresh pulls in what changed on the server.
+
+THUMBS THAT STEER THE SHUFFLE
+
+Thumb a track down and shuffle never offers it again; thumb one up and it comes round twice as
+often, and joins a playlist named for you on your server.
 
 MADE FOR LISTENING WITH THE SCREEN OFF
 
@@ -60,34 +64,33 @@ MADE FOR LISTENING WITH THE SCREEN OFF
 - Albums play through without gaps
 - Volume levelling from your files' ReplayGain tags
 - The seek bar works even on formats your server re-encodes on the fly
-- A sleep timer that fades down and pauses, by the clock or at the end of the chapter; shake
-  the phone for five more minutes
+- A sleep timer that fades down and pauses, by the clock or at the chapter's end; shake the
+  phone for five more minutes
 
 AUDIOBOOKS ARE A DIFFERENT INSTRUMENT
 
 A book opens in its own player, not the music one. Next and Previous move a chapter at a time,
 there is a chapter list to jump around in, and a thirty-second nudge for the sentence you missed.
-Every book comes back to the right position inside the right file, kept across days of music in
-between, winding back a few seconds in proportion to how long you were away. Each book keeps its own
+Every book comes back to the right position in the right file, across days of music in between,
+winding back a few seconds in proportion to how long you were away. Each book keeps its own
 speed, 0.5x to 3.0x, and its own silence skipping; neither follows you into music.
 
 IN THE CAR
 
 MuPlay is an Android Auto media app. The car screen offers Continue, Books, Albums and Artists.
-Books you have started show how much is left, and a book in several parts opens at the part you had
-reached. The first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay"
+Books you started show how much is left, and a book in several parts opens at the part you reached. The first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay"
 works with the app closed.
 
 ON YOUR SPEAKERS
 
 Send music to a Sonos speaker, or any DLNA/UPnP renderer on your network. MuPlay finds them while
 the picker is open and, by default, relays the audio through your phone, so the speaker never gets
-your server's address or your password. The button is on the music player; an audiobook cannot be
+your server's address or password. The button is on the music player; an audiobook cannot be
 sent to a speaker yet.
 
 ASK FOR WHAT IS NOT THERE YET
 
-If you run Lidarr or Bindery, MuPlay will talk to them: search both at once, ask for an album or an
+If you run Lidarr or Bindery, MuPlay talks to them: search both at once, ask for an album or an
 audiobook, and watch it turn up in your library. Each needs an https address — MuPlay will not send
 an API key over plain http.
 
@@ -103,9 +106,9 @@ WHAT YOU LISTEN TO STAYS YOURS
 
 NOT IN THIS VERSION
 
-MuPlay is young and claims only what it does today. There is no Chromecast support (Sonos and DLNA/UPnP only), no Wear OS app, no Material You or dynamic
-colour, and no downloading for offline listening — recently played audio is cached, which is much
-weaker.
+There is no Chromecast support (Sonos and
+DLNA/UPnP only), no Wear OS app, no Material You, and no downloading for offline listening —
+recently played audio is cached, which is much weaker.
 Nothing you listen to is ever scrobbled back to your server, and that is a promise, not a gap.
 
 Needs Android 8.0 or newer and a server you can reach from your phone.
