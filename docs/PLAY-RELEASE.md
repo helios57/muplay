@@ -101,6 +101,42 @@ changing the key is disruptive rather than free.
 
 ---
 
+## Before any of this: are you actually signed in?
+
+Every console step below needs a signed-in browser, and an agent session driving Playwright MCP
+will very likely **not** have one — measured 2026-09-08, and it cost twenty minutes.
+
+Playwright MCP launches its own Chrome against a persistent profile under
+`~/.cache/ms-playwright-mcp/mcp-chrome-<hash>/`, and a different session gets a different hash. So
+"the browser is already logged in" can be true of the machine and false of the browser you control.
+There were ten such profiles here; one held the session. What varies the hash was not measured, so
+do not predict it — check.
+
+Counting cookies is the cheap way to find which profile has it (read-only, immutable URI, counts
+only — never read the values):
+
+    sqlite3 "file:<profile>/Default/Cookies?immutable=1" \
+      "select count(*) from cookies where host_key like '%google.com'"
+
+Measured: the signed-in profile held **25**, the fresh one **3** — and all three of those were
+consent cookies picked up by the failed navigation itself.
+
+**The discriminator, because the console's own behaviour is ambiguous.** A bounce from
+`/console/u/0/developers/` to `/console/about/` has at least three causes, and they look identical:
+no session at all, a session with no developer account, or an account gated mid-verification. Probe
+`myaccount.google.com` instead — it bounces to a marketing page **only** when there is no session,
+while a real session missing a developer account keeps you on an account page. Take that reading
+before concluding anything about the console.
+
+Two things that follow, both learned the expensive way:
+
+- **Releasing another session's browser lock does not help.** The `SingletonLock` only stops two
+  Chromes holding one profile; it has nothing to do with which profile you were given. A handoff
+  that frees the lock and stops there solves nothing.
+- **Repointing the MCP at someone else's profile is not a neutral fix.** That profile carries a
+  whole Google session, not a Play-Console-scoped one. It is a config change and an access
+  question, and it belongs to the account holder rather than to whoever is driving.
+
 ## Order of operations
 
 1. Create the app in Play Console.
