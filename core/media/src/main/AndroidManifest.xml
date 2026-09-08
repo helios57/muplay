@@ -25,7 +25,7 @@
 
   <application>
     <service
-        android:name="app.muplay.media.MuPlaybackService"
+        android:name="io.github.helios57.muplay.media.MuPlaybackService"
         android:exported="true"
         android:foregroundServiceType="mediaPlayback">
       <!-- exported="true" with this action is how a MediaSessionService is discovered by

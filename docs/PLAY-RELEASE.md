@@ -45,15 +45,36 @@ Signing is, and it is the point of the correction below.
 
 ## The rename to `io.github.helios57.muplay`, and what it cost
 
-Changed 2026-09-08 at the owner's request, from `app.muplay`. `namespace` deliberately stays
-`app.muplay`, so every Kotlin package, import and coverage-floor pattern is untouched -- this is one
-line in `app/build.gradle.kts`. Verified: `assembleDebug`, `verifyDebugManifest` and the full `:app`
-JVM tier green, merged manifest reads `package="io.github.helios57.muplay"`, and the built APK
-reports the same id to `aapt2 dump packagename`. Nothing in production code hardcodes the id -- the
-app learns its own package from `context.packageName` and passes it as `ownPackageName`, so the
-`app.muplay` literals that remain are all test fixtures.
+Changed 2026-09-08 at the owner's request, from `app.muplay`, and it happened in **two steps a few
+hours apart** — which is worth knowing, because the first step's own note in this file said the
+second would not happen.
 
-**Two things about this that are worth stating plainly rather than discovering later.**
+**Step one: the `applicationId` alone.** One line in `app/build.gradle.kts`, with `namespace` left
+at `app.muplay`, so every Kotlin package, import and coverage-floor pattern was untouched. Verified
+at the time: `assembleDebug`, `verifyDebugManifest` and the full `:app` JVM tier green, merged
+manifest reading `package="io.github.helios57.muplay"`, and the built APK reporting the same id to
+`aapt2 dump packagename`.
+
+**Step two: the namespace and every package with it**, at the owner's request the same afternoon.
+55 package directories moved, 635 files rewritten, both Room `schemas/` directories renamed (they
+are named after the fully-qualified database class, and Room looks for them under the new name —
+miss this and the exported schema history is silently orphaned). `namespace` and `applicationId` are
+now the same string again.
+
+What that cost, measured rather than predicted:
+
+- **`verifyReleaseArtifact` was wired to the `applicationId`** and meant the namespace. Between the
+  two steps the two differed, and the first release build failed with *"mapping.txt names no
+  io.github.helios57.muplay class at all"*. Fixed to read `extension.namespace`; see the comment at
+  that call site, which keeps the measurement now that the strings agree again and the divergence is
+  invisible.
+- **`StoreListingTest`'s `every claim names code that still exists`** went red on nine store-listing
+  claims whose evidence paths had moved — the gate doing exactly its job, and the reason the docs
+  pass is not optional.
+- **The archived plan and spike documents under `docs/superpowers/` were deliberately left alone.**
+  They are dated records of the tree as it was, and this repository's own rule is that renaming an
+  identifier inside a measurement record does not move it. Expect paths there to read `app/muplay`;
+  that is history, not rot. The same applies to the quoted compiler and test output in `CLAUDE.md`.
 
 **It is a package rename, which to Android means a different app.** No update path from a build
 carrying the old id, side-by-side install, and no data carried over. That is free while the app has
@@ -63,13 +84,14 @@ resume positions, which exist nowhere else by design. Reinstalling is the whole 
 is a handful of test positions -- but it is the same data-loss shape the signing section is about,
 and it should be a decision rather than a surprise.
 
-**Whether the rename was necessary is still unmeasured.** It was requested, not forced. The sibling
-session's `io.github.helios57.familyguard` was forced -- an installed base on a child's phone pinned
-it to an existing `applicationId` -- and that session is explicit that it never queried a short name
-and its success is no evidence about `app.muplay`'s availability. The Play Console availability check
-is the only authority, it is free, and it can be run before anything is created. If `app.muplay` is
-available and the owner would rather have it, the moment to find that out is before the app entry
-exists, because after creation the Play package name can never change.
+**Whether the rename was necessary was never measured, and that question is now closed.** It was
+requested, not forced. The sibling session's `io.github.helios57.familyguard` *was* forced -- an
+installed base on a child's phone pinned it to an existing `applicationId` -- and that session is
+explicit that it never queried a short name, so its success was no evidence about `app.muplay`'s
+availability. The Play Console availability check was the only authority and it was free to run
+before creating anything; nobody ran it for `app.muplay`. The app entry now exists under
+`io.github.helios57.muplay`, and a Play package name can never change after creation, so this is
+settled by fact rather than by argument.
 
 ---
 

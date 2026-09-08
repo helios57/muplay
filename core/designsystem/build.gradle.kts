@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.designsystem"
+  namespace = "io.github.helios57.muplay.designsystem"
 }
 
 dependencies {

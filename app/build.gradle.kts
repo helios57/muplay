@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay"
+  namespace = "io.github.helios57.muplay"
 
   defaultConfig {
     applicationId = "io.github.helios57.muplay"

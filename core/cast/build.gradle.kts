@@ -32,7 +32,7 @@ dependencies {
   // from the line below, so this is a declaration and not a note: change the package here and the
   // rule follows; delete the line and the test fails rather than silently scanning nothing.
   //
-  // OKHTTP EXEMPT PACKAGE: app.muplay.cast.proxy
+  // OKHTTP EXEMPT PACKAGE: io.github.helios57.muplay.cast.proxy
   implementation(libs.okhttp)
   implementation(libs.coroutines.core)
 

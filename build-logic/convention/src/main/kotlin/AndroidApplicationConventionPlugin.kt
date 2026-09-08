@@ -188,7 +188,7 @@ private val BASE_DECLARATIONS = listOf(
   // The service itself, reaching the application from `:core:media`'s own manifest
   // through the merger. "It is declared in the library" is a claim about source layout;
   // this is the evidence.
-  """android:name="app.muplay.media.MuPlaybackService"""",
+  """android:name="io.github.helios57.muplay.media.MuPlaybackService"""",
   // The intent-filter action that makes a MediaSessionService discoverable by Android
   // Auto, Wear, Assistant and the system media controls.
   """android:name="androidx.media3.session.MediaSessionService"""",

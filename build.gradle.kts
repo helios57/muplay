@@ -48,7 +48,7 @@ val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
  *
  * 1. **`includes`/`excludes` on an [element] `"BUNDLE"` rule silently do nothing.** Measured
  *    empirically (see task-7-report.md for the exact commands): a `"BUNDLE"` rule with
- *    `excludes = listOf("app.muplay.setup.SetupScreenKt")` still evaluated the module's *entire*,
+ *    `excludes = listOf("io.github.helios57.muplay.setup.SetupScreenKt")` still evaluated the module's *entire*,
  *    unfiltered class set — it reported the same ratio, and passed at the same floors, as an
  *    identical rule with no `excludes` at all, all the way up to a minimum of `1.00`. Every rule
  *    below that needs to scope to specific classes uses `element = "CLASS"` instead, confirmed to
@@ -62,9 +62,9 @@ val LIVE_NAVIDROME_TEST_TASK_NAME = "liveNavidromeTest"
  *    below only assigns `includes`/`excludes` when the corresponding list is non-empty, leaving
  *    the property at its own real default otherwise.
  * 3. **A literal `$` in a class-name pattern never matches anything** (e.g.
- *    `"app.muplay.setup.SetupViewModel$1"`, the exact binary name of a compiled nested/lambda
+ *    `"io.github.helios57.muplay.setup.SetupViewModel$1"`, the exact binary name of a compiled nested/lambda
  *    class) — every rule below that needs one uses a `*` wildcard across that position instead
- *    (`"app.muplay.setup.SetupViewModel*1"`), which does match. Not a regex-anchoring problem —
+ *    (`"io.github.helios57.muplay.setup.SetupViewModel*1"`), which does match. Not a regex-anchoring problem —
  *    JaCoCo's `WildcardMatcher` quotes every literal character before matching, `$` included, so
  *    it is never treated as a regex metacharacter. The real cause is upstream of matching
  *    entirely: `JavaNames.getQualifiedClassName` converts the binary name to its "qualified" form
@@ -341,12 +341,12 @@ fun isEnforceableWithoutAnEmulator(floor: CoverageFloor): Boolean = !floor.requi
  *     unreachable non-null path of `sizePx?.toString() ?: "full"`, so `0.75` — not `0.90` — is the
  *     honest ceiling, the same shape and the same reason as `SetupFailureReasonKt`'s `0.85` above.
  *     Proved able to fail, not merely to pass: raising this entry to `1.00` produces
- *     `Rule violated for class app.muplay.library.CoverArtCacheKeyKt: branches covered ratio is
+ *     `Rule violated for class io.github.helios57.muplay.library.CoverArtCacheKeyKt: branches covered ratio is
  *     0.75, but expected minimum is 1.00 -> BUILD FAILED`.
  *   - *"`LibraryViewModel` cannot be gated: `LibraryViewModel$shuffle$1` measures 6/12."* True of a
  *     **wildcard**, which is what was tried; it is not true of an exact-name include, and this
- *     table already uses exact names beside wildcards (`"app.muplay.setup.SetupViewModel"` *and*
- *     `"app.muplay.setup.SetupViewModel*"`). `LibraryViewModel` itself is 4/4 from this module's
+ *     table already uses exact names beside wildcards (`"io.github.helios57.muplay.setup.SetupViewModel"` *and*
+ *     `"io.github.helios57.muplay.setup.SetupViewModel*"`). `LibraryViewModel` itself is 4/4 from this module's
  *     own JVM tests, and an exact-name rule gates the outer class while leaving the under-covered
  *     nested ones to keep warning. `AlbumViewModel` was genuinely 1/2 when the review ran — its
  *     double-load guard was executed by no test (N-3a) — and is 2/2 now that it is.
@@ -421,7 +421,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   `BrowseId`            Plan 5 Task 1, and the same shape as `StreamFormat` for the same
     //                         reason: the interface itself compiles to **no counters at all**
     //                         (measured -- neither BRANCH nor LINE appears for
-    //                         `app/muplay/model/browse/BrowseId` in the report), and every branch
+    //                         `io/github/helios57/muplay/model/browse/BrowseId` in the report), and every branch
     //                         lives in nested classes the `*` pattern is what reaches. Measured
     //                         today: `BrowseId$Companion` **60/60** (all of `decode` -- the empty
     //                         check, the prefix check, `hasPayload`, the eleven-arm `when` over
@@ -494,27 +494,27 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.model.ServerCapabilities",
+        "io.github.helios57.muplay.model.ServerCapabilities",
         // Plan 3 Task 12: `ServerCapabilities$Companion`, which holds one `const val` (the
         // `transcodeOffset` extension name) and carries no counter of either kind. It rides along
         // exactly as `BrowseSurface*` does below, so `warnUngatedClasses` has nothing to say about
         // it and it can never move this ratio.
-        "app.muplay.model.ServerCapabilities*",
-        "app.muplay.model.SearchResults",
-        "app.muplay.model.ServerInfo",
-        "app.muplay.model.MusicLibrary",
-        "app.muplay.model.LibraryRole",
-        "app.muplay.model.Album",
-        "app.muplay.model.AlbumWithSongs",
-        "app.muplay.model.AlbumListType",
-        "app.muplay.model.Artist",
-        "app.muplay.model.ScanStatus",
-        "app.muplay.model.Song",
-        "app.muplay.model.ShuffleResult",
-        "app.muplay.model.StreamFormat",
-        "app.muplay.model.StreamFormat*",
-        "app.muplay.model.browse.BrowseId",
-        "app.muplay.model.browse.BrowseId*",
+        "io.github.helios57.muplay.model.ServerCapabilities*",
+        "io.github.helios57.muplay.model.SearchResults",
+        "io.github.helios57.muplay.model.ServerInfo",
+        "io.github.helios57.muplay.model.MusicLibrary",
+        "io.github.helios57.muplay.model.LibraryRole",
+        "io.github.helios57.muplay.model.Album",
+        "io.github.helios57.muplay.model.AlbumWithSongs",
+        "io.github.helios57.muplay.model.AlbumListType",
+        "io.github.helios57.muplay.model.Artist",
+        "io.github.helios57.muplay.model.ScanStatus",
+        "io.github.helios57.muplay.model.Song",
+        "io.github.helios57.muplay.model.ShuffleResult",
+        "io.github.helios57.muplay.model.StreamFormat",
+        "io.github.helios57.muplay.model.StreamFormat*",
+        "io.github.helios57.muplay.model.browse.BrowseId",
+        "io.github.helios57.muplay.model.browse.BrowseId*",
         // Plan 4 Task 8. `SleepTimerRequest`/`SleepTimerState` and their four members ride along
         // exactly the way `Album` and `Song` do above: measured with **no BRANCH counter at all**
         // (JaCoCo filters a `data class`'s generated `equals`/`hashCode`/`copy`), and every line
@@ -527,10 +527,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // execution data -- so these four measure 0 lines here and would fail any LINE rule at any
         // minimum above zero. What actually gates them is `SleepTimerControllerTest`, which asserts
         // on `SleepTimerState.Running`'s three fields and constructs both `SleepTimerRequest` arms.
-        "app.muplay.model.SleepTimerRequest",
-        "app.muplay.model.SleepTimerRequest*",
-        "app.muplay.model.SleepTimerState",
-        "app.muplay.model.SleepTimerState*",
+        "io.github.helios57.muplay.model.SleepTimerRequest",
+        "io.github.helios57.muplay.model.SleepTimerRequest*",
+        "io.github.helios57.muplay.model.SleepTimerState",
+        "io.github.helios57.muplay.model.SleepTimerState*",
         // Plan 6 Task 2. `RememberedRenderer` is a three-field record and `RememberedRenderers` is
         // an interface whose only member with a body is a `const val`; between them they carry
         // zero branch counters, so they ride along here exactly the way `Album` and `Song` do
@@ -545,21 +545,21 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // plumbing on a class with no body. Gating them would be gating the Kotlin compiler, and
         // writing a `:core:model` test that constructs one just to light them up would be gating
         // it dishonestly. If this record ever grows a member, it needs a rule of its own.
-        "app.muplay.model.RememberedRenderer",
-        "app.muplay.model.RememberedRenderers",
-        "app.muplay.model.RememberedRenderers*",
-        "app.muplay.model.BookSummary",
+        "io.github.helios57.muplay.model.RememberedRenderer",
+        "io.github.helios57.muplay.model.RememberedRenderers",
+        "io.github.helios57.muplay.model.RememberedRenderers*",
+        "io.github.helios57.muplay.model.BookSummary",
         // Plan 4 Task 4. `ResumePoint` is a three-field `data class` with no body -- the
         // ride-along shape this list's own paragraph describes, measured with no BRANCH
         // counter at all -- and its only constructor lives in `:core:database`, so its LINE
         // counter is that module's to gate and is gated there. Named here so
         // `warnUngatedClasses` has nothing to say about it.
-        "app.muplay.model.ResumePoint",
-        "app.muplay.model.browse.BrowseTree",
-        "app.muplay.model.browse.BrowseTree*",
-        "app.muplay.model.browse.BrowseText",
-        "app.muplay.model.browse.BrowseSurface",
-        "app.muplay.model.browse.BrowseSurface*",
+        "io.github.helios57.muplay.model.ResumePoint",
+        "io.github.helios57.muplay.model.browse.BrowseTree",
+        "io.github.helios57.muplay.model.browse.BrowseTree*",
+        "io.github.helios57.muplay.model.browse.BrowseText",
+        "io.github.helios57.muplay.model.browse.BrowseSurface",
+        "io.github.helios57.muplay.model.browse.BrowseSurface*",
         // Plan 5 Task 3. Named in full even though the `BrowseSurface*` rider one line up already
         // matches it (`wildcardToRegex` turns that into `\QBrowseSurface\E.*`, and `BrowseSurfaces`
         // matches) -- because that rider was added in Task 2 to catch `BrowseSurface$Companion`,
@@ -585,7 +585,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // remaining 9 are the two `setOf(...)` initialisers in `<clinit>`, which execute the moment
         // any test in the module touches the object at all. That is the unfireable-declaration
         // case the ride-along paragraph above describes, not the `BrowseTree` case.
-        "app.muplay.model.browse.BrowseSurfaces",
+        "io.github.helios57.muplay.model.browse.BrowseSurfaces",
         // Plan 3 Task 11, and a ride-along in the strict sense this list's paragraph above
         // describes: `ReplayGain` is a three-field `data class` with no body, measured with **no
         // BRANCH counter at all** and 0/4 LINE from this module's own tests -- the only code that
@@ -596,12 +596,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // `:core:model` test written only to light up compiler-generated `equals`/`copy` plumbing.
         // The decisions this type carries are gated where they are made -- `ReplayGainPolicy`
         // (`:core:media`, 12/12 BRANCH) and `ReplayGainMappingTest` (`:core:network`).
-        "app.muplay.model.ReplayGain",
-        "app.muplay.model.browse.BrowseNode",
-        "app.muplay.model.browse.BrowseCompletion",
-        "app.muplay.model.browse.BrowseCompletionStatus",
-        "app.muplay.model.browse.BrowseMediaType",
-        "app.muplay.model.browse.BrowseStyle",
+        "io.github.helios57.muplay.model.ReplayGain",
+        "io.github.helios57.muplay.model.browse.BrowseNode",
+        "io.github.helios57.muplay.model.browse.BrowseCompletion",
+        "io.github.helios57.muplay.model.browse.BrowseCompletionStatus",
+        "io.github.helios57.muplay.model.browse.BrowseMediaType",
+        "io.github.helios57.muplay.model.browse.BrowseStyle",
         //   `BrowsePaging`         Plan 5 Task 4. 6/6, from `BrowsePagingTest`. Four lines, and
         //                          every branch in them is a value Android Auto really sends: a
         //                          negative page, a non-positive size, a page past the end, and the
@@ -616,8 +616,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         //                          and not a `Bundle` precisely so this stays on the fast tier;
         //                          `BrowseItems.bundleOf` does the one Android-shaped step and is
         //                          gated in `:core:media`.
-        "app.muplay.model.browse.BrowsePaging",
-        "app.muplay.model.browse.BrowseExtras",
+        "io.github.helios57.muplay.model.browse.BrowsePaging",
+        "io.github.helios57.muplay.model.browse.BrowseExtras",
         //   `PlayFromSearch`       Plan 5 Task 6. **10/10 BRANCH**, from `PlayFromSearchTest`, JVM
         //                          data only. Which one thing a spoken query plays: the blank-query
         //                          arm, `tierOf`'s three-way `when`, and `normalise`'s
@@ -633,8 +633,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         //                          BRANCH counter at all** -- included so `warnUngatedClasses` has
         //                          nothing to say, gating nothing. Its one line is gated by the
         //                          LINE rule below.
-        "app.muplay.model.browse.PlayFromSearch",
-        "app.muplay.model.browse.PlayFromSearch*",
+        "io.github.helios57.muplay.model.browse.PlayFromSearch",
+        "io.github.helios57.muplay.model.browse.PlayFromSearch*",
       ),
     ),
     // 5/5 LINE -- `SubsonicCredentials`, the one class in this module with a hand-written member:
@@ -647,7 +647,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.model.SubsonicCredentials"),
+      includes = listOf("io.github.helios57.muplay.model.SubsonicCredentials"),
     ),
     // A LINE rule over the same classes the BRANCH rule above already lists, and it is not
     // redundant with it: eight of `BrowseId`'s twelve members -- the six `data object`s plus
@@ -670,8 +670,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.model.browse.BrowseId",
-        "app.muplay.model.browse.BrowseId*",
+        "io.github.helios57.muplay.model.browse.BrowseId",
+        "io.github.helios57.muplay.model.browse.BrowseId*",
       ),
     ),
     // Plan 5 Task 2, and the `BrowseId` argument directly above applied to a bigger class for the
@@ -702,16 +702,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.model.browse.BrowseTree",
-        "app.muplay.model.browse.BrowseTree*",
-        "app.muplay.model.browse.BrowseText",
-        "app.muplay.model.BookSummary",
+        "io.github.helios57.muplay.model.browse.BrowseTree",
+        "io.github.helios57.muplay.model.browse.BrowseTree*",
+        "io.github.helios57.muplay.model.browse.BrowseText",
+        "io.github.helios57.muplay.model.BookSummary",
         // Plan 5 Task 4: `BrowsePaging` 5/5 and `BrowseExtras` 24/24, both from JVM data alone.
         // They carry the BRANCH rule above as well, and ride here for the reason every other
         // pure-data class in this module does: `BrowseExtras` is mostly `put`s, and a deleted key
         // moves no branch.
-        "app.muplay.model.browse.BrowsePaging",
-        "app.muplay.model.browse.BrowseExtras",
+        "io.github.helios57.muplay.model.browse.BrowsePaging",
+        "io.github.helios57.muplay.model.browse.BrowseExtras",
         // Plan 5 Task 5. `BrowseSelection` **4/4** and `BrowseSelection$Companion` **1/1** LINE,
         // from JVM data alone, and it carries **no BRANCH counter at all** -- so LINE is the only
         // counter it has and a BRANCH rule over it would gate nothing.
@@ -729,16 +729,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // `RememberedRenderer` both fell into above. The answer there was a ride-along; the answer
         // here is a real test, because `EMPTY` is a value a caller hands to a player and "it is
         // empty and starts at zero" is a claim worth holding.
-        "app.muplay.model.browse.BrowseSelection",
-        "app.muplay.model.browse.BrowseSelection*",
+        "io.github.helios57.muplay.model.browse.BrowseSelection",
+        "io.github.helios57.muplay.model.browse.BrowseSelection*",
         // Plan 5 Task 6. `PlayFromSearch` **16/16** LINE and its synthetic `sortedBy` comparator
         // **1/1**, from JVM data alone. It carries the BRANCH rule above as well, and it is here
         // for the reason `BrowseTree` is: `pick` is a single delegating expression and `rank`'s
         // filter/sort statements contain no branch of their own, so deleting the tests that reach
         // them moves no branch at all. The comparator class has only a LINE counter, so this is the
         // only rule that can gate it.
-        "app.muplay.model.browse.PlayFromSearch",
-        "app.muplay.model.browse.PlayFromSearch*",
+        "io.github.helios57.muplay.model.browse.PlayFromSearch",
+        "io.github.helios57.muplay.model.browse.PlayFromSearch*",
       ),
     ),
     // ---- Plan 4 Task 2: the audiobook value types --------------------------------------------
@@ -770,9 +770,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.model.Chapter",
-        "app.muplay.model.BookSettings*Companion",
-        "app.muplay.model.BookSettings",
+        "io.github.helios57.muplay.model.Chapter",
+        "io.github.helios57.muplay.model.BookSettings*Companion",
+        "io.github.helios57.muplay.model.BookSettings",
       ),
     ),
     // The same two classes' LINE -- `Chapter` **7/7**, `BookSettings$Companion` **5/5** -- and it
@@ -797,8 +797,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.model.Chapter",
-        "app.muplay.model.BookSettings*Companion",
+        "io.github.helios57.muplay.model.Chapter",
+        "io.github.helios57.muplay.model.BookSettings*Companion",
       ),
     ),
   ),
@@ -833,9 +833,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.testing.BookFixtures",
-        "app.muplay.testing.BookFixtures*",
-        "app.muplay.testing.ExpectedBook",
+        "io.github.helios57.muplay.testing.BookFixtures",
+        "io.github.helios57.muplay.testing.BookFixtures*",
+        "io.github.helios57.muplay.testing.ExpectedBook",
       ),
     ),
     // LINE as well as BRANCH, for the reason `:core:model`'s `BrowseTree` carries both: deleting
@@ -847,9 +847,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.testing.BookFixtures",
-        "app.muplay.testing.BookFixtures*",
-        "app.muplay.testing.ExpectedBook",
+        "io.github.helios57.muplay.testing.BookFixtures",
+        "io.github.helios57.muplay.testing.BookFixtures*",
+        "io.github.helios57.muplay.testing.ExpectedBook",
       ),
     ),
   ),
@@ -885,10 +885,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.setup.SetupViewModel",
-        "app.muplay.setup.SetupViewModel*",
-        "app.muplay.setup.SetupUiState",
-        "app.muplay.setup.SetupUiState*",
+        "io.github.helios57.muplay.setup.SetupViewModel",
+        "io.github.helios57.muplay.setup.SetupViewModel*",
+        "io.github.helios57.muplay.setup.SetupUiState",
+        "io.github.helios57.muplay.setup.SetupUiState*",
       ),
     ),
     // **9/10 = 0.9000, re-measured 2026-09-05** (was 7/8 = 0.875 when this floor was written, over
@@ -920,9 +920,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.85"),
       includes = listOf(
-        "app.muplay.setup.SetupFailureReasonKt",
-        "app.muplay.setup.SetupFailureReason",
-        "app.muplay.setup.SetupFailureReason*",
+        "io.github.helios57.muplay.setup.SetupFailureReasonKt",
+        "io.github.helios57.muplay.setup.SetupFailureReason",
+        "io.github.helios57.muplay.setup.SetupFailureReason*",
       ),
     ),
     // `ServerSection` -- the way back out of a mistyped server, and the only caller anywhere of
@@ -971,8 +971,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.setup.ServerSection",
-        "app.muplay.setup.ServerSection*",
+        "io.github.helios57.muplay.setup.ServerSection",
+        "io.github.helios57.muplay.setup.ServerSection*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -999,7 +999,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.setup.SetupScreenKt", "app.muplay.setup.SetupScreenKt*"),
+      includes = listOf("io.github.helios57.muplay.setup.SetupScreenKt", "io.github.helios57.muplay.setup.SetupScreenKt*"),
       // Composed only by FirstRunJourneyTest, on a device. 0/54 from the JVM alone.
       requiresInstrumentedData = true,
     ),
@@ -1034,7 +1034,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // 2026-09-05, and the second half is the more useful one.**
     //
     //   `jacocoJvmCoverageVerification`, whole `CastSettingsTest` withheld
-    //     -> `Rule violated for class app.muplay.database.CastSettings.Companion: branches covered
+    //     -> `Rule violated for class io.github.helios57.muplay.database.CastSettings.Companion: branches covered
     //        ratio is 0.00, but expected minimum is 1.00`, BUILD FAILED.
     //   `jacocoJvmCoverageVerification`, only `the shipped default is off, and that is the security
     //     decision three other arguments rest on` withheld -> still 2/2, green. The other five
@@ -1051,7 +1051,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.database.CastSettings.Companion"),
+      includes = listOf("io.github.helios57.muplay.database.CastSettings.Companion"),
     ),
     // `CastSettings` itself -- the **fail-closed** rule, which is a different decision from the
     // default above and needs a device to reach. **2/2 = 1.0000 BRANCH, 10/10 LINE** from the
@@ -1075,7 +1075,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.database.CastSettings"),
+      includes = listOf("io.github.helios57.muplay.database.CastSettings"),
       requiresInstrumentedData = true,
     ),
     // The generated machinery around it, LINE, instrumented: `$allowRendererDirect$1` 1/1,
@@ -1097,10 +1097,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.60"),
-      includes = listOf("app.muplay.database.CastSettings*"),
+      includes = listOf("io.github.helios57.muplay.database.CastSettings*"),
       excludes = listOf(
-        "app.muplay.database.CastSettings",
-        "app.muplay.database.CastSettings.Companion",
+        "io.github.helios57.muplay.database.CastSettings",
+        "io.github.helios57.muplay.database.CastSettings.Companion",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1113,7 +1113,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.KeystoreCipher"),
+      includes = listOf("io.github.helios57.muplay.database.KeystoreCipher"),
     ),
     // `SyncFailure.Companion` -- the `of(Throwable)` cascade, which is the single decision that
     // stops every sync failure in this app from being reported as "Could not reach the server".
@@ -1144,8 +1144,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.database.SyncFailure",
-        "app.muplay.database.SyncFailure*",
+        "io.github.helios57.muplay.database.SyncFailure",
+        "io.github.helios57.muplay.database.SyncFailure*",
       ),
     ),
     // `MirrorMapper` is the second: a plain `object` with no injected collaborators and no
@@ -1154,7 +1154,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // (moved here from `BrowseRepository.search` so its trim/blank/escape logic is JVM-testable).
     // `MirrorMapper*` (not the bare name) because `artistEntities`'s `sortedBy` call compiles to a
     // nested lambda class (`MirrorMapper$artistEntities$lambda$2$$inlined$sortedBy$1`) that a bare
-    // `"app.muplay.database.MirrorMapper"` include would not match at all and `warnUngatedClasses`
+    // `"io.github.helios57.muplay.database.MirrorMapper"` include would not match at all and `warnUngatedClasses`
     // would then flag on every run; it carries 0 branches of its own (JaCoCo's isNaN pass) so
     // widening the pattern costs nothing. `MirrorMapper.album(entity)` and `.artist(entity)` --
     // the reverse direction only `BrowseRepository` originally called -- measured 0/17 LINE from
@@ -1168,7 +1168,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.MirrorMapper*"),
+      includes = listOf("io.github.helios57.muplay.database.MirrorMapper*"),
     ),
     // `SyncDecision` is Task 6's own JVM-measurable class: a sealed interface with a pure
     // `companion object` rule and no collaborators, so `SyncDecisionTest` (a plain JVM test)
@@ -1182,7 +1182,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.SyncDecision*"),
+      includes = listOf("io.github.helios57.muplay.database.SyncDecision*"),
     ),
     // The three mirror row entities -- unlike `LibraryEntity`/`MediaProgressEntity` below, these
     // have no branches of their own (plain `data class`es) but *are* JVM-measurable: `MirrorMapper`
@@ -1196,9 +1196,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.entity.ArtistEntity",
-        "app.muplay.database.entity.AlbumEntity",
-        "app.muplay.database.entity.SongEntity",
+        "io.github.helios57.muplay.database.entity.ArtistEntity",
+        "io.github.helios57.muplay.database.entity.AlbumEntity",
+        "io.github.helios57.muplay.database.entity.SongEntity",
       ),
     ),
     // CredentialStore's own author-written branches. 16/16 after Plan 2 Task 2 added the
@@ -1218,7 +1218,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.CredentialStore"),
+      includes = listOf("io.github.helios57.muplay.database.CredentialStore"),
       requiresInstrumentedData = true,
     ),
     // Plan 7 Task 2. `KeystoreKeys`, the Android Keystore plumbing extracted out from under
@@ -1241,7 +1241,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.KeystoreKeys"),
+      includes = listOf("io.github.helios57.muplay.database.KeystoreKeys"),
       requiresInstrumentedData = true,
     ),
     // LibraryRepository's author-written branches. Originally just `hasUnassignedLibraries`'s
@@ -1258,7 +1258,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.LibraryRepository"),
+      includes = listOf("io.github.helios57.muplay.database.LibraryRepository"),
       requiresInstrumentedData = true,
     ),
     // `SubsonicSourceProvider.current`'s `credentialStore.load() ?: throw NotConfiguredException()`
@@ -1268,7 +1268,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.SubsonicSourceProvider"),
+      includes = listOf("io.github.helios57.muplay.database.SubsonicSourceProvider"),
       requiresInstrumentedData = true,
     ),
     // `BrowseRepository`'s branches, post fix-round-1: `search` delegates its LIKE-pattern
@@ -1285,7 +1285,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.BrowseRepository"),
+      includes = listOf("io.github.helios57.muplay.database.BrowseRepository"),
       requiresInstrumentedData = true,
     ),
     // `BrowseDao`'s only author-written conditionals, new in fix round 1: the three `require`
@@ -1300,7 +1300,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.dao.BrowseDao"),
+      includes = listOf("io.github.helios57.muplay.database.dao.BrowseDao"),
       requiresInstrumentedData = true,
     ),
     // `SyncEngine`'s own author-written conditionals: the `SyncDecision` `when`, the null check on
@@ -1322,7 +1322,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.SyncEngine*"),
+      includes = listOf("io.github.helios57.muplay.database.SyncEngine*"),
       requiresInstrumentedData = true,
     ),
     // `ShuffleRepository`'s one author-written branch: `shuffle`'s early `if (returned.isEmpty())`
@@ -1340,7 +1340,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.ShuffleRepository"),
+      includes = listOf("io.github.helios57.muplay.database.ShuffleRepository"),
       requiresInstrumentedData = true,
     ),
     // Everything whose value is "did this line run at all": the Room database class, the Hilt
@@ -1376,29 +1376,29 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.MuPlayDatabase",
-        "app.muplay.database.CredentialStore",
-        "app.muplay.database.CredentialStore*Companion",
+        "io.github.helios57.muplay.database.MuPlayDatabase",
+        "io.github.helios57.muplay.database.CredentialStore",
+        "io.github.helios57.muplay.database.CredentialStore*Companion",
         // Plan 7 Task 2, 19/19 LINE. Listed here rather than given a rule of its own for the
         // reason this rule exists: its value is "did this line run at all", and its branches are
         // gated separately above.
-        "app.muplay.database.KeystoreKeys",
-        "app.muplay.database.di.DataModule",
-        "app.muplay.database.entity.MediaProgressEntity",
-        "app.muplay.database.entity.LibraryEntity",
-        "app.muplay.database.entity.SyncWatermarkEntity",
-        "app.muplay.database.dao.LibraryDao",
-        "app.muplay.database.dao.BrowseDao",
-        "app.muplay.database.dao.MirrorReplacement",
-        "app.muplay.database.dao.SyncWatermarkDao",
-        "app.muplay.database.LibraryRepository",
-        "app.muplay.database.SubsonicSourceProvider",
-        "app.muplay.database.BrowseRepository",
-        "app.muplay.database.ShuffleRepository",
-        "app.muplay.database.NotConfiguredException",
-        "app.muplay.database.EmptyLibraryListException",
-        "app.muplay.database.SyncEngine*",
-        "app.muplay.database.SyncState*",
+        "io.github.helios57.muplay.database.KeystoreKeys",
+        "io.github.helios57.muplay.database.di.DataModule",
+        "io.github.helios57.muplay.database.entity.MediaProgressEntity",
+        "io.github.helios57.muplay.database.entity.LibraryEntity",
+        "io.github.helios57.muplay.database.entity.SyncWatermarkEntity",
+        "io.github.helios57.muplay.database.dao.LibraryDao",
+        "io.github.helios57.muplay.database.dao.BrowseDao",
+        "io.github.helios57.muplay.database.dao.MirrorReplacement",
+        "io.github.helios57.muplay.database.dao.SyncWatermarkDao",
+        "io.github.helios57.muplay.database.LibraryRepository",
+        "io.github.helios57.muplay.database.SubsonicSourceProvider",
+        "io.github.helios57.muplay.database.BrowseRepository",
+        "io.github.helios57.muplay.database.ShuffleRepository",
+        "io.github.helios57.muplay.database.NotConfiguredException",
+        "io.github.helios57.muplay.database.EmptyLibraryListException",
+        "io.github.helios57.muplay.database.SyncEngine*",
+        "io.github.helios57.muplay.database.SyncState*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1433,25 +1433,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.50"),
       includes = listOf(
-        "app.muplay.database.CredentialStore*",
-        "app.muplay.database.LibraryRepository*",
-        "app.muplay.database.SubsonicSourceProvider*",
-        "app.muplay.database.BrowseRepository*",
-        "app.muplay.database.ShuffleRepository*",
+        "io.github.helios57.muplay.database.CredentialStore*",
+        "io.github.helios57.muplay.database.LibraryRepository*",
+        "io.github.helios57.muplay.database.SubsonicSourceProvider*",
+        "io.github.helios57.muplay.database.BrowseRepository*",
+        "io.github.helios57.muplay.database.ShuffleRepository*",
         // Plan 4 Task 4. `AudiobookRepository`'s two `Flow.map` lambdas -- `observeSettings` and
         // `observeAudiobookItems` -- are the same artefact as `BrowseRepository`'s four above and
         // belong to the same rule. Narrow on purpose: the class itself, its companion and its
         // `combine` lambda are gated at 0.90 by the Plan 4 Task 4 rules below, and that rule
         // excludes exactly this glob so the two rules cannot both claim a class.
-        "app.muplay.database.AudiobookRepository*inlined*",
+        "io.github.helios57.muplay.database.AudiobookRepository*inlined*",
       ),
       excludes = listOf(
-        "app.muplay.database.CredentialStore",
-        "app.muplay.database.CredentialStore*Companion",
-        "app.muplay.database.LibraryRepository",
-        "app.muplay.database.SubsonicSourceProvider",
-        "app.muplay.database.BrowseRepository",
-        "app.muplay.database.ShuffleRepository",
+        "io.github.helios57.muplay.database.CredentialStore",
+        "io.github.helios57.muplay.database.CredentialStore*Companion",
+        "io.github.helios57.muplay.database.LibraryRepository",
+        "io.github.helios57.muplay.database.SubsonicSourceProvider",
+        "io.github.helios57.muplay.database.BrowseRepository",
+        "io.github.helios57.muplay.database.ShuffleRepository",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1476,7 +1476,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.database.RendererStore"),
+      includes = listOf("io.github.helios57.muplay.database.RendererStore"),
       requiresInstrumentedData = true,
     ),
     // The same class's LINE, and its coroutine artefacts, at the full 0.90 rather than at the
@@ -1499,8 +1499,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.RendererStore*",
-        "app.muplay.database.CastPreferences",
+        "io.github.helios57.muplay.database.RendererStore*",
+        "io.github.helios57.muplay.database.CastPreferences",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1542,7 +1542,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // and is gated by the Plan 4 Task 4 rules below rather than folded in here, because its
         // execution data comes from two connected suites and this rule's recorded falsification is
         // about one. Whoever re-measures either must re-measure both.
-        "app.muplay.database.BrowseTreeRepository",
+        "io.github.helios57.muplay.database.BrowseTreeRepository",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1564,7 +1564,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.BrowseTreeRepository",
+        "io.github.helios57.muplay.database.BrowseTreeRepository",
         // Plan 5 Task 5 put `startIndexOf` on the companion, which gave it a LINE counter and so
         // took it out of the standing `$Companion` exception above -- that exception is for
         // companions carrying **zero** counters, which `warnUngatedClasses` skips because no rule
@@ -1576,7 +1576,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // already reach their companions. An entry written as `BrowseTreeRepository$Companion`
         // matches nothing and leaves the warning in place -- measured, because I wrote it that way
         // first and the warning did not move.
-        "app.muplay.database.BrowseTreeRepository*",
+        "io.github.helios57.muplay.database.BrowseTreeRepository*",
         // Plan 4 Task 4 deleted `MirrorBookshelf`, `BookProgress` and `BookPosition`; see the
         // BRANCH rule above and the Plan 4 Task 4 rules below.
       ),
@@ -1630,11 +1630,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.MigrationsKt*",
-        "app.muplay.database.dao.ChapterDao*",
-        "app.muplay.database.entity.BookSettingsEntity",
-        "app.muplay.database.entity.ChapterEntity",
-        "app.muplay.database.entity.ChapterScanEntity",
+        "io.github.helios57.muplay.database.MigrationsKt*",
+        "io.github.helios57.muplay.database.dao.ChapterDao*",
+        "io.github.helios57.muplay.database.entity.BookSettingsEntity",
+        "io.github.helios57.muplay.database.entity.ChapterEntity",
+        "io.github.helios57.muplay.database.entity.ChapterScanEntity",
       ),
       requiresInstrumentedData = true,
     ),
@@ -1672,8 +1672,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.BookSummaries",
-        "app.muplay.database.BookSummaries*",
+        "io.github.helios57.muplay.database.BookSummaries",
+        "io.github.helios57.muplay.database.BookSummaries*",
       ),
     ),
     CoverageFloor(
@@ -1681,8 +1681,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.BookSummaries",
-        "app.muplay.database.BookSummaries*",
+        "io.github.helios57.muplay.database.BookSummaries",
+        "io.github.helios57.muplay.database.BookSummaries*",
       ),
     ),
     // `AudiobookRepository` itself needs Room, so its floors are instrumented -- and its execution
@@ -1712,10 +1712,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.AudiobookRepository",
-        "app.muplay.database.AudiobookRepository*",
+        "io.github.helios57.muplay.database.AudiobookRepository",
+        "io.github.helios57.muplay.database.AudiobookRepository*",
       ),
-      excludes = listOf("app.muplay.database.AudiobookRepository*bookshelf*"),
+      excludes = listOf("io.github.helios57.muplay.database.AudiobookRepository*bookshelf*"),
       requiresInstrumentedData = true,
     ),
     // `$bookshelf$1` -- the `combine` transform -- measured **5/6 = 0.8333 BRANCH**, 7/7 LINE, and
@@ -1733,7 +1733,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.80"),
-      includes = listOf("app.muplay.database.AudiobookRepository*bookshelf*"),
+      includes = listOf("io.github.helios57.muplay.database.AudiobookRepository*bookshelf*"),
       requiresInstrumentedData = true,
     ),
     // The same classes' LINE -- `AudiobookRepository` **66/66**, `$Companion` **2/2**,
@@ -1754,11 +1754,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.database.AudiobookRepository",
-        "app.muplay.database.AudiobookRepository*",
-        "app.muplay.database.dao.AudiobookItemRow",
+        "io.github.helios57.muplay.database.AudiobookRepository",
+        "io.github.helios57.muplay.database.AudiobookRepository*",
+        "io.github.helios57.muplay.database.dao.AudiobookItemRow",
       ),
-      excludes = listOf("app.muplay.database.AudiobookRepository*inlined*"),
+      excludes = listOf("io.github.helios57.muplay.database.AudiobookRepository*inlined*"),
       requiresInstrumentedData = true,
     ),
   ),
@@ -1774,7 +1774,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // below; the only classes left over are `MuPlayDataSourceFactory$Companion`,
   // `NavidromeLoadErrorHandlingPolicy$Companion`, `QueueRepository$Companion`,
   // `QueueRepository$mediaItems$1`, the `ResumePolicy` interface and the `@Qualifier` annotation
-  // class `app.muplay.media.di.MediaHttpClient`, every one of which measures zero branches *and*
+  // class `io.github.helios57.muplay.media.di.MediaHttpClient`, every one of which measures zero branches *and*
   // zero lines, so [UngatedClassChecker.warnUngatedClasses] skips them and no rule can gate them
   // anyway. (`MediaHttpClient` was named only inside one rule's own comment before this round,
   // which is the wrong place for it: this paragraph is the list a reader checks.)
@@ -1840,7 +1840,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.50"),
-      includes = listOf("app.muplay.media.QueueEditor"),
+      includes = listOf("io.github.helios57.muplay.media.QueueEditor"),
       requiresInstrumentedData = true,
     ),
     // The three missed lines are the closing braces of `remove`, `move` and `jumpTo` -- the
@@ -1851,7 +1851,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.92"),
-      includes = listOf("app.muplay.media.QueueEditor"),
+      includes = listOf("io.github.helios57.muplay.media.QueueEditor"),
       requiresInstrumentedData = true,
     ),
     // `ArtworkUri` -- the object that keeps a non-expiring Subsonic password equivalent off the
@@ -1884,7 +1884,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.ArtworkUri"),
+      includes = listOf("io.github.helios57.muplay.media.ArtworkUri"),
     ),
     // `PlaybackFailure` -- which of four sentences a listener is shown when playback stops.
     //
@@ -1918,8 +1918,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.PlaybackFailure",
-        "app.muplay.media.PlaybackFailure*",
+        "io.github.helios57.muplay.media.PlaybackFailure",
+        "io.github.helios57.muplay.media.PlaybackFailure*",
       ),
     ),
     // 15/16 = 0.9375 BRANCH from **JVM data alone** -- `StreamRetryPolicyTest`, ten tests, no
@@ -1939,7 +1939,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.StreamRetryPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.StreamRetryPolicy"),
     ),
     // **14/14 = 1.0000 LINE, also JVM-only** (`MediaModuleTest`) -- measured on master after the
     // merge, not carried forward from either lane. This one number has now been wrong twice in a
@@ -1970,7 +1970,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.di.MediaModule"),
+      includes = listOf("io.github.helios57.muplay.media.di.MediaModule"),
     ),
     // 6/6 = 1.0000 BRANCH, instrumented. `NavidromeLoadErrorHandlingPolicy` is the adapter between
     // Media3's `LoadErrorInfo` and the decision above, and its branches are the passthrough:
@@ -1982,7 +1982,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.NavidromeLoadErrorHandlingPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.NavidromeLoadErrorHandlingPolicy"),
       requiresInstrumentedData = true,
     ),
     // 11/11, 14/14, 16/16 and 2/2 = 1.0000 LINE, instrumented. `MuPlayDataSourceFactory` carries
@@ -2005,9 +2005,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.MuPlayDataSourceFactory",
-        "app.muplay.media.NavidromeLoadErrorHandlingPolicy",
-        "app.muplay.media.RequestedUriDataSource*",
+        "io.github.helios57.muplay.media.MuPlayDataSourceFactory",
+        "io.github.helios57.muplay.media.NavidromeLoadErrorHandlingPolicy",
+        "io.github.helios57.muplay.media.RequestedUriDataSource*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2021,17 +2021,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // Falsified the other way round, because a floor measuring exactly 1.0000 cannot be falsified
     // by raising its minimum: JaCoCo validates `minimum` *before* comparing anything, so 1.01
-    // fails with "Rule violated for class app.muplay.media.PlaybackQueue: given minimum ratio is
+    // fails with "Rule violated for class io.github.helios57.muplay.media.PlaybackQueue: given minimum ratio is
     // 1.01, but must be between 0.0 and 1.0" -- measured here, and the identical message
     // zero-coverage code would produce, which proves nothing about any test. Watched failing with
     // `PlaybackQueueTest` moved aside instead: "Rule violated for class
-    // app.muplay.media.PlaybackQueue: branches covered ratio is 0.00, but expected minimum is
+    // io.github.helios57.muplay.media.PlaybackQueue: branches covered ratio is 0.00, but expected minimum is
     // 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackQueue"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackQueue"),
     ),
     // `PlaybackQueue$Companion` -- the `of` factory -- measures 1/1 LINE and **no branches at
     // all**, so it needs a rule of its own on the counter it actually carries: a BRANCH rule over
@@ -2043,13 +2043,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `*Companion`, not `$Companion`: a literal `$` in a pattern never matches (see this table's
     // own doc, gotcha 3). JVM-measurable, same run as above. Watched failing with
     // `PlaybackQueueTest` moved aside: "Rule violated for class
-    // app.muplay.media.PlaybackQueue.Companion: lines covered ratio is 0.00, but expected minimum
+    // io.github.helios57.muplay.media.PlaybackQueue.Companion: lines covered ratio is 0.00, but expected minimum
     // is 0.90".
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackQueue*Companion"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackQueue*Companion"),
     ),
     // `MediaItems` 2/2 and `QueueRepository` 2/2 = 1.0000 BRANCH, instrumented -- both measure
     // 0/2 from JVM data alone, because `MediaItem` is built on `android.net.Uri` and there is no
@@ -2062,7 +2062,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.MediaItems", "app.muplay.media.QueueRepository"),
+      includes = listOf("io.github.helios57.muplay.media.MediaItems", "io.github.helios57.muplay.media.QueueRepository"),
       requiresInstrumentedData = true,
     ),
     // 18/18 and 10/10 = 1.0000 LINE, instrumented. Both classes ride here *as well as* carrying
@@ -2093,14 +2093,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // for two other `$Companion`s above.
     //
     // Watched failing with the connected run's `.ec` -- the execution data these two classes'
-    // only tests produce -- moved aside: "Rule violated for class app.muplay.media.MediaItems:
+    // only tests produce -- moved aside: "Rule violated for class io.github.helios57.muplay.media.MediaItems:
     // lines covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, alongside the same
     // for `QueueRepository` and for both classes' BRANCH rule.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.MediaItems", "app.muplay.media.QueueRepository"),
+      includes = listOf("io.github.helios57.muplay.media.MediaItems", "io.github.helios57.muplay.media.QueueRepository"),
       requiresInstrumentedData = true,
     ),
     // Plan 3 Task 8a: the resume policy. 1/1 = 1.0000 LINE each for `NeverResume` and
@@ -2119,7 +2119,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // describes. Same argument as `MediaModule` above, reached from a different direction.
     //
     // Watched failing, with `ResumePolicyTest` moved aside: both classes drop to 0/1 and the build
-    // fails naming the ratio -- "Rule violated for class app.muplay.media.NeverResume: lines
+    // fails naming the ratio -- "Rule violated for class io.github.helios57.muplay.media.NeverResume: lines
     // covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class. That is
     // the only way to watch a floor already measuring 1.0000 fail, and it is worth writing down
     // why: raising `minimum` above the measured ratio, which is how every fractional floor in this
@@ -2135,7 +2135,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.NeverResume", "app.muplay.media.ResumeTarget"),
+      includes = listOf("io.github.helios57.muplay.media.NeverResume", "io.github.helios57.muplay.media.ResumeTarget"),
     ),
     // ---- Plan 3 Task 8b: the seam that applies the decision, and the writer -------------------
     // `MuPlayer` **83/83 = 1.0000 LINE**, instrumented.
@@ -2158,20 +2158,20 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // Falsified by moving the connected run's `.ec` aside -- the only execution data this class has
     // -- exactly as the `ContentTypeSwitcher` entry below was: "Rule violated for class
-    // app.muplay.media.MuPlayer: lines covered ratio is 0.00, but expected minimum is 0.90",
+    // io.github.helios57.muplay.media.MuPlayer: lines covered ratio is 0.00, but expected minimum is 0.90",
     // BUILD FAILED.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.MuPlayer",
+        "io.github.helios57.muplay.media.MuPlayer",
         // Plan 3 Task 12's anonymous `Player.Listener`, 2/2 -- the one this class installs on the
         // **wrapped** player so it can announce a command set the wrapped player does not know it
         // has. Two lines, and if neither ran the announcement never happens and every seek from a
         // `MediaController` is dropped in silence. `*1`, not `$1`: a literal `$` in a pattern never
         // matches (this table's own doc, gotcha 3).
-        "app.muplay.media.MuPlayer*1",
+        "io.github.helios57.muplay.media.MuPlayer*1",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2192,13 +2192,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // being excused, and 0.90 leaves room for that one dead arm and no more -- one genuinely
     // uncovered branch takes this to 26/28 = 0.9286 and a second to 25/28 = 0.8929, which fails.
     //
-    // Falsified by raising the minimum to 0.97: "Rule violated for class app.muplay.media.MuPlayer:
+    // Falsified by raising the minimum to 0.97: "Rule violated for class io.github.helios57.muplay.media.MuPlayer:
     // branches covered ratio is 0.96, but expected minimum is 0.97", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.MuPlayer"),
+      includes = listOf("io.github.helios57.muplay.media.MuPlayer"),
       requiresInstrumentedData = true,
     ),
     // ---- Plan 3 Task 12: transcoded seek ------------------------------------------------------
@@ -2218,13 +2218,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // device tier is a second caller and the merged report would stay green -- the exact
     // stale-falsification shape `CLAUDE.md` records. What fires is withholding that test and
     // running `jacocoJvmCoverageVerification`, i.e. the task this `requiresInstrumentedData = false`
-    // is a claim about: "Rule violated for class app.muplay.media.TranscodeSeek: branches covered
+    // is a claim about: "Rule violated for class io.github.helios57.muplay.media.TranscodeSeek: branches covered
     // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.TranscodeSeek"),
+      includes = listOf("io.github.helios57.muplay.media.TranscodeSeek"),
     ),
     // `TranscodeOffsetSupport` **17/18 = 0.9444 BRANCH**, instrumented -- the capability gate and
     // the adapter that rebuilds an item's URI at an offset. Its branches are the ones that decide
@@ -2248,7 +2248,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.TranscodeOffsetSupport"),
+      includes = listOf("io.github.helios57.muplay.media.TranscodeOffsetSupport"),
       requiresInstrumentedData = true,
     ),
     // The LINE half of the same family, all at 1.0000, instrumented: `TranscodeOffsetSupport`
@@ -2275,11 +2275,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.TranscodeOffsetSupport",
-        "app.muplay.media.TranscodeOffsetSupport*",
-        "app.muplay.media.TranscodeSeekSupport*",
-        "app.muplay.media.SeekMethod*",
-        "app.muplay.media.MuPlayerKt",
+        "io.github.helios57.muplay.media.TranscodeOffsetSupport",
+        "io.github.helios57.muplay.media.TranscodeOffsetSupport*",
+        "io.github.helios57.muplay.media.TranscodeSeekSupport*",
+        "io.github.helios57.muplay.media.SeekMethod*",
+        "io.github.helios57.muplay.media.MuPlayerKt",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2343,7 +2343,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `@Ignore` on both `attach` tests **and the device suite re-run** (363 tests, 5 skipped): this
     // class drops to exactly **26/30 = 0.8667**, reproducing master's number, and
     // `jacocoTestCoverageVerification` reports "Rule violated for class
-    // app.muplay.media.ProgressWriter: branches covered ratio is 0.86, but expected minimum is
+    // io.github.helios57.muplay.media.ProgressWriter: branches covered ratio is 0.86, but expected minimum is
     // 0.90", BUILD FAILED. Restored, green at 30/30.
     //
     // **The re-run is not optional and the reason is worth keeping.** An `@Ignore` changes only the
@@ -2354,12 +2354,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // The all-tests-withheld residual is still recorded, because it is a different claim and both
     // are cheap to state: with the connected `.ec` moved aside, "branches covered ratio is 0.00",
-    // BUILD FAILED, and the same for `app.muplay.media.ProgressWriter.write.2`.
+    // BUILD FAILED, and the same for `io.github.helios57.muplay.media.ProgressWriter.write.2`.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.ProgressWriter*"),
+      includes = listOf("io.github.helios57.muplay.media.ProgressWriter*"),
       requiresInstrumentedData = true,
     ),
     // The same family's LINE, instrumented, and it gates what the BRANCH rule above cannot reach:
@@ -2389,13 +2389,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.ProgressWriter*"),
+      includes = listOf("io.github.helios57.muplay.media.ProgressWriter*"),
       requiresInstrumentedData = true,
     ),
     // ---- Plan 6 Task 9: the handover -----------------------------------------------------------
     // Every number below is MEASURED, per class, from
     // `core/media/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml` at this commit, with
-    // `:core:media`'s JVM tier and the `app.muplay.media.cast` device package both in the run.
+    // `:core:media`'s JVM tier and the `io.github.helios57.muplay.media.cast` device package both in the run.
     // Per class and never as a module blend, because a BRANCH floor over a class with no BRANCH
     // counters enforces nothing at any minimum and a blend hides which of these is which.
     //
@@ -2410,7 +2410,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // LINE rule below rather than here.
     //
     // Falsified by moving `OneShotResumePolicyTest` aside: "Rule violated for class
-    // app.muplay.media.cast.OneShotResumePolicy: branches covered ratio is 0.00, but expected
+    // io.github.helios57.muplay.media.cast.OneShotResumePolicy: branches covered ratio is 0.00, but expected
     // minimum is 0.90", BUILD FAILED. Raising the minimum is not available at 1.0000 -- JaCoCo
     // validates `minimum` before comparing and rejects 1.01 as a configuration error, which would
     // have gone red against any code at all.
@@ -2418,7 +2418,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.cast.OneShotResumePolicy"),
+      includes = listOf("io.github.helios57.muplay.media.cast.OneShotResumePolicy"),
     ),
     // `PlaybackOutputSwitch` BRANCH 4/4 = 1.0000 and `CastSources` BRANCH 20/20 = 1.0000,
     // instrumented. Both measure 0/N from JVM data alone -- a `Player` is confined to a `Looper` and
@@ -2434,8 +2434,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.PlaybackOutputSwitch",
-        "app.muplay.media.cast.CastSources",
+        "io.github.helios57.muplay.media.PlaybackOutputSwitch",
+        "io.github.helios57.muplay.media.cast.CastSources",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2457,7 +2457,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.cast.UpnpPlayer"),
+      includes = listOf("io.github.helios57.muplay.media.cast.UpnpPlayer"),
       requiresInstrumentedData = true,
     ),
     // The same family's LINE, instrumented, and it reaches what the BRANCH rule cannot: the six
@@ -2478,7 +2478,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.cast.UpnpPlayer*"),
+      includes = listOf("io.github.helios57.muplay.media.cast.UpnpPlayer*"),
       requiresInstrumentedData = true,
     ),
     // `CastSessionManager` LINE 84/84 = 1.0000, instrumented, **and LINE is the honest counter
@@ -2497,13 +2497,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `ContinuationImpl` subclasses and carry **zero counters of either kind**, so JaCoCo evaluates
     // nothing for them and `warnUngatedClasses` skips them.
     //
-    // Falsified by moving the `app.muplay.media.cast` device package's `.ec` aside: every class
+    // Falsified by moving the `io.github.helios57.muplay.media.cast` device package's `.ec` aside: every class
     // here drops to 0.00 and the build fails naming each one.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.cast.CastSessionManager*"),
+      includes = listOf("io.github.helios57.muplay.media.cast.CastSessionManager*"),
       requiresInstrumentedData = true,
     ),
     // ---- Plan 3 Task 3: the media cache ------------------------------------------------------
@@ -2533,8 +2533,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // reason the `ResumePolicy` entry above spells out: at a measured 1.0000 a minimum above the
     // ratio is a configuration error JaCoCo rejects before it compares anything. Watched failing
     // at its real minimum, with the connected run re-taken under
-    // `-Pandroid.testInstrumentationRunnerArguments.notClass=app.muplay.media.MediaCacheTest`:
-    // "Rule violated for class app.muplay.media.TrackIdCacheKeyFactory: branches covered ratio is
+    // `-Pandroid.testInstrumentationRunnerArguments.notClass=io.github.helios57.muplay.media.MediaCacheTest`:
+    // "Rule violated for class io.github.helios57.muplay.media.TrackIdCacheKeyFactory: branches covered ratio is
     // 0.50, but expected minimum is 0.90", BUILD FAILED.
     //
     // 0.50 and not 0.00, which is the more interesting number: `MuPlayDataSourceFactoryTest`'s own
@@ -2546,7 +2546,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.TrackIdCacheKeyFactory"),
+      includes = listOf("io.github.helios57.muplay.media.TrackIdCacheKeyFactory"),
       requiresInstrumentedData = true,
     ),
     // 8/8, 2/2 and 1/1 = 1.0000 LINE, instrumented. None of these three carries a single BRANCH
@@ -2570,9 +2570,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // doubt -- the same argument the BRANCH rule above makes about its own elvis.
     //
     // Watched failing the same way, with `MediaCacheTest` moved aside: BUILD FAILED naming all
-    // three -- "app.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
-    // "app.muplay.media.MissingCacheKeyException: lines covered ratio is 0.00" and
-    // "app.muplay.media.MediaCache: lines covered ratio is 0.83", each against a minimum of 0.90.
+    // three -- "io.github.helios57.muplay.media.di.MediaCacheModule: lines covered ratio is 0.00",
+    // "io.github.helios57.muplay.media.MissingCacheKeyException: lines covered ratio is 0.00" and
+    // "io.github.helios57.muplay.media.MediaCache: lines covered ratio is 0.83", each against a minimum of 0.90.
     // `MediaCache`'s 0.83 is 5/6: `MuPlayDataSourceFactoryTest` builds its own cache through the
     // two-argument overload, so the one line left uncovered is the production default argument --
     // which is precisely the line `MediaCacheModule` exists to exercise and the one a
@@ -2586,9 +2586,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.MediaCache",
-        "app.muplay.media.MissingCacheKeyException",
-        "app.muplay.media.di.MediaCacheModule",
+        "io.github.helios57.muplay.media.MediaCache",
+        "io.github.helios57.muplay.media.MissingCacheKeyException",
+        "io.github.helios57.muplay.media.di.MediaCacheModule",
       ),
       requiresInstrumentedData = true,
     ),
@@ -2609,13 +2609,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified with `TaskRemovalPolicyTest` moved aside, because a floor measuring exactly 1.0000
     // cannot be falsified by raising its minimum (see the Task 8a note above for the exact JaCoCo
     // message that produces and why it proves nothing): "Rule violated for class
-    // app.muplay.media.TaskRemovalPolicy: branches covered ratio is 0.00, but expected minimum is
+    // io.github.helios57.muplay.media.TaskRemovalPolicy: branches covered ratio is 0.00, but expected minimum is
     // 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.TaskRemovalPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.TaskRemovalPolicy"),
     ),
     // `PlaybackState$Companion` 4/4 = 1.0000 BRANCH, JVM-only (`PlaybackStateTest`). The four
     // branches are `durationMsOf`'s two elvis arms and its `coerceAtLeast`, which is the whole of
@@ -2629,7 +2629,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackState*Companion"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackState*Companion"),
     ),
     // `PlaybackState` 24/24 and `TaskRemovalPolicy` 1/1 = 1.0000 LINE, JVM-only. Both ride here as
     // well as (for `TaskRemovalPolicy` and the companion) carrying a BRANCH rule, because the
@@ -2644,7 +2644,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackState", "app.muplay.media.TaskRemovalPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackState", "io.github.helios57.muplay.media.TaskRemovalPolicy"),
     ),
     // Plan 4 Task 7. **`PlaybackState` 4/4 = 1.0000 BRANCH, JVM-only** (`PlaybackStateTest`) --
     // `isAudiobook`'s two `==` comparisons and their short-circuit. Re-measured here, not carried
@@ -2666,7 +2666,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // Falsified by withholding `PlaybackStateTest` (the file moved aside, not `@Disabled`, and
     // restored by a trap rather than by `git checkout` -- see CLAUDE.md on the revert that destroys
-    // uncommitted work): *"Rule violated for class app.muplay.media.PlaybackState: branches covered
+    // uncommitted work): *"Rule violated for class io.github.helios57.muplay.media.PlaybackState: branches covered
     // ratio is 0.00, but expected minimum is 0.90"*, BUILD FAILED. **0.00, so that one class is the
     // only reader of `isAudiobook` in either tier today.** Task 9's book player is its first
     // production consumer, and when it lands this falsification is void -- re-run it, do not carry
@@ -2675,7 +2675,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackState"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackState"),
     ),
     // Plan 4 Task 7's decision half. **`BookPlaybackSettings$Companion` 2/2 = 1.0000 BRANCH and
     // 5/5 LINE; `BookPlaybackSettings` 2/2 LINE**, all from JVM data alone
@@ -2702,7 +2702,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // FALSIFIED, and the number is not the one this comment was first written with -- which is the
     // reason it is spelled out rather than summarised. Withholding `BookPlaybackSettingsTest` alone
-    // gives *"Rule violated for class app.muplay.media.BookPlaybackSettings.Companion: branches
+    // gives *"Rule violated for class io.github.helios57.muplay.media.BookPlaybackSettings.Companion: branches
     // covered ratio is **0.50**, but expected minimum is 0.90"*, BUILD FAILED -- not the 0.00 that
     // was predicted, because `MediaModuleTest`'s *"until the audiobook snapshot lands, nothing is a
     // book"* asserts `of(source.itemFor(..)) == MUSIC` and so drives the `null` arm from another
@@ -2716,15 +2716,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.BookPlaybackSettings*Companion"),
+      includes = listOf("io.github.helios57.muplay.media.BookPlaybackSettings*Companion"),
     ),
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.BookPlaybackSettings",
-        "app.muplay.media.AudiobookItem",
+        "io.github.helios57.muplay.media.BookPlaybackSettings",
+        "io.github.helios57.muplay.media.AudiobookItem",
       ),
     ),
     // `BookSpeedController` -- the half of that split that *applies* the decision, and the one that
@@ -2754,7 +2754,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.BookSpeedController"),
+      includes = listOf("io.github.helios57.muplay.media.BookSpeedController"),
       requiresInstrumentedData = true,
     ),
     // 22/22 = 1.0000 BRANCH, instrumented -- `PlaybackConnection`, driven by `MuPlaybackServiceTest`
@@ -2795,7 +2795,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackConnection"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackConnection"),
       requiresInstrumentedData = true,
     ),
     // Plan 3 Task 5's fix round: the connection gate. 4/4 = 1.0000 BRANCH from **JVM data alone**
@@ -2813,13 +2813,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by withholding the covering test rather than by raising the minimum, for the reason
     // the Task 8a entry above spells out (JaCoCo rejects a minimum over 1.0 before it compares
     // anything, which proves nothing): with `ControllerAccessPolicyTest` moved aside, "Rule
-    // violated for class app.muplay.media.ControllerAccessPolicy: branches covered ratio is 0.00,
+    // violated for class io.github.helios57.muplay.media.ControllerAccessPolicy: branches covered ratio is 0.00,
     // but expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.ControllerAccessPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.ControllerAccessPolicy"),
     ),
     // The adapter half of the same decision: 2/2 = 1.0000 BRANCH, instrumented, driven by
     // `ControllerAccessGateTest` -- which calls the real `onConnect` with a real `ControllerInfo`
@@ -2828,7 +2828,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // **The class moved in Plan 5 Task 4** and this include moved with it. Media3 takes exactly one
     // `MediaLibrarySession.Callback`, so `MuPlaybackService$LibraryCallback` -- whose entire body
-    // was `onConnect` -- became `app.muplay.media.browse.MuPlayLibraryCallback`, which serves the
+    // was `onConnect` -- became `io.github.helios57.muplay.media.browse.MuPlayLibraryCallback`, which serves the
     // browse tree as well. `warnUngatedClasses` is what caught the stale pattern, by name: *"this
     // floor currently enforces nothing: it matches no class in this module at all"*. A JaCoCo
     // include that stops matching does not fail; it silently gates nothing.
@@ -2849,7 +2849,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.browse.MuPlayLibraryCallback"),
+      includes = listOf("io.github.helios57.muplay.media.browse.MuPlayLibraryCallback"),
       requiresInstrumentedData = true,
     ),
     // 1.0000 LINE on everything this task adds that a device can reach: `PlaybackConnection` 51/51
@@ -2888,7 +2888,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // production shape exercised.
     //
     // Re-falsified after the change, not assumed to still hold: with `:core:media`'s own connected
-    // `.ec` moved aside, "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered
+    // `.ec` moved aside, "Rule violated for class io.github.helios57.muplay.media.MuPlayerFactory: lines covered
     // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, and green again once restored.
     //
     // `MuPlaybackService*Companion` is listed by name rather than as `MuPlaybackService*`,
@@ -2896,25 +2896,25 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // below at a lower minimum.
     //
     // Falsified by moving the connected run's `.ec` aside -- the only execution data these classes
-    // have: "Rule violated for class app.muplay.media.MuPlayerFactory: lines covered ratio is 0.00,
+    // have: "Rule violated for class io.github.helios57.muplay.media.MuPlayerFactory: lines covered ratio is 0.00,
     // but expected minimum is 0.90", BUILD FAILED, once per class.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.PlaybackConnection",
-        "app.muplay.media.PlaybackConnection*controller*2",
-        "app.muplay.media.PlaybackConnection*controller*2*1",
-        "app.muplay.media.PlaybackConnection*listener*1",
+        "io.github.helios57.muplay.media.PlaybackConnection",
+        "io.github.helios57.muplay.media.PlaybackConnection*controller*2",
+        "io.github.helios57.muplay.media.PlaybackConnection*controller*2*1",
+        "io.github.helios57.muplay.media.PlaybackConnection*listener*1",
         // Deliberately `*connect*` and not `*connect*connected*1*1`: the suspend function's own
         // continuation class (`PlaybackConnection$connect$1`) carries zero counters of either kind,
         // so it can never move this ratio, and a pattern pinned to the lambda's exact spelling is
         // the thing that just went stale once. This one survives the body being rearranged again.
-        "app.muplay.media.PlaybackConnection*connect*",
-        "app.muplay.media.PlaybackConnection*startTicker*1",
-        "app.muplay.media.MuPlayerFactory",
-        "app.muplay.media.MuPlaybackService*Companion",
+        "io.github.helios57.muplay.media.PlaybackConnection*connect*",
+        "io.github.helios57.muplay.media.PlaybackConnection*startTicker*1",
+        "io.github.helios57.muplay.media.MuPlayerFactory",
+        "io.github.helios57.muplay.media.MuPlaybackService*Companion",
         // Plan 5 Task 6. `MuPlaybackService$playFromSearch$1` -- the coroutine that answers the
         // Assistant's cold-start intent -- **6/6 LINE**, instrumented, from
         // `VoiceSearchJourneyTest`'s three intent tests in `:app`.
@@ -2927,9 +2927,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // 0.50 would permit anything, which is the vacuous shape this table exists to refuse.
         // What the LINE rule really holds is that the intent path *ran*: it is 0/6 the moment the
         // three intent journeys stop reaching it.
-        "app.muplay.media.MuPlaybackService*playFromSearch*1",
+        "io.github.helios57.muplay.media.MuPlaybackService*playFromSearch*1",
         // `MuPlaybackService$LibraryCallback` used to ride here at 6/6. Plan 5 Task 4 replaced it
-        // with `app.muplay.media.browse.MuPlayLibraryCallback`, which has its own LINE rule below;
+        // with `io.github.helios57.muplay.media.browse.MuPlayLibraryCallback`, which has its own LINE rule below;
         // the pattern is deleted rather than left behind, because a pattern that matches nothing
         // gates nothing and reads exactly like one that does.
       ),
@@ -2974,7 +2974,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // but somebody should decide whether 0.85 is still the number they meant.
     //
     // Watched failing at a minimum of 0.92 -- "Rule violated for class
-    // app.muplay.media.MuPlaybackService: lines covered ratio is 0.90, but expected minimum is
+    // io.github.helios57.muplay.media.MuPlaybackService: lines covered ratio is 0.90, but expected minimum is
     // 0.92", BUILD FAILED -- which is the falsification a fractional floor admits, and then
     // restored.
     //
@@ -2989,7 +2989,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.85"),
-      includes = listOf("app.muplay.media.MuPlaybackService"),
+      includes = listOf("io.github.helios57.muplay.media.MuPlaybackService"),
       requiresInstrumentedData = true,
     ),
     // **`MuPlaybackService$onCreate$N` is deliberately not gated, and that is a declaration rather
@@ -3025,7 +3025,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by withholding the covering test rather than by raising the minimum (at a measured
     // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing):
     // with `PlaybackLauncherTest` moved aside, "Rule violated for class
-    // app.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
+    // io.github.helios57.muplay.media.PlaybackLauncherKt: branches covered ratio is 0.00, but expected minimum is
     // 0.90", BUILD FAILED.
     //
     // **`PlaybackLauncher` itself is gated by the rule below rather than by this one**, and on LINE
@@ -3036,7 +3036,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackLauncherKt"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackLauncherKt"),
     ),
     // ---- Plan 3 Task 6: audio focus, becoming-noisy, wake mode, and the content-type switch ----
     // `PlaybackAudioAttributes` 2/2 = 1.0000 BRANCH from **JVM data alone**
@@ -3056,13 +3056,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by withholding the covering test rather than by raising the minimum (at a measured
     // 1.0000 JaCoCo rejects a minimum over 1.0 before it compares anything, which proves nothing --
     // see the Task 8a entry above): with `PlaybackAudioAttributesTest` moved aside, "Rule violated
-    // for class app.muplay.media.PlaybackAudioAttributes: branches covered ratio is 0.00, but
+    // for class io.github.helios57.muplay.media.PlaybackAudioAttributes: branches covered ratio is 0.00, but
     // expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackAudioAttributes"),
     ),
     // The same class's 8/8 = 1.0000 LINE, JVM, and it gates something the BRANCH rule above cannot:
     // `of` is a branchless builder chain (`setUsage`, `setContentType`), and `USAGE_MEDIA` is what
@@ -3075,7 +3075,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.PlaybackAudioAttributes"),
+      includes = listOf("io.github.helios57.muplay.media.PlaybackAudioAttributes"),
     ),
     // `ContentTypeSwitcher` 4/4 and `PlaybackLauncher` 2/2 = 1.0000 BRANCH, instrumented.
     //
@@ -3095,15 +3095,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // driven where they are applied.
     //
     // Falsified by moving both connected runs' `.ec` aside -- the only execution data either class
-    // has: "Rule violated for class app.muplay.media.ContentTypeSwitcher: branches covered ratio is
+    // has: "Rule violated for class io.github.helios57.muplay.media.ContentTypeSwitcher: branches covered ratio is
     // 0.00, but expected minimum is 0.90", BUILD FAILED, and the same for `PlaybackLauncher`.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ContentTypeSwitcher",
-        "app.muplay.media.PlaybackLauncher",
+        "io.github.helios57.muplay.media.ContentTypeSwitcher",
+        "io.github.helios57.muplay.media.PlaybackLauncher",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3121,16 +3121,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ContentTypeSwitcher",
-        "app.muplay.media.PlaybackLauncher",
-        "app.muplay.media.PlaybackLauncher*play*2",
+        "io.github.helios57.muplay.media.ContentTypeSwitcher",
+        "io.github.helios57.muplay.media.PlaybackLauncher",
+        "io.github.helios57.muplay.media.PlaybackLauncher*play*2",
         // Plan 3 Task 12: the `coroutineScope { async { refreshIfUnknown() } .. }` block, 5/5, and
         // the `async` body itself, 1/1. LINE and deliberately not BRANCH -- `*play*items*1`
         // measures 6/8 branches and the two missing arms are the `coroutineScope`/`async` state
         // machine's own suspension points, not a decision anyone wrote. The decision that *is*
         // there -- negotiate only when the answer is unknown -- lives in `TranscodeOffsetSupport`
         // and is gated on BRANCH there.
-        "app.muplay.media.PlaybackLauncher*play*items*",
+        "io.github.helios57.muplay.media.PlaybackLauncher*play*items*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3149,13 +3149,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // guessed 2/12 = 0.17, on the theory that `MediaItems`' instrumented tests would drive
     // `gainDbFor`'s two elvis arms. They do, but not into *this* task's execution data: with
     // `ReplayGainPolicyTest` moved aside, `jacocoJvmCoverageVerification` reports "Rule violated
-    // for class app.muplay.media.ReplayGainPolicy: branches covered ratio is **0.00**, but expected
+    // for class io.github.helios57.muplay.media.ReplayGainPolicy: branches covered ratio is **0.00**, but expected
     // minimum is 0.90", BUILD FAILED. No other JVM test in this module touches the class at all.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.ReplayGainPolicy"),
+      includes = listOf("io.github.helios57.muplay.media.ReplayGainPolicy"),
     ),
     // 10/10 and 14/14 = 1.0000 BRANCH, instrumented. Both classes are unreachable from the JVM
     // tier: `GainAudioProcessor` extends a Media3 `BaseAudioProcessor` and `ReplayGainController`
@@ -3190,8 +3190,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.GainAudioProcessor",
-        "app.muplay.media.ReplayGainController",
+        "io.github.helios57.muplay.media.GainAudioProcessor",
+        "io.github.helios57.muplay.media.ReplayGainController",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3222,10 +3222,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.GainAudioProcessor",
-        "app.muplay.media.ReplayGainController",
-        "app.muplay.media.ReplayGainPolicy",
-        "app.muplay.media.MuPlayRenderersFactory",
+        "io.github.helios57.muplay.media.GainAudioProcessor",
+        "io.github.helios57.muplay.media.ReplayGainController",
+        "io.github.helios57.muplay.media.ReplayGainPolicy",
+        "io.github.helios57.muplay.media.MuPlayRenderersFactory",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3265,8 +3265,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.browse.DefaultSurfaceResolver",
-        "app.muplay.media.browse.SurfaceResolver",
+        "io.github.helios57.muplay.media.browse.DefaultSurfaceResolver",
+        "io.github.helios57.muplay.media.browse.SurfaceResolver",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3292,16 +3292,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // table's own doc, gotcha 3).
     //
     // Falsified by moving `:core:media`'s connected `.ec` aside -- the only execution data these
-    // classes have: "Rule violated for class app.muplay.media.browse.BrowseItems: branches covered
+    // classes have: "Rule violated for class io.github.helios57.muplay.media.browse.BrowseItems: branches covered
     // ratio is 0.00, but expected minimum is 0.90", BUILD FAILED, once per class.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.browse.BrowseItems",
-        "app.muplay.media.browse.MuPlayLibraryCallback*onGetChildren*1",
-        "app.muplay.media.browse.MuPlayLibraryCallback*onGetItem*1",
+        "io.github.helios57.muplay.media.browse.BrowseItems",
+        "io.github.helios57.muplay.media.browse.MuPlayLibraryCallback*onGetChildren*1",
+        "io.github.helios57.muplay.media.browse.MuPlayLibraryCallback*onGetItem*1",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3322,14 +3322,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // 0.85 and not lower: one more genuinely uncovered branch takes it to 6/8 = 0.7500 and fails.
     // Watched failing at 0.90 -- "Rule violated for class
-    // app.muplay.media.browse.MuPlayLibraryCallback.future.1: branches covered ratio is 0.85, but
+    // io.github.helios57.muplay.media.browse.MuPlayLibraryCallback.future.1: branches covered ratio is 0.85, but
     // expected minimum is 0.90", BUILD FAILED -- and restored. It also fires with this module's
     // connected `.ec` withheld, at 0.00.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.85"),
-      includes = listOf("app.muplay.media.browse.MuPlayLibraryCallback*future*1"),
+      includes = listOf("io.github.helios57.muplay.media.browse.MuPlayLibraryCallback*future*1"),
       requiresInstrumentedData = true,
     ),
     // 1.0000 LINE, instrumented, on everything this task added to this module: `BrowseItems` 45/45,
@@ -3369,15 +3369,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Re-falsified this round by withholding those two tests and **re-running the device suite**
     // (an `@Ignore` alone leaves JaCoCo crediting the old `.ec`, which measures nothing):
     // `$onSetMediaItems$2` drops to 10/12, "Rule violated for class
-    // app.muplay.media.browse.MuPlayLibraryCallback.onSetMediaItems.2: lines covered ratio is 0.83,
+    // io.github.helios57.muplay.media.browse.MuPlayLibraryCallback.onSetMediaItems.2: lines covered ratio is 0.83,
     // but expected minimum is 0.90", BUILD FAILED. Restored.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.browse.BrowseItems",
-        "app.muplay.media.browse.MuPlayLibraryCallback*",
+        "io.github.helios57.muplay.media.browse.BrowseItems",
+        "io.github.helios57.muplay.media.browse.MuPlayLibraryCallback*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3422,13 +3422,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ChapterAssembly",
-        "app.muplay.media.ChapterAssembly*",
-        "app.muplay.media.RawChapter",
-        "app.muplay.media.BookTimeline",
-        "app.muplay.media.BookTimeline*",
-        "app.muplay.media.BookFile",
-        "app.muplay.media.BookChapter",
+        "io.github.helios57.muplay.media.ChapterAssembly",
+        "io.github.helios57.muplay.media.ChapterAssembly*",
+        "io.github.helios57.muplay.media.RawChapter",
+        "io.github.helios57.muplay.media.BookTimeline",
+        "io.github.helios57.muplay.media.BookTimeline*",
+        "io.github.helios57.muplay.media.BookFile",
+        "io.github.helios57.muplay.media.BookChapter",
       ),
     ),
     // The same objects' LINE -- `ChapterAssembly` **21/21**, `BookTimeline` **40/40**,
@@ -3455,11 +3455,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ChapterAssembly",
-        "app.muplay.media.ChapterAssembly*",
-        "app.muplay.media.BookTimeline",
-        "app.muplay.media.BookTimeline*",
-        "app.muplay.media.BookChapter",
+        "io.github.helios57.muplay.media.ChapterAssembly",
+        "io.github.helios57.muplay.media.ChapterAssembly*",
+        "io.github.helios57.muplay.media.BookTimeline",
+        "io.github.helios57.muplay.media.BookTimeline*",
+        "io.github.helios57.muplay.media.BookChapter",
       ),
     ),
     // `ChapterRepository` BRANCH **2/2 = 1.0000**, instrumented: Room and a real Navidrome, so
@@ -3468,15 +3468,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // rather than an HTTP round trip into a `moov` atom every time a screen opens.
     //
     // Falsified by moving `:core:media`'s connected `.ec` aside and running the full gate:
-    // *"Rule violated for class app.muplay.media.ChapterRepository: branches covered ratio is
+    // *"Rule violated for class io.github.helios57.muplay.media.ChapterRepository: branches covered ratio is
     // 0.00, but expected minimum is 0.90"*, BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ChapterRepository",
-        "app.muplay.media.ChapterRepository*",
+        "io.github.helios57.muplay.media.ChapterRepository",
+        "io.github.helios57.muplay.media.ChapterRepository*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3506,10 +3506,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ChapterReader",
-        "app.muplay.media.ChapterReader*",
-        "app.muplay.media.ChapterRepository",
-        "app.muplay.media.ChapterRepository*",
+        "io.github.helios57.muplay.media.ChapterReader",
+        "io.github.helios57.muplay.media.ChapterReader*",
+        "io.github.helios57.muplay.media.ChapterRepository",
+        "io.github.helios57.muplay.media.ChapterRepository*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3531,7 +3531,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // taken clamp -- `a rewind never goes past the start of the file`, `a negative stored position
     // is treated as the start` and `a stored position at the bottom of the range does not wrap
     // into the far future` -- drops it to **9/10 = 0.90** and `jacocoJvmCoverageVerification`
-    // fails with "Rule violated for class app.muplay.media.SmartRewind: branches covered ratio is
+    // fails with "Rule violated for class io.github.helios57.muplay.media.SmartRewind: branches covered ratio is
     // 0.90, but expected minimum is 1.00". Three, because that is the minimum: every other branch
     // in the class is reached by more than one test, which is what "both sides of every boundary"
     // buys and is also why 0.90 here would have needed five withheld tests to fire.
@@ -3539,7 +3539,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.media.SmartRewind"),
+      includes = listOf("io.github.helios57.muplay.media.SmartRewind"),
     ),
     // Plan 4 Task 8, the sleep timer's two Android-free halves. **8/8 and 14/14 = 1.0000 BRANCH
     // from JVM data alone** -- `SleepTimerFadeTest` (7 tests) and `ShakeDetectorTest` (12), no
@@ -3569,8 +3569,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.SleepTimerFade",
-        "app.muplay.media.ShakeDetector",
+        "io.github.helios57.muplay.media.SleepTimerFade",
+        "io.github.helios57.muplay.media.ShakeDetector",
       ),
     ),
     // `SleepTimerController` **41/42 = 0.9762 BRANCH**, instrumented. Unreachable from the JVM tier:
@@ -3604,8 +3604,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.SleepTimerController",
-        "app.muplay.media.SleepTimerController*begin*1",
+        "io.github.helios57.muplay.media.SleepTimerController",
+        "io.github.helios57.muplay.media.SleepTimerController*begin*1",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3646,10 +3646,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.ShakeSensor",
-        "app.muplay.media.ShakeSensor*",
-        "app.muplay.media.SleepTimerController",
-        "app.muplay.media.SleepTimerController*",
+        "io.github.helios57.muplay.media.ShakeSensor",
+        "io.github.helios57.muplay.media.ShakeSensor*",
+        "io.github.helios57.muplay.media.SleepTimerController",
+        "io.github.helios57.muplay.media.SleepTimerController*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3659,13 +3659,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.AudiobookResumePolicy"),
+      includes = listOf("io.github.helios57.muplay.media.AudiobookResumePolicy"),
     ),
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.media.AudiobookResumePolicy", "app.muplay.media.AudiobookItem"),
+      includes = listOf("io.github.helios57.muplay.media.AudiobookResumePolicy", "io.github.helios57.muplay.media.AudiobookItem"),
     ),
     // The four rules below replace the two PLACEHOLDER ones this block shipped with. They were
     // never re-measured, and three of the five violations that had `:core:media`'s emulator-tier
@@ -3680,10 +3680,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.AudiobookSnapshot",
-        "app.muplay.media.AudiobookSnapshot*",
+        "io.github.helios57.muplay.media.AudiobookSnapshot",
+        "io.github.helios57.muplay.media.AudiobookSnapshot*",
       ),
-      excludes = listOf("app.muplay.media.AudiobookSnapshot*start*1*1"),
+      excludes = listOf("io.github.helios57.muplay.media.AudiobookSnapshot*start*1*1"),
       requiresInstrumentedData = true,
     ),
     // **`AudiobookSnapshot$start$1$1` BRANCH 1/2 = 0.5000, and 1/2 is the ceiling.** This is the
@@ -3711,13 +3711,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // 1/2 or 0/2 and nothing else, and **0/2 is "the collector never emitted"** -- a snapshot whose
     // `combine` never ran, which is precisely the cold-snapshot defect this class exists to
     // prevent. Falsified by raising the minimum to 0.60: "Rule violated for class
-    // app.muplay.media.AudiobookSnapshot.start.1.1: branches covered ratio is 0.50, but expected
+    // io.github.helios57.muplay.media.AudiobookSnapshot.start.1.1: branches covered ratio is 0.50, but expected
     // minimum is 0.60", BUILD FAILED. Restored.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.50"),
-      includes = listOf("app.muplay.media.AudiobookSnapshot*start*1*1"),
+      includes = listOf("io.github.helios57.muplay.media.AudiobookSnapshot*start*1*1"),
       requiresInstrumentedData = true,
     ),
     // **`ResumptionQueue` BRANCH 7/8 = 0.8750**, instrumented, and the eighth arm is dead.
@@ -3748,7 +3748,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // separate reads, which no test can schedule -- untestable rather than impossible, which is the
     // honest way to say it and is not what the source comment said. Falsified by raising the
     // Falsified twice, both watched. **By withholding the test**, with the device suite re-run:
-    // 6/8 = 0.7500, "Rule violated for class app.muplay.media.ResumptionQueue: branches covered
+    // 6/8 = 0.7500, "Rule violated for class io.github.helios57.muplay.media.ResumptionQueue: branches covered
     // ratio is 0.75, but expected minimum is 0.87", BUILD FAILED -- which is master's own number,
     // so the test is exactly what closes the gap. **And by raising the minimum** to the 0.90 it had
     // before this round, which is the falsification that matters for the dead arm, since no test
@@ -3759,8 +3759,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.87"),
       includes = listOf(
-        "app.muplay.media.ResumptionQueue",
-        "app.muplay.media.ResumptionQueue*",
+        "io.github.helios57.muplay.media.ResumptionQueue",
+        "io.github.helios57.muplay.media.ResumptionQueue*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -3776,13 +3776,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.media.AudiobookSnapshot",
-        "app.muplay.media.AudiobookSnapshot*",
-        "app.muplay.media.ResumptionQueue",
-        "app.muplay.media.ResumptionQueue*",
-        "app.muplay.media.browse.MuPlayLibraryCallback*onPlaybackResumption*1",
+        "io.github.helios57.muplay.media.AudiobookSnapshot",
+        "io.github.helios57.muplay.media.AudiobookSnapshot*",
+        "io.github.helios57.muplay.media.ResumptionQueue",
+        "io.github.helios57.muplay.media.ResumptionQueue*",
+        "io.github.helios57.muplay.media.browse.MuPlayLibraryCallback*onPlaybackResumption*1",
       ),
-      excludes = listOf("app.muplay.media.AudiobookSnapshot*start*1"),
+      excludes = listOf("io.github.helios57.muplay.media.AudiobookSnapshot*start*1"),
       requiresInstrumentedData = true,
     ),
     // **`AudiobookSnapshot$start$1` LINE 6/7 = 0.8571, and 6/7 is the ceiling.** The seventh line is
@@ -3809,13 +3809,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // 0.85 still gates the six lines that do run: it fires at 5/7 = 0.7143, so losing any real line
     // of the collector reddens it. Falsified by raising the minimum to 0.90 -- the value it had
-    // before this round: "Rule violated for class app.muplay.media.AudiobookSnapshot.start.1: lines
+    // before this round: "Rule violated for class io.github.helios57.muplay.media.AudiobookSnapshot.start.1: lines
     // covered ratio is 0.85, but expected minimum is 0.90", BUILD FAILED. Restored.
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.85"),
-      includes = listOf("app.muplay.media.AudiobookSnapshot*start*1"),
+      includes = listOf("io.github.helios57.muplay.media.AudiobookSnapshot*start*1"),
       requiresInstrumentedData = true,
     ),
     // `QueueSnapshotKt` -- `playNextIndexIn`, `canRemoveFrom` and `canMoveWithin`: the three rules
@@ -3862,10 +3862,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.media.QueueSnapshotKt",
-        "app.muplay.media.QueueSnapshot",
-        "app.muplay.media.QueueSnapshot.Companion",
-        "app.muplay.media.QueueItem",
+        "io.github.helios57.muplay.media.QueueSnapshotKt",
+        "io.github.helios57.muplay.media.QueueSnapshot",
+        "io.github.helios57.muplay.media.QueueSnapshot.Companion",
+        "io.github.helios57.muplay.media.QueueItem",
       ),
     ),
     // `QueueEditor` (BRANCH 0/22, LINE 0/35) carries **no rule, and no test on any tier**. Saying
@@ -3900,7 +3900,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // classes read 0/1 in this report and 1/1 in the run that actually covers them. A floor here
     // would be gating `:core:media` on `:feature:player`'s suite without saying so, which is the
     // dependency this table's own doc warns about; the sentences those two arms produce are
-    // floored where they are decided, at `app.muplay.player.QueueFeedbackKt`.
+    // floored where they are decided, at `io.github.helios57.muplay.player.QueueFeedbackKt`.
   ),
   // See coverageFloors's own doc above for the exact measurements and why CLASS-element.
   // ThemeKt 23/23, ColorKt 12/12, TypeKt 13/13 -- all 1.0000 LINE once the emulator journey
@@ -3912,9 +3912,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.designsystem.theme.ThemeKt",
-        "app.muplay.designsystem.theme.ColorKt",
-        "app.muplay.designsystem.theme.TypeKt",
+        "io.github.helios57.muplay.designsystem.theme.ThemeKt",
+        "io.github.helios57.muplay.designsystem.theme.ColorKt",
+        "io.github.helios57.muplay.designsystem.theme.TypeKt",
         // Plan 8's design pass. `MuPlayIcons` is the ten hand-drawn transport glyphs, `DimensKt`
         // the shape set and `MuPlaySpacing` the 4dp grid. Each is a plain `object`/top-level `val`
         // set, so its whole body is one `<clinit>` and its LINE ratio is all-or-nothing: covered
@@ -3931,9 +3931,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // arrowhead's direction arm. It gets no BRANCH rule of its own: at 0.875 a floor would sit
         // under the measurement with nowhere useful to stand, and the eighth branch is the
         // `coerceAtLeast` guard on a sweep no icon in the set is small enough to reach.
-        "app.muplay.designsystem.theme.MuPlayIcons",
-        "app.muplay.designsystem.theme.DimensKt",
-        "app.muplay.designsystem.theme.MuPlaySpacing",
+        "io.github.helios57.muplay.designsystem.theme.MuPlayIcons",
+        "io.github.helios57.muplay.designsystem.theme.DimensKt",
+        "io.github.helios57.muplay.designsystem.theme.MuPlaySpacing",
       ),
       // MuPlayTheme is composed only by the emulator journey; from the JVM alone ThemeKt measures
       // 0.65 and TypeKt 0.00.
@@ -3976,7 +3976,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.designsystem.component.FastScrollIndexKt"),
+      includes = listOf("io.github.helios57.muplay.designsystem.component.FastScrollIndexKt"),
     ),
     // `AddToQueueButtonKt` -- the overflow menu every track row now carries ("Play next" / "Add to
     // queue") -- has **no rule**, for the same reason `FastScrollBarKt` above has none: it is a
@@ -4007,15 +4007,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.library.LibraryUiStateKt",
-        "app.muplay.library.LibraryUiState",
-        "app.muplay.library.LibraryUiState*",
+        "io.github.helios57.muplay.library.LibraryUiStateKt",
+        "io.github.helios57.muplay.library.LibraryUiState",
+        "io.github.helios57.muplay.library.LibraryUiState*",
         // AlbumUiState rides along on exactly the same reasoning -- Loading/NotFound/Content carry
         // no BRANCH counter at all (measured: branch n/a, line 1/1 for Content) -- rather than
         // being left to warn forever about three types with nothing a floor could gate. It has no
         // Kt file-class of its own to name here: `AlbumUiState.kt` declares no top-level function.
-        "app.muplay.library.AlbumUiState",
-        "app.muplay.library.AlbumUiState*",
+        "io.github.helios57.muplay.library.AlbumUiState",
+        "io.github.helios57.muplay.library.AlbumUiState*",
       ),
     ),
     // Both ViewModels' own bodies. **Exact names, not `"LibraryViewModel*"`** -- that wildcard is
@@ -4023,7 +4023,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Hilt-only LibrarySource adapter at 0/8 LINE), and it was mistaken for the class itself being
     // ungateable when this module shipped. The exact form gates the outer class and leaves the
     // nested ones to go on warning, which is what warnUngatedClasses is for. Precedent for exact
-    // names beside wildcards in this same table: "app.muplay.setup.SetupViewModel".
+    // names beside wildcards in this same table: "io.github.helios57.muplay.setup.SetupViewModel".
     //
     // Measured: LibraryViewModel 4/4 BRANCH (36/39 LINE, hence no LINE rule -- the three are the
     // @Inject secondary constructor's own body, reachable only through Hilt), AlbumViewModel 2/2
@@ -4039,9 +4039,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.library.LibraryViewModel",
-        "app.muplay.library.AlbumViewModel",
-        "app.muplay.library.AlbumViewModel*Fetch*",
+        "io.github.helios57.muplay.library.LibraryViewModel",
+        "io.github.helios57.muplay.library.AlbumViewModel",
+        "io.github.helios57.muplay.library.AlbumViewModel*Fetch*",
       ),
     ),
     // 3/4 = 0.75, and 0.75 is the honest ceiling rather than a rounded-down 0.90: the fourth
@@ -4051,7 +4051,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // second counter would add.
     //
     // Live, and proved able to fail rather than merely to pass: at minimum = 1.00 this entry
-    // reports `Rule violated for class app.muplay.library.CoverArtCacheKeyKt: branches covered
+    // reports `Rule violated for class io.github.helios57.muplay.library.CoverArtCacheKeyKt: branches covered
     // ratio is 0.75, but expected minimum is 1.00` and fails the build.
     //
     // This floor exists because `coverArtCacheKey` was moved out of `CoverArt.kt` into its own
@@ -4061,7 +4061,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.75"),
-      includes = listOf("app.muplay.library.CoverArtCacheKeyKt"),
+      includes = listOf("io.github.helios57.muplay.library.CoverArtCacheKeyKt"),
     ),
     // `LibraryNoticeKt` -- the three `when` cascades that decide every sentence this screen can
     // put in front of a user: `LibraryEmptyReason.toMessage`, `LibraryNotice.toMessage(hasMirror)`
@@ -4116,11 +4116,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.library.LibraryNoticeKt",
-        "app.muplay.library.LibraryNotice",
-        "app.muplay.library.LibraryNotice*",
-        "app.muplay.library.LibraryEmptyReason",
-        "app.muplay.library.LibraryEmptyReason*",
+        "io.github.helios57.muplay.library.LibraryNoticeKt",
+        "io.github.helios57.muplay.library.LibraryNotice",
+        "io.github.helios57.muplay.library.LibraryNotice*",
+        "io.github.helios57.muplay.library.LibraryEmptyReason",
+        "io.github.helios57.muplay.library.LibraryEmptyReason*",
       ),
     ),
     // ---- The folders and playlists screens (2026-09-05). ----
@@ -4161,9 +4161,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.library.FolderUiStateKt",
-        "app.muplay.library.FolderUiState",
-        "app.muplay.library.FolderEmptyReason",
+        "io.github.helios57.muplay.library.FolderUiStateKt",
+        "io.github.helios57.muplay.library.FolderUiState",
+        "io.github.helios57.muplay.library.FolderEmptyReason",
       ),
     ),
     // The three new view models' own bodies. **Exact names, not a wildcard**, for the reason the
@@ -4206,9 +4206,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.library.FolderViewModel",
-        "app.muplay.library.PlaylistViewModel",
-        "app.muplay.library.PlaylistsViewModel",
+        "io.github.helios57.muplay.library.FolderViewModel",
+        "io.github.helios57.muplay.library.PlaylistViewModel",
+        "io.github.helios57.muplay.library.PlaylistsViewModel",
       ),
     ),
     // ---- Plan 2 Task 10: the three Composable file-classes Task 9 deferred, now that
@@ -4238,7 +4238,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.library.LibraryScreenKt", "app.muplay.library.AlbumScreenKt"),
+      includes = listOf("io.github.helios57.muplay.library.LibraryScreenKt", "io.github.helios57.muplay.library.AlbumScreenKt"),
       requiresInstrumentedData = true,
     ),
     // `CoverArtKt` -- what is left in `CoverArt.kt` once `coverArtCacheKey` moved out: the
@@ -4269,7 +4269,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.75"),
-      includes = listOf("app.muplay.library.CoverArtKt"),
+      includes = listOf("io.github.helios57.muplay.library.CoverArtKt"),
       requiresInstrumentedData = true,
     ),
     // The Compose compiler's own nested classes for these three files: `LazyColumn`'s four
@@ -4295,14 +4295,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.65"),
       includes = listOf(
-        "app.muplay.library.LibraryScreenKt*",
-        "app.muplay.library.AlbumScreenKt*",
-        "app.muplay.library.CoverArtKt*",
+        "io.github.helios57.muplay.library.LibraryScreenKt*",
+        "io.github.helios57.muplay.library.AlbumScreenKt*",
+        "io.github.helios57.muplay.library.CoverArtKt*",
       ),
       excludes = listOf(
-        "app.muplay.library.LibraryScreenKt",
-        "app.muplay.library.AlbumScreenKt",
-        "app.muplay.library.CoverArtKt",
+        "io.github.helios57.muplay.library.LibraryScreenKt",
+        "io.github.helios57.muplay.library.AlbumScreenKt",
+        "io.github.helios57.muplay.library.CoverArtKt",
       ),
       requiresInstrumentedData = true,
     ),
@@ -4329,11 +4329,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.85"),
-      includes = listOf("app.muplay.library.LibraryViewModel*", "app.muplay.library.AlbumViewModel*"),
+      includes = listOf("io.github.helios57.muplay.library.LibraryViewModel*", "io.github.helios57.muplay.library.AlbumViewModel*"),
       excludes = listOf(
-        "app.muplay.library.LibraryViewModel",
-        "app.muplay.library.AlbumViewModel",
-        "app.muplay.library.AlbumViewModel*Fetch*",
+        "io.github.helios57.muplay.library.LibraryViewModel",
+        "io.github.helios57.muplay.library.AlbumViewModel",
+        "io.github.helios57.muplay.library.AlbumViewModel*Fetch*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -4411,10 +4411,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.book.BookPlaybackLauncherKt",
-        "app.muplay.book.BookshelfUiStateKt",
-        "app.muplay.book.BookshelfUiState",
-        "app.muplay.book.BookshelfUiState*",
+        "io.github.helios57.muplay.book.BookPlaybackLauncherKt",
+        "io.github.helios57.muplay.book.BookshelfUiStateKt",
+        "io.github.helios57.muplay.book.BookshelfUiState",
+        "io.github.helios57.muplay.book.BookshelfUiState*",
       ),
     ),
     // `BookPlayerUiStateKt` -- `bookPlayerUiState`, `formatClock` and `formatRemaining` -- measured
@@ -4457,9 +4457,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.95"),
       includes = listOf(
-        "app.muplay.book.BookPlayerUiStateKt",
-        "app.muplay.book.BookPlayerUiState",
-        "app.muplay.book.BookPlayerUiState*",
+        "io.github.helios57.muplay.book.BookPlayerUiStateKt",
+        "io.github.helios57.muplay.book.BookPlayerUiState",
+        "io.github.helios57.muplay.book.BookPlayerUiState*",
       ),
     ),
     // Plan 4 Task 9, piece 3. `BookUiStateKt` -- `bookUiState`, the lookup that turns the shelf
@@ -4492,9 +4492,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.book.BookUiStateKt",
-        "app.muplay.book.BookUiState",
-        "app.muplay.book.BookUiState*",
+        "io.github.helios57.muplay.book.BookUiStateKt",
+        "io.github.helios57.muplay.book.BookUiState",
+        "io.github.helios57.muplay.book.BookUiState*",
       ),
     ),
     // ---- Plan 4 Task 9, piece 4: the three view models. ----
@@ -4537,8 +4537,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.book.BookViewModel",
-        "app.muplay.book.BookPlayerViewModel",
+        "io.github.helios57.muplay.book.BookViewModel",
+        "io.github.helios57.muplay.book.BookPlayerViewModel",
       ),
     ),
     // `BookshelfViewModel` carries **no BRANCH counter at all** -- it collects one flow and
@@ -4557,7 +4557,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.75"),
-      includes = listOf("app.muplay.book.BookshelfViewModel"),
+      includes = listOf("io.github.helios57.muplay.book.BookshelfViewModel"),
     ),
     // The three view models' coroutine and `Flow` codegen -- `$resume$1`, `$load$1`, `$onBook$1`,
     // `$playChapter$1`, `$seekToChapter$1`, `$endOfChapterTimer$1`, `$nudge$1`, `$playPause$1`, the
@@ -4594,17 +4594,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.65"),
       includes = listOf(
-        "app.muplay.book.BookshelfViewModel*",
-        "app.muplay.book.BookViewModel*",
-        "app.muplay.book.BookPlayerViewModel*",
+        "io.github.helios57.muplay.book.BookshelfViewModel*",
+        "io.github.helios57.muplay.book.BookViewModel*",
+        "io.github.helios57.muplay.book.BookPlayerViewModel*",
       ),
       excludes = listOf(
-        "app.muplay.book.BookshelfViewModel",
-        "app.muplay.book.BookViewModel",
-        "app.muplay.book.BookPlayerViewModel",
-        "app.muplay.book.BookshelfViewModel.1",
-        "app.muplay.book.BookViewModel.1",
-        "app.muplay.book.BookPlayerViewModel.1",
+        "io.github.helios57.muplay.book.BookshelfViewModel",
+        "io.github.helios57.muplay.book.BookViewModel",
+        "io.github.helios57.muplay.book.BookPlayerViewModel",
+        "io.github.helios57.muplay.book.BookshelfViewModel.1",
+        "io.github.helios57.muplay.book.BookViewModel.1",
+        "io.github.helios57.muplay.book.BookPlayerViewModel.1",
       ),
     ),
     // ---- Plan 4 Task 9, piece 5: the screens. ----
@@ -4626,7 +4626,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.book.BookLabelsKt"),
+      includes = listOf("io.github.helios57.muplay.book.BookLabelsKt"),
     ),
     // WHAT THIS MODULE DELIBERATELY DOES NOT GATE, and why it is a list rather than a rule.
     //
@@ -4766,16 +4766,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // a higher minimum is rejected by JaCoCo before it compares anything ("given minimum ratio is
     // 1.01, but must be between 0.0 and 1.0"), which is the same configuration error zero-coverage
     // code would produce. With `PlayerUiStateTest` moved aside this floor reports "Rule violated
-    // for class app.muplay.player.PlayerUiStateKt: branches covered ratio is 0.00, but expected
+    // for class io.github.helios57.muplay.player.PlayerUiStateKt: branches covered ratio is 0.00, but expected
     // minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.player.PlayerUiStateKt",
-        "app.muplay.player.PlayerUiState",
-        "app.muplay.player.PlayerUiState*",
+        "io.github.helios57.muplay.player.PlayerUiStateKt",
+        "io.github.helios57.muplay.player.PlayerUiState",
+        "io.github.helios57.muplay.player.PlayerUiState*",
       ),
     ),
     // `PlayerViewModel`'s own decisions, both measuring 1.0000 BRANCH from **JVM data alone**
@@ -4797,15 +4797,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified by withholding the covering test rather than by raising the minimum -- at a
     // measured 1.0000 JaCoCo rejects a minimum above 1.0 before it compares anything, which is the
     // same configuration error zero-coverage code produces and proves nothing. With
-    // `PlayerViewModelTest` moved aside: "Rule violated for class app.muplay.player.PlayerViewModel:
+    // `PlayerViewModelTest` moved aside: "Rule violated for class io.github.helios57.muplay.player.PlayerViewModel:
     // branches covered ratio is 0.00, but expected minimum is 0.90", BUILD FAILED.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.player.PlayerViewModel",
-        "app.muplay.player.PlayerViewModel*playPause*",
+        "io.github.helios57.muplay.player.PlayerViewModel",
+        "io.github.helios57.muplay.player.PlayerViewModel*playPause*",
       ),
     ),
     // The view model's coroutine and `Flow` codegen -- `$2` (the `init` block's connect launch),
@@ -4838,10 +4838,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.player.PlayerViewModel*"),
+      includes = listOf("io.github.helios57.muplay.player.PlayerViewModel*"),
       excludes = listOf(
-        "app.muplay.player.PlayerViewModel",
-        "app.muplay.player.PlayerViewModel.1",
+        "io.github.helios57.muplay.player.PlayerViewModel",
+        "io.github.helios57.muplay.player.PlayerViewModel.1",
       ),
     ),
     // `PlayerViewModel$1`, the anonymous `PlaybackControls` adapter the `@Inject` constructor
@@ -4870,7 +4870,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // Falsified by withholding the covering data rather than by raising the minimum, since it
     // measures 1.0000: with the instrumented `.ec` files moved aside this reports
-    // `app.muplay.player.PlayerViewModel.1: lines covered ratio is 0.00, but expected minimum is
+    // `io.github.helios57.muplay.player.PlayerViewModel.1: lines covered ratio is 0.00, but expected minimum is
     // 0.90`, BUILD FAILED.
     CoverageFloor(
       counter = "LINE",
@@ -4878,7 +4878,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       minimum = BigDecimal("0.90"),
       // Written `PlayerViewModel.1`, not `PlayerViewModel$1`: a literal `$` in a JaCoCo pattern
       // never matches, because the report presents the class as `PlayerViewModel.1`.
-      includes = listOf("app.muplay.player.PlayerViewModel.1"),
+      includes = listOf("io.github.helios57.muplay.player.PlayerViewModel.1"),
       requiresInstrumentedData = true,
     ),
     // The three `@Composable` file-classes, LINE, instrumented. LINE and not BRANCH per this
@@ -4913,9 +4913,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.player.PlayerScreenKt",
-        "app.muplay.player.MiniPlayerKt",
-        "app.muplay.player.ArtworkKt",
+        "io.github.helios57.muplay.player.PlayerScreenKt",
+        "io.github.helios57.muplay.player.MiniPlayerKt",
+        "io.github.helios57.muplay.player.ArtworkKt",
       ),
       requiresInstrumentedData = true,
     ),
@@ -4956,10 +4956,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.player.QueueUiStateKt",
-        "app.muplay.player.QueueUiState",
-        "app.muplay.player.QueueUiState*",
-        "app.muplay.player.QueueRow",
+        "io.github.helios57.muplay.player.QueueUiStateKt",
+        "io.github.helios57.muplay.player.QueueUiState",
+        "io.github.helios57.muplay.player.QueueUiState*",
+        "io.github.helios57.muplay.player.QueueRow",
       ),
     ),
     // `QueueViewModel` itself -- **18/21 = 0.8571 LINE**, JVM data alone (`QueueViewModelTest`,
@@ -4983,7 +4983,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.85"),
-      includes = listOf("app.muplay.player.QueueViewModel"),
+      includes = listOf("io.github.helios57.muplay.player.QueueViewModel"),
     ),
     // The view model's coroutine and `Flow` codegen, LINE, for the reason the `PlayerViewModel*`
     // rule above is LINE: what is worth knowing about compiler-generated continuation machinery is
@@ -5030,11 +5030,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.65"),
-      includes = listOf("app.muplay.player.QueueViewModel*"),
+      includes = listOf("io.github.helios57.muplay.player.QueueViewModel*"),
       excludes = listOf(
-        "app.muplay.player.QueueViewModel",
+        "io.github.helios57.muplay.player.QueueViewModel",
         // `QueueViewModel.1`, not `QueueViewModel$1`: a literal `$` in a pattern never matches.
-        "app.muplay.player.QueueViewModel.1",
+        "io.github.helios57.muplay.player.QueueViewModel.1",
       ),
     ),
     // `QueueFeedbackKt` -- `queueEditMessage`, the sentence a queue edit is confirmed with.
@@ -5067,7 +5067,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.player.QueueFeedbackKt"),
+      includes = listOf("io.github.helios57.muplay.player.QueueFeedbackKt"),
     ),
     // `QueueFeedbackViewModel` and the class kotlinx-coroutines generates behind its `map`.
     //
@@ -5087,7 +5087,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.65"),
-      includes = listOf("app.muplay.player.QueueFeedbackViewModel*"),
+      includes = listOf("io.github.helios57.muplay.player.QueueFeedbackViewModel*"),
     ),
     // `QueueScreenKt` (LINE 0/93, BRANCH 0/188 -- re-measured 2026-09-06 after the header and the
     // open-on-the-playing-row effect landed; it was 0/80 and 0/182) and `QueueViewModel$1` (LINE
@@ -5136,7 +5136,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.settings.SettingsViewModel", "app.muplay.settings.SettingsSectionKt*"),
+      includes = listOf("io.github.helios57.muplay.settings.SettingsViewModel", "io.github.helios57.muplay.settings.SettingsSectionKt*"),
     ),
     // **NOT YET MEASURED -- see this task's report**, same reason as the entry above.
     //
@@ -5150,7 +5150,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.settings.SettingsScreenKt"),
+      includes = listOf("io.github.helios57.muplay.settings.SettingsScreenKt"),
       requiresInstrumentedData = true,
     ),
   ),
@@ -5169,7 +5169,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.castpicker.RendererDirectSectionKt"),
+      includes = listOf("io.github.helios57.muplay.castpicker.RendererDirectSectionKt"),
       requiresInstrumentedData = true,
     ),
     // **NOT YET MEASURED -- see this task's report**, same reason as above.
@@ -5182,7 +5182,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.castpicker.RendererDirectSection"),
+      includes = listOf("io.github.helios57.muplay.castpicker.RendererDirectSection"),
       requiresInstrumentedData = true,
     ),
   ),
@@ -5226,9 +5226,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // **The `.2` is not a typo, and the `$` form is a trap.** JaCoCo matches a rule's `includes`
     // against the class's *qualified* name, in which both the package separator and the nested-
-    // class separator are dots -- so this class is `app.muplay.ui.StartDestinationViewModel.2` to
+    // class separator are dots -- so this class is `io.github.helios57.muplay.ui.StartDestinationViewModel.2` to
     // a floor, never `...ViewModel$2`. Proved here rather than read: a probe floor naming
-    // `app.muplay.database.CastSettings\$allowRendererDirect\$1` at minimum 1.00 matched nothing
+    // `io.github.helios57.muplay.database.CastSettings\$allowRendererDirect\$1` at minimum 1.00 matched nothing
     // and passed, while the identical floor written `...CastSettings.allowRendererDirect.1` failed
     // with `branches covered ratio is 0.14`. Every other floor in this table that reaches a nested
     // class does it with a `*`, which is why this has not bitten before.
@@ -5261,7 +5261,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.ui.StartDestinationViewModel.2"),
+      includes = listOf("io.github.helios57.muplay.ui.StartDestinationViewModel.2"),
     ),
     // The same view model's two device-only halves, on LINE: the outer class (**11/11**, of which
     // the JVM reaches 8 -- the three it cannot are the `@Inject` secondary constructor's own body)
@@ -5278,8 +5278,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.ui.StartDestinationViewModel",
-        "app.muplay.ui.StartDestinationViewModel.1",
+        "io.github.helios57.muplay.ui.StartDestinationViewModel",
+        "io.github.helios57.muplay.ui.StartDestinationViewModel.1",
       ),
       requiresInstrumentedData = true,
     ),
@@ -5306,8 +5306,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.ui.navigation.BookshelfRoute",
-        "app.muplay.ui.navigation.BookRoute",
+        "io.github.helios57.muplay.ui.navigation.BookshelfRoute",
+        "io.github.helios57.muplay.ui.navigation.BookRoute",
       ),
       requiresInstrumentedData = true,
     ),
@@ -5346,17 +5346,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.http.HttpHeaders",
-        "app.muplay.cast.http.HttpHeaders*",
-        "app.muplay.cast.http.HttpWire",
-        "app.muplay.cast.http.CastHttpClient",
-        "app.muplay.cast.http.CastHttpClient*",
-        "app.muplay.cast.http.CastHttpResponse",
-        "app.muplay.cast.http.HttpRequestHead",
-        "app.muplay.cast.http.HttpResponseHead",
-        "app.muplay.cast.http.MalformedHttpException",
-        "app.muplay.cast.net.LocalNetworkOnly",
-        "app.muplay.cast.net.NonLocalAddressException",
+        "io.github.helios57.muplay.cast.http.HttpHeaders",
+        "io.github.helios57.muplay.cast.http.HttpHeaders*",
+        "io.github.helios57.muplay.cast.http.HttpWire",
+        "io.github.helios57.muplay.cast.http.CastHttpClient",
+        "io.github.helios57.muplay.cast.http.CastHttpClient*",
+        "io.github.helios57.muplay.cast.http.CastHttpResponse",
+        "io.github.helios57.muplay.cast.http.HttpRequestHead",
+        "io.github.helios57.muplay.cast.http.HttpResponseHead",
+        "io.github.helios57.muplay.cast.http.MalformedHttpException",
+        "io.github.helios57.muplay.cast.net.LocalNetworkOnly",
+        "io.github.helios57.muplay.cast.net.NonLocalAddressException",
       ),
     ),
     // `LocalAddress` was gated on LINE rather than BRANCH, and the comment here said its two
@@ -5377,7 +5377,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.cast.net.LocalAddress"),
+      includes = listOf("io.github.helios57.muplay.cast.net.LocalAddress"),
     ),
     // `CredentialQuery` -- the other half of the local-network rule, and until 2026-09-05 the only
     // class in this module's `net` package that no floor reached. `LocalNetworkOnly` (above) answers
@@ -5403,9 +5403,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.cast.net.CredentialQuery"),
+      includes = listOf("io.github.helios57.muplay.cast.net.CredentialQuery"),
     ),
-    // Plan 6 Task 2, `app.muplay.cast.discovery`. Every class below with an author-written branch
+    // Plan 6 Task 2, `io.github.helios57.muplay.cast.discovery`. Every class below with an author-written branch
     // measures **1.0000** today, and each number is from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`
     // -- no emulator anywhere, which is the whole point of this module being pure JVM:
@@ -5455,7 +5455,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // announces an address it did not come from is discarded` leaves it at **33/36 = 0.9167**,
     // still passing. What does fire it is those two together with `a reply whose location is not
     // a local address is discarded` -- **32/36 = 0.88** -- *"Rule violated for class
-    // app.muplay.cast.discovery.SsdpSearch: branches covered ratio is 0.88, but expected minimum
+    // io.github.helios57.muplay.cast.discovery.SsdpSearch: branches covered ratio is 0.88, but expected minimum
     // is 0.90"*.
     //
     // `DatagramSsdpTransport` is **not** here, and that is the brief's own ruling rather than a
@@ -5466,16 +5466,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.discovery.SsdpSearch",
-        "app.muplay.cast.discovery.SsdpResponse",
-        "app.muplay.cast.discovery.DeviceDescription",
-        "app.muplay.cast.discovery.MalformedDescriptionException",
-        "app.muplay.cast.discovery.UpnpDevice",
-        "app.muplay.cast.discovery.UpnpService",
-        "app.muplay.cast.discovery.CastDevice*",
-        "app.muplay.cast.discovery.DescriptionFetcher",
-        "app.muplay.cast.discovery.RendererDirectory",
-        "app.muplay.cast.discovery.DiscoveryResult",
+        "io.github.helios57.muplay.cast.discovery.SsdpSearch",
+        "io.github.helios57.muplay.cast.discovery.SsdpResponse",
+        "io.github.helios57.muplay.cast.discovery.DeviceDescription",
+        "io.github.helios57.muplay.cast.discovery.MalformedDescriptionException",
+        "io.github.helios57.muplay.cast.discovery.UpnpDevice",
+        "io.github.helios57.muplay.cast.discovery.UpnpService",
+        "io.github.helios57.muplay.cast.discovery.CastDevice*",
+        "io.github.helios57.muplay.cast.discovery.DescriptionFetcher",
+        "io.github.helios57.muplay.cast.discovery.RendererDirectory",
+        "io.github.helios57.muplay.cast.discovery.DiscoveryResult",
       ),
     ),
     // The transport, and the coroutine artefacts of the two suspend classes, on LINE.
@@ -5504,12 +5504,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.discovery.DatagramSsdpTransport*",
-        "app.muplay.cast.discovery.RendererDirectory*",
-        "app.muplay.cast.discovery.SsdpTransport",
+        "io.github.helios57.muplay.cast.discovery.DatagramSsdpTransport*",
+        "io.github.helios57.muplay.cast.discovery.RendererDirectory*",
+        "io.github.helios57.muplay.cast.discovery.SsdpTransport",
       ),
     ),
-    // Plan 6 Task 3, `app.muplay.cast.soap`. Measured from
+    // Plan 6 Task 3, `io.github.helios57.muplay.cast.soap`. Measured from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
     // no emulator anywhere. Every class named here carries BRANCH counters -- checked first,
     // because a CLASS rule over a class with none is a `0/0` COVEREDRATIO, which is `NaN`, which
@@ -5555,7 +5555,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // copies). Withholding those three **plus** `a doctype hidden behind a five kilobyte comment
     // is still seen by the guard`, `a response for a different action is not accepted as this one`
     // and the fake's own DOCTYPE test drops it to **30/34 = 0.8824** and this floor fails --
-    // *"Rule violated for class app.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.88,
+    // *"Rule violated for class io.github.helios57.muplay.cast.soap.SoapEnvelope: branches covered ratio is 0.88,
     // but expected minimum is 0.90"*.
     //
     // The other recorded near-miss still stands: withholding `UpnpTimeTest`'s `NOT_IMPLEMENTED and
@@ -5571,15 +5571,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.soap.SoapEnvelope",
-        "app.muplay.cast.soap.SoapNames",
-        "app.muplay.cast.soap.SoapArgument",
-        "app.muplay.cast.soap.UpnpError",
-        "app.muplay.cast.soap.UpnpErrorException",
-        "app.muplay.cast.soap.UpnpFault",
-        "app.muplay.cast.soap.SoapTransportException",
-        "app.muplay.cast.soap.MalformedSoapRequestException",
-        "app.muplay.cast.soap.UpnpTime",
+        "io.github.helios57.muplay.cast.soap.SoapEnvelope",
+        "io.github.helios57.muplay.cast.soap.SoapNames",
+        "io.github.helios57.muplay.cast.soap.SoapArgument",
+        "io.github.helios57.muplay.cast.soap.UpnpError",
+        "io.github.helios57.muplay.cast.soap.UpnpErrorException",
+        "io.github.helios57.muplay.cast.soap.UpnpFault",
+        "io.github.helios57.muplay.cast.soap.SoapTransportException",
+        "io.github.helios57.muplay.cast.soap.MalformedSoapRequestException",
+        "io.github.helios57.muplay.cast.soap.UpnpTime",
       ),
     ),
     // The two soap classes a BRANCH rule would measure nothing on, on LINE instead -- and which
@@ -5606,7 +5606,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // GREEN**. What fires it is those two together with `DidlLiteTest`'s two decoding tests --
     // `didl survives being embedded in a soap envelope and read back out` and `the metadata
     // argument carries the document escaped exactly once` -- which drops `XmlText` to
-    // **6/12 = 0.50**: *"Rule violated for class app.muplay.cast.soap.XmlText: lines covered ratio
+    // **6/12 = 0.50**: *"Rule violated for class io.github.helios57.muplay.cast.soap.XmlText: lines covered ratio
     // is 0.50, but expected minimum is 0.90"*.
     //
     // The `SoapClient*` half of this floor is the honest weak one, and the measurement is recorded
@@ -5622,11 +5622,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.soap.XmlText",
-        "app.muplay.cast.soap.SoapClient*",
+        "io.github.helios57.muplay.cast.soap.XmlText",
+        "io.github.helios57.muplay.cast.soap.SoapClient*",
       ),
     ),
-    // Plan 6 Task 4, `app.muplay.cast.didl`. Measured from
+    // Plan 6 Task 4, `io.github.helios57.muplay.cast.didl`. Measured from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
     // no emulator anywhere. Which class goes on which rule is a measurement and not a preference,
     // because a CLASS-element rule over a class carrying no counter of that kind is a `0/0`
@@ -5659,7 +5659,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     `every format this client serves agrees with itself on all three legs`, which renders an
     //     item with all three null. Withholding that sweep as well drops `DidlLite` to
     //     **3/6 = 0.50** and the rule fires -- *"Rule violated for class
-    //     app.muplay.cast.didl.DidlLite: branches covered ratio is 0.50, but expected minimum is
+    //     io.github.helios57.muplay.cast.didl.DidlLite: branches covered ratio is 0.50, but expected minimum is
     //     0.90"*. One withheld test is not always enough, and a near-miss is worth recording
     //     rather than re-deriving.
     //   * `MimeAgreement`: withholding `a document with no res element, or an unreadable one, is
@@ -5677,9 +5677,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.didl.DidlLite",
-        "app.muplay.cast.didl.MimeAgreement",
-        "app.muplay.cast.didl.ServedMedia*Companion",
+        "io.github.helios57.muplay.cast.didl.DidlLite",
+        "io.github.helios57.muplay.cast.didl.MimeAgreement",
+        "io.github.helios57.muplay.cast.didl.ServedMedia*Companion",
       ),
     ),
     // The one class in this package with real code and no branches, and the two declaration-only
@@ -5695,7 +5695,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // the rules above: its one line is the exception's construction, reached only when a refusal
     // actually happens. Falsified as such -- withholding `MimeAgreementTest`'s `require refuses a
     // disagreement as an IOException naming every leg` **alone** takes it to **0/1 = 0.0000** and
-    // this floor fires: *"Rule violated for class app.muplay.cast.didl.MimeDisagreementException:
+    // this floor fires: *"Rule violated for class io.github.helios57.muplay.cast.didl.MimeDisagreementException:
     // lines covered ratio is 0.00, but expected minimum is 0.90"*. So the one class in this
     // package that exists to say no is gated on whether anything ever makes it say no.
     //
@@ -5711,12 +5711,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.didl.ServedMedia",
-        "app.muplay.cast.didl.CastItem",
-        "app.muplay.cast.didl.MimeDisagreementException",
+        "io.github.helios57.muplay.cast.didl.ServedMedia",
+        "io.github.helios57.muplay.cast.didl.CastItem",
+        "io.github.helios57.muplay.cast.didl.MimeDisagreementException",
       ),
     ),
-    // Plan 6 Task 6, `app.muplay.cast.proxy`. Measured from
+    // Plan 6 Task 6, `io.github.helios57.muplay.cast.proxy`. Measured from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
     // no emulator and no Navidrome container anywhere -- `LiveNavidromeProxyTest` is `@Tag("live")`
     // and contributes nothing to this measurement, which is deliberate: a floor that needed a
@@ -5748,7 +5748,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   * `RangeHeader`: withholding `everything unparseable is Ignored...` **alone leaves it at
     //     46/48 = 0.9583 and this floor green**. Adding `a number too large to hold is ignored...`
     //     and `a range against an empty entity is unsatisfiable` reaches **41/48 = 0.8542** and the
-    //     rule fires -- *"Rule violated for class app.muplay.cast.proxy.RangeHeader: branches
+    //     rule fires -- *"Rule violated for class io.github.helios57.muplay.cast.proxy.RangeHeader: branches
     //     covered ratio is 0.85, but expected minimum is 0.90"*.
     //   * `MediaProxyServer`: withholding `the eleven range cases...` -- the ENTIRE range table --
     //     leaves it at **34/34 = 1.0000**, unchanged. Not a surprise on reflection and worth
@@ -5773,11 +5773,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.proxy.RangeHeader",
-        "app.muplay.cast.proxy.MediaProxyServer",
-        "app.muplay.cast.proxy.ProxyRetry",
-        "app.muplay.cast.proxy.OkHttpProxyUpstream",
-        "app.muplay.cast.proxy.UpstreamThrottledException",
+        "io.github.helios57.muplay.cast.proxy.RangeHeader",
+        "io.github.helios57.muplay.cast.proxy.MediaProxyServer",
+        "io.github.helios57.muplay.cast.proxy.ProxyRetry",
+        "io.github.helios57.muplay.cast.proxy.OkHttpProxyUpstream",
+        "io.github.helios57.muplay.cast.proxy.UpstreamThrottledException",
       ),
     ),
     // The classes in this package with real code and no branches, on LINE:
@@ -5800,7 +5800,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `ProxyRegistry` at **13/14 = 0.9286** and this rule green, because `MediaProxyServerTest`'s
     // `an unknown token is 404 and a revoked one stops working` still calls `revoke`. Withholding
     // that one too reaches **11/14 = 0.7857** -- *"Rule violated for class
-    // app.muplay.cast.proxy.ProxyRegistry: lines covered ratio is 0.78, but expected minimum is
+    // io.github.helios57.muplay.cast.proxy.ProxyRegistry: lines covered ratio is 0.78, but expected minimum is
     // 0.90"*.
     //
     // The remaining classes in this package carry **no counter of either kind** -- `RangeRequest`
@@ -5814,17 +5814,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.proxy.ProxyRegistry",
-        "app.muplay.cast.proxy.PublishedMedia",
-        "app.muplay.cast.proxy.ProxyRequest",
-        "app.muplay.cast.proxy.ByteRange",
-        "app.muplay.cast.proxy.RangeRequest*Bounded",
-        "app.muplay.cast.proxy.RangeRequest*Suffix",
-        "app.muplay.cast.proxy.RangeResolution*Partial",
-        "app.muplay.cast.proxy.OkHttpProxyUpstream*open*1",
+        "io.github.helios57.muplay.cast.proxy.ProxyRegistry",
+        "io.github.helios57.muplay.cast.proxy.PublishedMedia",
+        "io.github.helios57.muplay.cast.proxy.ProxyRequest",
+        "io.github.helios57.muplay.cast.proxy.ByteRange",
+        "io.github.helios57.muplay.cast.proxy.RangeRequest*Bounded",
+        "io.github.helios57.muplay.cast.proxy.RangeRequest*Suffix",
+        "io.github.helios57.muplay.cast.proxy.RangeResolution*Partial",
+        "io.github.helios57.muplay.cast.proxy.OkHttpProxyUpstream*open*1",
       ),
     ),
-    // Plan 6 Task 5, `app.muplay.cast.control`. Measured from
+    // Plan 6 Task 5, `io.github.helios57.muplay.cast.control`. Measured from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
     // no emulator and no Navidrome container anywhere.
     //
@@ -5891,13 +5891,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.control.TransportState*Companion",
-        "app.muplay.cast.control.TransportInfo*Companion",
-        "app.muplay.cast.control.PositionInfo",
-        "app.muplay.cast.control.PositionInfo*Companion",
-        "app.muplay.cast.control.RendererCapabilities",
-        "app.muplay.cast.control.RendererCapabilities*Companion",
-        "app.muplay.cast.control.UpnpRenderer",
+        "io.github.helios57.muplay.cast.control.TransportState*Companion",
+        "io.github.helios57.muplay.cast.control.TransportInfo*Companion",
+        "io.github.helios57.muplay.cast.control.PositionInfo",
+        "io.github.helios57.muplay.cast.control.PositionInfo*Companion",
+        "io.github.helios57.muplay.cast.control.RendererCapabilities",
+        "io.github.helios57.muplay.cast.control.RendererCapabilities*Companion",
+        "io.github.helios57.muplay.cast.control.UpnpRenderer",
       ),
     ),
     // The classes in this package with lines and no branches, on LINE -- the same shape and the
@@ -5930,7 +5930,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // Falsified: withholding `UpnpRendererTest`'s `a sonos following another speaker is detected
     // and named` **alone** takes `RendererFollowsAnotherException` to **0/2 = 0.0000** and this
     // floor fires -- *"Rule violated for class
-    // app.muplay.cast.control.RendererFollowsAnotherException: lines covered ratio is 0.00, but
+    // io.github.helios57.muplay.cast.control.RendererFollowsAnotherException: lines covered ratio is 0.00, but
     // expected minimum is 0.90"*. So the one class in this package that exists to say no is gated
     // on whether anything ever makes it say no.
     //
@@ -5949,13 +5949,13 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.control.RendererFollowsAnotherException",
-        "app.muplay.cast.control.TransportState",
-        "app.muplay.cast.control.TransportInfo",
-        "app.muplay.cast.control.UpnpRenderer*loadCapabilities*2",
+        "io.github.helios57.muplay.cast.control.RendererFollowsAnotherException",
+        "io.github.helios57.muplay.cast.control.TransportState",
+        "io.github.helios57.muplay.cast.control.TransportInfo",
+        "io.github.helios57.muplay.cast.control.UpnpRenderer*loadCapabilities*2",
       ),
     ),
-    // Plan 6 Task 7, `app.muplay.cast.route`. Measured from
+    // Plan 6 Task 7, `io.github.helios57.muplay.cast.route`. Measured from
     // `core/cast/build/reports/jacoco/test/jacocoTestReport.xml` after a plain `:core:cast:test`,
     // no emulator and no Navidrome container anywhere.
     //
@@ -5987,7 +5987,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     partial-byte mask's disagreeing arm has a second driver in `the prefix length is used,
     //     and changing only it changes the answer`, whose `/23` case is a partial byte too.
     //     Withholding both reaches **11/14 = 0.7857** and the rule fires: *"Rule violated for
-    //     class app.muplay.cast.route.SubnetMatch: branches covered ratio is 0.78, but expected
+    //     class io.github.helios57.muplay.cast.route.SubnetMatch: branches covered ratio is 0.78, but expected
     //     minimum is 0.90"*.
     //   * `CastRouter`: the search for a firing set took three attempts and both failures are
     //     recorded rather than re-derived. Withholding `a renderer that cannot reach the phone
@@ -6009,9 +6009,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.route.SubnetMatch",
-        "app.muplay.cast.route.CastRouter",
-        "app.muplay.cast.route.CastRouter*Companion",
+        "io.github.helios57.muplay.cast.route.SubnetMatch",
+        "io.github.helios57.muplay.cast.route.CastRouter",
+        "io.github.helios57.muplay.cast.route.CastRouter*Companion",
       ),
     ),
     // The three route members and the reason enum, on LINE -- the same shape and the same argument
@@ -6048,7 +6048,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     states no format on its path, and a strict renderer refuses it`, and `confirm returns a
     //     route it did not mint unchanged, and does not wait for one` (which constructs one
     //     directly) -- gives **0/1 = 0.0000**: *"Rule violated for class
-    //     app.muplay.cast.route.CastRoute.RendererDirect: lines covered ratio is 0.00, but
+    //     io.github.helios57.muplay.cast.route.CastRoute.RendererDirect: lines covered ratio is 0.00, but
     //     expected minimum is 0.90"*. Three of the four is not enough; the fourth was found by
     //     running it, not by reading the file.
     //   * `CastRoute$Unroutable` **and** `UnroutableReason`: withholding the six tests that
@@ -6070,10 +6070,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.route.CastRoute*Proxied",
-        "app.muplay.cast.route.CastRoute*RendererDirect",
-        "app.muplay.cast.route.CastRoute*Unroutable",
-        "app.muplay.cast.route.UnroutableReason",
+        "io.github.helios57.muplay.cast.route.CastRoute*Proxied",
+        "io.github.helios57.muplay.cast.route.CastRoute*RendererDirect",
+        "io.github.helios57.muplay.cast.route.CastRoute*Unroutable",
+        "io.github.helios57.muplay.cast.route.UnroutableReason",
       ),
     ),
     // ---- Plan 6 Task 8: the session over the renderer, and the renderer that disappears --------
@@ -6111,16 +6111,16 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.session.CastSession",
-        "app.muplay.cast.session.CastPlayback",
-        "app.muplay.cast.session.CastItems",
+        "io.github.helios57.muplay.cast.session.CastSession",
+        "io.github.helios57.muplay.cast.session.CastPlayback",
+        "io.github.helios57.muplay.cast.session.CastItems",
         // The two command lambdas that carry author-written branches. Named through `*` because a
         // literal `$` in a pattern never matches (this table's own doc, gotcha 3).
-        "app.muplay.cast.session.CastSession*seekTo*",
-        "app.muplay.cast.session.CastSession*setPlayWhenReady*",
+        "io.github.helios57.muplay.cast.session.CastSession*seekTo*",
+        "io.github.helios57.muplay.cast.session.CastSession*setPlayWhenReady*",
       ),
     ),
-    // The rest of `app.muplay.cast.session`, on LINE -- and the two exclusions from the BRANCH floor
+    // The rest of `io.github.helios57.muplay.cast.session`, on LINE -- and the two exclusions from the BRANCH floor
     // above are the reason this rule exists rather than one wider include list.
     //
     // `CastSession$startPolling$1` measures BRANCH **9/13 = 0.6923** and `CastSession$proveRoute$-
@@ -6169,15 +6169,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.cast.session.CastSession",
-        "app.muplay.cast.session.CastSession*",
-        "app.muplay.cast.session.CastSource",
-        "app.muplay.cast.session.CastSource*",
-        "app.muplay.cast.session.CastItems",
-        "app.muplay.cast.session.CastPlayback",
-        "app.muplay.cast.session.CastPlayback*",
-        "app.muplay.cast.session.CastFailure",
-        "app.muplay.cast.session.CastFailureKind",
+        "io.github.helios57.muplay.cast.session.CastSession",
+        "io.github.helios57.muplay.cast.session.CastSession*",
+        "io.github.helios57.muplay.cast.session.CastSource",
+        "io.github.helios57.muplay.cast.session.CastSource*",
+        "io.github.helios57.muplay.cast.session.CastItems",
+        "io.github.helios57.muplay.cast.session.CastPlayback",
+        "io.github.helios57.muplay.cast.session.CastPlayback*",
+        "io.github.helios57.muplay.cast.session.CastFailure",
+        "io.github.helios57.muplay.cast.session.CastFailureKind",
       ),
     ),
   ),
@@ -6215,7 +6215,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // `IntegrationBaseUrlKt` to 0/8 and `IntegrationService` to LINE 0/3, failing one rule each.
   //
   // The LINE rule names `IntegrationService` and `BaseUrlResult*` explicitly rather than widening
-  // the BRANCH rule's pattern to `app.muplay.integrations.*`: those two are the classes this task
+  // the BRANCH rule's pattern to `io.github.helios57.muplay.integrations.*`: those two are the classes this task
   // measured and decided about, and a wildcard would also swallow every class Tasks 2-11 add to
   // this module into a rule that cannot fail on them, which is the silent hole
   // `warnUngatedClasses` exists to report. A genuinely new class here should show up as ungated.
@@ -6224,15 +6224,15 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.IntegrationBaseUrl*"),
+      includes = listOf("io.github.helios57.muplay.integrations.IntegrationBaseUrl*"),
     ),
     CoverageFloor(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.IntegrationService",
-        "app.muplay.integrations.BaseUrlResult*",
+        "io.github.helios57.muplay.integrations.IntegrationService",
+        "io.github.helios57.muplay.integrations.BaseUrlResult*",
       ),
     ),
     // Task 2, and this one is a **security control's** floor, which is why it is a LINE rule in
@@ -6260,8 +6260,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.IntegrationCredentials",
-        "app.muplay.integrations.IntegrationCredentials*",
+        "io.github.helios57.muplay.integrations.IntegrationCredentials",
+        "io.github.helios57.muplay.integrations.IntegrationCredentials*",
       ),
     ),
     // Task 2. The companion's own `when` over `IntegrationService` -- **2/2 BRANCH, 7/7 LINE** --
@@ -6283,7 +6283,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.IntegrationCredentialStore*Companion"),
+      includes = listOf("io.github.helios57.muplay.integrations.IntegrationCredentialStore*Companion"),
     ),
     // Task 2, **RE-MEASURED AT TASK 8**: `IntegrationCredentialStore`'s own author-written
     // branches are now **19/20 = 0.9500**, instrumented only -- DataStore and AndroidKeyStore are
@@ -6319,7 +6319,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.IntegrationCredentialStore"),
+      includes = listOf("io.github.helios57.muplay.integrations.IntegrationCredentialStore"),
       requiresInstrumentedData = true,
     ),
     // Task 2, **RE-MEASURED AT TASK 8**: the same class's LINE is **28/28** (was 27/27 -- the
@@ -6342,10 +6342,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.IntegrationCredentialStore",
-        "app.muplay.integrations.IntegrationCredentialStore*Companion",
-        "app.muplay.integrations.IntegrationPreferences",
-        "app.muplay.integrations.di.IntegrationsDataModule",
+        "io.github.helios57.muplay.integrations.IntegrationCredentialStore",
+        "io.github.helios57.muplay.integrations.IntegrationCredentialStore*Companion",
+        "io.github.helios57.muplay.integrations.IntegrationPreferences",
+        "io.github.helios57.muplay.integrations.di.IntegrationsDataModule",
       ),
       requiresInstrumentedData = true,
     ),
@@ -6371,10 +6371,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.50"),
-      includes = listOf("app.muplay.integrations.IntegrationCredentialStore*"),
+      includes = listOf("io.github.helios57.muplay.integrations.IntegrationCredentialStore*"),
       excludes = listOf(
-        "app.muplay.integrations.IntegrationCredentialStore",
-        "app.muplay.integrations.IntegrationCredentialStore*Companion",
+        "io.github.helios57.muplay.integrations.IntegrationCredentialStore",
+        "io.github.helios57.muplay.integrations.IntegrationCredentialStore*Companion",
       ),
       requiresInstrumentedData = true,
     ),
@@ -6411,8 +6411,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.RequestStatusKt",
-        "app.muplay.integrations.RequestStatus*Companion",
+        "io.github.helios57.muplay.integrations.RequestStatusKt",
+        "io.github.helios57.muplay.integrations.RequestStatus*Companion",
       ),
     ),
     // The same two classes' LINE, plus the three data-carrying members' 1/1 constructors
@@ -6432,12 +6432,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.RequestStatusKt",
-        "app.muplay.integrations.RequestStatus",
-        "app.muplay.integrations.RequestStatus*",
-        "app.muplay.integrations.MediaRequest*Companion",
+        "io.github.helios57.muplay.integrations.RequestStatusKt",
+        "io.github.helios57.muplay.integrations.RequestStatus",
+        "io.github.helios57.muplay.integrations.RequestStatus*",
+        "io.github.helios57.muplay.integrations.MediaRequest*Companion",
       ),
-      excludes = listOf("app.muplay.integrations.MediaRequestRepository*"),
+      excludes = listOf("io.github.helios57.muplay.integrations.MediaRequestRepository*"),
     ),
     // `MediaRequestRepository`'s own author-written branches: **11/12**, instrumented only. Real
     // Room and real SQL need a device, and a fake DAO would not prove the two properties this
@@ -6463,7 +6463,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.MediaRequestRepository"),
+      includes = listOf("io.github.helios57.muplay.integrations.MediaRequestRepository"),
       requiresInstrumentedData = true,
     ),
     // The instrumented LINE side: `MediaRequestRepository` 43/43, `MediaRequest` 10/10 (its
@@ -6490,9 +6490,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.MediaRequestRepository",
-        "app.muplay.integrations.MediaRequest",
-        "app.muplay.integrations.db.*",
+        "io.github.helios57.muplay.integrations.MediaRequestRepository",
+        "io.github.helios57.muplay.integrations.MediaRequest",
+        "io.github.helios57.muplay.integrations.db.*",
       ),
       requiresInstrumentedData = true,
     ),
@@ -6515,8 +6515,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.50"),
-      includes = listOf("app.muplay.integrations.MediaRequestRepository*"),
-      excludes = listOf("app.muplay.integrations.MediaRequestRepository"),
+      includes = listOf("io.github.helios57.muplay.integrations.MediaRequestRepository*"),
+      excludes = listOf("io.github.helios57.muplay.integrations.MediaRequestRepository"),
       requiresInstrumentedData = true,
     ),
   ),
@@ -6600,8 +6600,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.lidarr.LidarrClient",
-        "app.muplay.integrations.lidarr.LidarrValidationException",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrClient",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrValidationException",
         // RIDE-ALONGS, gating nothing, and here for a measured reason rather than tidiness.
         //
         // `QueueRecordBody` and `AlbumStatisticsBody` are the module's only **nested** @Serializable
@@ -6623,8 +6623,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         //
         // `warnVacuousFloors` stays quiet because this rule's other two classes carry 140 real
         // branches between them, which is the condition that check actually tests.
-        "app.muplay.integrations.lidarr.QueueRecordBody*Companion",
-        "app.muplay.integrations.lidarr.AlbumStatisticsBody*Companion",
+        "io.github.helios57.muplay.integrations.lidarr.QueueRecordBody*Companion",
+        "io.github.helios57.muplay.integrations.lidarr.AlbumStatisticsBody*Companion",
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
@@ -6653,7 +6653,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.lidarr.LidarrClient*",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrClient*",
         // `LidarrAuthInterceptor` is here so it is *gated*, and this rule is measured at 7/7 --
         // but read the next sentence before trusting it, because it was falsified and the
         // falsification FAILED. Withholding **all seven** of `LidarrAuthTest`'s tests -- every
@@ -6666,12 +6666,12 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // query string. `ci/mutation-probes.sh`'s `integrations/lidarr-*` family is what does --
         // three of those four probes leave every ratio in this table exactly where it is. Do not
         // read a green coverage gate as evidence about the key's placement.
-        "app.muplay.integrations.lidarr.LidarrAuthInterceptor",
-        "app.muplay.integrations.lidarr.LidarrServer",
-        "app.muplay.integrations.lidarr.Lidarr*Exception",
-        "app.muplay.integrations.lidarr.LidarrValidationFailure",
-        "app.muplay.integrations.lidarr.DefaultLidarrSourceFactory",
-        "app.muplay.integrations.lidarr.di.LidarrModule",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAuthInterceptor",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrServer",
+        "io.github.helios57.muplay.integrations.lidarr.Lidarr*Exception",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrValidationFailure",
+        "io.github.helios57.muplay.integrations.lidarr.DefaultLidarrSourceFactory",
+        "io.github.helios57.muplay.integrations.lidarr.di.LidarrModule",
         // Task 5's three value types, measured at 1.0000 each: `LidarrAlbumCandidate` 11/11,
         // `LidarrRootFolder` 10/10, `LidarrProfile` 1/1. Kotlin puts a data class's generated
         // `equals`/`hashCode`/`toString` on the declaration line and gives each property its own.
@@ -6692,11 +6692,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // 1/1, because `LidarrAddTargetsTest` constructs both by hand. Their only falsification is
         // withholding both test classes at once (0/10 and 0/1, and the gate does then fire). That
         // is the second-caller effect this repository has already been bitten by once.
-        "app.muplay.integrations.lidarr.LidarrAlbumCandidate",
-        "app.muplay.integrations.lidarr.LidarrRootFolder",
-        "app.muplay.integrations.lidarr.LidarrProfile",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAlbumCandidate",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrRootFolder",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrProfile",
         // Task 5's decision class. 6/6 on the type, 10/10 on the companion that holds `resolve`.
-        "app.muplay.integrations.lidarr.LidarrAddTargets*",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAddTargets*",
         // Task 6's payload builder, measured **28/28**, and its outcome type: `Added` 1/1,
         // `Rejected` 1/1. `LidarrAddOutcome` itself and its `AlreadyAdded` object carry no counters
         // at all and ride along so `warnUngatedClasses` has nothing to say about them -- the same
@@ -6713,8 +6713,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // Note what *did* fire on that first withholding, because reading "28/28" as "the gate is
         // green" would be the mistake: rule 7's BRANCH floor went to 0.50 and failed the build.
         // The LINE rule is the one that cannot see it.
-        "app.muplay.integrations.lidarr.LidarrAddPayload",
-        "app.muplay.integrations.lidarr.LidarrAddOutcome*",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAddPayload",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAddOutcome*",
         // Task 7's three, measured 1.0000 each: `LidarrStatusMapper` 16/16, `LidarrQueueItem` 8/8,
         // `LidarrAlbumProgress` 2/2.
         //
@@ -6739,9 +6739,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         // That same withholding also drops `LidarrQueueItem` to 0/8 and `LidarrClient` to 0.80
         // LINE / 0.89 BRANCH only when BOTH test classes go -- with `LidarrQueueTest` alone in
         // place, both stay at 1.0000.
-        "app.muplay.integrations.lidarr.LidarrStatusMapper",
-        "app.muplay.integrations.lidarr.LidarrQueueItem",
-        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrStatusMapper",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrQueueItem",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAlbumProgress",
       ),
     ),
     // **`LidarrSourceProvider`'s two rules were here, and the class is gone.** Plan 8's
@@ -6781,18 +6781,18 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.40"),
       includes = listOf(
-        "app.muplay.integrations.lidarr.PingBody*",
-        "app.muplay.integrations.lidarr.SystemStatusBody*",
-        "app.muplay.integrations.lidarr.ValidationFailureBody*",
-        "app.muplay.integrations.lidarr.StartingUpBody*",
+        "io.github.helios57.muplay.integrations.lidarr.PingBody*",
+        "io.github.helios57.muplay.integrations.lidarr.SystemStatusBody*",
+        "io.github.helios57.muplay.integrations.lidarr.ValidationFailureBody*",
+        "io.github.helios57.muplay.integrations.lidarr.StartingUpBody*",
         // Task 5's two, measured on the same run and for the same reason: `RootFolderBody`
         // **9/12 = 0.7500** and `ProfileBody` **1/2 = 0.5000**, each `$$serializer` companion at
         // 1/1. The uncovered lines are the generated `equals`/`hashCode`/`copy`/`componentN`
         // nothing calls, because these types exist only to be deserialised into. Both clear 0.40
         // without it being raised for them -- 0.40 is still the number `ValidationFailureBody`
         // produced, not a number chosen to fit the newcomers.
-        "app.muplay.integrations.lidarr.RootFolderBody*",
-        "app.muplay.integrations.lidarr.ProfileBody*",
+        "io.github.helios57.muplay.integrations.lidarr.RootFolderBody*",
+        "io.github.helios57.muplay.integrations.lidarr.ProfileBody*",
         // Task 7's four, and the reason they clear 0.40 is worth writing down because the first
         // draft did not. Measured with every field the endpoints send declared, `QueuePageBody`
         // read **2/7 = 0.2857** and `AlbumWithStatisticsBody` **1/5 = 0.2000** -- both under this
@@ -6809,10 +6809,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
         //
         // The two nested types are matched WITHOUT a trailing `*` on purpose: their `Companion`s
         // measure 0/1 and are ride-alongs on rule 1 instead -- see the long note there.
-        "app.muplay.integrations.lidarr.QueuePageBody*",
-        "app.muplay.integrations.lidarr.QueueRecordBody",
-        "app.muplay.integrations.lidarr.AlbumWithStatisticsBody*",
-        "app.muplay.integrations.lidarr.AlbumStatisticsBody",
+        "io.github.helios57.muplay.integrations.lidarr.QueuePageBody*",
+        "io.github.helios57.muplay.integrations.lidarr.QueueRecordBody",
+        "io.github.helios57.muplay.integrations.lidarr.AlbumWithStatisticsBody*",
+        "io.github.helios57.muplay.integrations.lidarr.AlbumStatisticsBody",
       ),
     ),
     // 6. Task 5's `LidarrAddTargets`, at **1.00 BRANCH** -- the only floor in this module that
@@ -6834,14 +6834,14 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // FALSIFIED, not assumed: withholding
     // `there is no answer when a needed profile is zero and no profile exists to fall back to`
     // drops it to **13/16 = 0.8125** and `jacocoJvmCoverageVerification` fails with
-    // "Rule violated for class app.muplay.integrations.lidarr.LidarrAddTargets.Companion:
+    // "Rule violated for class io.github.helios57.muplay.integrations.lidarr.LidarrAddTargets.Companion:
     // branches covered ratio is 0.81, but expected minimum is 1.00".
     // The `LidarrAddTargets` type itself rides along on rule 2's LINE list at 6/6.
     CoverageFloor(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.integrations.lidarr.LidarrAddTargets*"),
+      includes = listOf("io.github.helios57.muplay.integrations.lidarr.LidarrAddTargets*"),
     ),
     // 7. Task 6's `LidarrAddPayload`, at **1.00 BRANCH** for the same argument as rule 6 and with
     // the same honesty about what 1.00 is worth: `build` is a pure function over three arguments
@@ -6858,7 +6858,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `a candidate whose raw element has no artist object still produces a valid nested artist` and
     // `a raw element whose artist is not an object still produces a valid nested artist` -- drops
     // this to **2/4 = 0.50** and `jacocoJvmCoverageVerification` fails with
-    // "Rule violated for class app.muplay.integrations.lidarr.LidarrAddPayload:
+    // "Rule violated for class io.github.helios57.muplay.integrations.lidarr.LidarrAddPayload:
     // branches covered ratio is 0.50, but expected minimum is 1.00".
     //
     // Withholding either one **alone** leaves it at 4/4 and green, and the reason is worth writing
@@ -6879,7 +6879,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "BRANCH",
       element = "CLASS",
       minimum = BigDecimal("1.00"),
-      includes = listOf("app.muplay.integrations.lidarr.LidarrAddPayload"),
+      includes = listOf("io.github.helios57.muplay.integrations.lidarr.LidarrAddPayload"),
     ),
     // 8. Task 7's decision code, at **1.00 BRANCH** -- the third floor in this module that demands
     // every branch, and, like the other two, only because the classes can honestly carry one.
@@ -6922,8 +6922,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("1.00"),
       includes = listOf(
-        "app.muplay.integrations.lidarr.LidarrStatusMapper",
-        "app.muplay.integrations.lidarr.LidarrAlbumProgress",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrStatusMapper",
+        "io.github.helios57.muplay.integrations.lidarr.LidarrAlbumProgress",
       ),
     ),
   ),
@@ -6983,7 +6983,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     predicted 0.8796 and a red gate, and was wrong by six branches.
     //   * Withholding both of those **plus the whole of `BinderyBooksTest`** gives **93/108 =
     //     0.8611** and `jacocoJvmCoverageVerification` fails with "Rule violated for class
-    //     app.muplay.integrations.bindery.BinderyClient: branches covered ratio is 0.86, but
+    //     io.github.helios57.muplay.integrations.bindery.BinderyClient: branches covered ratio is 0.86, but
     //     expected minimum is 0.90".
     //
     // So this floor gates a *trio* of test classes rather than any one of them, and a reader who
@@ -6998,9 +6998,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.bindery.BinderyClient",
-        "app.muplay.integrations.bindery.BinderyStatusMapper",
-        "app.muplay.integrations.bindery.BinderyServer",
+        "io.github.helios57.muplay.integrations.bindery.BinderyClient",
+        "io.github.helios57.muplay.integrations.bindery.BinderyStatusMapper",
+        "io.github.helios57.muplay.integrations.bindery.BinderyServer",
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
@@ -7047,17 +7047,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.bindery.BinderyClient*",
-        "app.muplay.integrations.bindery.BinderyAuthInterceptor",
-        "app.muplay.integrations.bindery.BinderyStatusMapper",
-        "app.muplay.integrations.bindery.BinderyServer",
-        "app.muplay.integrations.bindery.BinderyBook",
-        "app.muplay.integrations.bindery.BinderyBookCandidate",
-        "app.muplay.integrations.bindery.BinderyBookPage",
-        "app.muplay.integrations.bindery.BinderyMediaType",
-        "app.muplay.integrations.bindery.Bindery*Exception",
-        "app.muplay.integrations.bindery.DefaultBinderySourceFactory",
-        "app.muplay.integrations.bindery.di.BinderyModule",
+        "io.github.helios57.muplay.integrations.bindery.BinderyClient*",
+        "io.github.helios57.muplay.integrations.bindery.BinderyAuthInterceptor",
+        "io.github.helios57.muplay.integrations.bindery.BinderyStatusMapper",
+        "io.github.helios57.muplay.integrations.bindery.BinderyServer",
+        "io.github.helios57.muplay.integrations.bindery.BinderyBook",
+        "io.github.helios57.muplay.integrations.bindery.BinderyBookCandidate",
+        "io.github.helios57.muplay.integrations.bindery.BinderyBookPage",
+        "io.github.helios57.muplay.integrations.bindery.BinderyMediaType",
+        "io.github.helios57.muplay.integrations.bindery.Bindery*Exception",
+        "io.github.helios57.muplay.integrations.bindery.DefaultBinderySourceFactory",
+        "io.github.helios57.muplay.integrations.bindery.di.BinderyModule",
       ),
     ),
     // **`BinderySourceProvider`'s two rules were here, and the class is gone** -- deleted for the
@@ -7097,7 +7097,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //
     // Withholding **all three** gives `HealthBody` **0/2 = 0.0000** and
     // `jacocoJvmCoverageVerification` fails with "Rule violated for class
-    // app.muplay.integrations.bindery.HealthBody: lines covered ratio is 0.00, but expected
+    // io.github.helios57.muplay.integrations.bindery.HealthBody: lines covered ratio is 0.00, but expected
     // minimum is 0.40" (and the same for `HealthBody.Companion`). Note what that says and does
     // not: the floor fires when a DTO stops being deserialised at all, and says nothing about
     // whether any of its fields is read correctly. Transcript in task-8-report.md.
@@ -7109,11 +7109,11 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.40"),
       includes = listOf(
-        "app.muplay.integrations.bindery.HealthBody*",
-        "app.muplay.integrations.bindery.ErrorBody*",
-        "app.muplay.integrations.bindery.BookBody*",
-        "app.muplay.integrations.bindery.BookPageBody*",
-        "app.muplay.integrations.bindery.AddBookBody*",
+        "io.github.helios57.muplay.integrations.bindery.HealthBody*",
+        "io.github.helios57.muplay.integrations.bindery.ErrorBody*",
+        "io.github.helios57.muplay.integrations.bindery.BookBody*",
+        "io.github.helios57.muplay.integrations.bindery.BookPageBody*",
+        "io.github.helios57.muplay.integrations.bindery.AddBookBody*",
       ),
     ),
   ),
@@ -7158,7 +7158,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   * Withholding `RequestsRepositorySearchTest` alone leaves `RequestsRepository` at
     //     **47/96 = 0.4896** and `jacocoJvmCoverageVerification` FAILS with
     //
-    //         Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //         Rule violated for class io.github.helios57.muplay.integrations.requests.RequestsRepository:
     //         branches covered ratio is 0.48, but expected minimum is 0.90
     //
     //   * Withholding `RequestsRepositoryTest` alone leaves it at **51/96 = 0.5312** and fails the
@@ -7172,7 +7172,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //   * Withholding the whole of `RequestArrivalDetectorTest` still takes that class to
     //     **13/22 = 0.5909**, not 0/22, and fails with
     //
-    //         Rule violated for class app.muplay.integrations.requests.RequestArrivalDetector:
+    //         Rule violated for class io.github.helios57.muplay.integrations.requests.RequestArrivalDetector:
     //         branches covered ratio is 0.59, but expected minimum is 0.90
     //
     //     Thirteen of its twenty-two branches survive because `RequestsRepositoryTest` builds a
@@ -7188,8 +7188,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.requests.RequestArrivalDetector",
-        "app.muplay.integrations.requests.RequestsRepository",
+        "io.github.helios57.muplay.integrations.requests.RequestArrivalDetector",
+        "io.github.helios57.muplay.integrations.requests.RequestsRepository",
       ),
     ),
     // 2. The **fast tier's** LINE rule, over every author-written class the JVM tier reaches.
@@ -7245,9 +7245,9 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     //     0/8, `$Book` 0/8, `SearchReport` 0/3, `SubmitResult$Recorded` and `$Refused` 0/1 each —
     //     and the gate fails naming all six in one run:
     //
-    //         Rule violated for class app.muplay.integrations.requests.RequestsRepository:
+    //         Rule violated for class io.github.helios57.muplay.integrations.requests.RequestsRepository:
     //         lines covered ratio is 0.53, but expected minimum is 0.90
-    //         Rule violated for class app.muplay.integrations.requests.RequestCandidate.Album:
+    //         Rule violated for class io.github.helios57.muplay.integrations.requests.RequestCandidate.Album:
     //         lines covered ratio is 0.00, but expected minimum is 0.90
     //         ...and the same for RequestCandidate.Book, SearchReport, SubmitResult.Recorded and
     //         SubmitResult.Refused.
@@ -7265,17 +7265,17 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.integrations.requests.RequestArrivalDetector",
-        "app.muplay.integrations.requests.RequestArrivalDetector*Companion",
-        "app.muplay.integrations.requests.RequestsRepository",
-        "app.muplay.integrations.requests.TitleMatching",
+        "io.github.helios57.muplay.integrations.requests.RequestArrivalDetector",
+        "io.github.helios57.muplay.integrations.requests.RequestArrivalDetector*Companion",
+        "io.github.helios57.muplay.integrations.requests.RequestsRepository",
+        "io.github.helios57.muplay.integrations.requests.TitleMatching",
         // Task 10's search and submit vocabulary. `$` is replaced by `.` before a pattern ever sees
         // a class name (see [CoverageFloor]'s gotcha 3), so the members are matched with a `*`.
-        "app.muplay.integrations.requests.RequestCandidate",
-        "app.muplay.integrations.requests.RequestCandidate*",
-        "app.muplay.integrations.requests.SearchReport",
-        "app.muplay.integrations.requests.SubmitResult",
-        "app.muplay.integrations.requests.SubmitResult*",
+        "io.github.helios57.muplay.integrations.requests.RequestCandidate",
+        "io.github.helios57.muplay.integrations.requests.RequestCandidate*",
+        "io.github.helios57.muplay.integrations.requests.SearchReport",
+        "io.github.helios57.muplay.integrations.requests.SubmitResult",
+        "io.github.helios57.muplay.integrations.requests.SubmitResult*",
       ),
     ),
     // 3. `RefreshReport` and the `Flow.map` machinery behind `configuredServices`, gated **low
@@ -7301,10 +7301,10 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
     // `…inlined.map.1` to **1/3 = 0.3333** and `…map.1.2` to **0/2 = 0.0000**, and the gate fails
     // with three of this rule's own violations in one run —
     //
-    //     Rule violated for class app.muplay.integrations.requests.RefreshReport:
+    //     Rule violated for class io.github.helios57.muplay.integrations.requests.RefreshReport:
     //     lines covered ratio is 0.00, but expected minimum is 0.40
     //     Rule violated for class
-    //     app.muplay.integrations.requests.RequestsRepository.special..inlined.map.1:
+    //     io.github.helios57.muplay.integrations.requests.RequestsRepository.special..inlined.map.1:
     //     lines covered ratio is 0.00, but expected minimum is 0.40
     //     ...and the same for `.map.1.2`.
     //
@@ -7319,8 +7319,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.40"),
       includes = listOf(
-        "app.muplay.integrations.requests.RefreshReport",
-        "app.muplay.integrations.requests.RequestsRepository*inlined*",
+        "io.github.helios57.muplay.integrations.requests.RefreshReport",
+        "io.github.helios57.muplay.integrations.requests.RequestsRepository*inlined*",
       ),
     ),
     // 4. `di.RequestsModule`, **instrumented only** — LINE 4/4 for the object and 1/1 for each of
@@ -7347,7 +7347,7 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       counter = "LINE",
       element = "CLASS",
       minimum = BigDecimal("0.90"),
-      includes = listOf("app.muplay.integrations.requests.di.RequestsModule*"),
+      includes = listOf("io.github.helios57.muplay.integrations.requests.di.RequestsModule*"),
       requiresInstrumentedData = true,
     ),
   ),
@@ -7421,23 +7421,23 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       includes = listOf(
         // `$` never matches; JaCoCo presents `A$B` as `A.B` before a pattern sees it (see
         // [CoverageFloor]'s gotcha 3), so every nested class is matched with a `*`.
-        "app.muplay.requests.ConnectionCheck",
-        "app.muplay.requests.ConnectionCheck*",
-        "app.muplay.requests.ConnectionCheckKt",
-        "app.muplay.requests.ConnectionCheckKt*",
-        "app.muplay.requests.IntegrationSetupUiState",
-        "app.muplay.requests.IntegrationsUiState",
-        "app.muplay.requests.IntegrationsUiStateKt",
-        "app.muplay.requests.IntegrationsViewModel",
-        "app.muplay.requests.IntegrationsViewModel*",
-        "app.muplay.requests.RequestSearchState",
-        "app.muplay.requests.RequestsUiState",
-        "app.muplay.requests.RequestsUiState*",
-        "app.muplay.requests.RequestsUiStateKt",
-        "app.muplay.requests.RequestsViewModel",
-        "app.muplay.requests.RequestsViewModel*",
+        "io.github.helios57.muplay.requests.ConnectionCheck",
+        "io.github.helios57.muplay.requests.ConnectionCheck*",
+        "io.github.helios57.muplay.requests.ConnectionCheckKt",
+        "io.github.helios57.muplay.requests.ConnectionCheckKt*",
+        "io.github.helios57.muplay.requests.IntegrationSetupUiState",
+        "io.github.helios57.muplay.requests.IntegrationsUiState",
+        "io.github.helios57.muplay.requests.IntegrationsUiStateKt",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel*",
+        "io.github.helios57.muplay.requests.RequestSearchState",
+        "io.github.helios57.muplay.requests.RequestsUiState",
+        "io.github.helios57.muplay.requests.RequestsUiState*",
+        "io.github.helios57.muplay.requests.RequestsUiStateKt",
+        "io.github.helios57.muplay.requests.RequestsViewModel",
+        "io.github.helios57.muplay.requests.RequestsViewModel*",
       ),
-      excludes = listOf("app.muplay.requests.IntegrationsViewModel*uiState*"),
+      excludes = listOf("io.github.helios57.muplay.requests.IntegrationsViewModel*uiState*"),
     ),
     // 2. LINE, over every author-written class the JVM tier reaches. **Every one of them measured
     // 1.0000** on the run above:
@@ -7464,34 +7464,34 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.90"),
       includes = listOf(
-        "app.muplay.requests.ConnectionCheck",
-        "app.muplay.requests.ConnectionCheck*",
-        "app.muplay.requests.ConnectionCheckKt",
-        "app.muplay.requests.ConnectionCheckKt*",
-        "app.muplay.requests.ConnectionObservation",
-        "app.muplay.requests.ConnectionProbe",
-        "app.muplay.requests.IntegrationCredentialWriter",
-        "app.muplay.requests.IntegrationCredentialEraser",
-        "app.muplay.requests.IntegrationSetupUiState",
-        "app.muplay.requests.IntegrationsUiState",
-        "app.muplay.requests.IntegrationsUiStateKt",
-        "app.muplay.requests.IntegrationsViewModel",
-        "app.muplay.requests.IntegrationsViewModel*",
-        "app.muplay.requests.IntegrationsPresenceViewModel",
-        "app.muplay.requests.IntegrationsPresenceViewModel*",
-        "app.muplay.requests.IntegrationsRoute",
-        "app.muplay.requests.RequestsRoute",
-        "app.muplay.requests.RequestSearchState",
-        "app.muplay.requests.RequestsUiState",
-        "app.muplay.requests.RequestsUiState*",
-        "app.muplay.requests.RequestsUiStateKt",
-        "app.muplay.requests.RequestsViewModel",
-        "app.muplay.requests.RequestsViewModel*",
+        "io.github.helios57.muplay.requests.ConnectionCheck",
+        "io.github.helios57.muplay.requests.ConnectionCheck*",
+        "io.github.helios57.muplay.requests.ConnectionCheckKt",
+        "io.github.helios57.muplay.requests.ConnectionCheckKt*",
+        "io.github.helios57.muplay.requests.ConnectionObservation",
+        "io.github.helios57.muplay.requests.ConnectionProbe",
+        "io.github.helios57.muplay.requests.IntegrationCredentialWriter",
+        "io.github.helios57.muplay.requests.IntegrationCredentialEraser",
+        "io.github.helios57.muplay.requests.IntegrationSetupUiState",
+        "io.github.helios57.muplay.requests.IntegrationsUiState",
+        "io.github.helios57.muplay.requests.IntegrationsUiStateKt",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel*",
+        "io.github.helios57.muplay.requests.IntegrationsPresenceViewModel",
+        "io.github.helios57.muplay.requests.IntegrationsPresenceViewModel*",
+        "io.github.helios57.muplay.requests.IntegrationsRoute",
+        "io.github.helios57.muplay.requests.RequestsRoute",
+        "io.github.helios57.muplay.requests.RequestSearchState",
+        "io.github.helios57.muplay.requests.RequestsUiState",
+        "io.github.helios57.muplay.requests.RequestsUiState*",
+        "io.github.helios57.muplay.requests.RequestsUiStateKt",
+        "io.github.helios57.muplay.requests.RequestsViewModel",
+        "io.github.helios57.muplay.requests.RequestsViewModel*",
       ),
       // Kotlin's own `Flow.map` inlining, gated low by rule 3 rather than at 0.90 here.
       excludes = listOf(
-        "app.muplay.requests.IntegrationsViewModel*inlined*",
-        "app.muplay.requests.IntegrationsPresenceViewModel*inlined*",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel*inlined*",
+        "io.github.helios57.muplay.requests.IntegrationsPresenceViewModel*inlined*",
       ),
     ),
     // 3. The `Flow.map` machinery behind the two view models' state flows, gated **low rather than
@@ -7511,8 +7511,8 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
       element = "CLASS",
       minimum = BigDecimal("0.40"),
       includes = listOf(
-        "app.muplay.requests.IntegrationsViewModel*inlined*",
-        "app.muplay.requests.IntegrationsPresenceViewModel*inlined*",
+        "io.github.helios57.muplay.requests.IntegrationsViewModel*inlined*",
+        "io.github.helios57.muplay.requests.IntegrationsPresenceViewModel*inlined*",
       ),
     ),
     // **WHAT IS DELIBERATELY NOT GATED HERE, AND WHY THERE IS NO FOURTH RULE.**
@@ -7685,7 +7685,7 @@ object UngatedClassChecker {
    * [warnVacuousFloors] exists to notice.
    */
   private class ClassCoverage(
-    /** JaCoCo's `name` attribute verbatim, e.g. `app/muplay/setup/SetupViewModel$1`. */
+    /** JaCoCo's `name` attribute verbatim, e.g. `io/github/helios57/muplay/setup/SetupViewModel$1`. */
     val binaryName: String,
     /** [binaryName] in JaCoCo's "qualified" form — both `/` and `$` replaced by `.`. */
     val qualifiedName: String,
@@ -7729,7 +7729,7 @@ object UngatedClassChecker {
     val classes = mutableListOf<ClassCoverage>()
     for (i in 0 until classNodes.length) {
       val classElement = classNodes.item(i) as Element
-      val binaryName = classElement.getAttribute("name") // e.g. app/muplay/setup/SetupScreenKt
+      val binaryName = classElement.getAttribute("name") // e.g. io/github/helios57/muplay/setup/SetupScreenKt
       val missedByCounter = mutableMapOf<String, Int>()
       val coveredByCounter = mutableMapOf<String, Int>()
       val counterNodes = classElement.getElementsByTagName("counter")

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.player"
+  namespace = "io.github.helios57.muplay.player"
 }
 
 dependencies {

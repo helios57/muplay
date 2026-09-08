@@ -153,138 +153,138 @@ import glob, html, pathlib, re, shutil, subprocess, sys
 
 FILTER = sys.argv[1] if len(sys.argv) > 1 else ""
 
-CLIENT = "core/network/src/main/kotlin/app/muplay/network/SubsonicClient.kt"
-AUTH = "core/network/src/main/kotlin/app/muplay/network/SubsonicAuth.kt"
-TYPE = "core/model/src/main/kotlin/app/muplay/model/AlbumListType.kt"
-MODEL = "core/network/src/main/kotlin/app/muplay/network/model/SubsonicResponse.kt"
-MIRROR = "core/database/src/main/kotlin/app/muplay/database/MirrorMapper.kt"
-SETUP_VM = "feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt"
-SYNC_DECISION = "core/database/src/main/kotlin/app/muplay/database/SyncDecision.kt"
-LIBRARY_VM = "feature/library/src/main/kotlin/app/muplay/library/LibraryViewModel.kt"
-ALBUM_VM = "feature/library/src/main/kotlin/app/muplay/library/AlbumViewModel.kt"
-LIBRARY_STATE = "feature/library/src/main/kotlin/app/muplay/library/LibraryUiState.kt"
-STREAM_FORMAT = "core/model/src/main/kotlin/app/muplay/model/StreamFormat.kt"
-RETRY_POLICY = "core/media/src/main/kotlin/app/muplay/media/StreamRetryPolicy.kt"
-MEDIA_MODULE = "core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt"
-RESUME_POLICY = "core/media/src/main/kotlin/app/muplay/media/ResumePolicy.kt"
-GAIN_POLICY = "core/media/src/main/kotlin/app/muplay/media/ReplayGainPolicy.kt"
-PCM_ANALYSIS = "core/testing/src/main/kotlin/app/muplay/testing/PcmAnalysis.kt"
-BOOK_FIXTURES = "core/testing/src/main/kotlin/app/muplay/testing/BookFixtures.kt"
-PLAYBACK_QUEUE = "core/media/src/main/kotlin/app/muplay/media/PlaybackQueue.kt"
-TRACK_ID_KEY = "core/media/src/main/kotlin/app/muplay/media/TrackIdCacheKeyFactory.kt"
-CAST_HEADERS = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpHeaders.kt"
-CAST_WIRE = "core/cast/src/main/kotlin/app/muplay/cast/http/HttpWire.kt"
-CAST_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/http/CastHttpClient.kt"
-CAST_NET = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalNetworkOnly.kt"
-CAST_ADDRESS = "core/cast/src/main/kotlin/app/muplay/cast/net/LocalAddress.kt"
-PLAYER_STATE = "feature/player/src/main/kotlin/app/muplay/player/PlayerUiState.kt"
-PLAYER_VM = "feature/player/src/main/kotlin/app/muplay/player/PlayerViewModel.kt"
-PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/app/muplay/media/PlaybackLauncher.kt"
-BROWSE_ID = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseId.kt"
-BROWSE_TREE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt"
-BROWSE_TEXT = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseText.kt"
-BROWSE_SURFACE = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSurface.kt"
-BROWSE_PAGING = "core/model/src/main/kotlin/app/muplay/model/browse/BrowsePaging.kt"
-BROWSE_EXTRAS = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseExtras.kt"
-BROWSE_SELECTION = "core/model/src/main/kotlin/app/muplay/model/browse/BrowseSelection.kt"
-PLAY_FROM_SEARCH = "core/model/src/main/kotlin/app/muplay/model/browse/PlayFromSearch.kt"
-BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/app/muplay/database/BrowseTreeRepository.kt"
-BOOK_SUMMARIES = "core/database/src/main/kotlin/app/muplay/database/BookSummaries.kt"
-DATA_MODULE = "core/database/src/main/kotlin/app/muplay/database/di/DataModule.kt"
+CLIENT = "core/network/src/main/kotlin/io/github/helios57/muplay/network/SubsonicClient.kt"
+AUTH = "core/network/src/main/kotlin/io/github/helios57/muplay/network/SubsonicAuth.kt"
+TYPE = "core/model/src/main/kotlin/io/github/helios57/muplay/model/AlbumListType.kt"
+MODEL = "core/network/src/main/kotlin/io/github/helios57/muplay/network/model/SubsonicResponse.kt"
+MIRROR = "core/database/src/main/kotlin/io/github/helios57/muplay/database/MirrorMapper.kt"
+SETUP_VM = "feature/setup/src/main/kotlin/io/github/helios57/muplay/setup/SetupViewModel.kt"
+SYNC_DECISION = "core/database/src/main/kotlin/io/github/helios57/muplay/database/SyncDecision.kt"
+LIBRARY_VM = "feature/library/src/main/kotlin/io/github/helios57/muplay/library/LibraryViewModel.kt"
+ALBUM_VM = "feature/library/src/main/kotlin/io/github/helios57/muplay/library/AlbumViewModel.kt"
+LIBRARY_STATE = "feature/library/src/main/kotlin/io/github/helios57/muplay/library/LibraryUiState.kt"
+STREAM_FORMAT = "core/model/src/main/kotlin/io/github/helios57/muplay/model/StreamFormat.kt"
+RETRY_POLICY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/StreamRetryPolicy.kt"
+MEDIA_MODULE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/di/MediaModule.kt"
+RESUME_POLICY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/ResumePolicy.kt"
+GAIN_POLICY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/ReplayGainPolicy.kt"
+PCM_ANALYSIS = "core/testing/src/main/kotlin/io/github/helios57/muplay/testing/PcmAnalysis.kt"
+BOOK_FIXTURES = "core/testing/src/main/kotlin/io/github/helios57/muplay/testing/BookFixtures.kt"
+PLAYBACK_QUEUE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackQueue.kt"
+TRACK_ID_KEY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/TrackIdCacheKeyFactory.kt"
+CAST_HEADERS = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/http/HttpHeaders.kt"
+CAST_WIRE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/http/HttpWire.kt"
+CAST_CLIENT = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/http/CastHttpClient.kt"
+CAST_NET = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/net/LocalNetworkOnly.kt"
+CAST_ADDRESS = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/net/LocalAddress.kt"
+PLAYER_STATE = "feature/player/src/main/kotlin/io/github/helios57/muplay/player/PlayerUiState.kt"
+PLAYER_VM = "feature/player/src/main/kotlin/io/github/helios57/muplay/player/PlayerViewModel.kt"
+PLAYBACK_LAUNCHER = "core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackLauncher.kt"
+BROWSE_ID = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseId.kt"
+BROWSE_TREE = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseTree.kt"
+BROWSE_TEXT = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseText.kt"
+BROWSE_SURFACE = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseSurface.kt"
+BROWSE_PAGING = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowsePaging.kt"
+BROWSE_EXTRAS = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseExtras.kt"
+BROWSE_SELECTION = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseSelection.kt"
+PLAY_FROM_SEARCH = "core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/PlayFromSearch.kt"
+BROWSE_TREE_REPOSITORY = "core/database/src/main/kotlin/io/github/helios57/muplay/database/BrowseTreeRepository.kt"
+BOOK_SUMMARIES = "core/database/src/main/kotlin/io/github/helios57/muplay/database/BookSummaries.kt"
+DATA_MODULE = "core/database/src/main/kotlin/io/github/helios57/muplay/database/di/DataModule.kt"
 # Plan 4 Task 2. The two audiobook value types that live on the JVM tier at all -- the schema,
 # the DAOs and the migration behind them need a device and are recorded by hand in
 # task-2-report.md, per this file's own INSTRUMENTED TIER note above.
-CHAPTER = "core/model/src/main/kotlin/app/muplay/model/Chapter.kt"
-BOOK_SETTINGS = "core/model/src/main/kotlin/app/muplay/model/BookSettings.kt"
+CHAPTER = "core/model/src/main/kotlin/io/github/helios57/muplay/model/Chapter.kt"
+BOOK_SETTINGS = "core/model/src/main/kotlin/io/github/helios57/muplay/model/BookSettings.kt"
 # Plan 4 Task 3. The Android-free half of chapter reading: `ChapterReader` and `ChapterRepository`
 # are Media3/Room-shaped and unreachable from this JVM-only runner (their mutations are recorded by
 # hand in task-3-report.md, per the SCOPE note above), but the sorting, the end-time filling, the
 # de-duplication and the whole timeline are plain Kotlin and are gated here.
-CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/app/muplay/media/ChapterAssembly.kt"
-BOOK_TIMELINE = "core/media/src/main/kotlin/app/muplay/media/BookTimeline.kt"
+CHAPTER_ASSEMBLY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/ChapterAssembly.kt"
+BOOK_TIMELINE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/BookTimeline.kt"
 # Plan 4 Task 5. A pure function over two Longs, on purpose, so the whole of it is reachable from
 # this JVM-only runner -- there is nothing about the smart-rewind table that needs a device.
-SMART_REWIND = "core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt"
+SMART_REWIND = "core/media/src/main/kotlin/io/github/helios57/muplay/media/SmartRewind.kt"
 # Plan 4 Task 8. The two Android-free halves of the sleep timer. `SleepTimerController` needs a real
 # `Player` and `ShakeSensor` needs a real `SensorManager`, so both are out of this runner's reach and
 # their mutations are recorded by hand in task-8-report.md, per the SCOPE note above -- but the fade
 # ramp and the shake decision are plain arithmetic and are gated here.
-SLEEP_FADE = "core/media/src/main/kotlin/app/muplay/media/SleepTimerFade.kt"
+SLEEP_FADE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/SleepTimerFade.kt"
 # Plan 4 Task 6. The resume policy itself is a pure function over an in-memory item and a `Clock`,
 # on purpose, so the whole of the decision this project exists for is reachable from this JVM-only
 # runner. `AudiobookSnapshot` and `ResumptionQueue` are Room-shaped and are recorded by hand in the
 # task report, per the SCOPE note above -- and so is the ONE thing that could not be probed here at
 # all until this task changed it: `MediaModule`'s binding, which now takes an `AudiobookItemSource`
 # rather than the concrete snapshot precisely so `MediaModuleTest` can call it from this tier.
-AUDIOBOOK_POLICY = "core/media/src/main/kotlin/app/muplay/media/AudiobookResumePolicy.kt"
+AUDIOBOOK_POLICY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/AudiobookResumePolicy.kt"
 # The local-only guard's two subjects: the port every consumer holds, and the wire it reaches.
-SUBSONIC_SOURCE = "core/network/src/main/kotlin/app/muplay/network/SubsonicSource.kt"
-SUBSONIC_API = "core/network/src/main/kotlin/app/muplay/network/SubsonicApi.kt"
-SHAKE_DETECTOR = "core/media/src/main/kotlin/app/muplay/media/ShakeDetector.kt"
+SUBSONIC_SOURCE = "core/network/src/main/kotlin/io/github/helios57/muplay/network/SubsonicSource.kt"
+SUBSONIC_API = "core/network/src/main/kotlin/io/github/helios57/muplay/network/SubsonicApi.kt"
+SHAKE_DETECTOR = "core/media/src/main/kotlin/io/github/helios57/muplay/media/ShakeDetector.kt"
 # Plan 4 Task 7. The Android-free half of per-book speed: `BookSpeedController` itself needs a real
 # `ExoPlayer` and is out of this runner's reach (its mutations are recorded by hand in
 # task-7-report.md, per the SCOPE note above), but `BookPlaybackSettings.of` -- the decision that
 # "a song after a book is not played at the book's speed" -- is a plain function over a plain value
 # and lives in the same file.
-BOOK_SPEED = "core/media/src/main/kotlin/app/muplay/media/BookSpeedController.kt"
-BASE_URL = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationBaseUrl.kt"
-STORE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentialStore.kt"
-CREDENTIALS = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationCredentials.kt"
-INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/app/muplay/integrations/IntegrationService.kt"
-REQUEST_STATUS = "integrations/core/src/main/kotlin/app/muplay/integrations/RequestStatus.kt"
-MEDIA_REQUEST = "integrations/core/src/main/kotlin/app/muplay/integrations/MediaRequest.kt"
-LIDARR_INT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
-LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrClient.kt"
-LIDARR_EXC = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrException.kt"
-LIDARR_API = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrApi.kt"
-LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddTargets.kt"
-LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrAddPayload.kt"
-BINDERY_INT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyAuthInterceptor.kt"
-BINDERY_CLIENT = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyClient.kt"
-BINDERY_API = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyApi.kt"
-BINDERY_EXC = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyException.kt"
-BINDERY_STATUS = "integrations/bindery/src/main/kotlin/app/muplay/integrations/bindery/BinderyStatusMapper.kt"
-LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrStatusMapper.kt"
-LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/app/muplay/integrations/lidarr/LidarrSource.kt"
-REQUESTS_ARRIVAL = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestArrivalDetector.kt"
-REQUESTS_REPO = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestsRepository.kt"
-REQUESTS_TITLE = "integrations/requests/src/main/kotlin/app/muplay/integrations/requests/TitleMatching.kt"
-PLAYBACK_SERVICE = "core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt"
-TASK_REMOVAL = "core/media/src/main/kotlin/app/muplay/media/TaskRemovalPolicy.kt"
-PLAYBACK_STATE = "core/media/src/main/kotlin/app/muplay/media/PlaybackState.kt"
-AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt"
-TRANSCODE_SEEK = "core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt"
+BOOK_SPEED = "core/media/src/main/kotlin/io/github/helios57/muplay/media/BookSpeedController.kt"
+BASE_URL = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/IntegrationBaseUrl.kt"
+STORE = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/IntegrationCredentialStore.kt"
+CREDENTIALS = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/IntegrationCredentials.kt"
+INTEGRATION_SERVICE = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/IntegrationService.kt"
+REQUEST_STATUS = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/RequestStatus.kt"
+MEDIA_REQUEST = "integrations/core/src/main/kotlin/io/github/helios57/muplay/integrations/MediaRequest.kt"
+LIDARR_INT = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrAuthInterceptor.kt"
+LIDARR_CLIENT = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrClient.kt"
+LIDARR_EXC = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrException.kt"
+LIDARR_API = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrApi.kt"
+LIDARR_TARGETS = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrAddTargets.kt"
+LIDARR_PAYLOAD = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrAddPayload.kt"
+BINDERY_INT = "integrations/bindery/src/main/kotlin/io/github/helios57/muplay/integrations/bindery/BinderyAuthInterceptor.kt"
+BINDERY_CLIENT = "integrations/bindery/src/main/kotlin/io/github/helios57/muplay/integrations/bindery/BinderyClient.kt"
+BINDERY_API = "integrations/bindery/src/main/kotlin/io/github/helios57/muplay/integrations/bindery/BinderyApi.kt"
+BINDERY_EXC = "integrations/bindery/src/main/kotlin/io/github/helios57/muplay/integrations/bindery/BinderyException.kt"
+BINDERY_STATUS = "integrations/bindery/src/main/kotlin/io/github/helios57/muplay/integrations/bindery/BinderyStatusMapper.kt"
+LIDARR_STATUS = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrStatusMapper.kt"
+LIDARR_SOURCE = "integrations/lidarr/src/main/kotlin/io/github/helios57/muplay/integrations/lidarr/LidarrSource.kt"
+REQUESTS_ARRIVAL = "integrations/requests/src/main/kotlin/io/github/helios57/muplay/integrations/requests/RequestArrivalDetector.kt"
+REQUESTS_REPO = "integrations/requests/src/main/kotlin/io/github/helios57/muplay/integrations/requests/RequestsRepository.kt"
+REQUESTS_TITLE = "integrations/requests/src/main/kotlin/io/github/helios57/muplay/integrations/requests/TitleMatching.kt"
+PLAYBACK_SERVICE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/MuPlaybackService.kt"
+TASK_REMOVAL = "core/media/src/main/kotlin/io/github/helios57/muplay/media/TaskRemovalPolicy.kt"
+PLAYBACK_STATE = "core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackState.kt"
+AUDIO_ATTRIBUTES = "core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackAudioAttributes.kt"
+TRANSCODE_SEEK = "core/media/src/main/kotlin/io/github/helios57/muplay/media/TranscodeSeek.kt"
 
 # Plan 3 Task 5, review round. The rule that decides which MediaControllers may connect to the
 # exported playback session at all.
-CONTROLLER_ACCESS = "core/media/src/main/kotlin/app/muplay/media/ControllerAccessPolicy.kt"
-DISCOVERY_SSDP = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt"
-DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpTransport.kt"
-DISCOVERY_DESC = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DeviceDescription.kt"
-DISCOVERY_DEVICE = "core/cast/src/main/kotlin/app/muplay/cast/discovery/CastDevice.kt"
-DISCOVERY_DIR = "core/cast/src/main/kotlin/app/muplay/cast/discovery/RendererDirectory.kt"
-DISCOVERY_FETCH = "core/cast/src/main/kotlin/app/muplay/cast/discovery/DescriptionFetcher.kt"
-SOAP_XML = "core/cast/src/main/kotlin/app/muplay/cast/soap/XmlText.kt"
-SOAP_ENVELOPE = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapEnvelope.kt"
-SOAP_NAMES = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapNames.kt"
-SOAP_CLIENT = "core/cast/src/main/kotlin/app/muplay/cast/soap/SoapClient.kt"
-DIDL_SERVED = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
-DIDL_LITE = "core/cast/src/main/kotlin/app/muplay/cast/didl/DidlLite.kt"
-DIDL_MIME = "core/cast/src/main/kotlin/app/muplay/cast/didl/MimeAgreement.kt"
-PROXY_RANGE = "core/cast/src/main/kotlin/app/muplay/cast/proxy/RangeHeader.kt"
-PROXY_REGISTRY = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyRegistry.kt"
-PROXY_UPSTREAM = "core/cast/src/main/kotlin/app/muplay/cast/proxy/ProxyUpstream.kt"
-PROXY_SERVER = "core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt"
-CONTROL_STATE = "core/cast/src/main/kotlin/app/muplay/cast/control/TransportState.kt"
-CONTROL_CAPS = "core/cast/src/main/kotlin/app/muplay/cast/control/RendererCapabilities.kt"
-CONTROL_RENDERER = "core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt"
-ROUTE_SUBNET = "core/cast/src/main/kotlin/app/muplay/cast/route/SubnetMatch.kt"
-ROUTE_ROUTER = "core/cast/src/main/kotlin/app/muplay/cast/route/CastRouter.kt"
-SESSION_SESSION = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSession.kt"
-SESSION_PLAYBACK = "core/cast/src/main/kotlin/app/muplay/cast/session/CastPlayback.kt"
-SESSION_SOURCE = "core/cast/src/main/kotlin/app/muplay/cast/session/CastSource.kt"
-HANDOVER_POLICY = "core/media/src/main/kotlin/app/muplay/media/cast/OneShotResumePolicy.kt"
-SERVED_MEDIA = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
+CONTROLLER_ACCESS = "core/media/src/main/kotlin/io/github/helios57/muplay/media/ControllerAccessPolicy.kt"
+DISCOVERY_SSDP = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/SsdpSearch.kt"
+DISCOVERY_TRANSPORT = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/SsdpTransport.kt"
+DISCOVERY_DESC = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/DeviceDescription.kt"
+DISCOVERY_DEVICE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/CastDevice.kt"
+DISCOVERY_DIR = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/RendererDirectory.kt"
+DISCOVERY_FETCH = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/DescriptionFetcher.kt"
+SOAP_XML = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/soap/XmlText.kt"
+SOAP_ENVELOPE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/soap/SoapEnvelope.kt"
+SOAP_NAMES = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/soap/SoapNames.kt"
+SOAP_CLIENT = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/soap/SoapClient.kt"
+DIDL_SERVED = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/didl/ServedMedia.kt"
+DIDL_LITE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/didl/DidlLite.kt"
+DIDL_MIME = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/didl/MimeAgreement.kt"
+PROXY_RANGE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/proxy/RangeHeader.kt"
+PROXY_REGISTRY = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/proxy/ProxyRegistry.kt"
+PROXY_UPSTREAM = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/proxy/ProxyUpstream.kt"
+PROXY_SERVER = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/proxy/MediaProxyServer.kt"
+CONTROL_STATE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/control/TransportState.kt"
+CONTROL_CAPS = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/control/RendererCapabilities.kt"
+CONTROL_RENDERER = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/control/UpnpRenderer.kt"
+ROUTE_SUBNET = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/route/SubnetMatch.kt"
+ROUTE_ROUTER = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/route/CastRouter.kt"
+SESSION_SESSION = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/session/CastSession.kt"
+SESSION_PLAYBACK = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/session/CastPlayback.kt"
+SESSION_SOURCE = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/session/CastSource.kt"
+HANDOVER_POLICY = "core/media/src/main/kotlin/io/github/helios57/muplay/media/cast/OneShotResumePolicy.kt"
+SERVED_MEDIA = "core/cast/src/main/kotlin/io/github/helios57/muplay/cast/didl/ServedMedia.kt"
 # The one probe below that mutates TEST source, named here rather than quietly reached through
 # the `core/cast` entry in `revert()`. See `soap/fake-accepts-everything` for why it is not the
 # test-side probe this file's SCOPE note excludes: `FakeRenderer` is the *subject* of
@@ -293,21 +293,21 @@ SERVED_MEDIA = "core/cast/src/main/kotlin/app/muplay/cast/didl/ServedMedia.kt"
 # `HandoverTest` drives a handover against this same fake, and a `testFixtures` source set is
 # how one module's test helper reaches another's. `revert()` checks out `core/cast` wholesale,
 # so the move needed no change there -- only here, where the path is written out.
-SOAP_FAKE = "core/cast/src/testFixtures/kotlin/app/muplay/cast/fake/FakeRenderer.kt"
+SOAP_FAKE = "core/cast/src/testFixtures/kotlin/io/github/helios57/muplay/cast/fake/FakeRenderer.kt"
 
 # Plan 6 Task 10. The picker's two pure-Kotlin halves -- the state mapping and the view model.
 # Both are reachable from this JVM-only runner because `:feature:castpicker` keeps every decision
 # out of its `@Composable`s: `castUiState`, `castFailure` and `connectedUdn` are top-level
 # functions in their own file, and `CastViewModel` is constructed over two hand-written seams
 # rather than over `RendererDirectory` and `CastSessionManager`. Nothing here needs a device.
-CAST_UI_STATE = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastUiState.kt"
-CAST_VIEW_MODEL = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/CastViewModel.kt"
+CAST_UI_STATE = "feature/castpicker/src/main/kotlin/io/github/helios57/muplay/castpicker/CastUiState.kt"
+CAST_VIEW_MODEL = "feature/castpicker/src/main/kotlin/io/github/helios57/muplay/castpicker/CastViewModel.kt"
 # Plan 6 Task 12. The renderer-direct setting: where it is stored, where its consequences are
 # stated, and the slot that puts them in front of a user. `CastRouter` itself is `ROUTE_ROUTER`
 # above, and lives inside `core/cast`, which `revert()` checks out wholesale.
-CAST_SETTINGS = "core/database/src/main/kotlin/app/muplay/database/CastSettings.kt"
-RENDERER_DIRECT_SECTION = "feature/castpicker/src/main/kotlin/app/muplay/castpicker/RendererDirectSection.kt"
-SETTINGS_SECTION = "feature/settings/src/main/kotlin/app/muplay/settings/SettingsSection.kt"
+CAST_SETTINGS = "core/database/src/main/kotlin/io/github/helios57/muplay/database/CastSettings.kt"
+RENDERER_DIRECT_SECTION = "feature/castpicker/src/main/kotlin/io/github/helios57/muplay/castpicker/RendererDirectSection.kt"
+SETTINGS_SECTION = "feature/settings/src/main/kotlin/io/github/helios57/muplay/settings/SettingsSection.kt"
 
 # (id, file, exact text to replace, replacement, test that must fail, total expected failures)
 #
@@ -902,7 +902,7 @@ PROBES = [
      "  fun provideUndecoratedResumePolicy(source: AudiobookItemSource, clock: Clock): ResumePolicy =\n"
      "    AudiobookResumePolicy(source, clock)",
      "  fun provideUndecoratedResumePolicy(source: AudiobookItemSource, clock: Clock): ResumePolicy =\n"
-     "    ResumePolicy { _, i -> app.muplay.media.ResumeTarget(i, 30_000L) }",
+     "    ResumePolicy { _, i -> io.github.helios57.muplay.media.ResumeTarget(i, 30_000L) }",
      # `resume/position-honoured` above breaks `NeverResume` itself; this breaks the *binding*, which
      # is the other way the same defect arrives and the one Plan 4 will be editing. `MuPlayer`
      # faithfully applies whatever is bound here, so a wrong binding is a wrong app.
@@ -2908,8 +2908,8 @@ PROBES = [
     #    `when` still has two arms and both still execute, so the 2/2 BRANCH floor over this
     #    companion stays green under the mutation.
     ("integrations/keyAlias-service", STORE,
-     'IntegrationService.BINDERY -> "app.muplay.integrations.bindery"',
-     'IntegrationService.BINDERY -> "app.muplay.integrations.lidarr"',
+     'IntegrationService.BINDERY -> "io.github.helios57.muplay.integrations.bindery"',
+     'IntegrationService.BINDERY -> "io.github.helios57.muplay.integrations.lidarr"',
      "the two services use two different keystore aliases", 1),
 
     # 2. The API-key redaction. A Lidarr key is instance-wide and carries admin authority over the

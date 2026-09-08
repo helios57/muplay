@@ -244,47 +244,47 @@ symbol. It is deliberately a weak check of a strong discipline: it cannot tell y
 
 | Claim | File | Must contain |
 |---|---|---|
-| Connects to a Navidrome / Subsonic server you name | `feature/setup/src/main/kotlin/app/muplay/setup/SetupViewModel.kt` | `class SetupViewModel` |
-| Each library is tagged Music or Audiobooks | `core/model/src/main/kotlin/app/muplay/model/LibraryRole.kt` | `AUDIOBOOKS` |
-| Shuffle is scoped to one library, and out-of-scope tracks are dropped and reported | `core/database/src/main/kotlin/app/muplay/database/ShuffleRepository.kt` | `class ShuffleRepository` |
-| Browsing and searching read a local mirror, not the network | `core/database/src/main/kotlin/app/muplay/database/dao/BrowseDao.kt` | `LIKE` |
-| Album art | `feature/library/src/main/kotlin/app/muplay/library/CoverArt.kt` | `CoverArtImage` |
-| Refresh pulls server-side changes on demand | `feature/library/src/main/kotlin/app/muplay/library/LibraryScreen.kt` | `Refresh library` |
-| Media notification and lock-screen controls | `core/media/src/main/kotlin/app/muplay/media/PlaybackNotification.kt` | `NOTIFICATION_ID` |
-| Pauses when headphones are unplugged | `core/media/src/main/kotlin/app/muplay/media/MuPlayerFactory.kt` | `setHandleAudioBecomingNoisy` |
-| Ducks for navigation prompts, pauses for calls | `core/media/src/main/kotlin/app/muplay/media/PlaybackAudioAttributes.kt` | `USAGE_MEDIA` |
-| Gapless playback | `core/media/src/androidTest/kotlin/app/muplay/media/GaplessTest.kt` | `class GaplessTest` |
-| Volume levelling from ReplayGain tags, automatically | `core/media/src/main/kotlin/app/muplay/media/ReplayGainController.kt` | `class ReplayGainController` |
-| Seeking works on a re-encoded stream | `core/media/src/main/kotlin/app/muplay/media/TranscodeSeek.kt` | `TranscodeSeek` |
-| Android Auto browse tree: Continue, Books, Albums, Artists | `core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt` | `Continue` |
-| Books show how much is left and resume in the right part | `core/database/src/main/kotlin/app/muplay/database/AudiobookRepository.kt` | `resumeFileId` |
-| One tap shuffles a library in the car | `core/model/src/main/kotlin/app/muplay/model/browse/BrowseTree.kt` | `Shuffle ` |
-| "Play … on MuPlay" works with the app closed | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | `playFromSearch` |
+| Connects to a Navidrome / Subsonic server you name | `feature/setup/src/main/kotlin/io/github/helios57/muplay/setup/SetupViewModel.kt` | `class SetupViewModel` |
+| Each library is tagged Music or Audiobooks | `core/model/src/main/kotlin/io/github/helios57/muplay/model/LibraryRole.kt` | `AUDIOBOOKS` |
+| Shuffle is scoped to one library, and out-of-scope tracks are dropped and reported | `core/database/src/main/kotlin/io/github/helios57/muplay/database/ShuffleRepository.kt` | `class ShuffleRepository` |
+| Browsing and searching read a local mirror, not the network | `core/database/src/main/kotlin/io/github/helios57/muplay/database/dao/BrowseDao.kt` | `LIKE` |
+| Album art | `feature/library/src/main/kotlin/io/github/helios57/muplay/library/CoverArt.kt` | `CoverArtImage` |
+| Refresh pulls server-side changes on demand | `feature/library/src/main/kotlin/io/github/helios57/muplay/library/LibraryScreen.kt` | `Refresh library` |
+| Media notification and lock-screen controls | `core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackNotification.kt` | `NOTIFICATION_ID` |
+| Pauses when headphones are unplugged | `core/media/src/main/kotlin/io/github/helios57/muplay/media/MuPlayerFactory.kt` | `setHandleAudioBecomingNoisy` |
+| Ducks for navigation prompts, pauses for calls | `core/media/src/main/kotlin/io/github/helios57/muplay/media/PlaybackAudioAttributes.kt` | `USAGE_MEDIA` |
+| Gapless playback | `core/media/src/androidTest/kotlin/io/github/helios57/muplay/media/GaplessTest.kt` | `class GaplessTest` |
+| Volume levelling from ReplayGain tags, automatically | `core/media/src/main/kotlin/io/github/helios57/muplay/media/ReplayGainController.kt` | `class ReplayGainController` |
+| Seeking works on a re-encoded stream | `core/media/src/main/kotlin/io/github/helios57/muplay/media/TranscodeSeek.kt` | `TranscodeSeek` |
+| Android Auto browse tree: Continue, Books, Albums, Artists | `core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseTree.kt` | `Continue` |
+| Books show how much is left and resume in the right part | `core/database/src/main/kotlin/io/github/helios57/muplay/database/AudiobookRepository.kt` | `resumeFileId` |
+| One tap shuffles a library in the car | `core/model/src/main/kotlin/io/github/helios57/muplay/model/browse/BrowseTree.kt` | `Shuffle ` |
+| "Play … on MuPlay" works with the app closed | `core/media/src/main/kotlin/io/github/helios57/muplay/media/MuPlaybackService.kt` | `playFromSearch` |
 | No analytics, advertising or crash reporting dependency | `gradle/libs.versions.toml` | `[libraries]` |
-| Listening history is never sent to the server | `core/media/src/main/kotlin/app/muplay/media/ProgressWriter.kt` | `class ProgressWriter` |
-| Book positions are written to the phone only | `core/database/src/main/kotlin/app/muplay/database/dao/MediaProgressDao.kt` | `MediaProgressDao` |
-| The password is sealed with an Android Keystore key | `core/database/src/main/kotlin/app/muplay/database/KeystoreCipher.kt` | `AndroidKeyStore` |
+| Listening history is never sent to the server | `core/media/src/main/kotlin/io/github/helios57/muplay/media/ProgressWriter.kt` | `class ProgressWriter` |
+| Book positions are written to the phone only | `core/database/src/main/kotlin/io/github/helios57/muplay/database/dao/MediaProgressDao.kt` | `MediaProgressDao` |
+| The password is sealed with an Android Keystore key | `core/database/src/main/kotlin/io/github/helios57/muplay/database/KeystoreCipher.kt` | `AndroidKeyStore` |
 | Excluded from device backups | `app/src/main/AndroidManifest.xml` | `android:allowBackup="false"` |
 | MIT licence | `LICENSE` | `MIT` |
 | Android 8.0 or newer | `build-logic/convention/src/main/kotlin/KotlinAndroid.kt` | `minSdk = 26` |
-| A book opens in its own player, not the music one | `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` | `BookPlayerRoute` |
-| Next and Previous move a chapter at a time | `feature/book/src/main/kotlin/app/muplay/book/BookPlayerScreen.kt` | `onPreviousChapter` |
-| A tappable chapter list | `feature/book/src/main/kotlin/app/muplay/book/BookScreen.kt` | `onPlayChapter` |
-| Chapters are read from the files' own tags and remembered | `core/media/src/main/kotlin/app/muplay/media/ChapterRepository.kt` | `class ChapterRepository` |
-| A book resumes at the position inside the file, not just the right file | `core/media/src/main/kotlin/app/muplay/media/AudiobookResumePolicy.kt` | `class AudiobookResumePolicy` |
-| ...and that is the policy the shipping player is given | `core/media/src/main/kotlin/app/muplay/media/di/MediaModule.kt` | `OneShotResumePolicy` |
-| Resume winds back in proportion to how long you were away | `core/media/src/main/kotlin/app/muplay/media/SmartRewind.kt` | `object SmartRewind` |
-| Per-book speed, 0.5x to 3.0x | `core/model/src/main/kotlin/app/muplay/model/BookSettings.kt` | `MAX_SPEED` |
-| Speed and silence skipping reach the real player, per book | `core/media/src/main/kotlin/app/muplay/media/BookSpeedController.kt` | `player.skipSilenceEnabled` |
-| The sleep timer reaches the player the service is actually driving | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | `sleepTimer.attach(` |
-| A shake extends the sleep timer, and the sensor listens only while one is in play | `core/media/src/main/kotlin/app/muplay/media/MuPlaybackService.kt` | `shakeSensor.start` |
-| Playing to Sonos and generic DLNA/UPnP renderers | `core/cast/src/main/kotlin/app/muplay/cast/control/UpnpRenderer.kt` | `SetAVTransportURI` |
-| Renderers are found on the network, by SSDP | `core/cast/src/main/kotlin/app/muplay/cast/discovery/SsdpSearch.kt` | `TARGET_MEDIA_RENDERER` |
-| The phone relays the audio, so the speaker gets no credential | `core/cast/src/main/kotlin/app/muplay/cast/proxy/MediaProxyServer.kt` | `class MediaProxyServer` |
-| The picker is reachable — from the music player | `app/src/main/kotlin/app/muplay/ui/MuPlayApp.kt` | `CastPickerSheet` |
-| Requests really reach Lidarr and Bindery — albums to one, audiobooks to the other | `integrations/requests/src/main/kotlin/app/muplay/integrations/requests/RequestsRepository.kt` | `BinderyMediaType.AUDIOBOOK` |
-| Setting an integration up is reachable with none configured | `feature/requests/src/main/kotlin/app/muplay/requests/IntegrationsSection.kt` | `settings:integrations` |
-| An integration API key is never sent over plain http in a release build | `app/src/release/kotlin/app/muplay/di/CleartextPolicyModule.kt` | `CleartextPolicy.Forbidden` |
+| A book opens in its own player, not the music one | `app/src/main/kotlin/io/github/helios57/muplay/ui/MuPlayApp.kt` | `BookPlayerRoute` |
+| Next and Previous move a chapter at a time | `feature/book/src/main/kotlin/io/github/helios57/muplay/book/BookPlayerScreen.kt` | `onPreviousChapter` |
+| A tappable chapter list | `feature/book/src/main/kotlin/io/github/helios57/muplay/book/BookScreen.kt` | `onPlayChapter` |
+| Chapters are read from the files' own tags and remembered | `core/media/src/main/kotlin/io/github/helios57/muplay/media/ChapterRepository.kt` | `class ChapterRepository` |
+| A book resumes at the position inside the file, not just the right file | `core/media/src/main/kotlin/io/github/helios57/muplay/media/AudiobookResumePolicy.kt` | `class AudiobookResumePolicy` |
+| ...and that is the policy the shipping player is given | `core/media/src/main/kotlin/io/github/helios57/muplay/media/di/MediaModule.kt` | `OneShotResumePolicy` |
+| Resume winds back in proportion to how long you were away | `core/media/src/main/kotlin/io/github/helios57/muplay/media/SmartRewind.kt` | `object SmartRewind` |
+| Per-book speed, 0.5x to 3.0x | `core/model/src/main/kotlin/io/github/helios57/muplay/model/BookSettings.kt` | `MAX_SPEED` |
+| Speed and silence skipping reach the real player, per book | `core/media/src/main/kotlin/io/github/helios57/muplay/media/BookSpeedController.kt` | `player.skipSilenceEnabled` |
+| The sleep timer reaches the player the service is actually driving | `core/media/src/main/kotlin/io/github/helios57/muplay/media/MuPlaybackService.kt` | `sleepTimer.attach(` |
+| A shake extends the sleep timer, and the sensor listens only while one is in play | `core/media/src/main/kotlin/io/github/helios57/muplay/media/MuPlaybackService.kt` | `shakeSensor.start` |
+| Playing to Sonos and generic DLNA/UPnP renderers | `core/cast/src/main/kotlin/io/github/helios57/muplay/cast/control/UpnpRenderer.kt` | `SetAVTransportURI` |
+| Renderers are found on the network, by SSDP | `core/cast/src/main/kotlin/io/github/helios57/muplay/cast/discovery/SsdpSearch.kt` | `TARGET_MEDIA_RENDERER` |
+| The phone relays the audio, so the speaker gets no credential | `core/cast/src/main/kotlin/io/github/helios57/muplay/cast/proxy/MediaProxyServer.kt` | `class MediaProxyServer` |
+| The picker is reachable — from the music player | `app/src/main/kotlin/io/github/helios57/muplay/ui/MuPlayApp.kt` | `CastPickerSheet` |
+| Requests really reach Lidarr and Bindery — albums to one, audiobooks to the other | `integrations/requests/src/main/kotlin/io/github/helios57/muplay/integrations/requests/RequestsRepository.kt` | `BinderyMediaType.AUDIOBOOK` |
+| Setting an integration up is reachable with none configured | `feature/requests/src/main/kotlin/io/github/helios57/muplay/requests/IntegrationsSection.kt` | `settings:integrations` |
+| An integration API key is never sent over plain http in a release build | `app/src/release/kotlin/io/github/helios57/muplay/di/CleartextPolicyModule.kt` | `CleartextPolicy.Forbidden` |
 
 ### Not in this version
 

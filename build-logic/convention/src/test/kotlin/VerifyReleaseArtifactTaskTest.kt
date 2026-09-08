@@ -21,9 +21,9 @@ import org.junit.jupiter.api.io.TempDir
  *
  *     R8 produced no mapping.txt for this build, so the release variant was NOT minified. 27978
  *     type descriptors are in base/dex/classes.dex, base/dex/classes2.dex, base/dex/classes3.dex,
- *     base/dex/classes4.dex, of which 920 are app.muplay classes carrying their own source names.
+ *     base/dex/classes4.dex, of which 920 are io.github.helios57.muplay classes carrying their own source names.
  *
- * — against 6146 descriptors in one dex, 7 of them `app.muplay`, on the minified build minutes
+ * — against 6146 descriptors in one dex, 7 of them `io.github.helios57.muplay`, on the minified build minutes
  * earlier. That is one branch of one check. This file is the rest of them, and it exists for the
  * reason [VerifyMergedManifestTaskTest] states at length: a gate whose only exercise is a green
  * build is a gate nobody has watched fail, and *green* is what this one produces on every correct
@@ -46,23 +46,23 @@ class VerifyReleaseArtifactTaskTest {
   // renamed, one it removed outright, and a platform type as the DEX reader's proof of life.
   // -------------------------------------------------------------------------------------------
 
-  private val keptClass = "app.muplay.MainActivity"
-  private val renamedClass = "app.muplay.library.LibraryScreenKt"
-  private val debugOnlyClass = "app.muplay.media.PlaybackEntryPoint"
+  private val keptClass = "io.github.helios57.muplay.MainActivity"
+  private val renamedClass = "io.github.helios57.muplay.library.LibraryScreenKt"
+  private val debugOnlyClass = "io.github.helios57.muplay.media.PlaybackEntryPoint"
 
   private val mapping = """
-    app.muplay.MainActivity -> app.muplay.MainActivity:
+    io.github.helios57.muplay.MainActivity -> io.github.helios57.muplay.MainActivity:
         void onCreate(android.os.Bundle) -> onCreate
-    app.muplay.library.LibraryScreenKt -> a1:
-    app.muplay.player.PlayerViewModel -> b2:
-    app.muplay.gone.NeverReferenced -> R8${'$'}${'$'}REMOVED${'$'}${'$'}CLASS${'$'}${'$'}17:
+    io.github.helios57.muplay.library.LibraryScreenKt -> a1:
+    io.github.helios57.muplay.player.PlayerViewModel -> b2:
+    io.github.helios57.muplay.gone.NeverReferenced -> R8${'$'}${'$'}REMOVED${'$'}${'$'}CLASS${'$'}${'$'}17:
     androidx.room.RoomDatabase -> androidx.room.RoomDatabase:
   """.trimIndent()
 
   private val dexTypes = listOf(
     "Landroid/os/Bundle;",
     "Ljava/lang/String;",
-    "Lapp/muplay/MainActivity;",
+    "Lio/github/helios57/muplay/MainActivity;",
     "La1;",
     "Lb2;",
   )
@@ -70,10 +70,10 @@ class VerifyReleaseArtifactTaskTest {
   /** aapt2 stores attribute names as plain UTF-8 in the bundle's protobuf manifest. */
   private val manifest =
     "\u0002\u0010manifest\u0000android:name=\"android.permission.INTERNET\"\u0000" +
-      "android:name=\"app.muplay.media.MuPlaybackService\"\u0000" +
+      "android:name=\"io.github.helios57.muplay.media.MuPlaybackService\"\u0000" +
       "android:foregroundServiceType=\"mediaPlayback\"\u0000"
 
-  private val required = listOf("foregroundServiceType", "app.muplay.media.MuPlaybackService", "android.permission.INTERNET")
+  private val required = listOf("foregroundServiceType", "io.github.helios57.muplay.media.MuPlaybackService", "android.permission.INTERNET")
   private val forbidden = listOf("usesCleartextTraffic", "networkSecurityConfig", "debuggable")
 
   /** One 64-bit and one 32-bit library, both 16 KB aligned, like the real bundle's eight. */
@@ -84,15 +84,15 @@ class VerifyReleaseArtifactTaskTest {
 
   /** `app/src/debug/...` declares one type that no main or release source set declares. */
   private val debugSources = mapOf(
-    "PlaybackEntryPoint.kt" to "package app.muplay.media\n\ninterface PlaybackEntryPoint\n",
+    "PlaybackEntryPoint.kt" to "package io.github.helios57.muplay.media\n\ninterface PlaybackEntryPoint\n",
     // The build-type *twin*: the same fully-qualified name exists in `src/release` too, so it is
     // legitimately in the release program and must not be reported. Without this case in the
     // fixture, the subtraction that makes the check correct would be untested.
-    "CleartextPolicyModule.kt" to "package app.muplay.di\n\nobject CleartextPolicyModule\n",
+    "CleartextPolicyModule.kt" to "package io.github.helios57.muplay.di\n\nobject CleartextPolicyModule\n",
   )
   private val nonDebugSources = mapOf(
-    "CleartextPolicyModule.kt" to "package app.muplay.di\n\nobject CleartextPolicyModule\n",
-    "MainActivity.kt" to "package app.muplay\n\nclass MainActivity\n",
+    "CleartextPolicyModule.kt" to "package io.github.helios57.muplay.di\n\nobject CleartextPolicyModule\n",
+    "MainActivity.kt" to "package io.github.helios57.muplay\n\nclass MainActivity\n",
   )
 
   // -------------------------------------------------------------------------------------------
@@ -156,19 +156,19 @@ class VerifyReleaseArtifactTaskTest {
     // A class that reached the artifact around R8 rather than through it. Distinct from the
     // renamed-original case: this name is in no mapping line at all, so a check written only
     // against the renamed set would wave it through.
-    assertThatThrownBy { verify(dir, dexTypes = dexTypes + "Lapp/muplay/Injected;") }
+    assertThatThrownBy { verify(dir, dexTypes = dexTypes + "Lio/github/helios57/muplay/Injected;") }
       .isInstanceOf(GradleException::class.java)
       .hasMessageContaining("not in mapping.txt's kept set")
-      .hasMessageContaining("app.muplay.Injected")
+      .hasMessageContaining("io.github.helios57.muplay.Injected")
   }
 
   @Test
   fun `a mapping that renames nothing is not a minified build`(@TempDir dir: File) {
-    // `-keep class app.muplay.** { *; }` pasted in to fix a reflection crash. R8 runs, a mapping
+    // `-keep class io.github.helios57.muplay.** { *; }` pasted in to fix a reflection crash. R8 runs, a mapping
     // is written, and the shipped artifact carries every one of this application's own names.
     val keepEverything = """
-      app.muplay.MainActivity -> app.muplay.MainActivity:
-      app.muplay.library.LibraryScreenKt -> app.muplay.library.LibraryScreenKt:
+      io.github.helios57.muplay.MainActivity -> io.github.helios57.muplay.MainActivity:
+      io.github.helios57.muplay.library.LibraryScreenKt -> io.github.helios57.muplay.library.LibraryScreenKt:
     """.trimIndent()
     assertThatThrownBy {
       verify(dir, mapping = keepEverything, dexTypes = dexTypes + descriptor(renamedClass))
@@ -185,7 +185,7 @@ class VerifyReleaseArtifactTaskTest {
       verify(dir, mapping = "androidx.room.RoomDatabase -> androidx.room.RoomDatabase:", dexTypes = dexTypes - descriptor(keptClass) - "La1;" - "Lb2;")
     }
       .isInstanceOf(GradleException::class.java)
-      .hasMessageContaining("names no app.muplay class at all")
+      .hasMessageContaining("names no io.github.helios57.muplay class at all")
   }
 
   @Test
@@ -222,7 +222,7 @@ class VerifyReleaseArtifactTaskTest {
     // build legitimately contains that name. Asserted rather than assumed, because the naive
     // spelling of the rule above -- "no name declared under src/debug" -- fails here on the very
     // file pair this repository uses to prove build-type source sets work.
-    val withTwin = "$mapping\napp.muplay.di.CleartextPolicyModule -> d4:"
+    val withTwin = "$mapping\nio.github.helios57.muplay.di.CleartextPolicyModule -> d4:"
     assertThatCode { verify(dir, mapping = withTwin, dexTypes = dexTypes + "Ld4;") }
       .doesNotThrowAnyException()
   }
@@ -357,7 +357,7 @@ class VerifyReleaseArtifactTaskTest {
     }
     task.debugSources.from(sources("debug", debugSources))
     task.nonDebugSources.from(sources("main", nonDebugSources))
-    task.applicationPackage.set("app.muplay")
+    task.applicationPackage.set("io.github.helios57.muplay")
     task.forbiddenManifestAttributes.set(forbidden)
     task.requiredManifestAttributes.set(required)
     task.dexProbeDescriptor.set("Landroid/os/Bundle;")

@@ -128,7 +128,7 @@ crash they avoid, and note that the script refuses to run without them.
   [`build-logic/`](build-logic/convention/src/main/kotlin); a module's own
   `build.gradle.kts` carries `plugins {}`, `dependencies {}` and nothing else
   except its own identity (`namespace`, `applicationId`, `versionCode`,
-  `versionName`). [`ConventionTest`](app/src/test/kotlin/app/muplay/ConventionTest.kt)
+  `versionName`). [`ConventionTest`](app/src/test/kotlin/io/github/helios57/muplay/ConventionTest.kt)
   enforces that allow-list rather than leaving it to habit.
 - **No mock frameworks.** Real collaborators first, then hand-written fakes.
   `ConventionTest` scans the catalogue, every module build file and every

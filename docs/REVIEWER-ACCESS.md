@@ -334,7 +334,7 @@ emulator is back:
 
     ./gradlew :app:assembleRelease            # with the upload key configured
     adb install -r app/build/outputs/apk/release/app-release.apk
-    adb shell am start -n app.muplay/.MainActivity
+    adb shell am start -n io.github.helios57.muplay/.MainActivity
 
 **Nobody should file these instructions with Play until that walk has been done once**, because a
 route that has only ever been proved server-side is exactly the half-measured claim this project

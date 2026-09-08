@@ -3,6 +3,24 @@
 Short, hard-won facts that cost real time when they were unknown. Add to this
 file when something costs you more than a few minutes to discover.
 
+## The package is `io.github.helios57.muplay`, and older records here say `app.muplay`
+
+Renamed 2026-09-08 -- the `applicationId` first, then the `namespace` and every Kotlin package with
+it a few hours later, so the two are the same string again. Two consequences for reading anything
+written before that day:
+
+- **Quoted compiler and test output in this file is left verbatim.** Where a D8 error or a JUnit
+  message below names `app.muplay.…`, that is what the tool actually printed. Rewriting it would
+  turn a record into a fabrication, and the lesson each of those sections teaches does not depend on
+  which package it happened in.
+- **`docs/superpowers/plans/` and `docs/superpowers/spikes/` were not rewritten either**, for the
+  same reason: they are dated documents describing the tree as it was. A path there beginning
+  `…/kotlin/app/muplay/` is history, not rot. The live documents -- `README.md`, `docs/STORE-LISTING.md`,
+  `docs/PRIVACY.md`, `docs/REVIEWER-ACCESS.md`, `docs/AUDIT-BACKLOG.md` -- were rewritten and are current.
+
+`docs/PLAY-RELEASE.md` has the full account, including the one gate the rename broke and why the
+gate was right.
+
 ## `adb` is not on `PATH`
 
 It lives at `/home/helios/Android/Sdk/platform-tools/adb`.
@@ -76,7 +94,7 @@ to install plus execution. While iterating, narrow it further to the class you
 are working on:
 
     ci/device-lock.sh ./gradlew :core:media:connectedDebugAndroidTest \
-      -Pandroid.testInstrumentationRunnerArguments.class=app.muplay.media.MediaCacheTest
+      -Pandroid.testInstrumentationRunnerArguments.class=io.github.helios57.muplay.media.MediaCacheTest
 
 Run the module's full connected suite once, at the end, before you report.
 

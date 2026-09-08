@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.integrations.bindery"
+  namespace = "io.github.helios57.muplay.integrations.bindery"
 }
 
 dependencies {

@@ -10,7 +10,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.requests"
+  namespace = "io.github.helios57.muplay.requests"
 }
 
 // **This module and `:app` are the only two permitted to name an `:integrations:*` project**, and

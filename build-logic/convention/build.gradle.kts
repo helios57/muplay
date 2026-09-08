@@ -2,7 +2,7 @@ plugins {
   `kotlin-dsl`
 }
 
-group = "app.muplay.buildlogic"
+group = "io.github.helios57.muplay.buildlogic"
 
 java {
   toolchain {

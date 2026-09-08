@@ -13,8 +13,8 @@ import java.nio.ByteOrder
  *
  * ### Why a parser rather than a substring search over the bytes
  *
- * A `bytes.contains("Lapp/muplay/MainActivity;")` scan can answer "is this name present" and
- * nothing else. The assertion that carries the weight is the *census* one — **every** `app.muplay`
+ * A `bytes.contains("Lio/github/helios57/muplay/MainActivity;")` scan can answer "is this name present" and
+ * nothing else. The assertion that carries the weight is the *census* one — **every** `io.github.helios57.muplay`
  * type in the shipped dex must be one R8 said it deliberately kept — and that needs the full list,
  * not a membership test against names guessed in advance. A rule that can only ask about names
  * somebody wrote down cannot see the class that was added last week, which is the exact failure
@@ -30,7 +30,7 @@ import java.nio.ByteOrder
  * table. That is the whole of what is read here — no instructions, no class definitions, no
  * annotations — which is why this is fifty lines instead of a dependency on a bytecode library.
  *
- * Type descriptors are JVM-shaped: `Lapp/muplay/MainActivity;`, `Ljava/lang/String;`, `[I`.
+ * Type descriptors are JVM-shaped: `Lio/github/helios57/muplay/MainActivity;`, `Ljava/lang/String;`, `[I`.
  * The table holds every type the file *references*, not only the ones it defines, which is what
  * makes a framework name like `Landroid/os/Bundle;` usable as a proof-of-life control.
  */
@@ -54,10 +54,10 @@ internal object DexTypes {
     return (0 until typeIdsSize).map { stringAt(buffer.getInt(typeIdsOff + 4 * it)) }
   }
 
-  /** `app.muplay.Foo.Bar` -> `Lapp/muplay/Foo$Bar;`, the shape a descriptor table holds. */
+  /** `io.github.helios57.muplay.Foo.Bar` -> `Lio/github/helios57/muplay/Foo$Bar;`, the shape a descriptor table holds. */
   fun descriptorOf(binaryName: String): String = "L${binaryName.replace('.', '/')};"
 
-  /** `Lapp/muplay/MainActivity;` -> `app.muplay.MainActivity`; anything else -> null. */
+  /** `Lio/github/helios57/muplay/MainActivity;` -> `io.github.helios57.muplay.MainActivity`; anything else -> null. */
   fun binaryNameOf(descriptor: String): String? =
     if (descriptor.length > 2 && descriptor.startsWith('L') && descriptor.endsWith(';')) {
       descriptor.substring(1, descriptor.length - 1).replace('/', '.')

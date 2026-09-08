@@ -33,7 +33,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-readonly TEST_SOURCE="$REPO_ROOT/app/src/androidTest/kotlin/app/muplay/StoreScreenshotsTest.kt"
+readonly TEST_SOURCE="$REPO_ROOT/app/src/androidTest/kotlin/io/github/helios57/muplay/StoreScreenshotsTest.kt"
 readonly OUTPUT_DIR="$REPO_ROOT/play/screenshots/phone"
 # Play's own limits for a phone screenshot, and the reason this script checks pixels at all: the
 # Console rejects the upload rather than the listing, long after anyone remembers why.

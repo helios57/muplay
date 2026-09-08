@@ -1,0 +1,241 @@
+package io.github.helios57.muplay.media
+
+import android.content.Context
+import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+
+/**
+ * The only place in this project an `ExoPlayer` is constructed.
+ *
+ * "Only" is not a convention here, it is the point of the type, and it is enforced twice.
+ * `PlayerConstructionTest` (JVM tier) fails if a second `ExoPlayer.Builder(` appears anywhere in
+ * this module's sources, and `media3-exoplayer` is an `implementation` dependency of `:core:media`
+ * -- checked against the resolved POMs, `media3-session` does not depend on it -- so no other module
+ * can even name the type. A feature module that *can* build an `ExoPlayer` eventually does, and then
+ * there are two players in the process, one of them not the one holding the media session.
+ *
+ * ### Why a factory rather than a `@Provides @Singleton ExoPlayer`
+ *
+ * A hard Media3 requirement rather than a preference: an `ExoPlayer` binds to the `Looper` of the
+ * thread that built it, and every subsequent access must come from that thread. Hilt would construct
+ * a singleton on whichever thread first asked for it. [MuPlaybackService.onCreate] runs on the main
+ * thread, so building it there is the only way to be sure.
+ *
+ * ### The one line that is silent when it is missing
+ *
+ * `.setLoadErrorHandlingPolicy(loadErrorPolicy)` hangs off the **`MediaSource.Factory`**, not off
+ * `ExoPlayer.Builder` -- which has no such setter at all in Media3 1.11.0, checked against the
+ * resolved artifact. Forget it and nothing breaks loudly: the player quietly keeps
+ * `DefaultLoadErrorHandlingPolicy`'s three retries inside five seconds,
+ * `NavidromeLoadErrorHandlingPolicyTest` and `StreamRetryPolicyTest` stay green, and the 429
+ * handling this module exists for is simply absent from the running app.
+ *
+ * The other argument this constructor forwards, `dataSourceFactory`, is observed by
+ * `MuPlayDataSourceFactoryTest.theRequestIsIssuedByTheInjectedCallFactoryAndNotOneBuiltInside`: the
+ * client it is built on stamps a header nothing else sends, so a factory that ignored the argument
+ * and built an identical one internally loses it. A `User-Agent` assertion cannot see that defect,
+ * because the replacement would send the same `User-Agent`. `context` is not observable and honestly
+ * so -- it is `ExoPlayer.Builder`'s sole positional argument, so there is no way to drop it that
+ * compiles, and the only substitution available in a process (`context.applicationContext`) is
+ * behaviourally identical.
+ *
+ * And the test that proves the *policy* wired counts requests rather than inspecting objects:
+ * `MuPlayDataSourceFactoryTest.aRefusalBudgetThatRunsOutSurfacesAsAPlayerError` asserts
+ * `StreamRetryPolicy.MAX_RETRIES + 1` = 6 requests reached the server, where Media3's own default
+ * would produce 4. Its neighbour `twoRefusalsWithHttp429DoNotKillThePlayback` is **not** that
+ * evidence and must not be read as it: two retries are inside Media3's default budget too, so it is
+ * green either way. Both of those tests now build their player through *this* function, which is
+ * what makes their wiring the production wiring rather than a copy of it.
+ *
+ * ### Adding to the player later
+ *
+ * A future collaborator -- a resume policy, an audio-focus configuration, a cache -- arrives as
+ * another constructor parameter here, applied inside [create]. It must not arrive as a second
+ * construction site somewhere else; that is exactly what `PlayerConstructionTest` refuses. When a
+ * test needs to reach *inside* the player rather than to configure it -- Task 7's PCM capture is
+ * the first -- the answer is a parameter on [create] with a production default, for the same
+ * reason: see that function's own note.
+ *
+ * ### The three lines that are silent in the other direction
+ *
+ * `setAudioAttributes(.., handleAudioFocus = true)`, `setHandleAudioBecomingNoisy(true)` and
+ * `setWakeMode(C.WAKE_MODE_NETWORK)` are one builder call each, and dropping any of them is silent
+ * in exactly the way the retry policy is: the app still plays, every unit test stays green, and the
+ * defect only appears on a device that has something else happening on it -- a phone call played
+ * over, an audiobook coming out of the phone's speaker the moment the headphones come out, or a
+ * track that stalls once the screen has been off long enough for doze and WiFi power-save to bite.
+ *
+ * The third is the one a bench test can never reproduce, because the device under test is awake and
+ * plugged in. `AudioFocusTest` therefore observes it the only way that is not a flag assertion: the
+ * **power manager's own wake-lock registry**, read back through `dumpsys`, showing this process
+ * holding `ExoPlayer:WakeLockManager` while it plays and giving it up when it pauses.
+ *
+ * The first is observed as *playback that stopped*, never as a flag that was set. The second cannot
+ * be observed as a pause on any emulator this project has -- see that test's own note for the
+ * measured reason -- and is observed as `ActivityManagerService`'s receiver registry instead.
+ */
+// `androidx.annotation.OptIn`, not `kotlin.OptIn`: Media3's `@UnstableApi` is an
+// `androidx.annotation.RequiresOptIn`, which the Kotlin compiler does not enforce at all -- Android
+// Lint's `UnsafeOptInUsageError` does, and `check` runs lint, so a file like this one compiles clean
+// and fails the build much later. `ExoPlayer`, `ExoPlayer.Builder` and `DefaultMediaSourceFactory`
+// are all annotated. Opting in here rather than marking this class `@UnstableApi` itself: that would
+// propagate the requirement to every consumer, and the point of this module is that
+// `androidx.media3.exoplayer` stops at its boundary.
+@OptIn(UnstableApi::class)
+class MuPlayerFactory @Inject constructor(
+  @ApplicationContext private val context: Context,
+  private val dataSourceFactory: MuPlayDataSourceFactory,
+  private val loadErrorPolicy: NavidromeLoadErrorHandlingPolicy,
+  private val resumePolicy: ResumePolicy,
+  // A *constructor* parameter rather than a defaulted argument on `create()`, and that is the whole
+  // point: Hilt supplies it, so the production wiring cannot forget it. A `create(transcodeSeek =
+  // ...)` seam would put the one call site that matters in charge of remembering, and the default
+  // it forgot to override -- `TranscodeSeekSupport.None` -- is precisely the shipped defect this
+  // task removes. The Kotlin default below exists only for the nine hand-constructions in this
+  // module's own instrumented suites, none of which plays a transcode.
+  private val transcodeSeek: TranscodeSeekSupport = TranscodeSeekSupport.None,
+) {
+
+  /**
+   * **What the session is given, and the only thing outside this module that should ever be.**
+   *
+   * A [MuPlayer] rather than the `ExoPlayer` below: everything past this line sees a `Player` that
+   * cannot be told where to start, because all six of its `setMediaItem(s)` overloads discard the
+   * caller's position and ask [resumePolicy] instead. That is spec section 3's guarantee, and it is
+   * structural rather than conventional -- a `MediaController` in a car reaches the session's
+   * player, and the session's player is this one.
+   *
+   * The caller's **index** survives: [NeverResume] returns it unchanged, so `PlaybackLauncher`'s
+   * `setMediaItems(items, queue.startIndex, 0L)` still starts on the track the user tapped. Only the
+   * position is the policy's to choose.
+   *
+   * [transcodeSeek] is handed over here and nowhere else, and forgetting it would be silent in the
+   * way this class's other arguments are: the player would still play, every unit test would stay
+   * green, and a seek inside an Opus track -- the only kind this app transcodes -- would move the
+   * bar and not the audio. `MuPlayer`'s default is `TranscodeSeekSupport.None`, which is exactly
+   * that defect, so the production call site has to pass the real one. `TranscodeSeekJourneyTest`
+   * is what notices if it stops.
+   */
+  fun create(): MuPlayer = wrap(createExoPlayer())
+
+  /**
+   * Wraps an `ExoPlayer` the caller intends to **keep**.
+   *
+   * `MuPlaybackService` needs both halves: the seam, which is what the session and every
+   * `MediaController` see, and the raw `ExoPlayer`, because `setSkipSilenceEnabled` is on
+   * `ExoPlayer` and not on `Player` -- so `BookSpeedController` cannot reach it through [MuPlayer].
+   * [create] returned only the seam, which left the raw player unreachable from the one place it is
+   * genuinely needed.
+   *
+   * [create] is re-expressed in terms of this rather than the other way round, so there is still
+   * exactly one place the three constructor arguments are assembled. A `wrap` that forgot
+   * [transcodeSeek] would produce a player that plays, passes every unit test, and moves the seek
+   * bar without moving the audio inside the one format this app transcodes.
+   */
+  fun wrap(exoPlayer: ExoPlayer): MuPlayer = MuPlayer(exoPlayer, resumePolicy, transcodeSeek)
+
+  /**
+   * The **raw** player, for the three device suites whose subject is an `ExoPlayer` behaviour
+   * (audio focus, the cache key, gapless) and for [create] to wrap.
+   *
+   * ### The two parameters, and why they are a pair
+   *
+   * [gainProcessor] is the ReplayGain stage (Task 11) and [renderersFactory] is what puts it in the
+   * audio chain; the default for the second is built from the first, so a caller that overrides
+   * neither gets a player whose listener and whose chain hold the *same* processor. That coupling
+   * is the thing to preserve: a `ReplayGainController` pointed at a processor which is not in the
+   * chain is the silent failure this whole task exists to remove, and it compiles perfectly.
+   * `GainAudioProcessorTest` overrides both together, passing one processor to both arguments,
+   * which is exactly how production wires it plus a tee.
+   *
+   * A caller overriding only [renderersFactory] -- `GaplessTest`, whose subject is the *queue* --
+   * gets a controller over an orphan processor. That is harmless (an orphan multiplies nothing) and
+   * it is deliberate rather than overlooked: that suite's items carry no gain extras at all, so
+   * every gain it would ever set is [ReplayGainPolicy.UNCHANGED].
+   *
+   * ### Why the parameter exists, since it is a seam a test asked for
+   *
+   * Plan 3 Task 7 measures gapless playback by capturing the PCM a real decoder produced, from
+   * inside the audio pipeline: a `TeeAudioProcessor` in the `DefaultAudioSink`'s processor chain,
+   * upstream of the `AudioTrack`. Media3 offers **no** way to reach that chain on an already-built
+   * player -- no setter, no listener, nothing after construction. The only supported route is the
+   * `RenderersFactory`, which is a *construction* argument.
+   *
+   * So the choice was between this parameter and `GaplessTest` assembling a player of its own. The
+   * second is the one this class exists to prevent, and `PlayerConstructionTest` refuses it outright
+   * -- a hand-built player would silently lose the 429 retry policy, which hangs off the media
+   * source factory below and is silent when it is missing. A test measuring a player that is not
+   * the one that ships is measuring a copy, and the copy is exactly what drifts.
+   *
+   * ### The default is a behaviour change, and this is the one place it is stated
+   *
+   * It used to be `DefaultRenderersFactory(context)` -- the same object `ExoPlayer.Builder(context)`
+   * supplies for itself. It is now [MuPlayRenderersFactory], which differs in exactly two ways:
+   * the audio sink's processor chain carries [gainProcessor], and there is **no video renderer** in
+   * the array at all. Both are deliberate; see that class's own note for why each is a property of
+   * the shipping player rather than of a test.
+   *
+   * ### What keeps the seam honest
+   *
+   * The parameter is not observable from production -- both call shapes build a working player --
+   * so what stops it drifting is the tier that uses it: `GaplessTest` passes a renderers factory
+   * whose audio sink is tapped, and every frame it measures arrives through *this* function. A
+   * `create` that ignored its argument would leave that suite with an empty capture and every
+   * frame-count assertion in it red. Measured, not asserted from the armchair: see task-7b-report.md.
+   */
+  fun createExoPlayer(
+    gainProcessor: GainAudioProcessor = GainAudioProcessor(),
+    renderersFactory: RenderersFactory = MuPlayRenderersFactory(context, gainProcessor),
+  ): ExoPlayer =
+    ExoPlayer.Builder(context, renderersFactory)
+      .setMediaSourceFactory(
+        DefaultMediaSourceFactory(dataSourceFactory.create())
+          .setLoadErrorHandlingPolicy(loadErrorPolicy),
+      )
+      // Music until the first item transition says otherwise -- [ContentTypeSwitcher] below keeps
+      // it honest from then on. `handleAudioFocus = true` is what makes Media3 request focus, duck
+      // for a navigation prompt and pause for a call, all of it without a line of focus code here.
+      .setAudioAttributes(PlaybackAudioAttributes.of(MediaMetadata.MEDIA_TYPE_MUSIC), true)
+      // Headphones unplugged, Bluetooth disconnected. Without this, yanking headphones plays an
+      // audiobook out loud on a train.
+      .setHandleAudioBecomingNoisy(true)
+      // A partial wake lock **and** a WiFi lock, held only while actually playing. `WAKE_MODE_NETWORK`
+      // rather than `WAKE_MODE_LOCAL` because every byte this app plays arrives over the network:
+      // without the WiFi half, WiFi power-save with the screen off starves the loader and playback
+      // stalls mid-track. Both are released the moment playback stops, by Media3, so this is not a
+      // battery decision made once for the process.
+      .setWakeMode(C.WAKE_MODE_NETWORK)
+      // **Without this a watch, a car and the system volume row cannot touch the volume**, and
+      // nothing says so. `ExoPlayer.Builder.deviceVolumeControlEnabled` defaults to `false`, and
+      // `ExoPlayerImpl`'s constructor adds all five volume commands with
+      // `Player.Commands.Builder.addIf(command, deviceVolumeControlEnabled)` -- commands 23, 25,
+      // 26, 33 and 34, read out of `media3-exoplayer-1.11.0.aar`'s bytecode rather than from the
+      // docs. A controller cannot even *draw* a volume slider without `COMMAND_GET_DEVICE_VOLUME`,
+      // so the failure is a dead control rather than an error.
+      //
+      // Measured before this line existed: a `MediaController` over real IPC reported
+      // `[false, false, false, false, false]` for those five, while every transport command it
+      // asked about was true. `MuPlaybackServiceTest.theSessionOffersTheVolumeCommandsAWatchNeeds`
+      // is that measurement.
+      //
+      // What it grants is control of the *device* volume -- the music stream -- which is what a
+      // remote controller means by "volume". It is not the per-player `volume` the sleep timer
+      // ramps; that is `Player.setVolume` and is unaffected.
+      .setDeviceVolumeControlEnabled(true)
+      .build()
+      .also { player ->
+        player.addListener(ContentTypeSwitcher(player))
+        // One processor and one controller per player, neither of them a `@Singleton`: they belong
+        // to the player they were built for, and a gain stage shared between two players would
+        // have two sources of truth for one number. The listener is what makes the gain follow the
+        // *item* -- see `ReplayGainController` for why a queue-builder call is not enough.
+        player.addListener(ReplayGainController(gainProcessor))
+      }
+}

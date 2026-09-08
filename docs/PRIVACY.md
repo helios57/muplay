@@ -36,7 +36,7 @@ reports what you played, and never uploads a playback position. The Subsonic `sc
 `nowPlaying` and `savePlayQueue` endpoints exist and MuPlay deliberately does not call them.
 
 That paragraph is **checked by the build**, not just written down here:
-`core/network/src/test/kotlin/app/muplay/network/LocalOnlyProgressTest.kt` asserts the exact set of
+`core/network/src/test/kotlin/io/github/helios57/muplay/network/LocalOnlyProgressTest.kt` asserts the exact set of
 operations the Subsonic client declares and the exact set of endpoints it can reach, so adding any
 way to send a listening position to a server fails `check` with a message naming this document.
 

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.library"
+  namespace = "io.github.helios57.muplay.library"
 }
 
 dependencies {

@@ -59,21 +59,22 @@ internal fun Project.configureReleaseGates(extension: ApplicationExtension) {
       )
       debugSources.from(repositorySources("debug"))
       nonDebugSources.from(repositorySources("main"), repositorySources("release"))
-      // The **namespace**, not the `applicationId`. Those were the same string (`app.muplay`) until
-      // 2026-09-08, when the Play package name became `io.github.helios57.muplay` and the two
-      // diverged -- which is the normal Android arrangement, not an anomaly to repair.
+      // The **namespace**, not the `applicationId`. They are the same string again today, and the
+      // distinction still matters: everything this property feeds is about the package the
+      // *classes* are in -- the census counts entries in `mapping.txt`, whose left-hand side is a
+      // source class name, and `packageDescriptorPrefix` builds a DEX type descriptor from it.
+      // Both are namespace-shaped; neither is about the id Play files the app under.
       //
-      // Everything this property feeds is about the package the *classes* are in: the census counts
-      // entries in `mapping.txt`, whose left-hand side is the source class name, and
-      // `packageDescriptorPrefix` builds a DEX type descriptor. Both are namespace-shaped. Measured
-      // on the first release build after the rename, where the applicationId wiring produced
+      // Measured 2026-09-08, in the hours when the two did differ. The applicationId had become
+      // `io.github.helios57.muplay` while the classes were still `app.muplay.*`, and this gate --
+      // wired to the applicationId -- failed the first release build after the rename with
       //
       //   mapping.txt names no io.github.helios57.muplay class at all
       //
-      // and the gate was right: under that name there is nothing to check. Note that it failed
-      // *loudly and accurately*, naming both candidate causes, which is why this needs no new rule
-      // guarding it -- `check` cannot see this task (it is a `releaseCheck` gate, 4 m 28 s), but
-      // nothing can reach Play without passing through it.
+      // which was correct: under that name there was nothing to check. The classes were renamed to
+      // match later the same day, closing the gap. That does not make the wiring a matter of taste
+      // -- Android permits the two to differ at any moment, the gap reopens the instant anyone
+      // changes either one, and nobody changing an applicationId is thinking about R8.
       applicationPackage.set(
         extension.namespace
           ?: error("app/build.gradle.kts must declare a namespace in the android block"),
@@ -86,7 +87,7 @@ internal fun Project.configureReleaseGates(extension: ApplicationExtension) {
       // manifest is protobuf, and "the forbidden string is absent" is equally true of a blob this
       // scan cannot read.
       requiredManifestAttributes.set(
-        listOf("foregroundServiceType", "app.muplay.media.MuPlaybackService", "android.permission.INTERNET"),
+        listOf("foregroundServiceType", "io.github.helios57.muplay.media.MuPlaybackService", "android.permission.INTERNET"),
       )
       // The other control, for the DEX reader. A platform type every Android app references.
       dexProbeDescriptor.set("Landroid/os/Bundle;")

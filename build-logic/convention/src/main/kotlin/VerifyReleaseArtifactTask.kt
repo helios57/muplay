@@ -77,7 +77,7 @@ abstract class VerifyReleaseArtifactTask : DefaultTask() {
    *
    * Needed because a build-type source set may legitimately *replace* a type rather than add one:
    * `app/src/debug/.../CleartextPolicyModule.kt` and `app/src/release/.../CleartextPolicyModule.kt`
-   * declare the same `app.muplay.di.CleartextPolicyModule`, and the release build contains that
+   * declare the same `io.github.helios57.muplay.di.CleartextPolicyModule`, and the release build contains that
    * name for an entirely correct reason. Subtracting these leaves the types **only** a debug
    * variant can compile, which is the set the release artifact must not contain.
    */
@@ -86,7 +86,7 @@ abstract class VerifyReleaseArtifactTask : DefaultTask() {
   abstract val nonDebugSources: ConfigurableFileCollection
 
   /**
-   * `app.muplay` — the package whose classes the minification census is about.
+   * `io.github.helios57.muplay` — the package whose classes the minification census is about.
    *
    * The **namespace**, which since 2026-09-08 is no longer the same string as the `applicationId`
    * (`io.github.helios57.muplay`). The name of this property predates that split and is now
@@ -155,14 +155,14 @@ abstract class VerifyReleaseArtifactTask : DefaultTask() {
    * `R8$$REMOVED$$CLASS$$n` when it was removed outright. So the mapping is a complete statement
    * about what the shipped dex should contain, and the dex is the evidence:
    *
-   * - every `app.muplay` class R8 **renamed** must be absent from the dex under its original name.
+   * - every `io.github.helios57.muplay` class R8 **renamed** must be absent from the dex under its original name.
    *   This is the assertion. With minification off, all 355 of them are present.
-   * - every `app.muplay` class R8 **kept** must be present. Without this, the assertion above is
+   * - every `io.github.helios57.muplay` class R8 **kept** must be present. Without this, the assertion above is
    *   satisfied by a dex parser that reads nothing, which is this project's most frequently
    *   recorded defect.
    * - every renamed class's **new** name must be present, so the dex in this bundle is R8's actual
    *   output rather than a differently-produced one that a stale mapping happens to sit beside.
-   * - the set of `app.muplay` names in the dex must therefore be **exactly** the kept set. Measured
+   * - the set of `io.github.helios57.muplay` names in the dex must therefore be **exactly** the kept set. Measured
    *   on 0.2.0: 355 classes in the mapping, 7 kept (`MainActivity`, `MuPlayApplication`,
    *   `MuPlaybackService` — all three are manifest components AGP feeds R8 as keeps — plus the two
    *   Room databases and their generated `_Impl`s, kept by `app/proguard-rules.pro`), 348 renamed

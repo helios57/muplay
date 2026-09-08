@@ -1,6 +1,6 @@
 # Destructive-migration exemption
 
-`DataModule.provideDatabase` (in this module, `app.muplay.database.di`) calls
+`DataModule.provideDatabase` (in this module, `io.github.helios57.muplay.database.di`) calls
 `.fallbackToDestructiveMigration(dropAllTables = true)`. That call is required
 throughout the rest of this pre-release Kotlin rewrite (Plans 2 onward, per
 `docs/superpowers/plans/2026-08-22-muplay-kotlin-roadmap.md`): nothing has shipped yet,

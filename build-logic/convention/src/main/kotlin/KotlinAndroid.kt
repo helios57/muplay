@@ -40,7 +40,7 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
   // AGP registers *no* JaCoCo Gradle report task from this flag. What it does register, observed
   // directly in this project's own build output, is `jacocoDebug` (offline JaCoCo instrumentation
   // of the variant's classes before packaging) and `generateDebugJacocoPropertiesFile`; the
-  // on-device run then writes `/data/data/app.muplay/coverage.ec`, which
+  // on-device run then writes `/data/data/io.github.helios57.muplay/coverage.ec`, which
   // `connectedDebugAndroidTest` pulls off with `run-as ... cat` into
   // `<app module>/build/outputs/code_coverage/debugAndroidTest/connected/<device>/coverage.ec`.
   //

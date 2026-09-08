@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.castpicker"
+  namespace = "io.github.helios57.muplay.castpicker"
 }
 
 dependencies {

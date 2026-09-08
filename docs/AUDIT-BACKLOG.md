@@ -394,7 +394,7 @@ four of about seventy, chosen because each one guards something a reader of this
 would care about; the remaining ~63 are mostly Compose file-classes and coroutine
 machinery, where a floor gates the compiler rather than the product.
 
-**And the audit found a gate that was already red.** `app.muplay.player.PlayerViewModel.1`
+**And the audit found a gate that was already red.** `io.github.helios57.muplay.player.PlayerViewModel.1`
 — the `PlaybackControls` adapter only Hilt can build — went from 10/10 to **10/15 LINE**
 when `674120e` (2026-09-03) added `retry()` to it, and stayed red on master for two days.
 Nothing saw it: the class is unreachable from any JVM test, so only the emulator job's

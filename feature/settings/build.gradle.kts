@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.settings"
+  namespace = "io.github.helios57.muplay.settings"
 }
 
 // **This module names no other feature, and the only `:core:` module it names is the theme.**

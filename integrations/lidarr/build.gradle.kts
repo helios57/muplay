@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace = "app.muplay.integrations.lidarr"
+  namespace = "io.github.helios57.muplay.integrations.lidarr"
 }
 
 dependencies {

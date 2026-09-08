@@ -51,14 +51,14 @@ class VerifyMergedManifestTaskTest {
    */
   private val compliantManifest = """
     <?xml version="1.0" encoding="utf-8"?>
-    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.muplay">
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.helios57.muplay">
       <uses-permission android:name="android.permission.INTERNET" />
       <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
       <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
       <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
       <application>
         <service
-            android:name="app.muplay.media.MuPlaybackService"
+            android:name="io.github.helios57.muplay.media.MuPlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback" />
       </application>
@@ -71,7 +71,7 @@ class VerifyMergedManifestTaskTest {
     """android:name="android.permission.POST_NOTIFICATIONS"""",
     """android:name="android.permission.FOREGROUND_SERVICE"""",
     """android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"""",
-    """android:name="app.muplay.media.MuPlaybackService"""",
+    """android:name="io.github.helios57.muplay.media.MuPlaybackService"""",
     """android:foregroundServiceType="mediaPlayback"""",
   )
 
