@@ -43,7 +43,7 @@ cheap check that sees this class of break.
 ## Two concurrent instrumented runs corrupt each other's results
 
 Both `:app:connectedDebugAndroidTest` runs install the same `applicationId`
-(`app.muplay`). When a second agent starts one mid-run, the first is reinstalled
+(`io.github.helios57.muplay`). When a second agent starts one mid-run, the first is reinstalled
 underneath itself and its report shows `<failure></failure>` plus `Process
 crashed` **with no stack trace** — indistinguishable from a real product crash.
 
@@ -1606,8 +1606,8 @@ It was a **stale system dialog from an earlier launch**. The Application Not
 Responding window belongs to `system_server`, not to the app, so it survives all
 three of the things you would reach for to get a clean slate:
 
-    adb shell am force-stop app.muplay
-    adb shell pm clear app.muplay
+    adb shell am force-stop io.github.helios57.muplay
+    adb shell pm clear io.github.helios57.muplay
     adb install -r ...            # even a full uninstall/reinstall
 
 It sits on top of whatever launches next, and a dump reads the topmost window. The

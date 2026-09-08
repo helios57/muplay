@@ -3,7 +3,7 @@
 #
 # One emulator (`muplay37`) serves every agent working here at once, and two
 # concurrent `connectedDebugAndroidTest` runs install the same applicationId
-# (`app.muplay`): the second reinstalls the first underneath itself, and the
+# (`io.github.helios57.muplay`): the second reinstalls the first underneath itself, and the
 # victim's report shows `<failure></failure>` plus `Process crashed` with **no
 # stack trace** — indistinguishable from a real product crash. Two runs were
 # lost to this before logcat showed the other agent's test class starting

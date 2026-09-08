@@ -39,3 +39,7 @@ keystore.properties
 # Python bytecode from the ci/ generator scripts. Written on import (ci/generate-feature-graphic.py
 # imports ci/generate-launcher-icon.py by path), never by the project.
 __pycache__/
+
+# Playwright MCP writes page snapshots, console logs and downloads here.
+# Untracked on purpose: this repo is public and console sessions land in it.
+.playwright-mcp/

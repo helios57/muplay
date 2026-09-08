@@ -21,7 +21,7 @@ detail — see the signing section.
 
 | | |
 |---|---|
-| `applicationId` | `app.muplay` — permanent once the Play app is created (**read**, `app/build.gradle.kts:14`) |
+| `applicationId` | `io.github.helios57.muplay` — permanent once the Play app is created (**read**, `app/build.gradle.kts:14`). Changed from `app.muplay` on 2026-09-08; see *The rename* below. |
 | Next release | `versionCode = 200`, `versionName = "0.2.0"` (**read**, same file) |
 | Spent version codes | one: `1 / 0.1.0`, *"never uploaded anywhere"* (**read**, `app/release-history.tsv`) |
 | Tags pushed | none matching `v*` (**measured**, `git tag -l`) |
@@ -34,6 +34,36 @@ detail — see the signing section.
 Two consequences follow immediately. **Nothing signed by this key has ever left the machine** — no
 release, no tester, no installed base anywhere. And **`release.yml` cannot run today**: its first
 step fails naming the four missing secrets, by design (**read**, *"Require the signing secrets"*).
+
+---
+
+## The rename to `io.github.helios57.muplay`, and what it cost
+
+Changed 2026-09-08 at the owner's request, from `app.muplay`. `namespace` deliberately stays
+`app.muplay`, so every Kotlin package, import and coverage-floor pattern is untouched -- this is one
+line in `app/build.gradle.kts`. Verified: `assembleDebug`, `verifyDebugManifest` and the full `:app`
+JVM tier green, merged manifest reads `package="io.github.helios57.muplay"`, and the built APK
+reports the same id to `aapt2 dump packagename`. Nothing in production code hardcodes the id -- the
+app learns its own package from `context.packageName` and passes it as `ownPackageName`, so the
+`app.muplay` literals that remain are all test fixtures.
+
+**Two things about this that are worth stating plainly rather than discovering later.**
+
+**It is a package rename, which to Android means a different app.** No update path from a build
+carrying the old id, side-by-side install, and no data carried over. That is free while the app has
+zero installs and expensive afterwards. MuPlay has at least one: the owner's own phone, installed
+during development. Its local state does not survive, and for this app local state is the audiobook
+resume positions, which exist nowhere else by design. Reinstalling is the whole remedy and the cost
+is a handful of test positions -- but it is the same data-loss shape the signing section is about,
+and it should be a decision rather than a surprise.
+
+**Whether the rename was necessary is still unmeasured.** It was requested, not forced. The sibling
+session's `io.github.helios57.familyguard` was forced -- an installed base on a child's phone pinned
+it to an existing `applicationId` -- and that session is explicit that it never queried a short name
+and its success is no evidence about `app.muplay`'s availability. The Play Console availability check
+is the only authority, it is free, and it can be run before anything is created. If `app.muplay` is
+available and the owner would rather have it, the moment to find that out is before the app entry
+exists, because after creation the Play package name can never change.
 
 ---
 
@@ -85,8 +115,8 @@ Steps 1, 2 and 5 need the console and the account holder. Steps 3 and 4 need the
 ### 1. Create the app
 
 Play Console → *Create app*. Three choices are permanent: the package name, free vs paid, and the
-app's existence — there is no delete, only unpublish. Press *Check availability* on `app.muplay`
-first; it must match `applicationId` character for character.
+app's existence — there is no delete, only unpublish. Press *Check availability* on
+`io.github.helios57.muplay` first; it must match `applicationId` character for character.
 
 The submit button is never disabled even with required fields empty, so its enabled state is not
 evidence the form is valid — the red validation error is. If a submit fails, re-read the app list

@@ -125,7 +125,7 @@ PATH="$(dirname "$ADB"):$PATH" "$REPO_ROOT/ci/prepare-emulator.sh"
 #
 # Measured: the Gradle task is green, writes all seven PNGs, and then **uninstalls the app**, which
 # is what AGP's connected-test task does when it finishes. The screenshots live in the app's private
-# `filesDir`, so they go with it -- `run-as: unknown package: app.muplay` at the pull step, on a run
+# `filesDir`, so they go with it -- `run-as: unknown package: io.github.helios57.muplay` at the pull step, on a run
 # whose own report said `Finished 1 tests` with nothing failed. There is no ordering fix: the task
 # owns both ends.
 #

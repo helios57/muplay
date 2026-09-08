@@ -11,7 +11,7 @@ android {
   namespace = "app.muplay"
 
   defaultConfig {
-    applicationId = "app.muplay"
+    applicationId = "io.github.helios57.muplay"
     // Two literals a human edits, paired by `verifyReleaseVersion`: versionCode is
     // MAJOR * 10000 + MINOR * 100 + PATCH of versionName, and neither may reuse a value listed in
     // app/release-history.tsv. Nothing computes them, and nothing may -- `ConventionTest`'s
