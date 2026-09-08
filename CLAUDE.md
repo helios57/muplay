@@ -1087,6 +1087,28 @@ naming `:feature:library:kspDebugKotlin` and two unnamed others. A plain retry w
 times, on the identical tree. It names no useful task and it is not a compilation error; retry
 before investigating.
 
+## A JaCoCo `Unsupported class file major version 69` trace is the host's JDK, and is benign
+
+Measured 2026-09-08. `./gradlew :app:testDebugUnitTest` printed a 30-line stack trace ending
+
+    Caused by: java.io.IOException: Error while instrumenting
+      sun/util/resources/cldr/provider/CLDRLocaleDataMetaInfo with JaCoCo 0.8.12
+    Caused by: java.lang.IllegalArgumentException: Unsupported class file major version 69
+
+and then **BUILD SUCCESSFUL**. Major version 69 is Java 25: this host's default `java` is now
+Temurin 25.0.4.1 (`JAVA_HOME` unset), while the project targets 21 and `release.yml` pins 21.
+
+It is noise. The class JaCoCo choked on is a JDK-internal CLDR resource that no report includes,
+and coverage is unharmed -- checked rather than assumed: `:core:model:check` was green with all
+**6** floors evaluated and `jacocoTestReport.xml` reading `LINE missed="54" covered="387"`. A
+zeroed report would have shown as `covered="0"`, and `warnVacuousFloors` would have fired.
+
+Worth a section only because of how it presents: a long JaCoCo stack trace inside a green build
+invites exactly the investigation this file keeps recording -- and note the trap next to it, which
+is mine: `./gradlew ... | tail` then `echo $?` reports **`tail`'s** status, not Gradle's, so the
+first read of this looked like a *failure* that had somehow exited 0. Redirect to a file and read
+`$?` on the Gradle line itself.
+
 ## An OOM kill here can be a *cgroup* limit, not the host running out
 
 Measured 2026-08-27 22:14, while the host had **tens of gigabytes free**:
