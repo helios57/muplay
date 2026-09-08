@@ -30,10 +30,16 @@ detail — see the signing section.
 | Upload keystore | exists outside the repo, `muplay-upload`, created 2026-08-31, valid to 2054-01-16 (**measured**, `keytool -list`) |
 | Its certificate SHA-256 | `97:D1:B2:C6:16:EC:15:C7:48:C2:99:C5:D7:FE:9B:FF:67:FD:F9:91:76:F9:2B:2E:D7:7E:1E:5E:31:A1:F5:E6` |
 | Declared permissions | `INTERNET`, `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS` (**measured**, grep over every `AndroidManifest.xml`) |
+| Play Console app | created 2026-09-08, `io.github.helios57.muplay`, app ID `4972426159135174049`, status *Entwurf* (**measured**, console) |
+| App signing key | **muplay's own** `97:D1:B2:C6:…:F5:E6`. Google generated and activated `4F:8A:5D:07:…:F6:60` at app-creation time; it was replaced the same day, before any track or upload existed (**measured**, both halves — see step 2) |
 
-Two consequences follow immediately. **Nothing signed by this key has ever left the machine** — no
-release, no tester, no installed base anywhere. And **`release.yml` cannot run today**: its first
+Two consequences follow immediately. **No artifact signed by this key has ever left the machine** —
+no release, no tester, no installed base anywhere. And **`release.yml` cannot run today**: its first
 step fails naming the four missing secrets, by design (**read**, *"Require the signing secrets"*).
+
+Note what changed on 2026-09-08 and what did not: no signed *artifact* has left, but the **private
+key itself now has a second holder**, because step 2 uploaded it to Google. That is what Play App
+Signing is, and it is the point of the correction below.
 
 ---
 
@@ -90,11 +96,21 @@ only and never sent to the server** — the constraint the whole audiobook featu
 so an uninstall drops every resume point permanently, with no server-side copy to sync back.
 
 So the recommendation is to **upload the existing `upload-keystore.jks` as the app signing key**,
-which keeps both channels on one certificate and keeps `release.yml`'s promise true. What it costs,
-stated plainly: the account holder then owns the app signing key forever, with no Google-held copy
-to fall back on, so losing that file or its passphrase ends the ability to ship updates under this
-package name. Back it up before starting. *(Inferred from how Play App Signing works, not measured
-here — the fingerprint comparison in step 2 is what turns it into a measurement.)*
+which keeps both channels on one certificate and keeps `release.yml`'s promise true.
+
+**What it costs — corrected 2026-09-08 by doing it.** This paragraph used to say the account holder
+would then own the key "with no Google-held copy to fall back on", so that losing the file would end
+the ability to ship updates under this package name. That was inferred, and it is wrong about what
+PEPK does. The tool encrypts the **private key** to a Google-supplied public key, and the zip you
+upload contains it — `encryptedPrivateKey` beside `certificate.pem` (**measured**, `unzip -l`).
+Google must hold it, because Play App Signing is Google signing every delivery.
+
+So losing the local keystore does *not* end Play updates, and the console additionally offers
+*Zurücksetzung des Uploadschlüssels anfordern* to re-key uploads (**observed** on the page; not
+exercised). What it ends is the **GitHub half**: nothing can re-create the certificate a sideloaded
+APK is signed with, so the two channels drift onto different certificates and the uninstall-to-switch
+data loss this section exists to prevent comes back. Back the keystore up — the reason is the APK,
+not Play.
 
 **The window for this is before the first upload and before any track exists.** After that,
 changing the key is disruptive rather than free.
@@ -188,6 +204,42 @@ for the password before printing it anywhere, and shred the log afterwards.
 
 After saving, reload the page and check **both halves**: the fingerprint above is present *and*
 Google's generated one is gone. "Ours is present" alone cannot tell a replacement from an addition.
+
+**Done, 2026-09-08.** On the reloaded page the Digital Asset Links snippet and the upload-key
+certificate both read `97:D1:B2:C6:…:F5:E6`, `4F:8A:5D:…` appears nowhere in the page text, and the
+*Bisherige App-Signaturschlüssel* section is gone entirely — a replacement, not an addition. Five
+things that were not obvious going in:
+
+- **The public encryption key is a per-app download, not a constant.** Current PEPK takes
+  `--rsa-aes-encryption --encryption-key-path=<pem>` and the console serves a 3072-bit RSA public
+  key for this app. The old fixed `--encryptionkey=<hex>` form that fills the public internet is
+  gone; do not carry one forward from an older runbook.
+- **Verify what PEPK exported before uploading it.** `unzip` the output and run
+  `openssl x509 -in certificate.pem -noout -fingerprint -sha256`. It is the only check that the
+  `--alias` you typed is the key you meant, it costs one command, and it is the difference between
+  uploading a key and uploading *a* key.
+- **Skip the optional "generate a new upload key" step.** Leaving it alone makes the upload key
+  *be* the app signing key, which is the entire point here: one certificate behind the Play build
+  and the GitHub APK.
+- **The upload-key certificate appears immediately**, contradicting the page's own placeholder —
+  *"fingerprints are shown here after you upload your first app bundle"*. That text is written for
+  the Google-generated case; ours was on the page with no bundle in existence.
+- The *Quantenbereit (Beta)* badge and the classic/post-quantum fingerprint pair belong to
+  Google-generated keys only. A plain RSA keystore has no PQC half, so both disappear — that is
+  expected, not a downgrade to investigate.
+
+Java 25 ran `pepk.jar` without complaint, so this step does not need the project's JDK 21.
+
+**If the browser tooling dies mid-flow, do not restart the flow.** The Playwright MCP server
+dropped its connection on the *first download click* here and took its Chrome with it, which looks
+like a dead end because the profile holding the Google session is the MCP's own. It is not one:
+Chrome relaunches against that same profile directory with `--remote-debugging-port=9222`
+(`setsid`, detached, so no tool call owns it — CLAUDE.md records what happens otherwise), and
+`playwright-core` is already on this machine under `/usr/lib/node_modules/@playwright/mcp/`, so
+`chromium.connectOverCDP('http://127.0.0.1:9222')` drives the console with the session intact.
+`Browser.setDownloadBehavior` with an explicit `downloadPath` is what makes the two downloads land
+somewhere you can find them. Remove `Singleton*` from the profile first or Chrome refuses to open
+it.
 
 ### 3. Configure the four repository secrets
 
