@@ -10,8 +10,10 @@ inferred, because an instruction nobody walked is the failure mode this project 
 
 The console procedure below was measured end-to-end on 2026-09-08 by a sibling session doing the
 same thing for another app (`github.com/helios57/familyguard`, `DEPLOYMENT.md` → *Publishing to
-Google Play*, commit `a254c1d`). What is written here is that procedure **plus** what changes for
-MuPlay, which is not a detail — see the signing section.
+Google Play*). Cite `a254c1d` for the original walk-through; the signing-key step has since been
+rewritten as `6a60918`, which carries the general rule below rather than the installed-base one it
+replaced. What is written here is that procedure **plus** what changes for MuPlay, which is not a
+detail — see the signing section.
 
 ---
 
@@ -160,8 +162,19 @@ src main*.
 Whether publishing to Play makes a **sideloaded** build of the same package and key stop being
 flagged by Play Protect. Google's guidance says nothing about signing certificates, developer
 reputation or install volume, so there is no authority to read — it has to be measured on a real
-handset. It matters here precisely because of the dual distribution above; it does not matter for a
-Play-only app.
+handset.
+
+**The test is cheap and needs no version bump**, because Play Protect scans at install time: once
+the listing has propagated (about an hour), reinstall *the same APK* from the phone's browser and
+see whether the warning still appears.
+
+It matters here far more than it would for a Play-only app, and the bad answer is the interesting
+one. If a Play listing does **not** launder the sideload, then the GitHub Releases channel stays
+warned-about however the Play side is configured — and `release.yml`'s argument for publishing an
+APK at all (*"an artifact nobody can download is not a distribution"*) needs revisiting rather than
+simply defending, because a download most people are told not to open is a weaker distribution than
+that comment assumes. Note that this is orthogonal to the signing decision above: same-certificate
+distribution fixes the *update* path between the two channels, and says nothing about the warning.
 
 ---
 
