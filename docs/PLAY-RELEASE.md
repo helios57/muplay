@@ -351,6 +351,38 @@ This is the same shape as every self-matching check in `CLAUDE.md`: the query re
 observation of the wrong thing.
 
 
+### The two channels really are one certificate — measured 2026-09-08
+
+The argument for replacing Google's generated app signing key was that a GitHub-released APK and a
+Play-served install should be the *same* app to Android, so a tester can move between the channels
+without an uninstall. That was the intention; here is the measurement, taken when a tester could
+see the internal test listing but got *"nicht gefunden"* on download and needed an install that
+worked immediately.
+
+Three fingerprints, three independent sources, one value
+`97:D1:B2:C6:16:EC:15:C7:48:C2:99:C5:D7:FE:9B:FF:67:FD:F9:91:76:F9:2B:2E:D7:7E:1E:5E:31:A1:F5:E6`:
+
+- `apksigner verify --print-certs` on the **public `v0.2.1` APK** from GitHub Releases —
+  `V3.0 Signer: certificate SHA-256 digest: 97d1b2c6…f5e6`.
+- The console's **upload key** certificate.
+- The console's **Digital Asset Links** snippet, which Play generates from the *app signing* key —
+  the one that signs what a user actually installs. This is the load-bearing one: the upload key
+  matching proves nothing about what Play serves, and this is the only place on that page where the
+  app signing key's fingerprint appears as text rather than behind a copy button.
+
+So the GitHub APK is installable now and Play updates it in place later. Worth knowing which way
+round that argument runs: it is the *third* fingerprint that closes it, and reading only the first
+two would have produced the same conclusion for the wrong reason.
+
+**And the draft-status red herring, since it looks like the obvious cause.** The app list shows
+MuPlay as *App-Entwurf*, which reads like "not published, therefore not downloadable". Play's own
+dashboard contradicts it in the same breath: *"Du kannst direkt damit beginnen, deine App mit
+internen Tests zu prüfen."* Draft is the normal state of an app whose only track is internal
+testing, and it does not gate the install. What does gate it is propagation (Play's own dialog says
+"normalerweise innerhalb von einer Stunde … manchmal kann es aber auch länger dauern") and the Play
+Store app's active account, which is tracked separately from the browser's.
+
+
 ## Permissions
 
 A bundle can be refused outright over a permission, with no help link and no declaration form —
