@@ -146,6 +146,31 @@ interface SubsonicSource {
    * `suspend`, unlike [streamUrl] and [coverArtUrl], because it really does talk to the server --
    * `ping` first, and `getOpenSubsonicExtensions` only if that reported OpenSubsonic support.
    */
+  /**
+   * Stores the authenticating user's rating for one song, 1..5, or `0` to clear it.
+   *
+   * Per user by construction -- the rating belongs to the account this request authenticates as --
+   * which is what lets the thumbs be personal without this app having a user model of its own.
+   */
+  suspend fun setRating(songId: String, rating: Int)
+
+  /** Creates a playlist owned by the authenticating user and returns it. */
+  suspend fun createPlaylist(name: String, songIds: List<String>): Playlist
+
+  /**
+   * Adds songs by id and removes them by **position**.
+   *
+   * Two measured cautions, both against the CI Navidrome. Adding a song that is already a member
+   * appends a **duplicate** rather than being ignored, so a caller that maintains a set has to
+   * check membership itself. And removal is index-based, so removing by identity costs a
+   * [getPlaylist] first to find the position.
+   */
+  suspend fun updatePlaylist(
+    playlistId: String,
+    songIdsToAdd: List<String>,
+    songIndexesToRemove: List<Int>,
+  )
+
   suspend fun capabilities(): ServerCapabilities
 }
 

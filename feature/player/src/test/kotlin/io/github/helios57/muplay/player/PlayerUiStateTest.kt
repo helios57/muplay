@@ -1,5 +1,6 @@
 package io.github.helios57.muplay.player
 
+import io.github.helios57.muplay.model.SongRating
 import androidx.media3.common.MediaMetadata
 import io.github.helios57.muplay.media.PlaybackState
 import org.assertj.core.api.Assertions.assertThat
@@ -33,7 +34,7 @@ class PlayerUiStateTest {
 
   @Test
   fun `nothing playing is its own state`() {
-    assertThat(playerUiState(PlaybackState.NOTHING_PLAYING, scrubPositionMs = null))
+    assertThat(playerUiState(PlaybackState.NOTHING_PLAYING, scrubPositionMs = null, SongRating.Neutral, ratingFailed = false))
       .isEqualTo(PlayerUiState.NothingPlaying)
   }
 
@@ -43,7 +44,7 @@ class PlayerUiStateTest {
     // player screen must render, and a screen that emptied itself on pause would be unusable.
     val paused = playing.copy(isPlaying = false)
 
-    assertThat(playerUiState(paused, null)).isInstanceOf(PlayerUiState.Content::class.java)
+    assertThat(playerUiState(paused, null, SongRating.Neutral, ratingFailed = false)).isInstanceOf(PlayerUiState.Content::class.java)
   }
 
   /**
@@ -60,13 +61,13 @@ class PlayerUiStateTest {
     val idOnly = PlaybackState.NOTHING_PLAYING.copy(mediaId = "song-9")
     val metadataWithoutAnId = playing.copy(mediaId = null)
 
-    assertThat(playerUiState(idOnly, null)).isInstanceOf(PlayerUiState.Content::class.java)
-    assertThat(playerUiState(metadataWithoutAnId, null)).isEqualTo(PlayerUiState.NothingPlaying)
+    assertThat(playerUiState(idOnly, null, SongRating.Neutral, ratingFailed = false)).isInstanceOf(PlayerUiState.Content::class.java)
+    assertThat(playerUiState(metadataWithoutAnId, null, SongRating.Neutral, ratingFailed = false)).isEqualTo(PlayerUiState.NothingPlaying)
   }
 
   @Test
   fun `the content carries the playback state it was given`() {
-    val content = playerUiState(playing, null) as PlayerUiState.Content
+    val content = playerUiState(playing, null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content
 
     // The whole value, so no individual field can be dropped or replaced on the way through.
     assertThat(content.playback).isEqualTo(playing)
@@ -75,9 +76,9 @@ class PlayerUiStateTest {
   @Test
   fun `the displayed position is the player's own position when nobody is scrubbing`() {
     // Two observations of a value a constant could satisfy.
-    assertThat((playerUiState(playing, null) as PlayerUiState.Content).displayPositionMs)
+    assertThat((playerUiState(playing, null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content).displayPositionMs)
       .isEqualTo(2_000L)
-    assertThat((playerUiState(playing.copy(positionMs = 4_100L), null) as PlayerUiState.Content).displayPositionMs)
+    assertThat((playerUiState(playing.copy(positionMs = 4_100L), null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content).displayPositionMs)
       .isEqualTo(4_100L)
   }
 
@@ -88,7 +89,7 @@ class PlayerUiStateTest {
    */
   @Test
   fun `the displayed position is the scrub position while scrubbing`() {
-    val content = playerUiState(playing, scrubPositionMs = 4_500L) as PlayerUiState.Content
+    val content = playerUiState(playing, scrubPositionMs = 4_500L, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content
 
     assertThat(content.displayPositionMs).isEqualTo(4_500L)
     assertThat(content.isScrubbing).isTrue
@@ -104,7 +105,7 @@ class PlayerUiStateTest {
    */
   @Test
   fun `a scrub behind the player still wins`() {
-    val content = playerUiState(playing.copy(positionMs = 4_100L), scrubPositionMs = 300L)
+    val content = playerUiState(playing.copy(positionMs = 4_100L), scrubPositionMs = 300L, SongRating.Neutral, ratingFailed = false)
       as PlayerUiState.Content
 
     assertThat(content.displayPositionMs).isEqualTo(300L)
@@ -117,7 +118,7 @@ class PlayerUiStateTest {
    */
   @Test
   fun `scrubbing to the very start is scrubbing`() {
-    val content = playerUiState(playing, scrubPositionMs = 0L) as PlayerUiState.Content
+    val content = playerUiState(playing, scrubPositionMs = 0L, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content
 
     assertThat(content.displayPositionMs).isEqualTo(0L)
     assertThat(content.isScrubbing).isTrue
@@ -133,11 +134,11 @@ class PlayerUiStateTest {
   fun `the displayed position never runs past the end of the track`() {
     val overrun = playing.copy(positionMs = 5_010L, durationMs = 4_995L)
 
-    assertThat((playerUiState(overrun, null) as PlayerUiState.Content).displayPositionMs)
+    assertThat((playerUiState(overrun, null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content).displayPositionMs)
       .isEqualTo(4_995L)
     // A second observation at a different duration, so the clamp cannot be a constant.
     assertThat(
-      (playerUiState(playing.copy(positionMs = 9_000L, durationMs = 6_000L), null)
+      (playerUiState(playing.copy(positionMs = 9_000L, durationMs = 6_000L), null, SongRating.Neutral, ratingFailed = false)
         as PlayerUiState.Content).displayPositionMs,
     ).isEqualTo(6_000L)
   }
@@ -152,7 +153,7 @@ class PlayerUiStateTest {
   fun `an unknown duration does not clamp the position to zero`() {
     val unknown = playing.copy(positionMs = 7_000L, durationMs = 0L)
 
-    assertThat((playerUiState(unknown, null) as PlayerUiState.Content).displayPositionMs)
+    assertThat((playerUiState(unknown, null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content).displayPositionMs)
       .isEqualTo(7_000L)
   }
 
@@ -160,18 +161,18 @@ class PlayerUiStateTest {
   @Test
   fun `a negative position is floored at zero`() {
     assertThat(
-      (playerUiState(playing.copy(positionMs = -20L, durationMs = 0L), null)
+      (playerUiState(playing.copy(positionMs = -20L, durationMs = 0L), null, SongRating.Neutral, ratingFailed = false)
         as PlayerUiState.Content).displayPositionMs,
     ).isZero
     assertThat(
-      (playerUiState(playing.copy(positionMs = -20L, durationMs = 5_000L), null)
+      (playerUiState(playing.copy(positionMs = -20L, durationMs = 5_000L), null, SongRating.Neutral, ratingFailed = false)
         as PlayerUiState.Content).displayPositionMs,
     ).isZero
   }
 
   @Test
   fun `not scrubbing is reported as not scrubbing`() {
-    assertThat((playerUiState(playing, null) as PlayerUiState.Content).isScrubbing).isFalse
+    assertThat((playerUiState(playing, null, SongRating.Neutral, ratingFailed = false) as PlayerUiState.Content).isScrubbing).isFalse
   }
 
   @Test

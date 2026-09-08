@@ -26,6 +26,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.helios57.muplay.designsystem.theme.MuPlaySpacing
+import io.github.helios57.muplay.model.SongRating
 import io.github.helios57.muplay.media.PlaybackFailure
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within
@@ -54,6 +55,7 @@ class PlayerScreenTest {
 
   private val scrubbedTo = mutableListOf<Long>()
   private val actions = mutableListOf<String>()
+  private val thumbs = mutableListOf<SongRating>()
 
   /** Long enough for a `viewModelScope` round trip on a loaded emulator, short enough to fail. */
   private val WAIT_MILLIS = 5_000L
@@ -68,6 +70,7 @@ class PlayerScreenTest {
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
         onRetry = { actions += "retry" },
+        onThumb = { thumbs += it },
         onOpenQueue = { actions += "openQueue" },
       )
     }
@@ -84,6 +87,7 @@ class PlayerScreenTest {
         onScrubTo = { scrubbedTo += it },
         onScrubFinished = { actions += "scrubFinished" },
         onRetry = { actions += "retry" },
+        onThumb = { thumbs += it },
         onOpenQueue = { actions += "openQueue" },
         castDeviceName = castDeviceName,
         castButton = { TextButton(onClick = { actions += "cast" }) { Text(CAST_SLOT_LABEL) } },
@@ -354,7 +358,7 @@ class PlayerScreenTest {
   @Test
   fun theHiltBoundScreenFollowsItsViewModelAndItsControlsReachItAgain() {
     val controls = RecordingPlaybackControls()
-    val viewModel = PlayerViewModel(controls)
+    val viewModel = PlayerViewModel(controls, InMemoryRatings())
     composeRule.setContent {
       PlayerScreen(onOpenQueue = { actions += "openQueue" }, viewModel = viewModel)
     }
@@ -640,4 +644,53 @@ class PlayerScreenTest {
      */
     const val CAST_SLOT_LABEL = "Cast slot"
   }
+
+  // ---- The thumbs ----
+
+  @Test
+  fun bothThumbsAreOnTheScreenWhileSomethingIsPlaying() {
+    show(content())
+
+    composeRule.onNodeWithContentDescription(THUMB_UP_LABEL).assertExists()
+    composeRule.onNodeWithContentDescription(THUMB_DOWN_LABEL).assertExists()
+  }
+
+  @Test
+  fun tappingAThumbReportsWhichOneRatherThanJustThatSomethingWasTapped() {
+    // Two controls whose only difference is which value they send: a screen that wired both to the
+    // same callback would pass any test that only counted taps.
+    show(content())
+
+    composeRule.onNodeWithContentDescription(THUMB_DOWN_LABEL).performClick()
+    composeRule.onNodeWithContentDescription(THUMB_UP_LABEL).performClick()
+
+    assertThat(thumbs).containsExactly(SongRating.Demoted, SongRating.Promoted)
+  }
+
+  @Test
+  fun aLitThumbSaysSoInItsAccessibleNameRatherThanOnlyInItsColour() {
+    // The lit state is a colour, which a screen reader cannot report and a colour-blind user may
+    // not see. The name carries it too.
+    show(content(rating = SongRating.Promoted))
+
+    composeRule.onNodeWithContentDescription("$THUMB_UP_LABEL, $THUMB_ON_SUFFIX").assertExists()
+    // ...and only the one that is lit: the other keeps its plain name.
+    composeRule.onNodeWithContentDescription(THUMB_DOWN_LABEL).assertExists()
+  }
+
+  @Test
+  fun aRatingThatFailedToSaveSaysSoOnTheScreen() {
+    // Without this the only evidence is a thumb that did not light, which reads as a missed tap.
+    show(content(ratingFailed = true))
+
+    composeRule.onNodeWithText(RATING_FAILED_LABEL).assertExists()
+  }
+
+  @Test
+  fun nothingSaysARatingFailedWhenNoneHas() {
+    show(content())
+
+    composeRule.onNodeWithText(RATING_FAILED_LABEL).assertDoesNotExist()
+  }
+
 }

@@ -7,6 +7,7 @@ import io.github.helios57.muplay.model.Album
 import io.github.helios57.muplay.model.Artist
 import io.github.helios57.muplay.model.ReplayGain
 import io.github.helios57.muplay.model.Song
+import io.github.helios57.muplay.model.SongRating
 
 /**
  * Domain models to mirror rows and back, plus the artist derivation.
@@ -79,6 +80,7 @@ object MirrorMapper {
     suffix = song.suffix,
     coverArtId = song.coverArtId,
     sortTitle = sortKey(song.title),
+    userRating = song.rating.userRating,
     replayGainTrackDb = song.replayGain?.trackGainDb,
     replayGainAlbumDb = song.replayGain?.albumGainDb,
     replayGainPeak = song.replayGain?.peakAmplitude,
@@ -100,6 +102,7 @@ object MirrorMapper {
     coverArtId = entity.coverArtId,
     replayGain = entity.replayGain(),
     path = entity.path,
+    rating = SongRating.ofUserRating(entity.userRating),
   )
 
   /**

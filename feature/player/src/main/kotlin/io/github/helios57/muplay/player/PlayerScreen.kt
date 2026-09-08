@@ -38,6 +38,7 @@ import io.github.helios57.muplay.designsystem.component.Message
 import io.github.helios57.muplay.designsystem.theme.MuPlayIcons
 import io.github.helios57.muplay.designsystem.theme.MuPlaySpacing
 import io.github.helios57.muplay.designsystem.theme.MuPlayTimecode
+import io.github.helios57.muplay.model.SongRating
 
 /**
  * The full-screen player.
@@ -90,6 +91,7 @@ fun PlayerScreen(
     onScrubTo = viewModel::scrubTo,
     onScrubFinished = viewModel::commitScrub,
     onRetry = viewModel::retry,
+    onThumb = viewModel::thumb,
     onOpenQueue = onOpenQueue,
     castDeviceName = castDeviceName,
     castButton = castButton,
@@ -118,6 +120,9 @@ internal fun PlayerScreen(
   // button that does nothing -- which `Message`'s own doc calls out as worse than no button at all,
   // and is why that component's `onRetry` is nullable rather than a defaulted no-op.
   onRetry: () -> Unit,
+  // Required, and for the same reason `onRetry` above is: a defaulted `{}` would ship two thumbs
+  // that light nothing and save nothing, which is worse than a screen with no thumbs on it.
+  onThumb: (SongRating) -> Unit,
   // Required, and for the same reason `onRetry` above is: this is the only way to the queue in the
   // whole app, and a defaulted `{}` would ship a control that looks like a way there and is not.
   onOpenQueue: () -> Unit,
@@ -294,7 +299,77 @@ internal fun PlayerScreen(
         }
         Box(modifier = Modifier.align(Alignment.CenterEnd)) { castButton() }
       }
+
+      Thumbs(
+        rating = uiState.rating,
+        failed = uiState.ratingFailed,
+        onThumb = onThumb,
+        modifier = Modifier.padding(top = MuPlaySpacing.md),
+      )
     }
+  }
+}
+
+/**
+ * Promote and demote, under the transport.
+ *
+ * **Below the transport rather than beside it**, and that is a placement decision worth stating:
+ * the row above is the one a thumb goes to without looking, and putting a control there that
+ * permanently changes what the shuffle plays -- a demoted track is never drawn again -- next to
+ * "skip" invites exactly the mis-tap that is hardest to notice. Down the screen, past the play
+ * button, is where a deliberate judgement about the *track* belongs.
+ *
+ * The lit state is a colour, not a second glyph: see [MuPlayIcons.ThumbUp]'s own note.
+ */
+@Composable
+private fun Thumbs(
+  rating: SongRating,
+  failed: Boolean,
+  onThumb: (SongRating) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+      Thumb(
+        icon = MuPlayIcons.ThumbDown,
+        label = THUMB_DOWN_LABEL,
+        lit = rating == SongRating.Demoted,
+        onClick = { onThumb(SongRating.Demoted) },
+      )
+      Thumb(
+        icon = MuPlayIcons.ThumbUp,
+        label = THUMB_UP_LABEL,
+        lit = rating == SongRating.Promoted,
+        onClick = { onThumb(SongRating.Promoted) },
+      )
+    }
+    if (failed) StatusLine(text = RATING_FAILED_LABEL)
+  }
+}
+
+/**
+ * One thumb.
+ *
+ * The accessible name says what the control *is* and what state it is in -- "Thumb up, on" -- rather
+ * than what tapping it would do. A name that describes the action ("Remove thumb up") changes under
+ * the finger and leaves a screen-reader user with no way to ask what the current rating is, which is
+ * the only question the control exists to answer.
+ */
+@Composable
+private fun Thumb(icon: ImageVector, label: String, lit: Boolean, onClick: () -> Unit) {
+  IconButton(
+    onClick = onClick,
+    modifier = Modifier.size(MuPlaySpacing.minTouchTarget),
+    colors = IconButtonDefaults.iconButtonColors(
+      contentColor =
+        if (lit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    ),
+  ) {
+    Icon(
+      imageVector = icon,
+      contentDescription = if (lit) "$label, $THUMB_ON_SUFFIX" else label,
+      modifier = Modifier.size(SECONDARY_GLYPH_DP.dp),
+    )
   }
 }
 
@@ -438,6 +513,19 @@ internal const val PLAYING_ON_PREFIX = "Playing on "
  * it is the word `Message`'s own default already uses everywhere else the component appears.
  */
 internal const val RETRY_LABEL = "Try again"
+
+/**
+ * The two thumbs, and the state suffix their accessible names carry when lit.
+ *
+ * "Thumb up" and "Thumb down" rather than "Like" and "Dislike": the consequence is not an opinion
+ * the app records and forgets, it is that a demoted track leaves the shuffle and a promoted one is
+ * played twice as often and joins a playlist. A neutral name for a control with a mechanical effect
+ * is the kind of thing a listener only finds out about afterwards.
+ */
+internal const val THUMB_UP_LABEL = "Thumb up"
+internal const val THUMB_DOWN_LABEL = "Thumb down"
+internal const val THUMB_ON_SUFFIX = "on"
+internal const val RATING_FAILED_LABEL = "Couldn't save that rating."
 
 /** Two lines of a long track name, then an ellipsis; three would crowd the transport row. */
 private const val TITLE_LINES = 2

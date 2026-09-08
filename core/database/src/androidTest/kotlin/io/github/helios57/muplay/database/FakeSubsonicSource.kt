@@ -139,14 +139,79 @@ class FakeSubsonicSource : SubsonicSource {
    * caller from mistaking "the fake does not model this" for "the server has none"; the two are
    * different answers and only one of them is a defect worth a loud failure.
    */
+  /** Playlists this fake server holds, by id. `RatingRepositoryTest` mutates it as the app writes. */
+  var playlists: MutableMap<String, PlaylistWithSongs> = linkedMapOf()
+
+  /** Ids handed out by [createPlaylist], in order, so a test can name the one it expects. */
+  var nextPlaylistId: String = "created-1"
+
   override suspend fun getPlaylists(): List<Playlist> {
     record("getPlaylists()")
-    return emptyList()
+    return playlists.values.map { it.playlist }
   }
 
-  override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
-    error("not used by the sync suite")
+  override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs {
+    record("getPlaylist($playlistId)")
+    return playlists[playlistId] ?: error("no such playlist: $playlistId")
+  }
 
   /** Nothing in the sync engine negotiates capabilities; `TranscodeOffsetSupport` is the caller. */
+  /**
+   * The three rating writes, kept as a **working fake server** rather than as `error(..)` stubs.
+   *
+   * `RatingRepository`'s whole job is the sequence of requests it makes -- read the playlists, read
+   * one playlist's entries, then create or add or remove -- and the defect it exists to prevent is a
+   * duplicate entry, which is a property of the *server's* state after several taps. A recording
+   * stub could assert the calls; only a fake that actually keeps the playlist can show that tapping
+   * a thumb up twice leaves one copy.
+   */
+  override suspend fun setRating(songId: String, rating: Int) {
+    record("setRating($songId, $rating)")
+  }
+
+  override suspend fun createPlaylist(name: String, songIds: List<String>): Playlist {
+    record("createPlaylist($name, $songIds)")
+    val playlist = Playlist(
+      id = nextPlaylistId,
+      name = name,
+      songCount = songIds.size,
+      durationSeconds = 0,
+      owner = null,
+      coverArtId = null,
+    )
+    playlists[playlist.id] = PlaylistWithSongs(playlist, songIds.map(::stubSong))
+    return playlist
+  }
+
+  override suspend fun updatePlaylist(
+    playlistId: String,
+    songIdsToAdd: List<String>,
+    songIndexesToRemove: List<Int>,
+  ) {
+    record("updatePlaylist($playlistId, add=$songIdsToAdd, remove=$songIndexesToRemove)")
+    val existing = playlists[playlistId] ?: error("no such playlist: $playlistId")
+    // Both halves of the measured server behaviour: the removals resolve against the list as it
+    // was, and an add appends **unconditionally** -- adding a song the playlist already holds
+    // leaves two copies. That second half is the whole reason `PromotedPlaylist` checks membership,
+    // so a fake that de-duplicated here would make the bug untestable.
+    val kept = existing.songs.filterIndexed { index, _ -> index !in songIndexesToRemove }
+    playlists[playlistId] = existing.copy(songs = kept + songIdsToAdd.map(::stubSong))
+  }
+
+  private fun stubSong(id: String) = Song(
+    id = id,
+    libraryId = 1,
+    title = id,
+    albumId = null,
+    albumName = null,
+    artistId = null,
+    artistName = null,
+    trackNumber = null,
+    discNumber = null,
+    durationSeconds = 1,
+    suffix = "mp3",
+    coverArtId = null,
+  )
+
   override suspend fun capabilities(): ServerCapabilities = error("not used by the sync suite")
 }

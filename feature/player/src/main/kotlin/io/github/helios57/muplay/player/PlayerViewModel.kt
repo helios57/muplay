@@ -4,12 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.helios57.muplay.media.PlaybackConnection
 import io.github.helios57.muplay.media.PlaybackState
+import io.github.helios57.muplay.model.SongRating
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -77,10 +83,15 @@ interface PlaybackControls {
  * actions.
  */
 @HiltViewModel
-class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
+class PlayerViewModel(
+  private val controls: PlaybackControls,
+  private val ratings: Ratings,
+) : ViewModel() {
 
   @Inject
-  constructor(connection: PlaybackConnection) : this(
+  constructor(connection: PlaybackConnection, ratings: Ratings.Impl) : this(
+    ratings = ratings,
+    controls =
     object : PlaybackControls {
       override val state: StateFlow<PlaybackState> = connection.state
 
@@ -122,8 +133,32 @@ class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
   /** Non-null only while a finger is on the seek bar. See [PlayerUiState.Content]. */
   private val scrubPositionMs = MutableStateFlow<Long?>(null)
 
+  /** Set when a thumb tap does not reach the server; see [PlayerUiState.Content.ratingFailed]. */
+  private val ratingFailed = MutableStateFlow(false)
+
+  /**
+   * The thumb on whatever is playing, re-subscribed when the track changes.
+   *
+   * `distinctUntilChanged` on the **media id**, not on the whole state: `controls.state` ticks
+   * about four times a second with a new position, and without it every tick would tear down the
+   * database query and start it again.
+   */
+  @OptIn(ExperimentalCoroutinesApi::class)
+  private val rating: StateFlow<SongRating> =
+    controls.state
+      .map { it.mediaId }
+      .distinctUntilChanged()
+      .flatMapLatest { mediaId ->
+        if (mediaId == null) flowOf(SongRating.Neutral) else ratings.ratingOf(mediaId)
+      }
+      .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = SongRating.Neutral,
+      )
+
   val uiState: StateFlow<PlayerUiState> =
-    combine(controls.state, scrubPositionMs, ::playerUiState)
+    combine(controls.state, scrubPositionMs, rating, ratingFailed, ::playerUiState)
       .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -183,6 +218,22 @@ class PlayerViewModel(private val controls: PlaybackControls) : ViewModel() {
     viewModelScope.launch {
       controls.seekTo(target)
       scrubPositionMs.value = null
+    }
+  }
+
+  /**
+   * A thumb tap on whatever is playing.
+   *
+   * The media id is read at the moment the tap is handled and passed down, so a track change
+   * mid-request cannot redirect the rating onto the song that followed. A failure sets
+   * [PlayerUiState.Content.ratingFailed] rather than throwing: the write is the listener's, not the
+   * app's, and a crash is not a reasonable answer to a server that said no.
+   */
+  fun thumb(tapped: SongRating) {
+    val mediaId = (uiState.value as? PlayerUiState.Content)?.playback?.mediaId ?: return
+    viewModelScope.launch {
+      val outcome = runCatching { ratings.rate(mediaId, tapped) }
+      ratingFailed.value = outcome.isFailure
     }
   }
 

@@ -1,6 +1,7 @@
 package io.github.helios57.muplay.player
 
 import io.github.helios57.muplay.media.PlaybackState
+import io.github.helios57.muplay.model.SongRating
 
 /**
  * What the player screen renders. A sealed interface, per the constraints, so a `when` over it is
@@ -24,11 +25,31 @@ sealed interface PlayerUiState {
     val playback: PlaybackState,
     val displayPositionMs: Long,
     val isScrubbing: Boolean,
+    /**
+     * The listener's thumb on the track that is playing.
+     *
+     * [SongRating.Neutral] covers both "no thumb" and "this track is not in the mirror yet", which
+     * a pair of buttons cannot draw apart anyway.
+     */
+    val rating: SongRating,
+    /**
+     * Whether the **last** thumb tap failed to reach the server.
+     *
+     * A flag rather than silence, because the alternative is worse than it looks: a failed write
+     * leaves the mirror untouched, so the thumb simply does not light and the listener reads that
+     * as a tap that missed. Cleared by the next successful tap and by a track change.
+     */
+    val ratingFailed: Boolean,
   ) : PlayerUiState
 }
 
 /** Pure mapping — see `PlayerUiStateTest` for why this is a function and not a `ViewModel` method. */
-internal fun playerUiState(playback: PlaybackState, scrubPositionMs: Long?): PlayerUiState =
+internal fun playerUiState(
+  playback: PlaybackState,
+  scrubPositionMs: Long?,
+  rating: SongRating,
+  ratingFailed: Boolean,
+): PlayerUiState =
   if (playback.mediaId == null) {
     PlayerUiState.NothingPlaying
   } else {
@@ -36,6 +57,8 @@ internal fun playerUiState(playback: PlaybackState, scrubPositionMs: Long?): Pla
       playback = playback,
       displayPositionMs = displayPosition(scrubPositionMs ?: playback.positionMs, playback.durationMs),
       isScrubbing = scrubPositionMs != null,
+      rating = rating,
+      ratingFailed = ratingFailed,
     )
   }
 

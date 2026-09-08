@@ -3,6 +3,7 @@ package io.github.helios57.muplay.player
 import androidx.media3.common.MediaMetadata
 import io.github.helios57.muplay.media.PlaybackFailure
 import io.github.helios57.muplay.media.PlaybackState
+import io.github.helios57.muplay.model.SongRating
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -127,10 +128,42 @@ class PlayerViewModelTest {
    * nothing at all without an active collector — the same reason `:feature:library`'s view-model
    * tests have a `warm` of their own.
    */
-  private fun TestScope.warm(controls: FakePlaybackControls): PlayerViewModel {
-    val viewModel = PlayerViewModel(controls)
+  private fun TestScope.warm(
+    controls: FakePlaybackControls,
+    ratings: FakeRatings = FakeRatings(),
+  ): PlayerViewModel {
+    val viewModel = PlayerViewModel(controls, ratings)
     backgroundScope.launch { viewModel.uiState.collect {} }
     return viewModel
+  }
+
+  /**
+   * A [Ratings] that keeps its ratings in memory, the way the server plus the mirror do together.
+   *
+   * `MutableStateFlow` per song rather than a plain map, because [PlayerViewModel] subscribes to
+   * the flow for whatever is playing and re-subscribes on a track change -- a fake that returned a
+   * `flowOf(..)` snapshot would make every one of those tests pass without the subscription
+   * existing at all.
+   */
+  private class FakeRatings : Ratings {
+    val ratings = mutableMapOf<String, MutableStateFlow<SongRating>>()
+    val tapped = mutableListOf<Pair<String, SongRating>>()
+
+    /** Non-null makes every [rate] fail, the way a refused write or a dead network does. */
+    var failWith: Throwable? = null
+
+    override fun ratingOf(songId: String): StateFlow<SongRating> = flowFor(songId)
+
+    override suspend fun rate(songId: String, tapped: SongRating): SongRating {
+      this.tapped += songId to tapped
+      failWith?.let { throw it }
+      val next = flowFor(songId).value.toggledTo(tapped)
+      flowFor(songId).value = next
+      return next
+    }
+
+    private fun flowFor(songId: String) =
+      ratings.getOrPut(songId) { MutableStateFlow(SongRating.Neutral) }
   }
 
   private fun PlayerViewModel.content(): PlayerUiState.Content =
@@ -449,4 +482,120 @@ class PlayerViewModelTest {
 
       assertThat(viewModel.content().playback.failure).isEqualTo(PlaybackFailure.Unplayable)
     }
+
+  // ---- The thumbs ----
+
+  @Test
+  fun `the thumb on the playing track comes from the rating source`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    ratings.ratings["song-1"] = MutableStateFlow(SongRating.Promoted)
+    val viewModel = warm(controls, ratings)
+
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    assertThat(viewModel.content().rating).isEqualTo(SongRating.Promoted)
+  }
+
+  @Test
+  fun `a rating written elsewhere reaches the screen without a track change`() = runTest(dispatcher) {
+    // The subscription, not a snapshot. Rating a track from another surface -- or the reconcile
+    // bringing one down from the server -- has to light the thumb on a screen that is already open,
+    // and a `ratingOf` collected once at construction would never see it.
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    ratings.ratings.getValue("song-1").value = SongRating.Demoted
+    advanceUntilIdle()
+
+    assertThat(viewModel.content().rating).isEqualTo(SongRating.Demoted)
+  }
+
+  @Test
+  fun `the thumb follows the track rather than staying on the one it was tapped for`() =
+    runTest(dispatcher) {
+      val controls = FakePlaybackControls()
+      val ratings = FakeRatings()
+      ratings.ratings["song-1"] = MutableStateFlow(SongRating.Promoted)
+      ratings.ratings["song-2"] = MutableStateFlow(SongRating.Demoted)
+      val viewModel = warm(controls, ratings)
+      controls.publish(playing)
+      advanceUntilIdle()
+
+      controls.publish(playing.copy(mediaId = "song-2", title = "Track 2"))
+      advanceUntilIdle()
+
+      assertThat(viewModel.content().rating).isEqualTo(SongRating.Demoted)
+    }
+
+  @Test
+  fun `a tap rates the track that is playing`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    assertThat(ratings.tapped).containsExactly("song-1" to SongRating.Promoted)
+    assertThat(viewModel.content().rating).isEqualTo(SongRating.Promoted)
+  }
+
+  @Test
+  fun `a tap with nothing playing rates nothing rather than throwing`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    val viewModel = warm(controls, ratings)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    assertThat(ratings.tapped).isEmpty()
+    assertThat(viewModel.uiState.value).isEqualTo(PlayerUiState.NothingPlaying)
+  }
+
+  @Test
+  fun `a refused rating is reported on the screen rather than swallowed`() = runTest(dispatcher) {
+    // A failed write leaves the mirror untouched, so the thumb does not light -- which on its own
+    // is indistinguishable from a tap that missed the button. The flag is what tells them apart.
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    ratings.failWith = java.io.IOException("the server refused")
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    assertThat(viewModel.content().ratingFailed).isTrue
+    assertThat(viewModel.content().rating).isEqualTo(SongRating.Neutral)
+  }
+
+  @Test
+  fun `a rating that succeeds after one that failed clears the message`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings()
+    ratings.failWith = java.io.IOException("the server refused")
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    ratings.failWith = null
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    assertThat(viewModel.content().ratingFailed).isFalse
+    assertThat(viewModel.content().rating).isEqualTo(SongRating.Promoted)
+  }
+
 }

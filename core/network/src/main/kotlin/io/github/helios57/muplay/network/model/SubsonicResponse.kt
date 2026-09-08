@@ -154,6 +154,15 @@ data class ChildBody(
   val replayGain: ReplayGainBody? = null,
   /** Relative to the library root, `/`-separated. Absent on servers that do not report it. */
   val path: String? = null,
+  /**
+   * The authenticating user's own star rating, 1..5, or absent for a track they have not rated.
+   *
+   * Absent and not zero: measured against the CI Navidrome, a `Child` for an unrated track carries
+   * no `userRating` key at all, and `setRating(rating = 0)` removes the key rather than storing a
+   * `0`. `SongRating.ofUserRating` reads both anyway, because a client that has just cleared a
+   * rating holds the 0 it sent.
+   */
+  val userRating: Int? = null,
 )
 
 /**

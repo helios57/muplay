@@ -65,7 +65,7 @@ import io.github.helios57.muplay.database.entity.SyncWatermarkEntity
     ChapterScanEntity::class,
     ChapterEntity::class,
   ],
-  version = 8,
+  version = 9,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {

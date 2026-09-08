@@ -144,7 +144,7 @@ class MiniPlayerTest {
   @Test
   fun theHiltBoundBarAppearsOnlyOncePlaybackStartsAndItsButtonReachesTheViewModel() {
     val controls = RecordingPlaybackControls()
-    val viewModel = PlayerViewModel(controls)
+    val viewModel = PlayerViewModel(controls, InMemoryRatings())
     composeRule.setContent { MiniPlayer(onOpenPlayer = { actions += "open" }, viewModel = viewModel) }
 
     composeRule.onNodeWithContentDescription(MINI_PLAYER_LABEL).assertDoesNotExist()

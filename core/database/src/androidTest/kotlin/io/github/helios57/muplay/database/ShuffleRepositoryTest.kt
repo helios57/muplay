@@ -9,6 +9,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.helios57.muplay.database.entity.AlbumEntity
 import io.github.helios57.muplay.database.entity.SongEntity
 import io.github.helios57.muplay.model.Song
+import io.github.helios57.muplay.model.ShufflePlan
+import io.github.helios57.muplay.model.SongRating
 import io.github.helios57.muplay.model.SubsonicCredentials
 import io.github.helios57.muplay.network.SubsonicSourceFactory
 import java.io.File
@@ -29,7 +31,7 @@ class ShuffleRepositoryTest {
   private lateinit var source: FakeSubsonicSource
   private lateinit var repository: ShuffleRepository
 
-  private fun song(id: String, title: String, libraryId: Int) = Song(
+  private fun song(id: String, title: String, libraryId: Int, rating: SongRating = SongRating.Neutral) = Song(
     id = id,
     libraryId = libraryId,
     title = title,
@@ -42,6 +44,7 @@ class ShuffleRepositoryTest {
     durationSeconds = 5,
     suffix = "mp3",
     coverArtId = null,
+    rating = rating,
   )
 
   private fun songEntity(id: String, title: String, libraryId: Int) = SongEntity(
@@ -84,7 +87,7 @@ class ShuffleRepositoryTest {
 
     // A mirror that agrees library 1 holds three music tracks and library 2 one audiobook
     // chapter. The third music track (song-3) exists only so a test can have three surviving
-    // songs to check the *order* of -- see theRepositoryPreservesTheServersOrder below.
+    // songs to check the *order* of -- see theOrderIsRandomisedRatherThanFixed below.
     db.browseDao().replaceLibraryContents(
       libraryId = 1,
       artists = emptyList(),
@@ -165,12 +168,12 @@ class ShuffleRepositoryTest {
   }
 
   @Test
-  fun theRequestedSizeReachesTheServerUnchangedWhenItIsInRange() = runTest {
+  fun theRequestedSizeIsOverFetchedRatherThanForwardedUnchanged() = runTest {
     source.randomSongsByLibrary = mapOf(1 to listOf(song("song-1", "Track 1", 1)))
 
     repository.shuffle(libraryId = 1, requestedSize = 25)
 
-    assertThat(source.callLog).contains("getRandomSongs(1, size=25)")
+    assertThat(source.callLog).contains("getRandomSongs(1, size=${ShufflePlan.poolSizeFor(25)})")
   }
 
   /**
@@ -192,7 +195,7 @@ class ShuffleRepositoryTest {
 
     // The one parameter the whole feature depends on, asserted at this layer too: the repository
     // must not "helpfully" widen or default it.
-    assertThat(source.callLog).contains("getRandomSongs(2, size=10)")
+    assertThat(source.callLog).contains("getRandomSongs(2, size=${ShufflePlan.poolSizeFor(10)})")
     // The guard's own argument, not just the fetch's -- see this test's own doc.
     assertThat(result.songs.map { it.id }).containsExactly("chapter-1")
     assertThat(result.discardedOutOfScope).isZero
@@ -253,41 +256,88 @@ class ShuffleRepositoryTest {
   }
 
   /**
-   * Fix round 1, N-2 (MEDIUM): nothing else in this suite has more than one surviving song to
-   * order, so `containsExactlyInAnyOrder` elsewhere could never notice a `sortedBy` (or any other
-   * reordering) inserted into `shuffle`. `filter` preserves the server's own order -- the play
-   * order the user actually hears -- and this pins that directly: the fake returns the three
-   * mirrored library-1 songs in a title order (`Track 3`, `Track 1`, `Track 2`) that a
-   * title-sort would visibly rearrange, so `.sortedBy { it.title }` (or `{ it.id }`, which would
-   * also reorder these three) fails this test while every other test in the suite stays green.
+   * The play order the listener hears is randomised here, and is not any fixed order.
+   *
+   * **This test used to assert that the server's order was preserved exactly** -- `filter` keeps
+   * it, and a `sortedBy { it.title }` inserted into `shuffle` would have shown up as `Track 1,
+   * Track 2, Track 3`. That property is gone: [ShufflePlan.queue] shuffles what it selects, because
+   * selecting by weight and emitting in key order would put every promoted track at the front.
+   *
+   * So the assertion is now the one that survives: over many runs the same three songs come back in
+   * more than one order, which a `sortedBy` **after** the plan fails and which the old fixture
+   * (three songs whose title order differs from the server's) is still chosen to expose. A sort
+   * *before* the plan is no longer detectable and no longer matters -- the plan re-randomises it.
    */
   @Test
-  fun theRepositoryPreservesTheServersOrderRatherThanSortingIt() = runTest {
+  fun theOrderIsRandomisedRatherThanFixed() = runTest {
     source.randomSongsByLibrary = mapOf(
       1 to listOf(song("song-3", "Track 3", 1), song("song-1", "Track 1", 1), song("song-2", "Track 2", 1)),
     )
 
-    val result = repository.shuffle(libraryId = 1, requestedSize = 10)
+    val orders = (1..40).map { repository.shuffle(libraryId = 1, requestedSize = 10).songs.map { it.id } }
 
-    assertThat(result.songs.map { it.id }).containsExactly("song-3", "song-1", "song-2")
+    // Every run returns all three -- nothing is dropped by randomising.
+    assertThat(orders).allSatisfy { order ->
+      assertThat(order).containsExactlyInAnyOrder("song-1", "song-2", "song-3")
+    }
+    // ...and not always in the same one. Three songs have six orders; forty draws miss a second
+    // one with probability (1/6)^39, which is not a flake anybody will see.
+    assertThat(orders.toSet()).hasSizeGreaterThan(1)
   }
 
   /**
-   * Fix round 1, N-4 (LOW): the 500 cap lives in `SubsonicClient` (Task 3), one layer down from
-   * here. `shuffle` neither rejects nor re-clamps a caller-supplied `requestedSize` above it --
-   * clamping twice, at two different layers, would make "the number on the wire" and "the number
-   * this repository forwarded" two different numbers to reason about. This pins that the
-   * repository's own contract really is a pure passthrough, not an accidental one: 1000 reaches
-   * the fake exactly as given, unclamped and unrejected, the same way `MAX_RANDOM_SONGS`
-   * clamping happens only in `SubsonicClient.getRandomSongs`, asserted on the wire by
-   * `BrowseEndpointsTest`.
+   * The 500 cap lives in two places on purpose, and this pins the one that is *this* layer's.
+   *
+   * **This test used to assert the opposite** -- that a `requestedSize` of 1000 reached the source
+   * unclamped, because clamping twice at two layers would make "the number on the wire" and "the
+   * number this repository forwarded" two different numbers. That reasoning was correct while the
+   * repository forwarded the size; it stopped being correct when the repository began asking for
+   * [ShufflePlan.POOL_FACTOR] times the queue length, because the multiplication itself can exceed
+   * what the protocol will return. The ceiling is now part of the arithmetic rather than a second
+   * clamp on top of it: `SubsonicClient` still clamps the wire, and `BrowseEndpointsTest` still
+   * proves it there.
+   *
+   * Kept as a rewritten test rather than deleted, because the old rationale reads perfectly
+   * sensibly and the next person to shorten this method would restore it.
    */
   @Test
-  fun aRequestedSizeAbove500ReachesTheSourceUnclampedByThisRepository() = runTest {
+  fun aRequestedSizeAbove500AsksForTheProtocolCapRatherThanAMultipleOfIt() = runTest {
     source.randomSongsByLibrary = mapOf(1 to listOf(song("song-1", "Track 1", 1)))
 
     repository.shuffle(libraryId = 1, requestedSize = 1000)
 
-    assertThat(source.callLog).contains("getRandomSongs(1, size=1000)")
+    assertThat(source.callLog).contains("getRandomSongs(1, size=500)")
   }
+
+  /**
+   * The thumb down, at the layer that decides what plays.
+   *
+   * `ShufflePlanTest` proves the rule over a list; this proves the rule is *reached* -- a
+   * repository that forgot to call [ShufflePlan.queue] returns the demoted song and every other
+   * test in this class stays green, because no other test rates anything.
+   */
+  @Test
+  fun aDemotedSongIsNeverInTheQueueHoweverManyTimesTheShuffleRuns() = runTest {
+    source.randomSongsByLibrary = mapOf(
+      1 to listOf(
+        song("song-1", "Track 1", 1),
+        song("song-2", "Track 2", 1, SongRating.Demoted),
+        song("song-3", "Track 3", 1),
+      ),
+    )
+
+    // Twenty runs rather than one: the pool is three songs and the queue asks for ten, so a
+    // repository that skipped the plan entirely would return all three every single time -- but a
+    // repository that merely *shuffled* would too, and only repetition distinguishes "removed"
+    // from "unlucky" if the selection ever became probabilistic.
+    repeat(20) {
+      val result = repository.shuffle(libraryId = 1, requestedSize = 10)
+
+      assertThat(result.songs.map { it.id }).containsExactlyInAnyOrder("song-1", "song-3")
+      // Not counted as out of scope: the mirror agrees this song is in library 1. It was the
+      // listener who removed it, and conflating the two would report a demotion as a sync fault.
+      assertThat(result.discardedOutOfScope).isZero
+    }
+  }
+
 }

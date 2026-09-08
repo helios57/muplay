@@ -72,6 +72,31 @@ class MigrationTest {
     }
   }
 
+  /**
+   * The same rows again at version 8, with the `path` column version 8 introduced filled in.
+   *
+   * A separate seed rather than a reuse of [seedVersionSeven]: `helper.createDatabase(name, 8)`
+   * builds the table from the exported version-8 schema, and inserting through the shared
+   * [seedRows] would leave `path` null on every row -- which is exactly the value a 8 -> 9
+   * migration that dropped the column would also produce, so the test could not tell them apart.
+   */
+  private fun seedVersionEight(name: String) {
+    helper.createDatabase(name, 8).use { db ->
+      seedRows(db)
+      db.execSQL("INSERT INTO book_settings (bookId, speed, skipSilence) VALUES ('book-1', 1.4, 1)")
+      db.execSQL(
+        "INSERT INTO chapter_scans (mediaId, chapterCount, scannedAtEpochMs) " +
+          "VALUES ('chapter-14', 2, 5)",
+      )
+      db.execSQL(
+        "INSERT INTO chapters (mediaId, chapterIndex, startMs, endMs, title) " +
+          "VALUES ('chapter-14', 0, 0, 7000, 'Head')",
+      )
+      db.execSQL("UPDATE songs SET path = 'Artist/Album/01 - A Song.mp3' WHERE id = 'a-song'")
+      db.execSQL("UPDATE songs SET path = 'Author/Book/02 - Part Two.mp3' WHERE id = 'chapter-14'")
+    }
+  }
+
   private fun seedRows(db: SupportSQLiteDatabase) {
       db.execSQL(
         "INSERT INTO media_progress " +
@@ -383,6 +408,79 @@ class MigrationTest {
     db.query("SELECT COUNT(*) FROM sync_watermark").use { c ->
       c.moveToFirst()
       assertThat(c.getInt(0)).isZero
+    }
+  }
+
+  @Test
+  fun everySongSurvivesTheMoveToNineAndArrivesUnrated() {
+    seedVersionEight(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 9, true, MIGRATION_8_9)
+
+    db.query("SELECT id, title, path, userRating FROM songs ORDER BY id").use { c ->
+      assertThat(c.count).isEqualTo(2)
+      c.moveToFirst()
+      assertThat(c.getString(0)).isEqualTo("a-song")
+      assertThat(c.getString(1)).isEqualTo("A Song")
+      // The column version 8 added is still populated: a migration that rebuilt the table and
+      // forgot a column would show up here and nowhere else in this class.
+      assertThat(c.getString(2)).isEqualTo("Artist/Album/01 - A Song.mp3")
+      // 0, which `SongRating.ofUserRating` reads as Neutral. Nobody's existing rows know their
+      // rating -- the column is new and only a reconcile fills it -- and "no thumb" is the honest
+      // reading of that until it has.
+      assertThat(c.getInt(3)).describedAs("a rating arrived that nothing wrote").isZero
+      c.moveToNext()
+      assertThat(c.getString(0)).isEqualTo("chapter-14")
+      assertThat(c.getString(2)).isEqualTo("Author/Book/02 - Part Two.mp3")
+      assertThat(c.getInt(3)).isZero
+    }
+  }
+
+  @Test
+  fun theMoveToNineClearsTheWatermarkSoTheNextSyncActuallyFetchesTheRatings() {
+    // The same half of the same shape as `theMoveToEightClearsTheWatermark...`, and the same
+    // reason it would be silently omitted: with the watermark intact, an upgraded install shows
+    // every track as unrated until the server next rescans. A listener who rated tracks in
+    // Navidrome's own web UI would see none of it, and nothing would report a fault.
+    seedVersionEight(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 9, true, MIGRATION_8_9)
+
+    db.query("SELECT lastScan FROM sync_watermark").use { c ->
+      assertThat(c.count).describedAs("a watermark survived, so no reconcile will be forced").isZero
+    }
+    // ...and it cleared the watermark rather than the database.
+    db.query("SELECT COUNT(*) FROM media_progress").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isEqualTo(2)
+    }
+    db.query("SELECT COUNT(*) FROM songs").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isEqualTo(2)
+    }
+  }
+
+  @Test
+  fun aVersionSixDatabaseReachesNineThroughEveryMigration() {
+    // The upgrade a phone that has not been opened since version 6 actually performs. Room chains
+    // all three, and a migration that assumed something a later version created would only fail
+    // on this path.
+    seedVersionSix(TEST_DB)
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 9, true, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+
+    // The listener's position, which is the one thing in this database that cannot be re-fetched.
+    db.query("SELECT positionMs, speed FROM media_progress WHERE mediaId = 'chapter-14'").use { c ->
+      assertThat(c.count).isEqualTo(1)
+      c.moveToFirst()
+      assertThat(c.getLong(0)).isEqualTo(3_600_000L)
+      assertThat(c.getFloat(1)).isEqualTo(1.4f)
+    }
+    db.query("SELECT path, userRating FROM songs").use { c ->
+      assertThat(c.count).isEqualTo(2)
+      c.moveToFirst()
+      assertThat(c.isNull(0)).describedAs("a path arrived that nothing wrote").isTrue
+      assertThat(c.getInt(1)).isZero
     }
   }
 }

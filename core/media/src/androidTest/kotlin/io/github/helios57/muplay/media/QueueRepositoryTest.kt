@@ -66,6 +66,21 @@ class QueueRepositoryTest {
     // Everything else on the port is out of this test's scope. `error(...)` rather than a benign
     // default: a call that should never happen must fail loudly rather than return something
     // plausible that the test would then be quietly asserting about.
+    // The three rating writes. `error` rather than a no-op: a call from QueueRepositoryTest would mean
+    // the thumbs had reached a surface this fake was never written for, and a silent
+    // success there is the failure mode the whole rating suite is asserting against.
+    override suspend fun setRating(songId: String, rating: Int) =
+      error("setRating is not used by QueueRepositoryTest")
+
+    override suspend fun createPlaylist(name: String, songIds: List<String>) =
+      error("createPlaylist is not used by QueueRepositoryTest")
+
+    override suspend fun updatePlaylist(
+      playlistId: String,
+      songIdsToAdd: List<String>,
+      songIndexesToRemove: List<Int>,
+    ) = error("updatePlaylist is not used by QueueRepositoryTest")
+
     override suspend fun capabilities(): ServerCapabilities = error("not used by QueueRepositoryTest")
     override suspend fun getPlaylists(): List<Playlist> = error("not used by QueueRepositoryTest")
     override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =

@@ -42,6 +42,21 @@ data class SongEntity(
   val coverArtId: String?,
   val sortTitle: String,
   /**
+   * The listener's own thumb on this track, as the Subsonic `userRating` number: 5 promoted,
+   * 1 demoted, 0 for no thumb.
+   *
+   * Stored as the wire number rather than as the `SongRating` enum so that no Room type converter
+   * is needed and so that a rating written by another client -- three stars, say -- survives a
+   * round trip through this mirror unchanged. `SongRating.ofUserRating` is what narrows it to the
+   * three states this app acts on, and it is applied when the row is read rather than when it is
+   * written.
+   *
+   * A rating is server truth, per user, so it belongs in this cache exactly the way a title does:
+   * a reconcile re-fetches it, and losing it costs nothing. Contrast `media_progress`, which is
+   * this app's own and lives in a table no reconcile touches.
+   */
+  val userRating: Int = 0,
+  /**
    * The file's own ReplayGain, mirrored so the player has it **before** the track is first played.
    *
    * That timing is the whole reason these three columns are here rather than on `media_progress`:

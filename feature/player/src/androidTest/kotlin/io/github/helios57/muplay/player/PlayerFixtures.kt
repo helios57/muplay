@@ -2,6 +2,7 @@ package io.github.helios57.muplay.player
 
 import androidx.media3.common.MediaMetadata
 import io.github.helios57.muplay.media.PlaybackState
+import io.github.helios57.muplay.model.SongRating
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -51,7 +52,9 @@ internal fun content(
   playback: PlaybackState = PLAYING,
   displayPositionMs: Long = playback.positionMs,
   isScrubbing: Boolean = false,
-) = PlayerUiState.Content(playback, displayPositionMs, isScrubbing)
+  rating: SongRating = SongRating.Neutral,
+  ratingFailed: Boolean = false,
+) = PlayerUiState.Content(playback, displayPositionMs, isScrubbing, rating, ratingFailed)
 
 /**
  * A hand-written [PlaybackControls] for the two suites' *stateful* cases — the ones that compose
@@ -111,4 +114,28 @@ internal class RecordingPlaybackControls : PlaybackControls {
   override suspend fun retry() {
     calls += "retry"
   }
+}
+
+/**
+ * A [Ratings] that keeps its ratings in memory, for the two suites that build a real
+ * [PlayerViewModel].
+ *
+ * Those tests are about the hop from `uiState` to the composition, not about rating anything, so
+ * this is deliberately the smallest thing that satisfies the constructor -- and it is a working
+ * store rather than a throwing stub, because the view model *subscribes* to `ratingOf` for whatever
+ * is playing and a stub that threw would take the screen down before it drew.
+ */
+internal class InMemoryRatings : Ratings {
+  private val ratings = mutableMapOf<String, MutableStateFlow<SongRating>>()
+
+  override fun ratingOf(songId: String): StateFlow<SongRating> = flowFor(songId)
+
+  override suspend fun rate(songId: String, tapped: SongRating): SongRating {
+    val next = flowFor(songId).value.toggledTo(tapped)
+    flowFor(songId).value = next
+    return next
+  }
+
+  private fun flowFor(songId: String) =
+    ratings.getOrPut(songId) { MutableStateFlow(SongRating.Neutral) }
 }

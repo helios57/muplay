@@ -160,6 +160,28 @@ abstract class BrowseDao {
   abstract suspend fun songsByIds(ids: List<String>): List<SongEntity>
 
   /**
+   * The listener's thumb on one track, as it changes.
+   *
+   * A `Flow`, and observed by the player screen, so that a rating written on one surface is visible
+   * on every other one without either knowing about the other. `null` means the mirror has never
+   * seen this track -- which is not the same as "no thumb", though both render the same way, and is
+   * the state an unsynced track is in.
+   */
+  @Query("SELECT userRating FROM songs WHERE id = :songId")
+  abstract fun observeUserRating(songId: String): Flow<Int?>
+
+  /**
+   * Records a rating the app has just written to the server.
+   *
+   * Write-through, not a source of truth: the server owns the rating, a reconcile re-fetches it,
+   * and this exists so the thumb the listener just tapped stays lit without waiting for one. A row
+   * the mirror does not have is not created here -- there is nothing to create it from, and the
+   * rating is on the server either way.
+   */
+  @Query("UPDATE songs SET userRating = :userRating WHERE id = :songId")
+  abstract suspend fun setUserRating(songId: String, userRating: Int)
+
+  /**
    * Replaces **everything** the mirror holds for one library, in one transaction.
    *
    * A full replace rather than a diff because Subsonic never reports deletions: there is no delta

@@ -19,6 +19,11 @@ dependencies {
   // screen draws. A `:core:` module, so this is not the feature-to-feature edge `settings.gradle.kts`
   // forbids; it is the same edge `:app` already has.
   implementation(project(":core:designsystem"))
+  // The thumbs. `RatingRepository` is what writes a rating to the server and keeps the mirror's
+  // copy of it, and this module reaches it behind the `Ratings` seam next to `PlaybackControls`
+  // -- a `:core:` module, so this is the same shape of edge as `:core:media` above and not the
+  // feature-to-feature edge `settings.gradle.kts` forbids.
+  implementation(project(":core:database"))
 
   implementation(libs.compose.ui)
   implementation(libs.compose.material3)

@@ -1,9 +1,11 @@
 package io.github.helios57.muplay.database
 
 import io.github.helios57.muplay.database.dao.BrowseDao
+import io.github.helios57.muplay.model.ShufflePlan
 import io.github.helios57.muplay.model.ShuffleResult
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.random.Random
 
 /**
  * Random playback restricted to one library — the feature this application exists for.
@@ -17,6 +19,10 @@ import javax.inject.Singleton
  * checked against the mirror**, and a song the mirror does not place in this library is dropped.
  * The failure being defended against is silent — an audiobook chapter simply starts playing —
  * so a defence that only works when something else already worked is not enough.
+ *
+ * On top of the scoping it applies the listener's own thumbs, through [ShufflePlan]: a demoted song
+ * is dropped and a promoted one is weighted. That happens *after* the library guard, so a demotion
+ * is never counted as a scoping fault.
  */
 @Singleton
 class ShuffleRepository @Inject constructor(
@@ -25,24 +31,51 @@ class ShuffleRepository @Inject constructor(
 ) {
 
   /**
-   * [requestedSize] is forwarded to [SubsonicSourceProvider.current]'s `getRandomSongs`
-   * unchanged: it is neither validated nor re-clamped here. `SubsonicClient`'s own `size` clamp
-   * (Task 3, `MAX_RANDOM_SONGS` = 500) is what makes "the number on the wire" and "the number a
-   * caller reasons about" the same one -- and it is made there, at the point the request is
-   * built, deliberately not duplicated here: a second clamp at this layer would make those two
-   * numbers different from each other instead. A [requestedSize] above 500 is therefore silently
-   * truncated one layer down from this method, not by it -- see
-   * `aRequestedSizeAbove500ReachesTheSourceUnclampedByThisRepository` for the passthrough this
-   * documents, and `BrowseEndpointsTest`'s wire-level clamp tests for where the truncation
-   * itself is proved.
+   * `Random.Default`, not an injected [Random].
+   *
+   * Every decision this source makes is [ShufflePlan]'s, and `ShufflePlanTest` drives that with a
+   * seeded [Random] on the JVM tier -- so a binding here would buy a Hilt provider and a test for
+   * the provider without making one product decision observable that is not already observable.
+   * `ShuffleRepositoryTest` asserts the property that survives real randomness (more than one order
+   * over many runs) rather than one seed's output.
+   */
+  private val random: Random = Random.Default
+
+  /**
+   * A queue of at most [requestedSize] songs from [libraryId], scoped, rated and shuffled.
+   *
+   * ### Why the number asked for is not the number requested
+   *
+   * [ShufflePlan] selects **without replacement**, so a pool no larger than the queue returns the
+   * whole pool whatever anything is rated -- a thumb up would do nothing at all. So this asks the
+   * server for [ShufflePlan.poolSizeFor] candidates, which is a multiple of the queue length capped
+   * at what `getRandomSongs` will return, and the plan chooses the queue out of them.
+   *
+   * **This used to be a pure passthrough**, and its KDoc said so at length: the 500 clamp lives in
+   * `SubsonicClient`, and clamping at two layers would make "the number on the wire" and "the number
+   * this repository forwarded" two different numbers to reason about. That is still true of the
+   * clamp -- this method does not clamp -- but the size on the wire is now a *derived* figure rather
+   * than the caller's own, and `aRequestedSizeAbove500AsksForTheProtocolCapRatherThanAMultipleOfIt`
+   * carries the rewritten record.
+   *
+   * ### Order of operations
+   *
+   * Scope first, then rate. The library guard is the defence this class exists for and it must see
+   * every song the server returned, including the demoted ones -- `discardedOutOfScope` counts songs
+   * the *mirror* disowns, and a demoted song filtered out beforehand would quietly stop being
+   * counted if the server ever leaked one.
    */
   suspend fun shuffle(libraryId: Int, requestedSize: Int): ShuffleResult {
-    val returned = sourceProvider.current().getRandomSongs(libraryId, requestedSize)
+    val poolSize = ShufflePlan.poolSizeFor(requestedSize)
+    val returned = sourceProvider.current().getRandomSongs(libraryId, poolSize)
     if (returned.isEmpty()) return ShuffleResult(emptyList(), discardedOutOfScope = 0)
 
     val confirmed = browseDao.songIdsInLibrary(libraryId, returned.map { it.id }).toSet()
     val kept = returned.filter { it.id in confirmed }
-    return ShuffleResult(songs = kept, discardedOutOfScope = returned.size - kept.size)
+    return ShuffleResult(
+      songs = ShufflePlan.queue(kept, requestedSize, random),
+      discardedOutOfScope = returned.size - kept.size,
+    )
   }
 
   companion object {

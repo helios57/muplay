@@ -91,3 +91,30 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
     db.execSQL("DELETE FROM `sync_watermark`")
   }
 }
+
+/**
+ * 8 -> 9: `songs.userRating`, and a cleared sync watermark.
+ *
+ * The column is what the thumbs read. The `DELETE` is what makes it arrive, for exactly the reason
+ * [MIGRATION_7_8] gives -- `SyncEngine` reconciles only when the server's `lastScan` differs from
+ * the stored watermark, so on a settled library an upgraded install would show every track as
+ * unrated until the server happened to rescan, which may be never. Ratings the listener set in
+ * another client would simply be invisible, and nothing would report a fault.
+ *
+ * Measured before writing this, rather than assumed: Navidrome returns `userRating` inline on the
+ * `song` children of `getAlbum`, so the ordinary reconcile fills this column with no extra request.
+ * That is the whole reason a rating can live in the mirror at all.
+ *
+ * `INTEGER NOT NULL DEFAULT 0` is what Room generates for an `Int` with a Kotlin default of `0`,
+ * and 0 is `SongRating.Neutral` -- so an existing row's pre-migration state and "no thumb" are the
+ * same value, which is the honest reading until the reconcile the `DELETE` forces has run.
+ *
+ * As with every migration in this file: `media_progress` is a different table that no reconcile
+ * touches, so no listener's book position is at risk here.
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    db.execSQL("ALTER TABLE `songs` ADD COLUMN `userRating` INTEGER NOT NULL DEFAULT 0")
+    db.execSQL("DELETE FROM `sync_watermark`")
+  }
+}

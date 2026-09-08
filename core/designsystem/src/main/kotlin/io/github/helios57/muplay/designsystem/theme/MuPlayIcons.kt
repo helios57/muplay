@@ -285,6 +285,49 @@ object MuPlayIcons {
     lineTo(11.5f, 18.5f)
   }
 
+  /**
+   * Promote and demote, the two thumbs on the player screen.
+   *
+   * Stroked, per this set's one rule — they are utilities, not transport — and the *lit* state is
+   * carried by colour rather than by a second filled glyph. Two glyphs per control would double the
+   * number of shapes a reader has to learn for a control whose whole meaning is on/off, and a
+   * filled thumb would then outweigh the play button it sits under.
+   *
+   * [ThumbDown] is [ThumbUp] mirrored about the horizontal centre line (`y' = 24 - y`), which is
+   * what makes the pair read as opposites at a glance rather than as two different hands.
+   */
+  val ThumbUp: ImageVector = stroked("MuPlayThumbUp") {
+    moveTo(3.5f, 11f)
+    lineTo(7f, 11f)
+    lineTo(7f, 20.5f)
+    lineTo(3.5f, 20.5f)
+    close()
+    moveTo(9.5f, 20.5f)
+    lineTo(17.5f, 20.5f)
+    lineTo(20.5f, 13f)
+    lineTo(14.5f, 13f)
+    lineTo(15.5f, 7f)
+    lineTo(13f, 3.5f)
+    lineTo(9.5f, 11f)
+    close()
+  }
+
+  val ThumbDown: ImageVector = stroked("MuPlayThumbDown") {
+    moveTo(3.5f, 13f)
+    lineTo(7f, 13f)
+    lineTo(7f, 3.5f)
+    lineTo(3.5f, 3.5f)
+    close()
+    moveTo(9.5f, 3.5f)
+    lineTo(17.5f, 3.5f)
+    lineTo(20.5f, 11f)
+    lineTo(14.5f, 11f)
+    lineTo(15.5f, 17f)
+    lineTo(13f, 20.5f)
+    lineTo(9.5f, 13f)
+    close()
+  }
+
   /** Dismisses the sleep timer. */
   val Close: ImageVector = stroked("MuPlayClose") {
     moveTo(6.8f, 6.8f)

@@ -11,6 +11,7 @@ import io.github.helios57.muplay.database.CastPreferences
 import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.MIGRATION_6_7
 import io.github.helios57.muplay.database.MIGRATION_7_8
+import io.github.helios57.muplay.database.MIGRATION_8_9
 import io.github.helios57.muplay.database.MuPlayDatabase
 import io.github.helios57.muplay.database.RendererStore
 import io.github.helios57.muplay.database.SubsonicSourceProvider
@@ -59,7 +60,7 @@ object DataModule {
       // every listener's book position -- the one thing this application exists to keep -- and no
       // migration test that is handed `MIGRATION_6_7` by name can see it happen.
       // `MigrationTest.theRealBuilderMigratesRatherThanDropping` is the one that can.
-      .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
+      .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
       // Pre-release only, and still needed. Versions 1 through 6 have no `Migration` between them
       // -- Plan 2 Tasks 4, 5 and 6 and Plan 3 Task 11 each bumped `version` and wrote none -- so a
       // developer's device (and the emulator that runs the required Tier 2 gate) must be allowed

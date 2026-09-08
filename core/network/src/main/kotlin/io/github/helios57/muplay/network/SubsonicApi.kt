@@ -2,6 +2,7 @@ package io.github.helios57.muplay.network
 
 import io.github.helios57.muplay.network.model.SubsonicEnvelope
 import retrofit2.http.GET
+import retrofit2.http.Query
 import retrofit2.http.QueryMap
 
 /**
@@ -52,4 +53,31 @@ interface SubsonicApi {
 
   @GET("rest/getScanStatus")
   suspend fun getScanStatus(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  @GET("rest/setRating")
+  suspend fun setRating(@QueryMap params: Map<String, String>): SubsonicEnvelope
+
+  /**
+   * `songId` is **repeated**, not comma-joined, so it cannot travel in the [QueryMap] a
+   * `Map<String, String>` provides. Retrofit renders a `List` parameter as one query pair per
+   * element, which is the shape Subsonic specifies and Navidrome accepts.
+   */
+  @GET("rest/createPlaylist")
+  suspend fun createPlaylist(
+    @QueryMap params: Map<String, String>,
+    @Query("songId") songIds: List<String>,
+  ): SubsonicEnvelope
+
+  /**
+   * Adds by id and removes by **index**, which is the only removal Subsonic offers.
+   *
+   * An empty list renders no query pair at all, which matters: `songIndexToRemove=` with an empty
+   * value is a parse error at the server rather than a no-op.
+   */
+  @GET("rest/updatePlaylist")
+  suspend fun updatePlaylist(
+    @QueryMap params: Map<String, String>,
+    @Query("songIdToAdd") songIdsToAdd: List<String>,
+    @Query("songIndexToRemove") songIndexesToRemove: List<Int>,
+  ): SubsonicEnvelope
 }

@@ -53,4 +53,23 @@ data class Song(
    * to move, the same as [replayGain] above.
    */
   val path: String? = null,
+
+  /**
+   * The listener's own thumb on this track, as the server reports it.
+   *
+   * Subsonic sends `userRating` inside the very responses this app already makes -- measured
+   * against the CI Navidrome, a rated track comes back with `"userRating": 5` inside
+   * `getRandomSongs` -- so a library-scoped shuffle knows what every track it drew is rated
+   * without a single extra request. That is what makes weighting a shuffle by rating free rather
+   * than an N-request feature, and it is why this sits on [Song] instead of being looked up beside
+   * it.
+   *
+   * [SongRating.Neutral] rather than null for an unrated track: there is no difference between "no
+   * thumb" and "the server did not say", nothing in the app treats them differently, and a
+   * nullable here would put a `?:` at every call site for a distinction none of them can act on.
+   *
+   * Defaulted so that no existing positional construction of this class had to move, the same as
+   * [replayGain] and [path] above.
+   */
+  val rating: SongRating = SongRating.Neutral,
 )

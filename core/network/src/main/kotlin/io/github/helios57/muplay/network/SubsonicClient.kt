@@ -14,6 +14,7 @@ import io.github.helios57.muplay.model.SearchResults
 import io.github.helios57.muplay.model.ServerCapabilities
 import io.github.helios57.muplay.model.ServerInfo
 import io.github.helios57.muplay.model.Song
+import io.github.helios57.muplay.model.SongRating
 import io.github.helios57.muplay.model.StreamFormat
 import io.github.helios57.muplay.model.SubsonicCredentials
 import io.github.helios57.muplay.network.model.PlaylistBody
@@ -325,6 +326,34 @@ class SubsonicClient(
     albumCount = albumCount,
   )
 
+  override suspend fun setRating(songId: String, rating: Int) {
+    call {
+      api.setRating(authParams() + mapOf("id" to songId, "rating" to rating.toString()))
+    }
+  }
+
+  override suspend fun createPlaylist(name: String, songIds: List<String>): Playlist {
+    val body = call { api.createPlaylist(authParams() + mapOf("name" to name), songIds) }
+    // Navidrome answers `createPlaylist` with the created playlist. The spec allows an empty
+    // response, so this is not assumed: a server that sends nothing gets an honest failure here
+    // rather than a fabricated id that every later update would send to the wrong playlist.
+    return checkNotNull(body.playlist) { "createPlaylist answered with no playlist" }.toPlaylist()
+  }
+
+  override suspend fun updatePlaylist(
+    playlistId: String,
+    songIdsToAdd: List<String>,
+    songIndexesToRemove: List<Int>,
+  ) {
+    call {
+      api.updatePlaylist(
+        authParams() + mapOf("playlistId" to playlistId),
+        songIdsToAdd,
+        songIndexesToRemove,
+      )
+    }
+  }
+
   private fun ChildBody.toSong(musicFolderId: Int) = Song(
     id = id,
     libraryId = musicFolderId,
@@ -340,6 +369,7 @@ class SubsonicClient(
     coverArtId = coverArt,
     replayGain = replayGain.toDomain(),
     path = path,
+    rating = SongRating.ofUserRating(userRating),
   )
 
   private fun PlaylistBody.toPlaylist() = Playlist(

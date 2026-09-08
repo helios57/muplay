@@ -451,6 +451,21 @@ class RecordingArtSource : SubsonicSource {
     return "http://stream.invalid/$songId" + (timeOffsetSeconds?.let { "?timeOffset=$it" } ?: "")
   }
 
+  // The three rating writes. `error` rather than a no-op: a call from the browse suite would mean
+  // the thumbs had reached a surface this fake was never written for, and a silent
+  // success there is the failure mode the whole rating suite is asserting against.
+  override suspend fun setRating(songId: String, rating: Int) =
+    error("setRating is not used by the browse suite")
+
+  override suspend fun createPlaylist(name: String, songIds: List<String>) =
+    error("createPlaylist is not used by the browse suite")
+
+  override suspend fun updatePlaylist(
+    playlistId: String,
+    songIdsToAdd: List<String>,
+    songIndexesToRemove: List<Int>,
+  ) = error("updatePlaylist is not used by the browse suite")
+
   override suspend fun capabilities(): ServerCapabilities = error("not used by the browse suite")
   override suspend fun getPlaylists(): List<Playlist> = error("not used by the browse suite")
   override suspend fun getPlaylist(playlistId: String, musicFolderId: Int): PlaylistWithSongs =
