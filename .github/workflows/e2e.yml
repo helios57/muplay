@@ -226,10 +226,34 @@ jobs:
           # signature, the evidence, and the reason it is delivered as a boot flag are in
           # `ci/prepare-emulator.sh`'s own header — which also fails fast if the device it is
           # handed does not have it.
+          #
+          # **`-show-kernel` is diagnostic and is here on purpose.** This job had run 99 times
+          # and had never once succeeded: every run reached `Launch Emulator`, printed a healthy
+          # emulator banner, and then answered `adb: device offline` 301 times over the 600-second
+          # boot timeout before the action killed it. Nothing in that output observes the *guest*,
+          # so nine days of failures were indistinguishable from each other and from the two other
+          # things they could have been. `-show-kernel` is the only flag here that prints what
+          # init is doing inside the emulator, and this repository has already paid an hour for
+          # not reaching for it early (see CLAUDE.md, "A device stuck at `offline` for days").
+          # Remove it once this job has been green at least once and the cause is written down.
           emulator-options: >-
             -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
             -camera-back none -camera-front none
             -feature Minigbm -prop qemu.hardware.gralloc=minigbm
+            -show-kernel
+          # The AVD the action builds is not the one this project is developed against, and the
+          # difference is the first hypothesis for the boot that never finishes. `muplay37` on the
+          # development host runs the identical emulator build (37.1.11 / 15917651) and the
+          # identical system image (android-37.0 google_apis x86_64) on **8 cores and 8192 MB**;
+          # `avdmanager create avd` with no hardware profile leaves this one on the image's own
+          # defaults, and the action then pins it to 2 cores. A four-core runner can spare 4 GB,
+          # and an API 37 guest under swiftshader is the wrong place to be frugal with it.
+          ram-size: 4096
+          # 600 is the action's default and is the number every one of those 99 runs hit. Raised
+          # so that "slow" and "stuck" produce different failures: with the kernel log above, a
+          # guest still making progress at 600 s is now visible as progress rather than as a
+          # timeout that names nothing.
+          emulator-boot-timeout: 900
           # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
           # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
           # `adb reverse` that makes `http://localhost:4533` inside the emulator reach the
