@@ -15,3 +15,4 @@
 200	0.2.0	2026-09-08	internal release v0.2.0; signed .aab + public GitHub Release APK, github.com/helios57/muplay/releases/tag/v0.2.0
 201	0.2.1	2026-09-08	internal test release on Google Play, track 4700194580516551844; opt-in play.google.com/apps/internaltest/4700194580516551844
 202	0.2.2	2026-09-09	release-signed APK handed to the owner for sideloading (thumbs, library filters on playlists and folders, the doubled window insets); not uploaded to Play
+203	0.2.3	2026-09-09	public GitHub Release v0.2.3; signed .aab archived, public APK github.com/helios57/muplay/releases/tag/v0.2.3 (thumbs, library filters on playlists and folders, the doubled window insets)
