@@ -89,8 +89,14 @@ fun FolderScreen(
   )
 }
 
+/**
+ * The stateless overload, `internal` for the reason `LibraryScreen`'s is: `FolderScreenTest`
+ * composes it against a listing built by hand, and three of the callbacks below plus the A-Z rail's
+ * jump are unreachable from `:app`. The rail needs `FAST_SCROLL_MIN_ITEMS` rows in one folder and
+ * the CI container's deepest folder holds two.
+ */
 @Composable
-private fun FolderScreen(
+internal fun FolderScreen(
   uiState: FolderUiState,
   libraryFilter: LibraryFilterState,
   onLibrarySelected: (Int) -> Unit,

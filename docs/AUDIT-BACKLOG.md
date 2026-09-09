@@ -1,4 +1,4 @@
-# Audit backlog — opened 2026-09-02, status 2026-09-05
+# Audit backlog — opened 2026-09-02, status 2026-09-09
 
 Findings from three completed audits (UI after two design rounds, theming/dark mode,
 failure and empty states). Eight further audits were cut off by a session rate limit and
@@ -6,8 +6,10 @@ produced nothing; they are listed at the end as **not done**, so nobody mistakes
 absence for a clean result.
 
 **Status, re-checked against the tree on 2026-09-05 rather than remembered: all eight P0
-items are fixed, and all eleven of P1.** What each was and what closed it is below, because a
-backlog that deletes its own history stops being reviewable -- but read the marker before
+items are fixed, and all eleven of P1.** One further P1 was **opened on 2026-09-09** and is
+still open -- the two playlist screens cannot be composed by a test -- and it is a finding of
+that day's coverage repair rather than of these three audits. What each item was and what closed
+it is below, because a backlog that deletes its own history stops being reviewable -- but read the marker before
 the prose. Every paragraph under a ✅ heading describes code that no longer exists; it is kept so the
 fix can be reviewed against what it was for.
 
@@ -270,6 +272,34 @@ browse item's `artworkUri` carries no `u`/`t`/`s`.
 Whatever the shape, the test is the cheap half and should land first: it goes red today.
 
 ---
+
+## P1 — the two playlist screens cannot be composed by a test
+
+**OPEN, added 2026-09-09.** `PlaylistsScreen` and `PlaylistScreen` in
+`feature/library/.../PlaylistScreens.kt` take a `PlaylistsViewModel` / `PlaylistViewModel` and call
+methods on it directly. Every other screen in this codebase is split into a stateful entry point and
+a stateless overload — `LibraryScreen`, `FolderScreen`, `QueueScreen`, `PlayerScreen` — and these two
+are the outliers.
+
+The cost is measured, not theoretical. `PlaylistScreensKt` reads **32/126 = 0.2540 LINE** and ten of
+its nested classes read **0.00**:
+
+    PlaylistScreen$2$1$3$1$1 / $2$1 / $3$1     a song row's play / play-next / add-to-queue
+    PlaylistsScreen$2$1$1$4$1$1                a playlist row's tap
+    PlaylistsScreen$2$3$1$1                    the A-Z rail's scope.launch { scrollToItem }
+    …plus the items/itemsIndexed adapters behind them
+
+None of that is reachable from `:app`, and it is not a matter of writing another journey: the shared
+CI Navidrome is seeded with **no playlists**, and creating one would mutate a container every other
+lane is using. The same hole on the albums and folders tabs was closed on 2026-09-09 by composing
+their stateless overloads in `:feature:library`'s own device tier against a state built by hand
+(`LibraryScreenTest`, `FolderScreenTest`), which took `LibraryScreenKt` from 182/193 to 191/193 and
+`FolderScreenKt` from 90/127 to 124/127. These two screens offer nothing to compose.
+
+Fix: split both the way the other four are split, then add `PlaylistScreenTest` and raise the
+`PlaylistScreensKt` floor in the root `build.gradle.kts` from 0.20 and add `PlaylistScreensKt*` to
+the nested-class rule beside `LibraryScreenKt*` and `FolderScreenKt*`. Until then that rule
+deliberately omits it, and the omission is recorded at the floor rather than left to be discovered.
 
 ## P2 — assets and consistency
 

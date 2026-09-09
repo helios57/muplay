@@ -991,6 +991,19 @@ test in `VerifyMergedManifestTaskTest`.
 
 This is the same defect as `verifyReleaseNoDestructiveMigration` reading comments, running the other
 way: there prose caused a false *failure*, here it caused a false *pass*.
+
+**And a third, met 2026-09-09.** `ConventionTest`'s `no module configures android or kotlin blocks
+directly` runs five plain regexes over each module build file's whole text -- comments included. A
+comment in `feature/library/build.gradle.kts` explaining an Espresso failure quoted the platform
+method it names, and `android\.` matched the package prefix inside that sentence:
+
+    Expecting empty but was: [.../feature/library/build.gradle.kts]
+
+with no line number and no snippet, over a build file whose `android { }` block is one `namespace`
+line. Describe a thing without spelling its fully-qualified name, the same discipline
+`AndroidRoomConventionPlugin`'s header keeps around the banned build tool. Note also that the *other*
+half of that rule -- `androidBodyOffends` -- does strip comments via `significantLines`, so the two
+halves of one test disagree about whether prose is code.
 ## An instrumented `fun x() = runBlocking { .. }` is refused before it runs
 
 JUnit 4 requires `void` test methods. Kotlin infers a `@Test`'s return type from the block's last

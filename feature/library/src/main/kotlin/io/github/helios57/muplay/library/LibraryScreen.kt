@@ -125,9 +125,20 @@ fun LibraryScreen(
  * centred on the album name rather than a row below it (the pairing distance goes to zero rather
  * than merely staying small), and a shuffled row still answers `SemanticsProperties.Text.first()`
  * with its title because the title is composed first.
+ *
+ * ### `internal`, not `private`, so this module can compose it on a device
+ *
+ * The same split, and the same reason, as `:feature:player`'s `QueueScreen`: the stateless overload
+ * takes a [LibraryUiState] and eight lambdas, so `LibraryScreenTest` composes it against a state
+ * built by hand with no Hilt graph, no mirror and no server. That is not a convenience -- two of
+ * the callbacks below and the A-Z rail's jump are **unreachable from `:app`'s journeys against the
+ * CI container**, and were measured at 0.00 for three days because of it. The container's music
+ * library holds one album, and [FastScrollBar] refuses to draw over fewer than
+ * `FAST_SCROLL_MIN_ITEMS` rows -- correctly, so no journey can ever drag a rail that is not there.
+ * A hand-built twenty-album shelf can.
  */
 @Composable
-private fun LibraryScreen(
+internal fun LibraryScreen(
   uiState: LibraryUiState,
   onLibrarySelected: (Int) -> Unit,
   onQueryChanged: (String) -> Unit,
