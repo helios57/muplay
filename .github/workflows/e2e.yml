@@ -333,15 +333,27 @@ jobs:
           # exactly the same position, found by that rule, and is now named here too.
           #
           # `:feature:book` and `:feature:requests` joined the same way and by the same rule, and
-          # what is different about them has to be said plainly: **their instrumented suites have
-          # never been executed.** They were written while this emulator was unavailable, so no run
-          # anywhere has yet observed one of those tests pass or fail. That is precisely why they
-          # are on this line -- the first CI run that reaches an emulator is the first measurement
-          # of them, and a suite that nothing executes is the failure mode the two modules above
-          # are on this list to remember. Expect the first green here to require fixing tests
-          # rather than product code; neither module carries a coverage floor over its Composables,
-          # deliberately, because nobody has measured one. See both modules' entries in the root
-          # `coverageFloors` table for what has to be measured once this job is green.
+          # what used to be different about them was that **their instrumented suites had never
+          # been executed** -- written while this emulator was unavailable, so no run anywhere had
+          # observed one of those tests pass or fail. That is no longer true, and leaving the claim
+          # here would be exactly the stale-measurement defect this repository keeps recording:
+          # 2026-09-09, on `muplay37`, `:feature:book` **57/57** and `:feature:requests` **46/46**.
+          #
+          # The whole census taken that day, because this list had never once been measured end to
+          # end and "the module is named here" was never evidence that it passes -- **941 tests
+          # across all twelve modules, zero failures**, on a device reporting the same
+          # `1080x2400 at 420dpi` this job now produces:
+          #
+          #   :app 76   :core:database 221   :core:media 371   :feature:book 57
+          #   :feature:castpicker 31   :feature:library 20   :feature:player 60
+          #   :feature:requests 46   :feature:settings 3   :feature:setup 10
+          #   :integrations:core 41   :integrations:requests 5
+          #
+          # `:core:database`'s 221 is CI's own figure, from the first run in this workflow's
+          # history to execute a test at all; the other eleven are local. Neither module carries a
+          # coverage floor over its Composables, deliberately, because nobody has measured one --
+          # see both modules' entries in the root `coverageFloors` table for what has to be
+          # measured once this job is green.
           #
           # `:feature:setup` joined last, and unlike those two its suite *has* been run here before
           # it was added: 9 tests against `ServerSection`, green on `muplay37`. It is the module the
