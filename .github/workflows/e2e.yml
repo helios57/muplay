@@ -93,6 +93,20 @@ jobs:
       # Carries its own unit because `disk.dataPartition.size` is a size, not a count: a bare
       # number in an AVD `config.ini` is bytes.
       EMULATOR_DATA_PARTITION: "6000M"
+      # **The screen, and the third thing this AVD had never been told.** `avdmanager create avd`
+      # with no `--device` builds a **320x640 at 160dpi** phone -- the emulator's own log says
+      # `androidboot.qemu.skin=320x640`. On that screen the app renders correctly and almost
+      # nothing is on it: with `:core:database` 221/221 and `:core:media` 370/371 green in the same
+      # run, **every** `:app` journey failed, 26 of them inside 30 seconds of
+      # `Condition (the library screen to be reached) still not satisfied`, and
+      # `FirstRunJourneyTest` reported the sharpest version of it --
+      # `The component ... contains 'Audiobooks' ... is not displayed`, which is a node that exists,
+      # below the fold, under the keyboard.
+      #
+      # `muplay37` is a `pixel_6`: 1080x2400 at 420dpi, four times the logical height. Every
+      # `assertIsDisplayed`, every tap-target sweep and every `waitUntil` in `:app` was written
+      # against that, so the profile is part of the fixture, not a preference.
+      EMULATOR_PROFILE: pixel_6
       # The watch. A different SDK package, a different device profile and a different AVD from the
     steps:
       - uses: actions/checkout@v7
@@ -268,6 +282,12 @@ jobs:
           # `ci/prepare-emulator.sh`'s own declarations, like every other coordinate here.
           ram-size: ${{ env.EMULATOR_RAM_MB }}
           disk-size: ${{ env.EMULATOR_DATA_PARTITION }}
+          # Passed to `avdmanager create avd` as `--device`. `ci/prepare-emulator.sh` checks the
+          # resolution and density the running device actually reports, because a profile that
+          # failed to apply and one that was never asked for look identical from here -- and
+          # because the action appends `hw.ramSize` *after* the profile has written its own, so
+          # the two could disagree.
+          profile: ${{ env.EMULATOR_PROFILE }}
           # 600 is the action's default and is the number every one of those 99 runs hit. Kept at
           # 900 now that the boot itself is fixed, so that "slow" and "stuck" go on producing
           # different failures: with the kernel log above, a guest still making progress at 600 s

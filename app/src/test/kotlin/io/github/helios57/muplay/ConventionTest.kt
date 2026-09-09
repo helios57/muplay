@@ -390,6 +390,7 @@ class ConventionTest {
       "EMULATOR_ARCH",
       "EMULATOR_RAM_MB",
       "EMULATOR_DATA_PARTITION",
+      "EMULATOR_PROFILE",
     ).forEach { name ->
       val fromWorkflow = Regex("""^\s*$name:\s*"?([^"\s#]+)"?\s*$""", RegexOption.MULTILINE)
         .find(workflow)?.groupValues?.get(1)
@@ -426,6 +427,7 @@ class ConventionTest {
       // could agree with the script perfectly while the step that builds the AVD ignored it.
       "ram-size" to "EMULATOR_RAM_MB",
       "disk-size" to "EMULATOR_DATA_PARTITION",
+      "profile" to "EMULATOR_PROFILE",
     ).forEach { (input, variable) ->
       val line = Regex(
         """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",

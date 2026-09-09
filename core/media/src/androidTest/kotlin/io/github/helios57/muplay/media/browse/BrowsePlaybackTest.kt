@@ -190,10 +190,23 @@ class BrowsePlaybackTest {
 
     // Two libraries, two different queues. A shuffle row that passed a constant library id -- the
     // defect this asserts against -- answers the same list twice, and the music one would then be
-    // full of chapters. `containsExactly`, because a shuffle's order is the order it is played in.
-    assertThat(music.mediaIds).containsExactly("tr-a1", "tr-a2", "tr-a3")
+    // full of chapters.
+    //
+    // **In any order, and that is a correction.** This read `containsExactly` and said "because a
+    // shuffle's order is the order it is played in", which was true when `ShuffleRepository.shuffle`
+    // was a passthrough of what the server returned. The rating feature ended that:
+    // [ShufflePlan.queue] finishes with `.shuffled(random)` on `Random.Default`, so the music line
+    // held three ids to one of six permutations and the book line four ids to one of twenty-four.
+    // Together this test could pass about **once in 144 runs**, which is what it did -- it went red
+    // the first time CI ever managed to boot an emulator, with
+    // `["tr-a2", "tr-a3", "tr-a1"]`, and `:core:media`'s device suite had not been run on this host
+    // since the ratings landed. `ShuffleRepositoryTest`'s own KDoc had already recorded that the
+    // ordering property was gone; this file was not updated with it.
+    //
+    // What the queue *is* remains the assertion. What order it is in is the feature.
+    assertThat(music.mediaIds).containsExactlyInAnyOrder("tr-a1", "tr-a2", "tr-a3")
     assertThat(books.mediaIds)
-      .containsExactly("bk-multi-p1", "bk-multi-p2", "bk-multi-p3", "bk-multi-p4")
+      .containsExactlyInAnyOrder("bk-multi-p1", "bk-multi-p2", "bk-multi-p3", "bk-multi-p4")
     assertThat(music.startIndex).isEqualTo(0)
 
     // ...and the id really did carry the library into the repository, at the size the browse tree
