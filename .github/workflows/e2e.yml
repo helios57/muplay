@@ -293,6 +293,18 @@ jobs:
           # different failures: with the kernel log above, a guest still making progress at 600 s
           # is visible as progress rather than as a timeout that names nothing.
           emulator-boot-timeout: 900
+          # **The sampler on the second line is diagnostic and is here on purpose.** Two runs in a
+          # row ended with `The runner has received a shutdown signal` about twenty minutes in,
+          # part-way through the fifth of the twelve suites below, with no failing test in the log
+          # and 83 GB free on disk. `Host capacity` above reads `free -h` once, before the emulator
+          # exists, which is the one moment it cannot say anything useful. The sampler's own header
+          # carries the measurement that makes the emulator the suspect -- 59.2 GB of *anonymous*
+          # resident memory for an 8 GB guest on the development host, against a hosted runner's
+          # 15 GB -- and writes to stdout rather than a file because a killed runner uploads no
+          # artifacts. `parseScript` runs each line as its own `sh -c`, so the `&` orphans it and it
+          # survives into the Gradle line's output; the runner's own cleanup reaps it at the end.
+          # Remove it once the number is known and written down.
+          #
           # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
           # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
           # `adb reverse` that makes `http://localhost:4533` inside the emulator reach the
@@ -363,6 +375,7 @@ jobs:
           # main thread) were held by their own comments until then.
           script: |
             ./ci/prepare-emulator.sh
+            ./ci/ci-memory-sampler.sh &
             ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:library:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :feature:setup:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
