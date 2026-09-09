@@ -77,6 +77,18 @@ readonly EMULATOR_API_LEVEL=37.0
 readonly EMULATOR_TARGET=google_apis
 readonly EMULATOR_ARCH=x86_64
 
+# The AVD's hardware is a coordinate too, and it is the one that had never been stated. Tier 2 had
+# run 99 times without a single success: with `avdmanager`'s default RAM the guest never finished
+# booting (`adb: device offline` for the whole 600-second timeout, 99 times), and once it did boot
+# with 4096 MB the default data partition filled part way through the twelve module suites and
+# PackageInstaller refused the eleventh APK with "Requested internal only, but not enough space" --
+# which Gradle reported as a failing *test* in a module that had run no tests.
+#
+# Both numbers are `muplay37`'s, the AVD this project is developed against. They are minima here
+# rather than equalities: a bigger AVD is fine, and the development host's is bigger.
+readonly EMULATOR_RAM_MB=4096
+readonly EMULATOR_DATA_PARTITION=6000M
+
 adb wait-for-device
 
 # Never a fixed sleep: `adb wait-for-device` returns as soon as adbd answers, which is long before
@@ -113,8 +125,33 @@ gralloc="$(prop ro.hardware.gralloc)"
   -feature Minigbm -prop qemu.hardware.gralloc=minigbm
 See this script's header for why an instrumented UI test cannot survive without it."
 
+# A guest reports slightly less RAM than the AVD was given -- the kernel takes its own reservation
+# off the top before /proc/meminfo exists -- so this compares against 85% of the declared figure.
+# The point is not the exact number: it is that an AVD built without `ram-size` is refused here, by
+# name, instead of timing out at boot with nothing in the log that mentions memory.
+mem_total_kb="$(adb shell cat /proc/meminfo | awk '/^MemTotal:/ { print $2 }' | tr -d '\r')"
+min_mem_kb=$(( EMULATOR_RAM_MB * 1024 * 85 / 100 ))
+[ "${mem_total_kb:-0}" -ge "$min_mem_kb" ] ||
+  fail "device reports $(( ${mem_total_kb:-0} / 1024 )) MB of RAM, expected at least
+  $(( min_mem_kb / 1024 )) MB (85% of the declared ${EMULATOR_RAM_MB} MB) -- start the emulator
+from an AVD with hw.ramSize=$EMULATOR_RAM_MB. See this script's header: below that, this image
+does not finish booting at all."
+
+# Free space, not partition size, because free space is what the installs actually consume and it
+# is what PackageInstaller refuses on. Twelve modules install a debug APK and an androidTest APK
+# each, and the run that found this had ~8 MB left when it stopped. 2 GB is roughly three times
+# the measured high-water mark, which leaves room for the media cache the audio suites fill.
+data_free_kb="$(adb shell df /data | awk 'NR > 1 { print $4; exit }' | tr -d '\r')"
+readonly MIN_DATA_FREE_MB=2048
+[ "${data_free_kb:-0}" -ge $(( MIN_DATA_FREE_MB * 1024 )) ] ||
+  fail "device has $(( ${data_free_kb:-0} / 1024 )) MB free on /data, expected at least
+  $MIN_DATA_FREE_MB MB -- start the emulator from an AVD with
+disk.dataPartition.size=$EMULATOR_DATA_PARTITION. Twelve module suites install two APKs each, and
+the installer's own refusal arrives as a failing test in whichever module happens to be next."
+
 adb reverse "tcp:$NAVIDROME_PORT" "tcp:$NAVIDROME_PORT"
 
 echo "emulator ready: android-$api_level $EMULATOR_TARGET $abi, gralloc=$gralloc," \
+     "$(( mem_total_kb / 1024 )) MB RAM, $(( data_free_kb / 1024 )) MB free on /data," \
      "tcp:$NAVIDROME_PORT reversed to the host"
 adb reverse --list

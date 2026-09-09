@@ -72,6 +72,27 @@ jobs:
       # The emulator the Minigbm workaround below was measured against, pinned like
       # `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator 37.1.11.
       EMULATOR_BUILD: "15917651"
+      # **The AVD's hardware, and the reason this job had never once succeeded.** It is a
+      # coordinate, not a tuning knob, and it is here because leaving it to `avdmanager`'s
+      # defaults produced two failures in a row that named neither RAM nor disk:
+      #
+      # - With the image's default RAM the guest never finished booting. Ninety-nine runs
+      #   answered `adb: device offline` for the whole 600-second timeout and were killed; with
+      #   4096 the same image on the same runner reached `sys.boot_completed=1` in **47 seconds**.
+      # - With the image's default data partition the twelve module suites filled `/data` part
+      #   way through, and the eleventh install failed inside PackageInstaller with
+      #   `java.io.IOException: Requested internal only, but not enough space` — reported by
+      #   Gradle as a *test* failure in `:core:database`, which had run no tests at all.
+      #
+      # Both numbers are `muplay37`'s, the AVD this project is actually developed against
+      # (`hw.ramSize=8192`, `disk.dataPartition.size=6000M`); the runner has 16 GB and 83 GB free,
+      # so the RAM is the half that had to come down. `ci/prepare-emulator.sh` checks the device
+      # it is handed against both, so a shrunk AVD is refused in one sentence rather than
+      # rediscovered from a PackageInstaller stack trace ten minutes later.
+      EMULATOR_RAM_MB: "4096"
+      # Carries its own unit because `disk.dataPartition.size` is a size, not a count: a bare
+      # number in an AVD `config.ini` is bytes.
+      EMULATOR_DATA_PARTITION: "6000M"
       # The watch. A different SDK package, a different device profile and a different AVD from the
     steps:
       - uses: actions/checkout@v7
@@ -241,18 +262,16 @@ jobs:
             -camera-back none -camera-front none
             -feature Minigbm -prop qemu.hardware.gralloc=minigbm
             -show-kernel
-          # The AVD the action builds is not the one this project is developed against, and the
-          # difference is the first hypothesis for the boot that never finishes. `muplay37` on the
-          # development host runs the identical emulator build (37.1.11 / 15917651) and the
-          # identical system image (android-37.0 google_apis x86_64) on **8 cores and 8192 MB**;
-          # `avdmanager create avd` with no hardware profile leaves this one on the image's own
-          # defaults, and the action then pins it to 2 cores. A four-core runner can spare 4 GB,
-          # and an API 37 guest under swiftshader is the wrong place to be frugal with it.
-          ram-size: 4096
-          # 600 is the action's default and is the number every one of those 99 runs hit. Raised
-          # so that "slow" and "stuck" produce different failures: with the kernel log above, a
-          # guest still making progress at 600 s is now visible as progress rather than as a
-          # timeout that names nothing.
+          # Both written into the AVD's `config.ini` by the action, as `hw.ramSize` and
+          # `disk.dataPartition.size`. The job `env:` block above carries the measurements and the
+          # two failures these numbers ended; `ConventionTest` holds them to
+          # `ci/prepare-emulator.sh`'s own declarations, like every other coordinate here.
+          ram-size: ${{ env.EMULATOR_RAM_MB }}
+          disk-size: ${{ env.EMULATOR_DATA_PARTITION }}
+          # 600 is the action's default and is the number every one of those 99 runs hit. Kept at
+          # 900 now that the boot itself is fixed, so that "slow" and "stuck" go on producing
+          # different failures: with the kernel log above, a guest still making progress at 600 s
+          # is visible as progress rather than as a timeout that names nothing.
           emulator-boot-timeout: 900
           # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
           # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
