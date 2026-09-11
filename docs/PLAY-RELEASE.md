@@ -374,6 +374,36 @@ This is the same shape as every self-matching check in `CLAUDE.md`: the query re
 observation of the wrong thing.
 
 
+### 203 went to the internal track, 2026-09-11
+
+Uploaded and published as `203 (0.2.3)` at 12:22, *Aktiv -- Für interne Tester verfügbar*, one
+version code, *Nicht überprüft*. Play parsed the bundle exactly as it parsed 201 -- *API 26 oder
+höher, Ziel-SDK 36, 4 ABIs* -- which is the signing key proved end to end a second time: an upload
+signed by anything but the registered key is refused at this exact point.
+
+**Note what the release actually was, because it is the part worth remembering.** `master` and the
+`v0.2.3` tag are *identical in app code*; the only commit between them moves `versionCode` to 204.
+So there was nothing to build: the newest build already existed, and the bundle uploaded here is
+the one CI produced from the tag on 2026-09-09 (workflow artifact `muplay-v0.2.3`, 90-day
+retention) rather than anything built on a laptop. Version code 203 is now spent twice over -- a
+public GitHub Release and an internal Play release -- and that is fine. Play refuses a *reused*
+code and it had only ever seen 201.
+
+The tester list is a property of the **track**, not of the release: *MuPlay internal testers*,
+5 users, was still attached with nothing to re-tick, and the opt-in link is unchanged.
+
+Both console traps from the 2026-09-08 account above still hold, so read that section first. Two
+things to add to it:
+
+- The *Release-Name* field arrives **pre-filled** from the bundle (`203 (0.2.3)`, 11 characters),
+  so the empty-name trap does not fire on an upload that succeeded. It is still the field to read
+  when *Weiter* looks dead.
+- The publish button is `Speichern und veröffentlichen`, and it appears **twice**: once on the
+  review page and once in the confirmation dialog that the first click opens (*"Änderung bei Google
+  Play veröffentlichen? Diese Änderung wird sofort veröffentlicht."*). Same accessible name, same
+  exact string -- so this is the stacked-dialog shape from the email-list trap above, and
+  exact-match-then-take-the-last-enabled clicks the right one both times.
+
 ### The two channels really are one certificate — measured 2026-09-08
 
 The argument for replacing Google's generated app signing key was that a GitHub-released APK and a

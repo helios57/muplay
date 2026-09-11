@@ -378,7 +378,20 @@ class ConventionTest {
     val workflow = File(repoRoot(), ".github/workflows/e2e.yml").readText()
     val script = File(repoRoot(), "ci/prepare-emulator.sh").readText()
 
-    listOf("EMULATOR_API_LEVEL", "EMULATOR_TARGET", "EMULATOR_ARCH").forEach { name ->
+    // `EMULATOR_RAM_MB` and `EMULATOR_DATA_PARTITION` joined the list after Tier 2's 99th
+    // consecutive failure. They are the AVD's *hardware*, which nothing here had ever named, and
+    // leaving them to `avdmanager`'s defaults is what made this job unable to boot a guest at all
+    // -- so they are exactly the kind of coordinate this test exists to hold. `prepare-emulator.sh`
+    // checks the running device against both, so they need the same anti-drift mechanism as the
+    // three above rather than a comment.
+    listOf(
+      "EMULATOR_API_LEVEL",
+      "EMULATOR_TARGET",
+      "EMULATOR_ARCH",
+      "EMULATOR_RAM_MB",
+      "EMULATOR_DATA_PARTITION",
+      "EMULATOR_PROFILE",
+    ).forEach { name ->
       val fromWorkflow = Regex("""^\s*$name:\s*"?([^"\s#]+)"?\s*$""", RegexOption.MULTILINE)
         .find(workflow)?.groupValues?.get(1)
       val fromScript = Regex("""^readonly $name=([^\s#]+)\s*$""", RegexOption.MULTILINE)
@@ -409,6 +422,12 @@ class ConventionTest {
       // device reports -- so this one is only held to reading the job `env:`, which is what keeps
       // the workflow's preflight check and the action's own download pointed at the same value.
       "emulator-build" to "EMULATOR_BUILD",
+      // The action writes these two into the AVD's `config.ini` as `hw.ramSize` and
+      // `disk.dataPartition.size`. Held here for the same reason as the rest: the `env:` block
+      // could agree with the script perfectly while the step that builds the AVD ignored it.
+      "ram-size" to "EMULATOR_RAM_MB",
+      "disk-size" to "EMULATOR_DATA_PARTITION",
+      "profile" to "EMULATOR_PROFILE",
     ).forEach { (input, variable) ->
       val line = Regex(
         """^\s*${Regex.escape(input)}:\s*\$\{\{\s*env\.$variable\s*\}\}\s*$""",

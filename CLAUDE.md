@@ -3,6 +3,81 @@
 Short, hard-won facts that cost real time when they were unknown. Add to this
 file when something costs you more than a few minutes to discover.
 
+## `origin` is Forgejo. GitHub is a mirror, and CI reads whichever one you pushed to
+
+Set up 2026-09-11, after most of a session had been spent debugging GitHub Actions on the
+assumption that it was the gate. It is not. The primary forge for this project -- and for every
+other project on this host -- is **`forgejo.lu-mi.ch`**; `github.com/helios57/muplay` is the
+public mirror, which is where releases and the APK go and where strangers read the README.
+
+    origin   https://forgejo.lu-mi.ch/helios157/muplay.git   (private, default branch `master`)
+    github   git@github.com:helios57/muplay.git              (public mirror)
+
+**Push to `origin`.** A Forgejo push-mirror with `sync_on_commit` forwards every push to GitHub
+within seconds, so the mirror needs nothing from you. Pushing straight to `github` is not
+forbidden and is how this repository was run until now, but it puts the mirror ahead of its
+source and the next Forgejo push will move GitHub back.
+
+Two things about credentials, because both cost time here:
+
+- **The token in `~/.gitconfig` cannot create repositories.** It is repo-scoped: it pushes fine
+  and answers `POST /api/v1/user/repos` with `token does not have at least one of required
+  scope(s): [write:user]`. Push-to-create is disabled server-side (`Push to create is not enabled
+  for users`, 403), so there is no way around it from git alone.
+- **The admin token is in Infisical**, which is self-hosted at `https://secrets.lu-mi.ch/api` and
+  is *not* `app.infisical.com` -- an API call to the default domain answers `invalid signature`,
+  which reads like a bad token rather than a wrong host. The CLI's own config names the domain:
+
+      infisical secrets get FORGEJO_TOKEN --projectId 0fe58223-5f26-4982-aedd-5d128aa92e69 \
+        --env prod --silent --plain
+
+  (project `forgejo-jgep`; the CLI takes only `--projectId`, never the slug, and the id is not
+  written down in any repository -- resolve it from `/api/v2/organizations/<org>/workspaces`.)
+
+Never echo either token. `FORGEJO_TOKEN` is an **admin** credential for the whole instance.
+
+## The Playwright MCP cannot open a browser here, and the Play Console login is in one profile
+
+Measured 2026-09-11, publishing a release. The first `browser_*` call fails with
+
+    Looks like you launched a headed browser without having a XServer running.
+    ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:257] Missing X server or $DISPLAY
+
+The MCP server's Chrome is configured **headed**, and that server process has no `DISPLAY` -- which
+no tool call can change, because the environment was fixed when the session started. There *are* X
+displays on this host (`/tmp/.X11-unix/X0..X3`, owned by `helios`); they are simply not reachable
+from here. And the headless Chrome you can see running belongs to another agent's MCP server and
+speaks `--remote-debugging-pipe`, so nothing can attach to it either.
+
+**Launch Chrome yourself and drive it over CDP.** `playwright-core` ships inside the MCP package,
+so this needs no install:
+
+    /opt/google/chrome/chrome --headless=new --disable-gpu --password-store=basic \
+      --use-mock-keychain --user-data-dir=<the profile below> --remote-debugging-port=9222 \
+      about:blank            # under setsid, so no tool-call lifetime owns it
+
+    const { chromium } = require('/usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core')
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222')
+    const page = browser.contexts()[0].pages()[0]
+    // never browser.close() -- that kills the browser. process.exit(0) leaves it up.
+
+`--password-store=basic` is load-bearing: the profile's cookies were encrypted under that fallback
+key by the MCP's own Chrome, and a launch that reaches for the keyring instead decrypts none of
+them -- which presents as a perfectly ordinary logged-out page.
+
+**Which profile.** There are eleven `~/.cache/ms-playwright-mcp/mcp-chrome-*` directories and the
+login is in exactly one. Ask the cookie jars rather than the mtimes:
+
+    for d in ~/.cache/ms-playwright-mcp/mcp-chrome-* ~/.config/google-chrome; do
+      sqlite3 "file:$d/Default/Cookies?immutable=1" \
+        "select '$(basename $d)', count(*) from cookies where host_key like '%play.google.com%'"
+    done
+
+On 2026-09-11 that was `mcp-chrome-0c5ff89` (5 play cookies, 30 google), signed in as the developer
+account -- and it is the same directory this session's MCP would have used had it been able to
+start. The user's own `~/.config/google-chrome` has Google cookies and **no** Play Console session,
+so picking the obvious profile picks the wrong one.
+
 ## The package is `io.github.helios57.muplay`, and older records here say `app.muplay`
 
 Renamed 2026-09-08 -- the `applicationId` first, then the `namespace` and every Kotlin package with
@@ -37,6 +112,37 @@ One emulator (`muplay37`) and one container (`ci-navidrome-1`) serve every agent
 working here at once. On device-busy, **wait and retry**. Never kill the
 emulator, never start a second, and never stop, restart or reseed the container
 — another agent's live suite may be mid-run against it.
+
+## The emulator's qemu holds ~7.4x its guest RAM in anonymous pages, and that is a CI ceiling
+
+Measured 2026-09-11 on `muplay37` (`hw.ramSize=8192`), after one full device tier -- 941 tests
+across twelve modules -- had run through it:
+
+    VmRSS 59.3 GB   RssAnon 59.2 GB   RssFile 0.1 GB   RssShmem 0.0 GB   VmSwap 0
+
+Note **which** number that is. It is not shared mappings, not page cache, not the system image
+mapped off disk: it is 59.2 GB of private anonymous memory, none of which the kernel can drop
+under pressure. This file has recorded "the emulator's qemu held 35 GB resident, which no Gradle
+setting can reach" for weeks as a *host* fact; the ratio is the part that generalises, and it
+grows with use rather than sitting at a plateau -- 53 GB after 38 idle hours, 60 GB after a full
+tier.
+
+**The consequence nobody had joined up is that a hosted CI runner cannot carry this.** A GitHub
+`ubuntu-latest` runner is 15 GB of RAM and 3 GB of swap. `.github/workflows/e2e.yml` sizes its AVD
+at 4 GB, which at this ratio wants roughly twice the whole machine, and the job died twice in a
+row about twenty minutes in with
+
+    ##[error]The runner has received a shutdown signal.
+
+part-way through the fifth of twelve suites, no failing test in the log and 83 GB free on disk.
+It died *later* each run as the earlier suites warmed up, which is what climbing into a ceiling
+looks like rather than a timeout. `ci/ci-memory-sampler.sh` is in that job to turn the inference
+into an observation; read its header before removing it.
+
+So when sizing a runner for the device tier, budget from the ratio and not from `hw.ramSize`:
+**~32 GB of RAM for a 4 GB AVD**, plus the Gradle and Kotlin daemons. And on this host, `free -h`
+showing 25 GB available with nothing obviously running is usually the emulator -- killing an idle
+one returned 53 GB in one step.
 
 ## `check` does not compile androidTest, so master can carry a broken device tier
 

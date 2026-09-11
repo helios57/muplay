@@ -15,6 +15,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.helios57.muplay.database.ShuffleRepository
+import io.github.helios57.muplay.model.ShufflePlan
 import io.github.helios57.muplay.model.Song
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.first
@@ -190,17 +191,40 @@ class BrowsePlaybackTest {
 
     // Two libraries, two different queues. A shuffle row that passed a constant library id -- the
     // defect this asserts against -- answers the same list twice, and the music one would then be
-    // full of chapters. `containsExactly`, because a shuffle's order is the order it is played in.
-    assertThat(music.mediaIds).containsExactly("tr-a1", "tr-a2", "tr-a3")
+    // full of chapters.
+    //
+    // **In any order, and that is a correction.** This read `containsExactly` and said "because a
+    // shuffle's order is the order it is played in", which was true when `ShuffleRepository.shuffle`
+    // was a passthrough of what the server returned. The rating feature ended that:
+    // [ShufflePlan.queue] finishes with `.shuffled(random)` on `Random.Default`, so the music line
+    // held three ids to one of six permutations and the book line four ids to one of twenty-four.
+    // Together this test could pass about **once in 144 runs**, which is what it did -- it went red
+    // the first time CI ever managed to boot an emulator, with
+    // `["tr-a2", "tr-a3", "tr-a1"]`, and `:core:media`'s device suite had not been run on this host
+    // since the ratings landed. `ShuffleRepositoryTest`'s own KDoc had already recorded that the
+    // ordering property was gone; this file was not updated with it.
+    //
+    // What the queue *is* remains the assertion. What order it is in is the feature.
+    assertThat(music.mediaIds).containsExactlyInAnyOrder("tr-a1", "tr-a2", "tr-a3")
     assertThat(books.mediaIds)
-      .containsExactly("bk-multi-p1", "bk-multi-p2", "bk-multi-p3", "bk-multi-p4")
+      .containsExactlyInAnyOrder("bk-multi-p1", "bk-multi-p2", "bk-multi-p3", "bk-multi-p4")
     assertThat(music.startIndex).isEqualTo(0)
 
     // ...and the id really did carry the library into the repository, at the size the browse tree
     // asks for rather than at whatever the source felt like answering.
+    //
+    // **The number on the wire is a pool, not a queue, and that is the second correction here.**
+    // This read `DEFAULT_SHUFFLE_SIZE` on both lines and was right while `shuffle` was a
+    // passthrough. [ShufflePlan] selects *without replacement*, so a pool no larger than the queue
+    // returns the whole pool whatever anything is rated -- a thumb up would do nothing -- and
+    // `ShuffleRepository.shuffle` therefore asks for [ShufflePlan.poolSizeFor] candidates and
+    // chooses the queue out of them. Measured in CI: `[(1, 300), (2, 300)]` against a demanded
+    // `[(1, 100), (2, 100)]`, which is `POOL_FACTOR` exactly. Written as the derivation rather than
+    // as 300, so a change to the factor moves this test with it instead of past it.
+    val poolSize = ShufflePlan.poolSizeFor(ShuffleRepository.DEFAULT_SHUFFLE_SIZE)
     assertThat(graph.artSource.randomSongsCalls).containsExactly(
-      BrowseGraph.MUSIC_LIBRARY_ID to ShuffleRepository.DEFAULT_SHUFFLE_SIZE,
-      BrowseGraph.AUDIOBOOK_LIBRARY_ID to ShuffleRepository.DEFAULT_SHUFFLE_SIZE,
+      BrowseGraph.MUSIC_LIBRARY_ID to poolSize,
+      BrowseGraph.AUDIOBOOK_LIBRARY_ID to poolSize,
     )
   }
 
@@ -213,8 +237,12 @@ class BrowsePlaybackTest {
     graph.artSource.randomSongsByLibrary[BrowseGraph.MUSIC_LIBRARY_ID] =
       songsOf("al-abbey") + songsOf("bk-multi").first()
 
+    // In any order, for the reason recorded at the test above: the queue leaves [ShufflePlan]
+    // shuffled. Three ids is one permutation in six, so this passed by luck on the run that caught
+    // its sibling and went red on the next -- and what it is *about* is the book part being absent,
+    // which is a membership question.
     assertThat(setMediaItem("muplay/shuffle/${BrowseGraph.MUSIC_LIBRARY_ID}").mediaIds)
-      .containsExactly("tr-a1", "tr-a2", "tr-a3")
+      .containsExactlyInAnyOrder("tr-a1", "tr-a2", "tr-a3")
   }
 
   @Test

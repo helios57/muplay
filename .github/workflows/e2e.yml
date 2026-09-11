@@ -72,6 +72,41 @@ jobs:
       # The emulator the Minigbm workaround below was measured against, pinned like
       # `deluan/navidrome:0.63.2` and every catalogue entry. 15917651 is emulator 37.1.11.
       EMULATOR_BUILD: "15917651"
+      # **The AVD's hardware, and the reason this job had never once succeeded.** It is a
+      # coordinate, not a tuning knob, and it is here because leaving it to `avdmanager`'s
+      # defaults produced two failures in a row that named neither RAM nor disk:
+      #
+      # - With the image's default RAM the guest never finished booting. Ninety-nine runs
+      #   answered `adb: device offline` for the whole 600-second timeout and were killed; with
+      #   4096 the same image on the same runner reached `sys.boot_completed=1` in **47 seconds**.
+      # - With the image's default data partition the twelve module suites filled `/data` part
+      #   way through, and the eleventh install failed inside PackageInstaller with
+      #   `java.io.IOException: Requested internal only, but not enough space` — reported by
+      #   Gradle as a *test* failure in `:core:database`, which had run no tests at all.
+      #
+      # Both numbers are `muplay37`'s, the AVD this project is actually developed against
+      # (`hw.ramSize=8192`, `disk.dataPartition.size=6000M`); the runner has 16 GB and 83 GB free,
+      # so the RAM is the half that had to come down. `ci/prepare-emulator.sh` checks the device
+      # it is handed against both, so a shrunk AVD is refused in one sentence rather than
+      # rediscovered from a PackageInstaller stack trace ten minutes later.
+      EMULATOR_RAM_MB: "4096"
+      # Carries its own unit because `disk.dataPartition.size` is a size, not a count: a bare
+      # number in an AVD `config.ini` is bytes.
+      EMULATOR_DATA_PARTITION: "6000M"
+      # **The screen, and the third thing this AVD had never been told.** `avdmanager create avd`
+      # with no `--device` builds a **320x640 at 160dpi** phone -- the emulator's own log says
+      # `androidboot.qemu.skin=320x640`. On that screen the app renders correctly and almost
+      # nothing is on it: with `:core:database` 221/221 and `:core:media` 370/371 green in the same
+      # run, **every** `:app` journey failed, 26 of them inside 30 seconds of
+      # `Condition (the library screen to be reached) still not satisfied`, and
+      # `FirstRunJourneyTest` reported the sharpest version of it --
+      # `The component ... contains 'Audiobooks' ... is not displayed`, which is a node that exists,
+      # below the fold, under the keyboard.
+      #
+      # `muplay37` is a `pixel_6`: 1080x2400 at 420dpi, four times the logical height. Every
+      # `assertIsDisplayed`, every tap-target sweep and every `waitUntil` in `:app` was written
+      # against that, so the profile is part of the fixture, not a preference.
+      EMULATOR_PROFILE: pixel_6
       # The watch. A different SDK package, a different device profile and a different AVD from the
     steps:
       - uses: actions/checkout@v7
@@ -226,10 +261,50 @@ jobs:
           # signature, the evidence, and the reason it is delivered as a boot flag are in
           # `ci/prepare-emulator.sh`'s own header — which also fails fast if the device it is
           # handed does not have it.
+          #
+          # **`-show-kernel` is diagnostic and is here on purpose.** This job had run 99 times
+          # and had never once succeeded: every run reached `Launch Emulator`, printed a healthy
+          # emulator banner, and then answered `adb: device offline` 301 times over the 600-second
+          # boot timeout before the action killed it. Nothing in that output observes the *guest*,
+          # so nine days of failures were indistinguishable from each other and from the two other
+          # things they could have been. `-show-kernel` is the only flag here that prints what
+          # init is doing inside the emulator, and this repository has already paid an hour for
+          # not reaching for it early (see CLAUDE.md, "A device stuck at `offline` for days").
+          # Remove it once this job has been green at least once and the cause is written down.
           emulator-options: >-
             -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
             -camera-back none -camera-front none
             -feature Minigbm -prop qemu.hardware.gralloc=minigbm
+            -show-kernel
+          # Both written into the AVD's `config.ini` by the action, as `hw.ramSize` and
+          # `disk.dataPartition.size`. The job `env:` block above carries the measurements and the
+          # two failures these numbers ended; `ConventionTest` holds them to
+          # `ci/prepare-emulator.sh`'s own declarations, like every other coordinate here.
+          ram-size: ${{ env.EMULATOR_RAM_MB }}
+          disk-size: ${{ env.EMULATOR_DATA_PARTITION }}
+          # Passed to `avdmanager create avd` as `--device`. `ci/prepare-emulator.sh` checks the
+          # resolution and density the running device actually reports, because a profile that
+          # failed to apply and one that was never asked for look identical from here -- and
+          # because the action appends `hw.ramSize` *after* the profile has written its own, so
+          # the two could disagree.
+          profile: ${{ env.EMULATOR_PROFILE }}
+          # 600 is the action's default and is the number every one of those 99 runs hit. Kept at
+          # 900 now that the boot itself is fixed, so that "slow" and "stuck" go on producing
+          # different failures: with the kernel log above, a guest still making progress at 600 s
+          # is visible as progress rather than as a timeout that names nothing.
+          emulator-boot-timeout: 900
+          # **The sampler on the second line is diagnostic and is here on purpose.** Two runs in a
+          # row ended with `The runner has received a shutdown signal` about twenty minutes in,
+          # part-way through the fifth of the twelve suites below, with no failing test in the log
+          # and 83 GB free on disk. `Host capacity` above reads `free -h` once, before the emulator
+          # exists, which is the one moment it cannot say anything useful. The sampler's own header
+          # carries the measurement that makes the emulator the suspect -- 59.2 GB of *anonymous*
+          # resident memory for an 8 GB guest on the development host, against a hosted runner's
+          # 15 GB -- and writes to stdout rather than a file because a killed runner uploads no
+          # artifacts. `parseScript` runs each line as its own `sh -c`, so the `&` orphans it and it
+          # survives into the Gradle line's output; the runner's own cleanup reaps it at the end.
+          # Remove it once the number is known and written down.
+          #
           # `ci/prepare-emulator.sh` first, and in the same shell: it waits for the framework
           # (never a fixed sleep), checks the gralloc flag above actually took, and sets up the
           # `adb reverse` that makes `http://localhost:4533` inside the emulator reach the
@@ -270,15 +345,27 @@ jobs:
           # exactly the same position, found by that rule, and is now named here too.
           #
           # `:feature:book` and `:feature:requests` joined the same way and by the same rule, and
-          # what is different about them has to be said plainly: **their instrumented suites have
-          # never been executed.** They were written while this emulator was unavailable, so no run
-          # anywhere has yet observed one of those tests pass or fail. That is precisely why they
-          # are on this line -- the first CI run that reaches an emulator is the first measurement
-          # of them, and a suite that nothing executes is the failure mode the two modules above
-          # are on this list to remember. Expect the first green here to require fixing tests
-          # rather than product code; neither module carries a coverage floor over its Composables,
-          # deliberately, because nobody has measured one. See both modules' entries in the root
-          # `coverageFloors` table for what has to be measured once this job is green.
+          # what used to be different about them was that **their instrumented suites had never
+          # been executed** -- written while this emulator was unavailable, so no run anywhere had
+          # observed one of those tests pass or fail. That is no longer true, and leaving the claim
+          # here would be exactly the stale-measurement defect this repository keeps recording:
+          # 2026-09-09, on `muplay37`, `:feature:book` **57/57** and `:feature:requests` **46/46**.
+          #
+          # The whole census taken that day, because this list had never once been measured end to
+          # end and "the module is named here" was never evidence that it passes -- **941 tests
+          # across all twelve modules, zero failures**, on a device reporting the same
+          # `1080x2400 at 420dpi` this job now produces:
+          #
+          #   :app 76   :core:database 221   :core:media 371   :feature:book 57
+          #   :feature:castpicker 31   :feature:library 20   :feature:player 60
+          #   :feature:requests 46   :feature:settings 3   :feature:setup 10
+          #   :integrations:core 41   :integrations:requests 5
+          #
+          # `:core:database`'s 221 is CI's own figure, from the first run in this workflow's
+          # history to execute a test at all; the other eleven are local. Neither module carries a
+          # coverage floor over its Composables, deliberately, because nobody has measured one --
+          # see both modules' entries in the root `coverageFloors` table for what has to be
+          # measured once this job is green.
           #
           # `:feature:setup` joined last, and unlike those two its suite *has* been run here before
           # it was added: 9 tests against `ServerSection`, green on `muplay37`. It is the module the
@@ -288,6 +375,7 @@ jobs:
           # main thread) were held by their own comments until then.
           script: |
             ./ci/prepare-emulator.sh
+            ./ci/ci-memory-sampler.sh &
             ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:library:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :feature:setup:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
