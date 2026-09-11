@@ -36,6 +36,48 @@ Two things about credentials, because both cost time here:
 
 Never echo either token. `FORGEJO_TOKEN` is an **admin** credential for the whole instance.
 
+## The Playwright MCP cannot open a browser here, and the Play Console login is in one profile
+
+Measured 2026-09-11, publishing a release. The first `browser_*` call fails with
+
+    Looks like you launched a headed browser without having a XServer running.
+    ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:257] Missing X server or $DISPLAY
+
+The MCP server's Chrome is configured **headed**, and that server process has no `DISPLAY` -- which
+no tool call can change, because the environment was fixed when the session started. There *are* X
+displays on this host (`/tmp/.X11-unix/X0..X3`, owned by `helios`); they are simply not reachable
+from here. And the headless Chrome you can see running belongs to another agent's MCP server and
+speaks `--remote-debugging-pipe`, so nothing can attach to it either.
+
+**Launch Chrome yourself and drive it over CDP.** `playwright-core` ships inside the MCP package,
+so this needs no install:
+
+    /opt/google/chrome/chrome --headless=new --disable-gpu --password-store=basic \
+      --use-mock-keychain --user-data-dir=<the profile below> --remote-debugging-port=9222 \
+      about:blank            # under setsid, so no tool-call lifetime owns it
+
+    const { chromium } = require('/usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core')
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222')
+    const page = browser.contexts()[0].pages()[0]
+    // never browser.close() -- that kills the browser. process.exit(0) leaves it up.
+
+`--password-store=basic` is load-bearing: the profile's cookies were encrypted under that fallback
+key by the MCP's own Chrome, and a launch that reaches for the keyring instead decrypts none of
+them -- which presents as a perfectly ordinary logged-out page.
+
+**Which profile.** There are eleven `~/.cache/ms-playwright-mcp/mcp-chrome-*` directories and the
+login is in exactly one. Ask the cookie jars rather than the mtimes:
+
+    for d in ~/.cache/ms-playwright-mcp/mcp-chrome-* ~/.config/google-chrome; do
+      sqlite3 "file:$d/Default/Cookies?immutable=1" \
+        "select '$(basename $d)', count(*) from cookies where host_key like '%play.google.com%'"
+    done
+
+On 2026-09-11 that was `mcp-chrome-0c5ff89` (5 play cookies, 30 google), signed in as the developer
+account -- and it is the same directory this session's MCP would have used had it been able to
+start. The user's own `~/.config/google-chrome` has Google cookies and **no** Play Console session,
+so picking the obvious profile picks the wrong one.
+
 ## The package is `io.github.helios57.muplay`, and older records here say `app.muplay`
 
 Renamed 2026-09-08 -- the `applicationId` first, then the `namespace` and every Kotlin package with
