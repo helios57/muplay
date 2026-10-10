@@ -113,6 +113,10 @@ class PlayerViewModelTest {
     override suspend fun retry() {
       calls += "retry"
     }
+
+    override suspend fun drop(mediaId: String) {
+      calls += "drop($mediaId)"
+    }
   }
 
   private val dispatcher = StandardTestDispatcher()
@@ -545,6 +549,65 @@ class PlayerViewModelTest {
 
     assertThat(ratings.tapped).containsExactly("song-1" to SongRating.Promoted)
     assertThat(viewModel.content().rating).isEqualTo(SongRating.Promoted)
+  }
+
+  @Test
+  fun `a thumbs down takes the track out of the queue at once`() = runTest(dispatcher) {
+    // The owner's words: "the thumbs down should immediately remove the song from the playlist".
+    // A demoted song is one they do not want to hear; leaving it playing until it ends is the
+    // opposite of what the tap asked for.
+    val controls = FakePlaybackControls()
+    val viewModel = warm(controls, FakeRatings())
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Demoted)
+    advanceUntilIdle()
+
+    assertThat(controls.calls).contains("drop(song-1)")
+  }
+
+  @Test
+  fun `taking a thumbs down back does not remove anything`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings().apply { ratings["song-1"] = MutableStateFlow(SongRating.Demoted) }
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Demoted) // toggles Demoted -> Neutral
+    advanceUntilIdle()
+
+    assertThat(controls.calls.filter { it.startsWith("drop") }).isEmpty()
+  }
+
+  @Test
+  fun `a thumbs up keeps the track playing`() = runTest(dispatcher) {
+    val controls = FakePlaybackControls()
+    val viewModel = warm(controls, FakeRatings())
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Promoted)
+    advanceUntilIdle()
+
+    assertThat(controls.calls.filter { it.startsWith("drop") }).isEmpty()
+  }
+
+  @Test
+  fun `a thumbs down the server refused leaves the queue alone`() = runTest(dispatcher) {
+    // The rating did not land, so the song is not demoted anywhere; dropping it would be a
+    // removal the listener cannot see a reason for.
+    val controls = FakePlaybackControls()
+    val ratings = FakeRatings().apply { failWith = java.io.IOException("the server refused") }
+    val viewModel = warm(controls, ratings)
+    controls.publish(playing)
+    advanceUntilIdle()
+
+    viewModel.thumb(SongRating.Demoted)
+    advanceUntilIdle()
+
+    assertThat(controls.calls.filter { it.startsWith("drop") }).isEmpty()
   }
 
   @Test

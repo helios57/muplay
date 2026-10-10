@@ -69,6 +69,13 @@ interface PlaybackControls {
    * control a user would reach for did nothing.
    */
   suspend fun retry()
+
+  /**
+   * Takes the item with [mediaId] out of the queue if it is still the current one, and carries on
+   * with the next. Keyed by id rather than "whatever is current" because the rating that asks for
+   * it is a network round trip, and the track may have changed by the time it answers.
+   */
+  suspend fun drop(mediaId: String) {}
 }
 
 /**
@@ -122,6 +129,12 @@ class PlayerViewModel(
       // It stays because it is what this method *means*. `PlaybackControls` is an interface whose
       // other implementations are hand-built, and "restart a player that failed" should not be
       // spelled `play()` and left to depend on a courtesy inside somebody else's session.
+      override suspend fun drop(mediaId: String) {
+        val controller = connection.controller()
+        val index = controller.currentMediaItemIndex
+        if (controller.currentMediaItem?.mediaId == mediaId) controller.removeMediaItem(index)
+      }
+
       override suspend fun retry() {
         val controller = connection.controller()
         controller.prepare()
@@ -241,6 +254,9 @@ class PlayerViewModel(
     viewModelScope.launch {
       val outcome = runCatching { ratings.rate(mediaId, tapped) }
       ratingFailed.value = outcome.isFailure
+      // A demoted song is one the listener does not want to hear: out of the queue now, not when
+      // it ends. Only once the rating has landed, and only on the way *to* Demoted.
+      if (outcome.getOrNull() == SongRating.Demoted) controls.drop(mediaId)
     }
   }
 
