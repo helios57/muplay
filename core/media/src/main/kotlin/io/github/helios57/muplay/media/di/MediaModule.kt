@@ -12,7 +12,14 @@ import io.github.helios57.muplay.media.AudiobookResumePolicy
 import io.github.helios57.muplay.media.AudiobookSnapshot
 import io.github.helios57.muplay.media.NeverResume
 import io.github.helios57.muplay.media.ResumePolicy
+import io.github.helios57.muplay.media.PlaybackConnection
+import io.github.helios57.muplay.media.QueueStore
 import io.github.helios57.muplay.media.TranscodeOffsetSupport
+import io.github.helios57.muplay.database.AccountScopedData
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.multibindings.IntoSet
+import java.io.File
 import io.github.helios57.muplay.media.TranscodeSeekSupport
 import io.github.helios57.muplay.media.browse.DefaultSurfaceResolver
 import io.github.helios57.muplay.media.browse.SurfaceResolver
@@ -87,6 +94,35 @@ annotation class CastCommands
 @Module
 @InstallIn(SingletonComponent::class)
 object MediaModule {
+
+  /** One writer over one file, so `@Singleton` is correctness rather than economy. */
+  @Provides
+  @Singleton
+  fun provideQueueStore(@ApplicationContext context: Context): QueueStore =
+    QueueStore(File(context.filesDir, QueueStore.FILE_NAME))
+
+  /**
+   * Sign-out stops playback and forgets the queue. The file is cleared on both sides of clearing
+   * the player because the service's `QueueKeeper` may write the old queue in between; after the
+   * player is empty it has nothing left to write.
+   */
+  @Provides
+  @IntoSet
+  fun provideQueueSignOut(store: QueueStore, connection: PlaybackConnection): AccountScopedData =
+    AccountScopedData {
+      store.clear()
+      try {
+        connection.onController { controller ->
+          controller.stop()
+          controller.clearMediaItems()
+        }
+      } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        // No service to reach is a player with nothing in it, which is what this wanted.
+      }
+      store.clear()
+    }
 
   @Provides
   @Singleton

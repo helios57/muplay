@@ -31,6 +31,9 @@ dependencies {
   // of the plan: `:core:cast` must never see a Media3 type, which is why `UpnpPlayer` (Task 8)
   // lives here and not there.
   implementation(project(":core:cast"))
+  // The persisted play queue's file format (SavedQueueCodec). Already on the app's classpath through
+  // :core:network; declared here because this module now uses it directly.
+  implementation(libs.serialization.json)
 
   implementation(libs.media3.exoplayer)
   // Plan 4 Task 3. `MetadataRetriever` -- the only way this client can show chapters, because

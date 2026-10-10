@@ -14,6 +14,7 @@ import io.github.helios57.muplay.media.AudiobookSnapshot
 import io.github.helios57.muplay.media.ControllerAccessPolicy
 import io.github.helios57.muplay.media.PlaybackQueue
 import io.github.helios57.muplay.media.QueueRepository
+import io.github.helios57.muplay.media.QueueStore
 import io.github.helios57.muplay.media.ResumptionQueue
 import io.github.helios57.muplay.model.browse.BrowseId
 import io.github.helios57.muplay.model.browse.BrowseNode
@@ -88,6 +89,7 @@ class MuPlayLibraryCallback @Inject constructor(
    * resumes every book from zero.
    */
   private val audiobookSnapshot: AudiobookSnapshot,
+  private val queueStore: QueueStore,
 ) : MediaLibrarySession.Callback {
 
   /**
@@ -305,6 +307,21 @@ class MuPlayLibraryCallback @Inject constructor(
   ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
     val settable = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
     scope.launch {
+      // The queue the listener left first: that is what "carry on" means after the system took
+      // the service away. The most recent unfinished book only when there is no saved queue.
+      val saved = runCatching { queueStore.load() }.getOrNull()
+      if (saved != null) {
+        val items = runCatching {
+          queueRepository.mediaItems(PlaybackQueue.of(saved.songs, saved.currentIndex))
+        }.getOrNull()
+        if (items != null) {
+          audiobookSnapshot.refresh()
+          settable.set(
+            MediaSession.MediaItemsWithStartPosition(items, saved.currentIndex, saved.positionMs),
+          )
+          return@launch
+        }
+      }
       val queue = runCatching { resumptionQueue.mostRecent() }.getOrNull()
       if (queue == null) {
         settable.setException(UnsupportedOperationException(NOTHING_TO_RESUME))

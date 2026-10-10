@@ -34,6 +34,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import androidx.media3.common.Player
 import okhttp3.Call
 
 /**
@@ -105,6 +107,13 @@ class MuPlaybackService : MediaLibraryService() {
    * `media_progress.lastPlayedAtEpochMs` this app writes.
    */
   @Inject lateinit var clock: Clock
+
+  /** Where the queue survives this service. See [QueueStore]. */
+  @Inject lateinit var queueStore: QueueStore
+
+  @Inject lateinit var queueRepository: QueueRepository
+
+  private var queueKeeper: QueueKeeper? = null
 
   /**
    * Which `Player` this session drives. **The seam the whole cast feature hangs from.**
@@ -284,6 +293,10 @@ class MuPlaybackService : MediaLibraryService() {
     // install onto. `MutableStateFlow` replays its current value to a late collector, which is why
     // this ordering is safe rather than lucky.
     outputSwitch.installLocal(player)
+    val keeper = QueueKeeper(queueStore, queueRepository::songFor, serviceScope)
+      .also { queueKeeper = it }
+    keeper.attach(player)
+    restoreQueue(player, keeper)
     // The session follows the switch, and so does the sleep timer. Everything player-bound that is
     // broken by being left behind is re-pointed here.
     //
@@ -305,6 +318,7 @@ class MuPlaybackService : MediaLibraryService() {
     serviceScope.launch {
       outputSwitch.activePlayer.filterNotNull().collect { active ->
         session?.let { if (it.player !== active) it.player = active }
+        keeper.attach(active)
         sleepTimer.attach(active, serviceScope)
       }
     }
@@ -393,7 +407,34 @@ class MuPlaybackService : MediaLibraryService() {
    * project can run, and a rule that lives inside it is a rule protected by a comment. See that
    * object for why both halves of the condition matter and which defect each one prevents.
    */
+  /**
+   * Puts back the queue a previous service left, paused where it was. Only into an empty player:
+   * a controller that started this service to play something new may already have filled it while
+   * the file was being read, and its choice wins.
+   */
+  private fun restoreQueue(player: Player, keeper: QueueKeeper) {
+    serviceScope.launch {
+      try {
+        val saved = queueStore.load() ?: return@launch
+        if (player.mediaItemCount > 0) return@launch
+        val items = queueRepository.mediaItems(PlaybackQueue.of(saved.songs, saved.currentIndex))
+        if (player.mediaItemCount > 0) return@launch
+        player.setMediaItems(items, saved.currentIndex, saved.positionMs)
+        player.repeatMode = saved.repeatMode
+        player.shuffleModeEnabled = saved.shuffle
+        player.prepare()
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        // Signed out, or the file names songs this account cannot build: no queue to restore.
+      } finally {
+        keeper.restoreFinished()
+      }
+    }
+  }
+
   override fun onTaskRemoved(rootIntent: Intent?) {
+    queueKeeper?.flushBlocking()
     val player = session?.player
     if (TaskRemovalPolicy.stopsService(player?.playWhenReady, player?.mediaItemCount)) stopSelf()
   }

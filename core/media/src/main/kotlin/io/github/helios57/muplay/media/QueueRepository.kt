@@ -37,7 +37,18 @@ class QueueRepository @Inject constructor(
   private val libraryRepository: LibraryRepository,
 ) {
 
+  /**
+   * Every song this process has turned into a [MediaItem], by id. A `MediaItem` carries what a
+   * player needs and not a whole [Song], so this is how `QueueStore` gets the queue back as songs
+   * to write down. Every item any player holds was built here, so every one of them is in it.
+   */
+  private val built = java.util.concurrent.ConcurrentHashMap<String, Song>()
+
+  /** The [Song] the item with this media id was built from, or null for one not built here. */
+  fun songFor(mediaId: String): Song? = built[mediaId]
+
   suspend fun mediaItems(queue: PlaybackQueue): List<MediaItem> {
+    queue.songs.forEach { built[it.id] = it }
     val source = sourceProvider.current()
     // Once per queue, not once per song: the set cannot change mid-call, and a hundred-track
     // shuffle would otherwise be a hundred identical database reads.

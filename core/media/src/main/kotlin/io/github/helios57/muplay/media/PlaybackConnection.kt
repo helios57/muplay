@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
@@ -150,6 +153,22 @@ class PlaybackConnection @Inject constructor(
    */
   private var connection: Deferred<MediaController>? = null
 
+  private var ticker: Job? = null
+
+  /**
+   * The service can go away under a live controller -- Media3 stops a paused service, the system
+   * reclaims it, a sign-out clears it -- and this class used to keep handing out the dead
+   * controller: every command went nowhere and the screens said "Nothing playing" until the
+   * process died. [forget] drops it, and this reconnects whenever a screen is watching
+   * [state], which on a fresh service is what brings the saved queue back (see `QueueStore`).
+   */
+  private val reconnector = CoroutineScope(SupervisorJob() + mainDispatcher).launch {
+    _state.subscriptionCount
+      .map { it > 0 }
+      .distinctUntilChanged()
+      .collect { watched -> if (watched && connection == null) reconnect() }
+  }
+
   private val listener = object : Player.Listener {
     override fun onEvents(player: Player, events: Player.Events) {
       publish(player)
@@ -246,6 +265,13 @@ class PlaybackConnection @Inject constructor(
    */
   private suspend fun connect(): MediaController {
     val future = MediaController.Builder(context, MuPlaybackService.sessionToken(context))
+      .setListener(
+        object : MediaController.Listener {
+          override fun onDisconnected(controller: MediaController) {
+            forget(controller)
+          }
+        },
+      )
       .buildAsync()
     controllerFuture = future
     val connected = suspendCancellableCoroutine { continuation ->
@@ -292,8 +318,25 @@ class PlaybackConnection @Inject constructor(
    * never false are not safety; they are two uncoverable branches and a reader's false impression
    * that either case was thought about.
    */
+  private fun forget(lost: MediaController) {
+    if (controller !== lost) return
+    ticker?.cancel()
+    ticker = null
+    lost.removeListener(listener)
+    controller = null
+    controllerFuture = null
+    connection = null
+    _state.value = PlaybackState.NOTHING_PLAYING
+    _queue.value = QueueSnapshot.EMPTY
+    if (_state.subscriptionCount.value > 0) reconnect()
+  }
+
+  private fun reconnect() {
+    scope.launch { runCatching { controller() } }
+  }
+
   private fun startTicker(player: Player) {
-    scope.launch {
+    ticker = scope.launch {
       while (true) {
         publish(player)
         delay(POSITION_TICK_MS)

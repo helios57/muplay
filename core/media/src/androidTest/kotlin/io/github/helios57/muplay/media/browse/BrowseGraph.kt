@@ -15,6 +15,7 @@ import io.github.helios57.muplay.database.entity.MediaProgressEntity
 import io.github.helios57.muplay.database.entity.SongEntity
 import io.github.helios57.muplay.media.AudiobookSnapshot
 import io.github.helios57.muplay.media.QueueRepository
+import io.github.helios57.muplay.media.QueueStore
 import io.github.helios57.muplay.media.ResumptionQueue
 import io.github.helios57.muplay.media.fixedSubsonicSourceProvider
 import io.github.helios57.muplay.model.Album
@@ -86,11 +87,15 @@ class BrowseGraph private constructor(
 
   val resumptionQueue: ResumptionQueue = ResumptionQueue(audiobookRepository)
 
+  /** Next to the credentials file, and deleted with it: no saved queue unless a test writes one. */
+  val queueStore: QueueStore = QueueStore(File(storeFile.parentFile, "${storeFile.name}.queue.json"))
+
   /** Closes the database and deletes the credential store's backing file. */
   fun close() {
     audiobookSnapshot.stop()
     database.close()
     storeFile.delete()
+    File(storeFile.parentFile, "${storeFile.name}.queue.json").delete()
   }
 
   fun callback(resolver: SurfaceResolver): MuPlayLibraryCallback =
@@ -100,6 +105,7 @@ class BrowseGraph private constructor(
       queueRepository,
       resumptionQueue,
       audiobookSnapshot,
+      queueStore,
     )
 
   /** The production resolver, reading a real `ControllerInfo`. */
