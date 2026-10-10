@@ -35,8 +35,26 @@ import javax.net.ssl.SSLException
  */
 sealed interface SyncFailure {
 
-  /** The server answered and refused the credentials — [code] is Subsonic's own error code. */
+  /**
+   * The server answered and refused the credentials — [code] is Subsonic's own error code, one of
+   * the authentication codes in [AUTHENTICATION_CODES].
+   */
   data class SignInRejected(val code: Int) : SyncFailure
+
+  /**
+   * Subsonic code 70: something asked for does not exist, **or is not shared with this account**.
+   *
+   * Navidrome 0.63.2 answers exactly this for a library the user has not been granted --
+   * `Library 2 not found or not accessible` -- which is why it must not read as a bad password.
+   * [detail] is the server's own message, kept because it is the only part that names the thing.
+   */
+  data class NotFound(val detail: String?) : SyncFailure
+
+  /** Subsonic code 50: the account is signed in correctly and is not allowed to do this. */
+  data class NotPermitted(val detail: String?) : SyncFailure
+
+  /** Any other Subsonic error, with its [code] and the server's own [detail]. */
+  data class ServerRefused(val code: Int, val detail: String?) : SyncFailure
 
   /** The server (or something in front of it) answered with an unsuccessful [status]. */
   data class ServerError(val status: Int) : SyncFailure
@@ -68,6 +86,16 @@ sealed interface SyncFailure {
   companion object {
 
     /**
+     * 40 wrong credentials, 41 token auth unsupported for an LDAP user, 42 auth mechanism not
+     * supported, 43 conflicting mechanisms, 44 invalid API key: the spec's authentication codes.
+     * Every one of them means "sign in again"; no other code does.
+     */
+    val AUTHENTICATION_CODES = 40..44
+
+    private const val NOT_AUTHORIZED = 50
+    private const val NOT_FOUND = 70
+
+    /**
      * Classifies [cause].
      *
      * Order matters twice. [UnknownServiceException] and [SSLException] are both `IOException`s,
@@ -75,7 +103,12 @@ sealed interface SyncFailure {
      * same trap `SetupViewModel.connect` meets with its own cleartext catch.
      */
     fun of(cause: Throwable): SyncFailure = when (cause) {
-      is SubsonicErrorException -> SignInRejected(cause.code)
+      is SubsonicErrorException -> when (cause.code) {
+        in AUTHENTICATION_CODES -> SignInRejected(cause.code)
+        NOT_AUTHORIZED -> NotPermitted(cause.message)
+        NOT_FOUND -> NotFound(cause.message)
+        else -> ServerRefused(cause.code, cause.message)
+      }
       is SubsonicHttpException -> ServerError(cause.status)
       is NotConfiguredException -> NotConfigured
       is EmptyLibraryListException -> NoLibraries

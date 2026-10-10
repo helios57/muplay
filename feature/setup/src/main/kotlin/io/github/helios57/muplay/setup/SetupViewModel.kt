@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -46,6 +47,7 @@ class SetupViewModel(
     createSource = { sourceFactory.create(it) },
     credentials = object : SetupCredentialSink {
       override suspend fun save(credentials: SubsonicCredentials) = credentialStore.save(credentials)
+      override val stored = credentialStore.credentials.map { it != null }
     },
     libraries = object : SetupLibrarySink {
       override suspend fun refreshFromServer() = libraryRepository.refreshFromServer()
@@ -59,6 +61,24 @@ class SetupViewModel(
   val uiState: StateFlow<SetupUiState> = _uiState.asStateFlow()
 
   private var serverInfo: io.github.helios57.muplay.model.ServerInfo? = null
+
+  init {
+    // **Start again when the credentials go.** This view model outlives any one visit to the
+    // setup screen -- `NavDisplay` scopes `hiltViewModel()` to the activity -- so after a sign-out
+    // it was still `Ready`, and `SetupScreen` leaves the moment it sees `Ready`: Settings -> Sign
+    // out landed straight back on the old library, signed in as nobody. Only states that exist
+    // *because* credentials were stored are reset; `Idle`, `Connecting` and a `Failure` the user
+    // is reading are not about any stored account.
+    viewModelScope.launch {
+      credentials.stored.collect { stored ->
+        val current = _uiState.value
+        if (!stored && (current is SetupUiState.Ready || current is SetupUiState.Tagging)) {
+          serverInfo = null
+          _uiState.value = SetupUiState.Idle
+        }
+      }
+    }
+  }
 
   /**
    * Validates [serverUrl], connects, stores the credentials and lists the libraries for tagging.

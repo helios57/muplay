@@ -427,6 +427,46 @@ class BrowseEndpointsTest {
     assertThat(results.songs).isEmpty()
   }
 
+  // --- songPage (search3 with an empty query) ---------------------------------------------
+
+  @Test
+  fun `a song page is an empty-query search3 asking for songs only, from one offset`() = runTest {
+    enqueue(fixture(SEARCH3_FIXTURE))
+
+    val songs = client.songPage(musicFolderId = 4, size = 500, offset = 1500)
+
+    val url = assertAuthenticatedRequestTo("/rest/search3")
+    // OpenSubsonic requires an empty query to match everything, for exactly this use: offline
+    // sync. Sent as an empty value rather than omitted, because Navidrome treats a missing query
+    // as a missing required parameter.
+    assertThat(url.queryParameter("query")).isEqualTo("")
+    assertThat(url.queryParameter("musicFolderId")).isEqualTo("4")
+    assertThat(url.queryParameter("artistCount")).isEqualTo("0")
+    assertThat(url.queryParameter("albumCount")).isEqualTo("0")
+    assertThat(url.queryParameter("songCount")).isEqualTo("500")
+    assertThat(url.queryParameter("songOffset")).isEqualTo("1500")
+    assertThat(songs.map { it.title }).containsExactly("Track 1", "Track 2", "Track 3")
+    assertThat(songs.map { it.libraryId }).containsExactly(4, 4, 4)
+  }
+
+  @Test
+  fun `a song page clamps its size to the protocol maximum and its offset to zero`() = runTest {
+    enqueue(fixture(SEARCH3_FIXTURE))
+
+    client.songPage(musicFolderId = 1, size = 10_000, offset = -3)
+
+    val url = nextRequest().url
+    assertThat(url.queryParameter("songCount")).isEqualTo("500")
+    assertThat(url.queryParameter("songOffset")).isEqualTo("0")
+  }
+
+  @Test
+  fun `a song page past the end is empty rather than a failure`() = runTest {
+    enqueue(OK_WITH_NO_PAYLOAD)
+
+    assertThat(client.songPage(musicFolderId = 1, size = 500, offset = 99_999)).isEmpty()
+  }
+
   @Test
   fun `search3 clamps negative counts to zero`() = runTest {
     enqueue(fixture(SEARCH3_FIXTURE))

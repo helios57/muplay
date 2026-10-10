@@ -13,6 +13,7 @@ import io.github.helios57.muplay.model.ScanStatus
 import io.github.helios57.muplay.model.Song
 import io.github.helios57.muplay.model.SubsonicCredentials
 import io.github.helios57.muplay.network.SubsonicClient
+import io.github.helios57.muplay.network.SubsonicSource
 import io.github.helios57.muplay.network.SubsonicSourceFactory
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -95,6 +96,10 @@ class SyncEngineTest {
       sourceProvider = sourceProvider,
       // One album per page, so the paging loop is exercised by two albums instead of 501.
       albumPageSize = 1,
+      // One request at a time and no retry pauses, so the progress samples below arrive in a
+      // fixed order and a forced failure fails at once. `LibraryReaderTest` holds both rules.
+      parallelism = 1,
+      retryDelaysMs = emptyList(),
     )
   }
 
@@ -113,6 +118,51 @@ class SyncEngineTest {
    * Sampled through [FakeSubsonicSource.beforeCall], because every interesting value of
    * `progress` is gone by the time `syncIfStale()` returns.
    */
+  @Test
+  fun aLibraryTheAccountMayNotReadIsSkippedAndTheOthersStillSync() = runTest {
+    // Measured on Navidrome 0.63.2: a user granted one library of two gets code 70 for the other.
+    // That one answer used to fail the whole sync, so a restricted account never finished a first
+    // import at all.
+    source.refusedLibraries = setOf(2)
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Synced::class.java)
+    state as SyncState.Synced
+    assertThat(state.libraries.keys).containsExactly(1)
+    assertThat(state.refused).containsOnlyKeys(2)
+    assertThat(state.refused[2]).contains("not accessible")
+    assertThat(db.browseDao().songIdsInLibrary(1, listOf("song-1", "song-2", "chapter-1")))
+      .containsExactlyInAnyOrder("song-1", "song-2")
+    // Refusal is an answer, not a transport failure: the next sync would get the same one, so it
+    // does not hold the watermark back and force a full re-read on every launch.
+    assertThat(db.syncWatermarkDao().read()).isEqualTo("s1")
+  }
+
+  @Test
+  fun aFailingLibraryDoesNotStopTheLibrariesAfterItFromBeingCommitted() = runTest {
+    source.albumsByLibrary = mapOf(
+      1 to listOf(album("album-1", "Test Album", 1)),
+      2 to listOf(album("book-1", "Test Book", 2)),
+    )
+    source.refusedLibraries = emptySet()
+    val throwing = object : SubsonicSource by source {
+      override suspend fun getAlbum(albumId: String, musicFolderId: Int) =
+        if (musicFolderId == 1) throw IllegalStateException("broken album") else source.getAlbum(albumId, musicFolderId)
+    }
+    val provider = SubsonicSourceProvider(credentialStore, SubsonicSourceFactory { throwing })
+    val engine = SyncEngine(
+      LibraryRepository(db.libraryDao(), provider), db.browseDao(), db.syncWatermarkDao(), provider,
+      albumPageSize = 1, parallelism = 1, retryDelaysMs = emptyList(),
+    )
+
+    val state = engine.syncIfStale()
+
+    assertThat(state).isInstanceOf(SyncState.Failed::class.java)
+    assertThat(db.browseDao().songIdsInLibrary(2, listOf("chapter-1"))).containsExactly("chapter-1")
+    assertThat(db.syncWatermarkDao().read()).isNull()
+  }
+
   @Test
   fun theProgressOfARunningSyncIsReadableWhileItIsStillRunning() = runTest {
     val seen = mutableListOf<SyncProgress>()

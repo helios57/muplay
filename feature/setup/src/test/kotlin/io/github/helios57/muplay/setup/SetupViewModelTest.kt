@@ -23,6 +23,7 @@ import java.net.UnknownServiceException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -82,8 +83,10 @@ class SetupViewModelTest {
    */
   private class RecordingCredentials(private val callOrder: MutableList<String>) : SetupCredentialSink {
     var saved: SubsonicCredentials? = null
+    override val stored = MutableStateFlow(false)
     override suspend fun save(credentials: SubsonicCredentials) {
       saved = credentials
+      stored.value = true
       callOrder += "save"
     }
   }
@@ -258,6 +261,56 @@ class SetupViewModelTest {
     dispatcher.scheduler.advanceUntilIdle()
 
     assertThat(vm.uiState.value).isEqualTo(SetupUiState.Ready)
+  }
+
+  @Test
+  fun `signing out after setup finished starts setup again instead of leaving it at once`() =
+    runTest(dispatcher) {
+      // The defect: `NavDisplay` keeps `hiltViewModel()` at activity scope, so the same view model
+      // was still `Ready` when sign-out navigated back to setup -- and `SetupScreen` leaves the
+      // moment it sees `Ready`. Sign out landed on the old library with nobody signed in.
+      libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+      val vm = viewModel(StubSource({ serverInfo() }))
+      vm.connect("http://localhost:4533", "admin", "testpass")
+      dispatcher.scheduler.advanceUntilIdle()
+      vm.setRole(1, LibraryRole.MUSIC)
+      vm.continueToLibrary()
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(vm.uiState.value).isEqualTo(SetupUiState.Ready)
+
+      credentials.stored.value = false
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(vm.uiState.value).isEqualTo(SetupUiState.Idle)
+    }
+
+  @Test
+  fun `a sign-out during tagging also starts again, because the tagging was for that account`() =
+    runTest(dispatcher) {
+      libraries.reported = listOf(MusicLibrary(1, "Music", LibraryRole.UNASSIGNED))
+      val vm = viewModel(StubSource({ serverInfo() }))
+      vm.connect("http://localhost:4533", "admin", "testpass")
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(vm.uiState.value).isInstanceOf(SetupUiState.Tagging::class.java)
+
+      credentials.stored.value = false
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(vm.uiState.value).isEqualTo(SetupUiState.Idle)
+    }
+
+  @Test
+  fun `nothing stored yet does not wipe a failure the user is reading`() = runTest(dispatcher) {
+    // First run: the store has never held anything, so it reports "not stored" throughout. That
+    // must not be mistaken for a sign-out and clear the message explaining why connecting failed.
+    val vm = viewModel(StubSource({ throw java.io.IOException("refused") }))
+    vm.connect("http://localhost:4533", "admin", "testpass")
+    dispatcher.scheduler.advanceUntilIdle()
+
+    credentials.stored.value = false
+    dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isInstanceOf(SetupUiState.Failure::class.java)
   }
 
   @Test

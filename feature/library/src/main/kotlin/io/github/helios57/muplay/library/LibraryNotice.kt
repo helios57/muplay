@@ -63,7 +63,7 @@ internal const val LIBRARY_LOADING_LABEL = "Loading your library…"
 private fun SyncProgress.countSuffix(): String = when (this) {
   SyncProgress.Idle, SyncProgress.Preparing -> ""
   is SyncProgress.Listing -> if (found > 0) " $found albums so far." else ""
-  is SyncProgress.Reading -> if (total > 0) " $done of $total albums." else ""
+  is SyncProgress.Reading -> if (total > 0) " $done of $total ${unit.noun}." else ""
 }
 
 /**
@@ -139,6 +139,12 @@ internal fun SyncFailure.describe(unknown: String = "The last sync did not finis
   is SyncFailure.SignInRejected ->
     "Could not sign in — the server rejected your credentials. Sign in again from Settings."
   is SyncFailure.ServerError -> "The server answered with an error ($status)."
+  is SyncFailure.NotFound ->
+    "The server says something MuPlay asked for does not exist or is not shared with your " +
+      "account" + serverSaid(detail)
+  is SyncFailure.NotPermitted ->
+    "Your account is not allowed to do this on the server" + serverSaid(detail)
+  is SyncFailure.ServerRefused -> "The server refused the request with error $code" + serverSaid(detail)
   SyncFailure.NotConfigured -> "No server is set up yet."
   SyncFailure.NoLibraries -> "The server reports no music libraries."
   SyncFailure.CleartextForbidden ->
@@ -150,3 +156,17 @@ internal fun SyncFailure.describe(unknown: String = "The last sync did not finis
   // the fallback -- "the last sync did not finish" is simply false on a screen that does not sync.
   SyncFailure.Unknown -> unknown
 }
+
+/**
+ * The server's own words, quoted, or just a full stop when it sent none. Kept because a Subsonic
+ * error's message is the only part of it that names *which* thing -- "Library 2 not found or not
+ * accessible" tells a self-hoster exactly which permission to grant.
+ */
+private fun serverSaid(detail: String?): String =
+  if (detail.isNullOrBlank()) "." else ": \u201c${detail.trim().removeSuffix(".")}\u201d."
+
+private val SyncProgress.Counted.noun: String
+  get() = when (this) {
+    SyncProgress.Counted.ALBUMS -> "albums"
+    SyncProgress.Counted.SONGS -> "songs"
+  }

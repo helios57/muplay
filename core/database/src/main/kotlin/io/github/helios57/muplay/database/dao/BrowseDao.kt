@@ -247,6 +247,23 @@ abstract class BrowseDao {
     )
   }
 
+  /** Every library's songs, albums and artists, for a sign-out. See `AccountReset`. */
+  @Transaction
+  open suspend fun clearMirror() {
+    deleteAllSongs()
+    deleteAllAlbums()
+    deleteAllArtists()
+  }
+
+  @Query("DELETE FROM songs")
+  protected abstract suspend fun deleteAllSongs()
+
+  @Query("DELETE FROM albums")
+  protected abstract suspend fun deleteAllAlbums()
+
+  @Query("DELETE FROM artists")
+  protected abstract suspend fun deleteAllArtists()
+
   @Query("SELECT COUNT(*) FROM artists WHERE libraryId = :libraryId")
   protected abstract suspend fun countArtists(libraryId: Int): Int
 

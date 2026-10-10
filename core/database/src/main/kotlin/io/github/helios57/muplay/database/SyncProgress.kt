@@ -53,7 +53,17 @@ sealed interface SyncProgress {
    * This is the state a sync spends nearly all of its time in, and the only one that can offer a
    * real fraction.
    */
-  data class Reading(val done: Int, val total: Int) : SyncProgress
+  data class Reading(
+    val done: Int,
+    val total: Int,
+    val unit: Counted = Counted.ALBUMS,
+  ) : SyncProgress
+
+  /**
+   * What [Reading] counts. Songs when the library is read in bulk pages, albums when it falls
+   * back to one request per album -- a counter must name the thing that is actually moving.
+   */
+  enum class Counted { ALBUMS, SONGS }
 }
 
 /**

@@ -1,5 +1,6 @@
 package io.github.helios57.muplay.setup.di
 
+import io.github.helios57.muplay.database.AccountReset
 import io.github.helios57.muplay.database.CredentialStore
 import io.github.helios57.muplay.settings.SettingsSection
 import io.github.helios57.muplay.setup.ServerAccount
@@ -39,14 +40,19 @@ object SetupFeatureModule {
    */
   @Provides
   @Singleton
-  fun provideServerAccount(credentialStore: CredentialStore): ServerAccount =
+  fun provideServerAccount(
+    credentialStore: CredentialStore,
+    accountReset: AccountReset,
+  ): ServerAccount =
     object : ServerAccount {
       override val identity: Flow<ServerIdentity?> =
         credentialStore.credentials.map { stored ->
           stored?.let { ServerIdentity(baseUrl = it.baseUrl, username = it.username) }
         }
 
-      override suspend fun signOut() = credentialStore.clear()
+      // Not just the credentials: the library mirror, the sync watermark and every
+      // account-scoped store go with them. See `AccountReset`.
+      override suspend fun signOut() = accountReset.signOut()
     }
 
   /**

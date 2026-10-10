@@ -67,6 +67,20 @@ interface SubsonicSource {
   ): SearchResults
 
   /**
+   * One page of **every** song in one library: `search3` with an empty query, songs only, from
+   * [offset]. [size] is clamped to 500.
+   *
+   * This is what makes a first sync of a large library minutes rather than an hour: one request
+   * per 500 songs instead of one `getAlbum` per album. OpenSubsonic requires servers to answer an
+   * empty query with everything, for offline sync. A short page is the last page.
+   *
+   * **Null means "this source cannot list songs in bulk"**, and the caller falls back to reading
+   * album by album. The default is null so a hand-written fake does not have to implement it,
+   * and so a source that cannot do it says so rather than answering with an empty library.
+   */
+  suspend fun songPage(musicFolderId: Int, size: Int, offset: Int): List<Song>? = null
+
+  /**
    * Random songs from one library — the server side of library-scoped shuffle. [size] is clamped
    * to 500, which Navidrome enforces silently.
    */

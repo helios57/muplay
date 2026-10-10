@@ -16,7 +16,14 @@ sealed interface SyncState {
   data object ScanInProgress : SyncState
 
   /** Every library was reconciled and the watermark committed. [libraries] is keyed by library id. */
-  data class Synced(val libraries: Map<Int, MirrorReplacement>) : SyncState
+  data class Synced(
+    val libraries: Map<Int, MirrorReplacement>,
+    /**
+     * Libraries the server refused to let this account read, by id, with the server's own
+     * message. Left untouched in the mirror; see `SyncEngine.reconcile`.
+     */
+    val refused: Map<Int, String?> = emptyMap(),
+  ) : SyncState
 
   /**
    * The attempt failed. The watermark was **not** advanced, so the next attempt will try the

@@ -80,6 +80,13 @@ sealed interface SetupUiState {
  */
 interface SetupCredentialSink {
   suspend fun save(credentials: io.github.helios57.muplay.model.SubsonicCredentials)
+
+  /**
+   * Whether credentials are stored right now. Setup watches it for the moment they disappear: a
+   * sign-out, which means whatever setup had finished or half-finished belonged to an account that
+   * is gone.
+   */
+  val stored: kotlinx.coroutines.flow.Flow<Boolean>
 }
 
 /**

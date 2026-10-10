@@ -199,6 +199,22 @@ class SubsonicClient(
     )
   }
 
+  override suspend fun songPage(musicFolderId: Int, size: Int, offset: Int): List<Song> {
+    val body = call {
+      api.search3(
+        authParams() + mapOf(
+          "query" to "",
+          "musicFolderId" to musicFolderId.toString(),
+          "artistCount" to "0",
+          "albumCount" to "0",
+          "songCount" to size.coerceIn(1, MAX_SONG_PAGE).toString(),
+          "songOffset" to offset.coerceAtLeast(0).toString(),
+        ),
+      )
+    }
+    return body.searchResult3?.song.orEmpty().map { it.toSong(musicFolderId) }
+  }
+
   /** Random songs from one library — the server side of library-scoped shuffle. */
   override suspend fun getRandomSongs(musicFolderId: Int, size: Int): List<Song> {
     val body = call {
@@ -470,6 +486,9 @@ class SubsonicClient(
 
     /** Subsonic's documented cap on `getAlbumList2.size`. */
     const val MAX_ALBUM_LIST_PAGE = 500
+
+    /** `search3`'s `songCount` ceiling on Navidrome, which truncates anything above it silently. */
+    const val MAX_SONG_PAGE = 500
 
     /**
      * Extracted from [buildApi], which had it inline, so the cover-art URL builder and the

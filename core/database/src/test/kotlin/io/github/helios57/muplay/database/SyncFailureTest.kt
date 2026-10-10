@@ -21,10 +21,46 @@ import org.junit.jupiter.api.Test
 class SyncFailureTest {
 
   @Test
-  fun `a subsonic error code is a rejection carrying that code`() {
+  fun `a wrong password is a rejection carrying that code`() {
     val failure = SyncFailure.of(SubsonicErrorException(40, "Wrong username or password"))
 
     assertThat(failure).isEqualTo(SyncFailure.SignInRejected(40))
+  }
+
+  @Test
+  fun `every authentication code the spec defines is a sign-in rejection`() {
+    // 41 token auth unsupported for LDAP users, 42 auth mechanism unsupported, 43 conflicting
+    // mechanisms, 44 invalid API key -- each means the same thing to the user: sign in again.
+    listOf(41, 42, 43, 44).forEach { code ->
+      assertThat(SyncFailure.of(SubsonicErrorException(code, "auth"))).describedAs("code $code")
+        .isEqualTo(SyncFailure.SignInRejected(code))
+    }
+  }
+
+  @Test
+  fun `data the account may not see is not reported as a rejected password`() {
+    // Measured against Navidrome 0.63.2 with a user granted one library of two: asking for the
+    // other answers code 70 with this message. It used to render as "the server rejected your
+    // credentials. Sign in again" -- advice that sends a correctly signed-in user to retype a
+    // password that was never wrong.
+    val failure = SyncFailure.of(SubsonicErrorException(70, "Library 2 not found or not accessible"))
+
+    assertThat(failure)
+      .isEqualTo(SyncFailure.NotFound(detail = "Library 2 not found or not accessible"))
+  }
+
+  @Test
+  fun `an operation the account is not authorised for is its own failure`() {
+    val failure = SyncFailure.of(SubsonicErrorException(50, "User not authorized"))
+
+    assertThat(failure).isEqualTo(SyncFailure.NotPermitted(detail = "User not authorized"))
+  }
+
+  @Test
+  fun `any other subsonic error keeps both its code and the server's own words`() {
+    val failure = SyncFailure.of(SubsonicErrorException(0, "database is locked"))
+
+    assertThat(failure).isEqualTo(SyncFailure.ServerRefused(code = 0, detail = "database is locked"))
   }
 
   @Test

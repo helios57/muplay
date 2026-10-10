@@ -6,6 +6,7 @@ import io.github.helios57.muplay.database.BrowseRepository
 import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.LibrarySelection
 import io.github.helios57.muplay.database.ShuffleRepository
+import io.github.helios57.muplay.database.CredentialStore
 import io.github.helios57.muplay.database.SyncEngine
 import io.github.helios57.muplay.database.SyncFailure
 import io.github.helios57.muplay.database.SyncProgress
@@ -24,6 +25,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -56,6 +61,13 @@ interface LibrarySource : QueueSink, LibraryFilterSource {
    */
   val syncProgress: Flow<SyncProgress>
 
+  /**
+   * One emission each time an account signs in after this source was created. This screen's view
+   * model lives as long as the activity, so it outlives a sign-out and needs telling that the
+   * library it synced at start-up now belongs to somebody else. Empty by default.
+   */
+  val signIns: Flow<Unit> get() = kotlinx.coroutines.flow.emptyFlow()
+
   suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String
   suspend fun allIds(): List<Int>
 
@@ -84,6 +96,7 @@ class LibraryViewModel(
     browseRepository: BrowseRepository,
     shuffleRepository: ShuffleRepository,
     syncEngine: SyncEngine,
+    credentialStore: CredentialStore,
     playbackLauncher: PlaybackLauncher,
     librarySelection: LibrarySelection,
     queueEditor: QueueEditor,
@@ -102,6 +115,14 @@ class LibraryViewModel(
         shuffleRepository.shuffle(libraryId, size)
       override suspend fun syncIfStale(): SyncState = syncEngine.syncIfStale()
       override val syncProgress: Flow<SyncProgress> = syncEngine.progress
+      // Every identity after the first one this source sees: the first is the account `init`
+      // already syncs for. A sign-out's null is skipped -- there is nothing to sync then.
+      override val signIns: Flow<Unit> = credentialStore.credentials
+        .map { it?.let { stored -> stored.baseUrl to stored.username } }
+        .distinctUntilChanged()
+        .drop(1)
+        .filterNotNull()
+        .map { }
       override suspend fun coverArtUrl(coverArtId: String, sizePx: Int): String =
         browseRepository.coverArtUrl(coverArtId, sizePx)
       override suspend fun allIds(): List<Int> = libraryRepository.allIds()
@@ -168,6 +189,7 @@ class LibraryViewModel(
 
   init {
     refresh()
+    viewModelScope.launch { source.signIns.collect { refresh() } }
   }
 
   fun selectLibrary(id: Int) {
@@ -230,7 +252,12 @@ class LibraryViewModel(
       // `syncingNotice` replaces this the moment it does.
       notice.value = LibraryNotice.Syncing(SyncProgress.Preparing)
       notice.value = when (val state = source.syncIfStale()) {
-        SyncState.UpToDate, is SyncState.Synced -> LibraryNotice.Idle
+        SyncState.UpToDate -> LibraryNotice.Idle
+        // A library the server would not let this account read was skipped and the rest synced.
+        // Said, because otherwise that library's chip simply stays empty with no reason given.
+        is SyncState.Synced ->
+          if (state.refused.isEmpty()) LibraryNotice.Idle
+          else LibraryNotice.Failed(SyncFailure.NotFound(state.refused.values.first()))
         SyncState.ScanInProgress -> LibraryNotice.ScanInProgress
         // Typed, not flattened: `SyncFailure.of` is what stops a changed password, a 502, a lapsed
         // certificate and a blocked cleartext request all reading as "could not reach the server".

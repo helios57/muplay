@@ -93,6 +93,9 @@ class LibraryViewModelTest {
       return syncAnswer()
     }
 
+    /** Emitted to by a test standing in for "a different account just signed in". */
+    override val signIns = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
     /** Writable, so a test can move it *while* [syncIfStale] is parked -- which is the only
      *  moment at which any value of it is true. */
     override val syncProgress = MutableStateFlow<SyncProgress>(SyncProgress.Idle)
@@ -470,6 +473,40 @@ class LibraryViewModelTest {
 
     assertThat(content(vm).syncMessage).isNull()
   }
+
+  @Test
+  fun `signing in again syncs again, because this screen outlives the account it first synced`() =
+    runTest(dispatcher) {
+      // `NavDisplay` keeps this view model at activity scope, so after Settings -> Sign out ->
+      // sign in as somebody else it is the same instance, whose `init` sync ran for the old
+      // account. Without this the new account's library stayed empty until a manual Refresh.
+      val fake = FakeLibrarySource(listOf(music))
+      warm(fake)
+      dispatcher.scheduler.advanceUntilIdle()
+      assertThat(fake.syncCallCount).isEqualTo(1)
+
+      fake.signIns.emit(Unit)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(fake.syncCallCount).isEqualTo(2)
+    }
+
+  @Test
+  fun `a library the server would not let this account read is named, not silently empty`() =
+    runTest(dispatcher) {
+      val fake = FakeLibrarySource(listOf(music)).apply {
+        syncAnswer = {
+          SyncState.Synced(
+            libraries = mapOf(1 to MirrorReplacement(0, 1, 0, 1, 0, 1)),
+            refused = mapOf(2 to "Library 2 not found or not accessible"),
+          )
+        }
+      }
+      val vm = warm(fake)
+      dispatcher.scheduler.advanceUntilIdle()
+
+      assertThat(content(vm).syncMessage).contains("Library 2 not found or not accessible")
+    }
 
   @Test
   fun `a completed reconcile leaves no message`() = runTest(dispatcher) {

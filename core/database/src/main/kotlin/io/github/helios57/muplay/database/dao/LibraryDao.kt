@@ -43,6 +43,10 @@ abstract class LibraryDao {
   @Query("SELECT musicFolderId FROM libraries ORDER BY musicFolderId")
   abstract suspend fun allIds(): List<Int>
 
+  /** Every library and its role, for a sign-out: the next account tags its own. */
+  @Query("DELETE FROM libraries")
+  abstract suspend fun deleteAll()
+
   @Query("UPDATE libraries SET role = :role WHERE musicFolderId = :musicFolderId")
   abstract suspend fun setRole(musicFolderId: Int, role: LibraryRole)
 

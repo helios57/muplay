@@ -57,6 +57,14 @@ class LibraryNoticeTest {
   }
 
   @Test
+  fun `a bulk read counts songs, because songs are what it is reading`() {
+    val progress = SyncProgress.Reading(done = 1500, total = 12000, unit = SyncProgress.Counted.SONGS)
+
+    assertThat(LibraryEmptyReason.Syncing(progress).toMessage())
+      .isEqualTo("Loading your library… 1500 of 12000 songs.")
+  }
+
+  @Test
   fun `a listing pass says what it has found and never what remains`() {
     // `fetchAllAlbums` learns it is on the last page only by getting a short one back, so a
     // message shaped "128 of 412" here would be a denominator nobody measured.
@@ -98,6 +106,41 @@ class LibraryNoticeTest {
 
     assertThat(message).contains("sign in")
     assertThat(message).doesNotContain("Could not reach")
+  }
+
+  @Test
+  fun `something not shared with this account names the server's words and never the password`() {
+    val message = LibraryNotice.Failed(
+      SyncFailure.NotFound(detail = "Library 2 not found or not accessible"),
+    ).toMessage(hasMirror = false)
+
+    assertThat(message).contains("Library 2 not found or not accessible")
+    assertThat(message).contains("account")
+    assertThat(message).doesNotContain("sign in").doesNotContain("credentials")
+  }
+
+  @Test
+  fun `an operation the account may not perform says so`() {
+    val message =
+      LibraryNotice.Failed(SyncFailure.NotPermitted(detail = "User not authorized")).toMessage(false)
+
+    assertThat(message).contains("not allowed").contains("User not authorized")
+  }
+
+  @Test
+  fun `any other refusal carries the code and the server's message`() {
+    val message =
+      LibraryNotice.Failed(SyncFailure.ServerRefused(code = 0, detail = "database is locked"))
+        .toMessage(false)
+
+    assertThat(message).contains("error 0").contains("database is locked")
+  }
+
+  @Test
+  fun `a refusal with no message from the server still reads as a sentence`() {
+    val message = LibraryNotice.Failed(SyncFailure.NotFound(detail = null)).toMessage(false)
+
+    assertThat(message).doesNotContain("null").endsWith(".")
   }
 
   @Test

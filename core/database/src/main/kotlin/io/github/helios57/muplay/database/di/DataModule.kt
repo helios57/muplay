@@ -222,4 +222,15 @@ object DataModule {
     @Singleton
     fun bindRememberedRenderers(impl: RendererStore): RememberedRenderers
   }
+
+  /**
+   * Declares the set `AccountReset` clears, so a build where no module contributes to it still
+   * has an (empty) set rather than a missing binding.
+   */
+  @Module
+  @InstallIn(SingletonComponent::class)
+  interface AccountScopedDataSet {
+    @dagger.multibindings.Multibinds
+    fun accountScopedData(): Set<io.github.helios57.muplay.database.AccountScopedData>
+  }
 }

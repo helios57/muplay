@@ -38,6 +38,12 @@ class FakeSubsonicSource : SubsonicSource {
   var randomSongsByLibrary: Map<Int, List<Song>> = emptyMap()
   var searchResults: SearchResults = SearchResults(emptyList(), emptyList(), emptyList())
 
+  /**
+   * Libraries whose listing answers Subsonic code 70, the way Navidrome 0.63.2 answers for a
+   * library the signed-in user has not been granted.
+   */
+  var refusedLibraries: Set<Int> = emptySet()
+
   /** After this many calls to any method, every further call throws. `null` disables it. */
   var failAfterCalls: Int? = null
 
@@ -95,6 +101,11 @@ class FakeSubsonicSource : SubsonicSource {
     offset: Int,
   ): List<Album> {
     record("getAlbumList2($musicFolderId, offset=$offset, size=$size)")
+    if (musicFolderId in refusedLibraries) {
+      throw io.github.helios57.muplay.network.SubsonicErrorException(
+        70, "Library $musicFolderId not found or not accessible",
+      )
+    }
     return albumsByLibrary[musicFolderId].orEmpty().drop(offset).take(size)
   }
 

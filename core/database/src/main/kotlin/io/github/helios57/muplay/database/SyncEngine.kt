@@ -3,15 +3,15 @@ package io.github.helios57.muplay.database
 import io.github.helios57.muplay.database.dao.BrowseDao
 import io.github.helios57.muplay.database.dao.MirrorReplacement
 import io.github.helios57.muplay.database.dao.SyncWatermarkDao
-import io.github.helios57.muplay.model.Album
-import io.github.helios57.muplay.model.AlbumListType
-import io.github.helios57.muplay.model.Song
 import io.github.helios57.muplay.network.SubsonicClient
+import io.github.helios57.muplay.network.SubsonicErrorException
 import io.github.helios57.muplay.network.SubsonicSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Keeps the local mirror in step with the server.
@@ -27,6 +27,8 @@ class SyncEngine(
   private val watermarkDao: SyncWatermarkDao,
   private val sourceProvider: SubsonicSourceProvider,
   private val albumPageSize: Int,
+  private val parallelism: Int = DEFAULT_PARALLELISM,
+  private val retryDelaysMs: List<Long> = DEFAULT_RETRY_DELAYS_MS,
 ) {
 
   private val _progress = MutableStateFlow<SyncProgress>(SyncProgress.Idle)
@@ -67,7 +69,17 @@ class SyncEngine(
    * a crash rather than into something a screen can render, so everything except cancellation
    * becomes [SyncState.Failed].
    */
-  suspend fun syncIfStale(): SyncState = try {
+  /**
+   * One sync at a time. A sign-in can ask for one while the start-up sync is still running, and
+   * two reconciles interleaving their per-library transactions would each commit a mirror the
+   * other is halfway through replacing. The second caller waits and then asks the server again,
+   * which after the first has finished is almost always "up to date".
+   */
+  private val running = Mutex()
+
+  suspend fun syncIfStale(): SyncState = running.withLock { syncOnce() }
+
+  private suspend fun syncOnce(): SyncState = try {
     // Before the first round trip: `sourceProvider.current()` and `getScanStatus` are themselves a
     // wait the user is looking at, and an up-to-date sync never gets past them.
     _progress.value = SyncProgress.Preparing
@@ -96,117 +108,69 @@ class SyncEngine(
     // alone.
     libraryRepository.refreshFromServer()
 
+    val reader = LibraryReader(
+      source = source.asLibraryReadSource(),
+      pageSize = albumPageSize,
+      parallelism = parallelism,
+      retryDelaysMs = retryDelaysMs,
+      onProgress = { _progress.value = it },
+    )
     val results = mutableMapOf<Int, MirrorReplacement>()
+    val refused = mutableMapOf<Int, SubsonicErrorException>()
+    var failure: Exception? = null
     for (libraryId in libraryRepository.allIds()) {
-      results[libraryId] = reconcileLibrary(source, libraryId)
+      try {
+        // One transaction per library: a failure reconciling the audiobook library must not be
+        // able to empty the music library, and a library is the unit the user actually reasons
+        // about.
+        val contents = reader.read(libraryId)
+        results[libraryId] = browseDao.replaceLibraryContents(
+          libraryId = libraryId,
+          artists = MirrorMapper.artistEntities(contents.albums),
+          albums = contents.albums.map(MirrorMapper::albumEntity),
+          songs = contents.songs.map(MirrorMapper::songEntity),
+        )
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: SubsonicErrorException) {
+        // **One library this account may not read is not a failed sync.** Navidrome answers code
+        // 70 ("Library 2 not found or not accessible") for a library the user has not been
+        // granted, and the first version let that one answer fail every library -- an account
+        // restricted to some libraries could never finish a first sync at all. The others are
+        // read and committed; this one's mirror is left exactly as it was.
+        if (e.code in ACCESS_REFUSED_CODES) refused[libraryId] = e else failure = failure ?: e
+      } catch (e: Exception) {
+        // Keep going: the libraries after this one can still be read, and what is read is
+        // committed. The sync is still reported failed, and the watermark not advanced, so the
+        // next one retries.
+        failure = failure ?: e
+      }
     }
 
+    failure?.let { return SyncState.Failed(it) }
     // Last, and only now. Advancing the watermark before the transactions commit would mean a
     // failed sync is never retried and the mirror stays permanently stale. A null watermark is
-    // deliberately not stored -- see `SyncDecision.Reconcile`.
+    // deliberately not stored -- see `SyncDecision.Reconcile`. A refused library does not hold it
+    // back: asking again gets the same refusal until somebody changes the account on the server.
     watermark?.let { watermarkDao.store(it) }
-    return SyncState.Synced(results)
-  }
-
-  /**
-   * **The named decision on an empty fetch:** if [fetchAllAlbums] genuinely returns no albums for
-   * [libraryId], this reconciles the library to empty anyway rather than skipping the write.
-   *
-   * `BrowseDao.replaceLibraryContents`'s own kdoc is explicit that it cannot tell "the library
-   * truly emptied out on the server" apart from "the caller passed empty lists by mistake" — that
-   * distinction is deferred to the caller, i.e. here. [fetchAllAlbums] only ever returns an empty
-   * list two ways: [libraryId] genuinely has zero albums right now (Subsonic sends
-   * `"albumList2": {}` for that, confirmed live — not an error), or something failed. A failure —
-   * a network error, a non-2xx response, a malformed body — surfaces from `getAlbumList2`/
-   * `getAlbum` as a thrown exception, not as a silently-empty list, and propagates out of
-   * [syncIfStale] to [SyncState.Failed] before this function is ever called again with a bad
-   * watermark. So an empty list reaching this point *is* the server's real answer, and this is
-   * the one caller `replaceLibraryContents`'s own doc says must accept it: a library that has
-   * actually gone to zero albums (every track removed, or the folder itself deleted on the
-   * server) is exactly what a full reconcile exists to notice, since Subsonic has no delta
-   * primitive that would ever report that deletion otherwise. Silently refusing to write here
-   * would mean a genuinely-emptied library never reflects that locally, no matter how many times
-   * sync runs — the same permanently-stale failure mode `SyncDecision`'s own doc warns about, just
-   * for one library instead of the whole mirror. See
-   * `SyncEngineTest.aLibraryThatBecomesEmptyOnTheServerIsWipedLocally`.
-   *
-   * **This reasoning is true of `getAlbumList2`/`getAlbum` and only of them.** `getMusicFolders`
-   * — consumed by [reconcile], one call above this one, not here — behaves differently:
-   * `SubsonicClient.getMusicFolders` maps an absent payload to an **empty list**, not a thrown
-   * exception, so "trust an empty fetch" would delete every locally known library (and the
-   * irreplaceable [LibraryEntity.role] tags with it) on the same kind of malformed-but-200
-   * response that every other endpoint here turns into a loud failure instead. That was applied
-   * here and *not* re-checked at the library layer in an earlier version of this file — the
-   * project's own "a mutation proves only the layer it is applied at" defect. `refreshFromServer`
-   * now carries its own, narrower guard — see `EmptyLibraryListException`.
-   */
-  private suspend fun reconcileLibrary(source: SubsonicSource, libraryId: Int): MirrorReplacement {
-    val albums = fetchAllAlbums(source, libraryId)
-
-    // One round trip per album, and the reason [progress] exists: this loop is where a first sync
-    // spends nearly all of its time, and it is the only part of a sync whose remaining work is
-    // known. A `flatMap` said the same thing in one line and could not be counted.
-    val songs = mutableListOf<Song>()
-    albums.forEachIndexed { index, album ->
-      _progress.value = SyncProgress.Reading(done = index, total = albums.size)
-      songs += source.getAlbum(album.id, libraryId).songs
-    }
-    _progress.value = SyncProgress.Reading(done = albums.size, total = albums.size)
-
-    // One transaction per library: a failure reconciling the audiobook library must not be able
-    // to empty the music library, and a library is the unit the user actually reasons about.
-    return browseDao.replaceLibraryContents(
-      libraryId = libraryId,
-      artists = MirrorMapper.artistEntities(albums),
-      albums = albums.map(MirrorMapper::albumEntity),
-      songs = songs.map(MirrorMapper::songEntity),
-    )
-  }
-
-  /**
-   * Pages `getAlbumList2` for [libraryId] to exhaustion, in `ALPHABETICAL_BY_NAME` order.
-   *
-   * **F-4 in task-6-review.md, recorded rather than fixed:** offset paging over a list the server
-   * may resize or reorder between two requests can drop a row. A *content* change mid-pagination
-   * is self-healing here -- on Navidrome, album content only changes as a result of a scan, and
-   * any scan landing mid-reconcile moves `lastScan` past the value this reconcile is about to
-   * store (captured before the fetch, in [syncIfStale]), forcing the *next* poll to reconcile
-   * from scratch. What is **not** self-healing is an *unstable tie order on unchanged data*: two
-   * albums that compare equal under Navidrome's sort key can land in a different relative
-   * position on two requests with identical server state, and the same drop then repeats on
-   * every subsequent sync, silently, since a full reconcile keeps only what it just listed.
-   * Subsonic's `getAlbumList2` offers no cursor/id-ordered alternative, so this is bounded by the
-   * protocol rather than by this loop; there is no dedup-by-id and no cross-check against a
-   * reported total album count, and none is planned -- a real, narrow, inherited gap, not an
-   * oversight.
-   */
-  private suspend fun fetchAllAlbums(source: SubsonicSource, libraryId: Int): List<Album> {
-    val albums = mutableListOf<Album>()
-    var page = 0
-    while (page < MAX_PAGES) {
-      // How many have been listed, never how many remain: this loop learns it was on the last page
-      // only by getting a short one back, so there is no honest denominator to publish here.
-      _progress.value = SyncProgress.Listing(found = albums.size)
-      val batch = source.getAlbumList2(
-        musicFolderId = libraryId,
-        type = AlbumListType.ALPHABETICAL_BY_NAME,
-        size = albumPageSize,
-        offset = page * albumPageSize,
-      )
-      albums += batch
-      // A short page is the last page. A past-the-end offset returns an empty list rather than an
-      // error -- confirmed live, where the server sends `"albumList2": {}` with no album key.
-      if (batch.size < albumPageSize) return albums
-      page++
-    }
-    // A server that keeps returning full pages forever would otherwise spin here until the
-    // process died. Failing loudly at a bound nothing real reaches is the lesser evil, and it
-    // becomes SyncState.Failed rather than a hang the user cannot interpret.
-    error("getAlbumList2 for library $libraryId did not terminate within $MAX_PAGES pages")
+    return SyncState.Synced(results, refused = refused.mapValues { it.value.message })
   }
 
   companion object {
     /** 200 pages of 500 is 100,000 albums — far past any real library, and not infinity. */
-    const val MAX_PAGES = 200
+    const val MAX_PAGES = LibraryReader.MAX_PAGES
+
+    /**
+     * Requests in flight at once when a library has to be read album by album. Six is what a
+     * browser allows per host: enough to hide a phone's round-trip time, few enough that a
+     * Raspberry Pi running Navidrome does not notice.
+     */
+    const val DEFAULT_PARALLELISM = 6
+
+    /** A dropped connection is retried twice, after one second and then three. */
+    val DEFAULT_RETRY_DELAYS_MS = listOf(1_000L, 3_000L)
+
+    /** 50 "not authorized", 70 "not found" -- which is what a library not shared with you is. */
+    private val ACCESS_REFUSED_CODES = setOf(50, 70)
   }
 }
