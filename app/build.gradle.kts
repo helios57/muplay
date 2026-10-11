@@ -17,8 +17,8 @@ android {
     // app/release-history.tsv. Nothing computes them, and nothing may -- `ConventionTest`'s
     // `android { }` allow-list permits a bare integer and a bare string here and nothing else.
     // See build-logic/convention/src/main/kotlin/VerifyReleaseVersionTask.kt for both rules.
-    versionCode = 204
-    versionName = "0.2.4"
+    versionCode = 300
+    versionName = "0.3.0"
   }
 }
 
@@ -85,6 +85,11 @@ dependencies {
   // are different instruments over one transport, and `:app` chooses between them from
   // `PlaybackState.isAudiobook`.
   implementation(project(":feature:book"))
+  // The binaural generator: the Waves tab and its editor.
+  implementation(project(":feature:binaural"))
+  // `WavesJourneyTest` builds a profile of its own; the generator's model is not part of the
+  // feature module's API, so the test names it directly.
+  androidTestImplementation(project(":core:binaural"))
   // Plan 6 Task 10. The cast button and the picker sheet `MuPlayApp` hosts, and the `CastViewModel`
   // both share. `:app` is the only module that composes them -- in particular `:feature:player`
   // does not: it takes the button as a `@Composable` slot and the connected speaker's name as a

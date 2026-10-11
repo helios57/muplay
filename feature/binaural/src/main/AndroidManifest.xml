@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- The binaural generator keeps sounding with the screen off, which is a foreground service of
+       type mediaPlayback. The two permissions it needs are already declared by core/media for the
+       music service, and are repeated here so this module does not depend on that one to start. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+  <application>
+    <service
+        android:name="io.github.helios57.muplay.waves.BinauralService"
+        android:exported="false"
+        android:foregroundServiceType="mediaPlayback" />
+  </application>
+</manifest>

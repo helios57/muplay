@@ -22,6 +22,8 @@ MuPlay talks to are ones whose addresses you typed in yourself.
 | **Audiobook positions, per book** | App-private database | **No — never, by design** |
 | Playback settings (speed, silence skipping, volume levelling) | App-private database | No |
 | Cached audio | App-private cache | No |
+| Playlists you chose to keep on the phone (their audio) | App-private storage; removed when you remove the playlist or sign out | No |
+| Waves profiles, your edits to them and the tone volume | App-private file `binaural-profiles.json` | No |
 | Credentials for optional integrations (Lidarr, Bindery) | Encrypted, one Keystore key per service | Only as authentication to *your* service |
 | Your thumbs up and down | **On your server**, as its own star rating | **Yes — to your server, on purpose** |
 

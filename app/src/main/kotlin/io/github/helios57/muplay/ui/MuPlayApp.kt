@@ -64,6 +64,10 @@ import io.github.helios57.muplay.ui.navigation.FolderRoute
 import io.github.helios57.muplay.ui.navigation.LibraryRoute
 import io.github.helios57.muplay.ui.navigation.PlayerRoute
 import io.github.helios57.muplay.ui.navigation.PlaylistRoute
+import io.github.helios57.muplay.ui.navigation.WaveEditorRoute
+import io.github.helios57.muplay.ui.navigation.WavesRoute
+import io.github.helios57.muplay.waves.WaveEditorScreen
+import io.github.helios57.muplay.waves.WavesScreen
 import io.github.helios57.muplay.ui.navigation.PlaylistsRoute
 import io.github.helios57.muplay.ui.navigation.QueueRoute
 import io.github.helios57.muplay.ui.navigation.SettingsRoute
@@ -223,7 +227,7 @@ private fun MuPlayNavigation(
       // name is the only thing that says which folder is open.
       val folder = onScreen as? FolderRoute
       val sectionRoot = onScreen == LibraryRoute || onScreen == PlaylistsRoute ||
-        onScreen == BookshelfRoute || folder != null
+        onScreen == BookshelfRoute || onScreen == WavesRoute || folder != null
       if (tab != null && sectionRoot) {
         TopAppBar(
           title = {
@@ -388,6 +392,19 @@ private fun MuPlayNavigation(
         // Navigation 3 populates no `SavedStateHandle` argument from a key's own properties.
         entry<BookRoute> { route -> BookScreen(bookId = route.bookId, onOpenPlayer = { openPlayer() }) }
         entry<BookPlayerRoute> { BookPlayerScreen() }
+        entry<WavesRoute> { WavesScreen(onEdit = { backStack.add(WaveEditorRoute(it)) }) }
+        // A duplicate replaces the editor it was made from rather than stacking on it: back from the
+        // copy goes to the list, which now shows both.
+        entry<WaveEditorRoute> { route ->
+          WaveEditorScreen(
+            profileId = route.profileId,
+            onDone = { if (backStack.lastOrNull() == route) backStack.removeLastOrNull() },
+            onOpen = { id ->
+              if (backStack.lastOrNull() == route) backStack.removeLastOrNull()
+              backStack.add(WaveEditorRoute(id))
+            },
+          )
+        }
         entry<SettingsRoute> {
           SettingsScreen(
             onNavigate = { key ->

@@ -5551,6 +5551,46 @@ val coverageFloors: Map<String, List<CoverageFloor>> = mapOf(
   // first floor carries 216 BRANCH counters, ALL 216 of them from the five real classes above (the
   // ride-alongs carry none at all, which is why they cannot move a ratio), and 215 of the 216 are
   // covered. The one that is not is `LocalNetworkOnly`'s unreachable `else`.
+  // MEASURED 2026-10-11, `:core:binaural:jacocoTestReport`: LINE 460/469 = 0.981, BRANCH 185/225 =
+  // 0.822. Pure JVM: everything that decides what a profile sounds like -- the timeline, the
+  // synthesiser, the noise, validation and the profile file -- is held here, on the fast tier.
+  // Falsified 2026-10-11: with `ProfileLibraryTest` withheld, LINE 0.80 and BRANCH 0.68 -- both red.
+  ":core:binaural" to listOf(
+    CoverageFloor(counter = "LINE", minimum = BigDecimal("0.95")),
+    CoverageFloor(counter = "BRANCH", minimum = BigDecimal("0.78")),
+  ),
+  ":feature:binaural" to listOf(
+    // MEASURED 2026-10-11 on the JVM tier: every one of these classes at LINE 1.00. The text the
+    // screens and the notification show, the editor's draft (where a Swiss comma becomes a decimal
+    // point) and both view models, over a real `ProfileLibrary` on a temporary file. Falsified
+    // 2026-10-11: with `WavesViewModelsTest` withheld, both view models read 0.00 and go red.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.95"),
+      includes = listOf(
+        "io.github.helios57.muplay.waves.WavesTextKt",
+        "io.github.helios57.muplay.waves.ProfileDraft",
+        "io.github.helios57.muplay.waves.SegmentDraft",
+        "io.github.helios57.muplay.waves.WavesViewModel",
+        "io.github.helios57.muplay.waves.WaveEditorViewModel",
+      ),
+    ),
+    // MEASURED 2026-10-11 from `WavesJourneyTest` on `muplay37`: `BinauralPlayer` 18/20, its
+    // `Session` thread 61/66, `BinauralService` 44/46. The real `AudioTrack` and foreground service;
+    // only `:app` can drive them, because the service is a Hilt entry point.
+    CoverageFloor(
+      counter = "LINE",
+      element = "CLASS",
+      minimum = BigDecimal("0.85"),
+      includes = listOf(
+        "io.github.helios57.muplay.waves.BinauralPlayer",
+        "io.github.helios57.muplay.waves.BinauralPlayer.Session",
+        "io.github.helios57.muplay.waves.BinauralService",
+      ),
+      requiresInstrumentedData = true,
+    ),
+  ),
   ":core:cast" to listOf(
     CoverageFloor(
       counter = "BRANCH",

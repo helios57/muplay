@@ -25,6 +25,7 @@ include(":core:database")
 include(":core:media")
 include(":core:designsystem")
 include(":core:cast")
+include(":core:binaural")
 include(":feature:setup")
 include(":feature:library")
 include(":feature:player")
@@ -35,6 +36,7 @@ include(":feature:player")
 // `PlaybackState.isAudiobook`; a feature-to-feature edge here is how two screens stop being able
 // to change independently.
 include(":feature:book")
+include(":feature:binaural")
 // Plan 6 Task 10. The cast picker: the device list, the cast button and the volume slider.
 // Depends on `:core:cast` and `:core:media` and on no other feature -- see this module's own
 // build file, and `ConventionTest`'s severability reasoning for `integrations`: dropping casting

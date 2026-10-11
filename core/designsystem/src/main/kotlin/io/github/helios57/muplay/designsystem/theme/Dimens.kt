@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
  * left margin.
  */
 object MuPlaySpacing {
+  /** Between the lines of one tight label: a title and its subtitle. */
+  val xxs = 2.dp
   val xs = 4.dp
   val sm = 8.dp
   val md = 12.dp
@@ -40,6 +42,16 @@ object MuPlaySpacing {
 
   /** The two controls beside it: the ±30s nudge on the book player. */
   val transportSecondary = 56.dp
+
+  /** A chart drawn inline in a card -- the Waves program curve -- tall enough to read a slope. */
+  val chartHeight = 120.dp
+
+  /** The line a chart draws, and the thinner one that marks "now" on it. */
+  val chartStroke = 3.dp
+  val chartMarker = 2.dp
+
+  /** A short numeric text field (a frequency, a number of minutes) beside its label. */
+  val numberField = 120.dp
 }
 
 /**

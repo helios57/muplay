@@ -373,10 +373,15 @@ jobs:
           # destroys the AndroidKeystore key had no device tier at all, and its three documented
           # decisions (collect rather than read once, ask first, sign out before navigating on the
           # main thread) were held by their own comments until then.
+          #
+          # `:feature:binaural` (the Waves tab) joined 2026-10-11 with its suite already run on
+          # `muplay37`: `WavesContentTest` 6/6, plus `:app`'s `WavesJourneyTest` 3/3, which plays a
+          # real program through the foreground service and lets it end by itself. The census above
+          # is the 2026-09-09 one and was not retaken.
           script: |
             ./ci/prepare-emulator.sh
             ./ci/ci-memory-sampler.sh &
-            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:library:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :feature:setup:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
+            ./gradlew :app:connectedDebugAndroidTest :core:database:connectedDebugAndroidTest :core:media:connectedDebugAndroidTest :feature:book:connectedDebugAndroidTest :feature:binaural:connectedDebugAndroidTest :feature:castpicker:connectedDebugAndroidTest :feature:library:connectedDebugAndroidTest :feature:player:connectedDebugAndroidTest :feature:requests:connectedDebugAndroidTest :feature:settings:connectedDebugAndroidTest :feature:setup:connectedDebugAndroidTest :integrations:core:connectedDebugAndroidTest :integrations:requests:connectedDebugAndroidTest || { adb logcat -d > emulator-logcat.txt; exit 1; }
 
       # The *whole* coverage table, every floor, against merged JVM + instrumented execution data
       # — which only exists here, after the journey above. Tier 1 already enforced the subset that

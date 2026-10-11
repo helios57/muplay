@@ -10,6 +10,8 @@ import io.github.helios57.muplay.ui.navigation.FolderRoute
 import io.github.helios57.muplay.ui.navigation.LibraryRoute
 import io.github.helios57.muplay.ui.navigation.PlaylistRoute
 import io.github.helios57.muplay.ui.navigation.PlaylistsRoute
+import io.github.helios57.muplay.ui.navigation.WaveEditorRoute
+import io.github.helios57.muplay.ui.navigation.WavesRoute
 
 /**
  * The four places the app is *about*, as a navigation bar.
@@ -31,6 +33,7 @@ enum class TopLevelDestination(
   Folders(FolderRoute(""), "Folders", MuPlayIcons.Folder),
   Playlists(PlaylistsRoute, "Playlists", MuPlayIcons.Playlist),
   Books(BookshelfRoute, "Books", MuPlayIcons.Book),
+  Waves(WavesRoute, "Waves", MuPlayIcons.Waves),
   ;
 
   /** Whether [key] is this section -- its own key, or a detail screen belonging to it. */
@@ -39,6 +42,7 @@ enum class TopLevelDestination(
     Folders -> key is FolderRoute
     Playlists -> key == PlaylistsRoute || key is PlaylistRoute
     Books -> key == BookshelfRoute || key is BookRoute
+    Waves -> key == WavesRoute || key is WaveEditorRoute
   }
 }
 

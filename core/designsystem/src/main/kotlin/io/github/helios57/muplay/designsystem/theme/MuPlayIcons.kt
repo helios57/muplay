@@ -347,6 +347,37 @@ object MuPlayIcons {
     lineTo(6.8f, 17.2f)
   }
 
+  /** Two waves of slightly different length: the binaural generator's destination. */
+  val Waves: ImageVector = stroked("MuPlayWaves") {
+    moveTo(3f, 9f)
+    quadTo(5.25f, 5f, 7.5f, 9f)
+    quadTo(9.75f, 13f, 12f, 9f)
+    quadTo(14.25f, 5f, 16.5f, 9f)
+    quadTo(18.75f, 13f, 21f, 9f)
+    moveTo(3f, 16f)
+    quadTo(5.6f, 12f, 8.2f, 16f)
+    quadTo(10.8f, 20f, 13.4f, 16f)
+    quadTo(16f, 12f, 18.6f, 16f)
+    quadTo(19.8f, 17.8f, 21f, 17.2f)
+  }
+
+  /** A pencil: change this. */
+  val Edit: ImageVector = stroked("MuPlayEdit") {
+    moveTo(4.5f, 19.5f)
+    lineTo(5f, 15.8f)
+    lineTo(15.6f, 5.2f)
+    lineTo(18.8f, 8.4f)
+    lineTo(8.2f, 19f)
+    close()
+    moveTo(13.4f, 7.4f)
+    lineTo(16.6f, 10.6f)
+  }
+
+  /** A filled square: stop, as opposed to pause. */
+  val Stop: ImageVector = solid("MuPlayStop") {
+    bar(6.5f, 6.5f, 17.5f, 17.5f)
+  }
+
   // ---- Construction ----
 
   private fun builder(name: String) = ImageVector.Builder(

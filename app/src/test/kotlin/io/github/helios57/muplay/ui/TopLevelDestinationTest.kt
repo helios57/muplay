@@ -2,6 +2,8 @@ package io.github.helios57.muplay.ui
 
 import androidx.navigation3.runtime.NavKey
 import io.github.helios57.muplay.setup.SetupRoute
+import io.github.helios57.muplay.ui.navigation.WaveEditorRoute
+import io.github.helios57.muplay.ui.navigation.WavesRoute
 import io.github.helios57.muplay.ui.navigation.AlbumRoute
 import io.github.helios57.muplay.ui.navigation.BookRoute
 import io.github.helios57.muplay.ui.navigation.BookshelfRoute
@@ -40,6 +42,8 @@ class TopLevelDestinationTest {
       .isEqualTo(TopLevelDestination.Playlists)
     assertThat(selectedTab(listOf(LibraryRoute, AlbumRoute("a1"))))
       .isEqualTo(TopLevelDestination.Albums)
+    assertThat(selectedTab(listOf(LibraryRoute, WavesRoute, WaveEditorRoute("power-nap"))))
+      .isEqualTo(TopLevelDestination.Waves)
   }
 
   @Test

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The status-bar icon for the generator: MuPlayIcons.Waves, as a resource the platform can draw. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:pathData="M3,9 Q5.25,5 7.5,9 T12,9 T16.5,9 T21,9 M3,16 Q5.6,12 8.2,16 T13.4,16 T18.6,16"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round" />
+</vector>

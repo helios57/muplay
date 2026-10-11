@@ -2376,3 +2376,30 @@ Two housekeeping notes from the same hour:
   `/data/data/<pkg>/files/`. `adb unroot` afterwards, for the same reason. Both restart `adbd`, and
   a reverse forward belongs to the running `adbd` -- so run `ci/prepare-emulator.sh` again before
   the next device suite rather than finding out from a suite that times out reaching Navidrome.
+
+## A `hiltViewModel()` here lives as long as the activity, not as long as its screen
+
+`NavDisplay` in `MuPlayApp` is given no ViewModel entry decorator, so every `hiltViewModel()` a
+destination asks for is scoped to `MainActivity` and survives the screen being popped. Measured
+2026-10-11 on the Waves profile editor: edit a prepared profile, save, leave, open the same profile
+again -- and the editor showed the **pre-save draft**, origin `BUILT_IN`, with no Reset button,
+because `WaveEditorViewModel.open(id)` saw the id it already held and kept its stale state. Every
+JVM test was green; only driving the real screens twice in a row shows it.
+
+`WaveEditorViewModel.close()` now forgets the opened id on every exit (the back arrow, Save,
+Delete and a `BackHandler` all go through one `leave` lambda). The general rule: **a view model
+that is "opened" with an argument must be told when its screen goes away**, or its next opening
+inherits the last one. The same shape has already been met with playlist view models outliving a
+sign-out. If you add a destination with per-item state, either give it a `close()` like this or
+add the ViewModel decorator to `NavDisplay` -- and the second changes every existing screen's
+lifetime at once, so measure before you do it.
+
+## A `sed` rename across a source tree also renames the gates that *name* the identifier
+
+Renaming a field `nowPlaying` -> `current` with `grep -rl nowPlaying app/src feature/binaural |
+xargs sed -i` rewrote `StoreListingTest`'s scrobbling probe from `scrobble|nowPlaying|savePlayQueue`
+to `scrobble|current|savePlayQueue` -- because the probe names that word as a *pattern*, not as a
+use. It then fired on every `val current` in the tree and reported `["Scrobbling"]` as a shipped
+capability, which read like a real over-claim and cost several runs to trace. Scope a mechanical
+rename to the module that owns the identifier (`src/main` and its own tests), and `git diff` the
+`src/test` files it touched before running anything.

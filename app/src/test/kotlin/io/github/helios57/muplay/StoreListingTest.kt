@@ -295,8 +295,6 @@ class StoreListingTest {
       // `shakeSensor.start(` in `MuPlaybackService.kt`), which `every claim names code that still
       // exists` checks on every run.
       Regex("""\bChromecast\b""", RegexOption.IGNORE_CASE),
-      Regex("""\bdownload\w*\b""", RegexOption.IGNORE_CASE),
-      Regex("""\boffline\b""", RegexOption.IGNORE_CASE),
       Regex("""\bWear OS\b""", RegexOption.IGNORE_CASE),
       Regex("""\bMaterial You\b""", RegexOption.IGNORE_CASE),
       Regex("""\bdynamic colou?r\b""", RegexOption.IGNORE_CASE),
@@ -528,7 +526,10 @@ class StoreListingTest {
       // Google Cast's own entry points. `core/cast` is SSDP + UPnP `AVTransport` and touches none
       // of these; a Chromecast implementation could not avoid them.
       "Casting to Chromecast" to Regex("""\bCastContext\b|\bCastPlayer\b|\bMediaRouteButton\b"""),
-      "Downloads" to Regex("""\bDownloadManager\b|\bDownloadRequest\b|exoplayer\.offline"""),
+      // "Downloads" was here, probing `DownloadManager|DownloadRequest|exoplayer.offline`, and it
+      // stayed green over the feature it disclaimed: kept playlists shipped through a second
+      // `SimpleCache` that names none of the three. The row and the probe went out together, and
+      // the capability is held from the presence side by the claims table instead.
       // Also the privacy claim from the other side: the listing says MuPlay never reports back what
       // you played, and `core/network`'s `LocalOnlyProgressTest` fails the build if an endpoint for
       // it is declared.

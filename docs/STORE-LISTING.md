@@ -47,9 +47,8 @@ says so.
 
 BROWSING THAT DOES NOT WAIT FOR THE NETWORK
 
-Your library is mirrored onto the phone, so opening it, scrolling and searching are immediate,
-not a round trip. Browse albums with their cover art, open one, start from any track.
-Refresh pulls in what changed on the server.
+Your library is mirrored onto the phone, so browsing and searching are immediate. Refresh pulls
+in what changed on the server.
 
 THUMBS THAT STEER THE SHUFFLE
 
@@ -69,24 +68,32 @@ MADE FOR LISTENING WITH THE SCREEN OFF
 
 AUDIOBOOKS ARE A DIFFERENT INSTRUMENT
 
-A book opens in its own player, not the music one. Next and Previous move a chapter at a time,
-there is a chapter list to jump around in, and a thirty-second nudge for the sentence you missed.
-Every book comes back to the right position in the right file, across days of music in between,
-winding back a few seconds in proportion to how long you were away. Each book keeps its own
-speed, 0.5x to 3.0x, and its own silence skipping; neither follows you into music.
+A book opens in its own player. Next and Previous move a chapter at a time, and there is a
+chapter list. Every book comes back to the right position, across days of music in between,
+winding back a little in proportion to how long you were away. Each book keeps its own speed,
+0.5x to 3.0x, and its own silence skipping.
 
 IN THE CAR
 
-MuPlay is an Android Auto media app. The car screen offers Continue, Books, Albums and Artists.
-Books you started show how much is left, and a book in several parts opens at the part you reached. The first row of Albums shuffles a whole library. "Hey Google, play <a title> on MuPlay"
-works with the app closed.
+MuPlay is an Android Auto media app: Continue, Books, Albums and Artists, with how much of each
+book is left. "Hey Google, play <a title> on MuPlay" works with the app closed.
 
 ON YOUR SPEAKERS
 
-Send music to a Sonos speaker, or any DLNA/UPnP renderer on your network. MuPlay finds them while
-the picker is open and, by default, relays the audio through your phone, so the speaker never gets
-your server's address or password. The button is on the music player; an audiobook cannot be
-sent to a speaker yet.
+Send music to a Sonos speaker or any DLNA/UPnP renderer. By default the audio is relayed through
+your phone, so the speaker never gets your server's password. Audiobooks cannot be sent yet.
+
+PLAYLISTS FOR WHEN THERE IS NO SIGNAL
+
+Keep a playlist on the phone and it plays with no connection at all. Signing out removes it.
+
+WAVES: BINAURAL BEATS, MADE ON THE PHONE
+
+Two slightly different tones, one per ear, generated on the phone, under your music or alone.
+Steady tones (meditate, focus, concentrate, creative, sleep, deep sleep) and programs that move
+between them, like a power nap that goes down slowly and comes back up. Edit any profile on the
+phone, or put it back as shipped. Headphones needed. Binaural beats may help you relax; their
+effects on sleep and focus are not proven.
 
 ASK FOR WHAT IS NOT THERE YET
 
@@ -107,8 +114,7 @@ WHAT YOU LISTEN TO STAYS YOURS
 NOT IN THIS VERSION
 
 There is no Chromecast support (Sonos and
-DLNA/UPnP only), no Wear OS app, no Material You, and no downloading for offline listening —
-recently played audio is cached, which is much weaker.
+DLNA/UPnP only), no Wear OS app, and no Material You.
 Nothing you listen to is ever scrobbled back to your server, and that is a promise, not a gap.
 
 Needs Android 8.0 or newer and a server you can reach from your phone.
@@ -287,6 +293,12 @@ symbol. It is deliberately a weak check of a strong discipline: it cannot tell y
 | The picker is reachable — from the music player | `app/src/main/kotlin/io/github/helios57/muplay/ui/MuPlayApp.kt` | `CastPickerSheet` |
 | Requests really reach Lidarr and Bindery — albums to one, audiobooks to the other | `integrations/requests/src/main/kotlin/io/github/helios57/muplay/integrations/requests/RequestsRepository.kt` | `BinderyMediaType.AUDIOBOOK` |
 | Setting an integration up is reachable with none configured | `feature/requests/src/main/kotlin/io/github/helios57/muplay/requests/IntegrationsSection.kt` | `settings:integrations` |
+| A playlist can be kept on the phone and played with no connection | `core/media/src/main/kotlin/io/github/helios57/muplay/media/OfflineDownloads.kt` | `class OfflineDownloads` |
+| ...and signing out removes the kept copies | `core/database/src/main/kotlin/io/github/helios57/muplay/database/di/DataModule.kt` | `repository.clear()` |
+| Binaural beats are generated on the phone, one tone per ear | `core/binaural/src/main/kotlin/io/github/helios57/muplay/binaural/BinauralSynth.kt` | `phaseRight` |
+| Programs move between bands over time | `core/binaural/src/main/kotlin/io/github/helios57/muplay/binaural/ProfileTimeline.kt` | `class ProfileTimeline` |
+| Prepared profiles: meditate, focus, concentrate, creative, sleep, deep sleep, power nap | `core/binaural/src/main/kotlin/io/github/helios57/muplay/binaural/Presets.kt` | `powerNap` |
+| Every profile can be edited on the phone and put back as shipped | `feature/binaural/src/main/kotlin/io/github/helios57/muplay/waves/WaveEditorViewModel.kt` | `library.reset(id)` |
 | An integration API key is never sent over plain http in a release build | `app/src/release/kotlin/io/github/helios57/muplay/di/CleartextPolicyModule.kt` | `CleartextPolicy.Forbidden` |
 
 ### Not in this version
@@ -299,7 +311,6 @@ audit that produced this list.
 |---|---|
 | Casting to Chromecast | `core/cast` speaks SSDP and UPnP `AVTransport`, and only those. There is no Google Cast dependency in `gradle/libs.versions.toml` and no `CastContext` anywhere in the tree. Sonos is reached *as* a DLNA renderer, not through SMAPI. |
 | Casting an audiobook | The cast button is in `PlayerScreen`'s slot and `:app` routes a book to `BookPlayerScreen`, which has no cast anything. So the capability exists and a book cannot reach it. |
-| Downloads for offline listening | Only a 512 MiB opportunistic byte cache in `cacheDir`, which the OS may reclaim. No selection, no pinning, no queue. |
 | Scrobbling / play counts sent back to the server | Never, and structurally: `SubsonicApi` declares eight read endpoints and no write one, and `core/network`'s own `LocalOnlyProgressTest` fails the build if one is added. |
 | Wear OS app | There is no watch module at all: `:wear` and `:core:watchlink` were deleted, nothing declares `wearApp(...)`, and `release.yml` assembles and signs `:app` and only `:app`. A watch controls playback by rendering the phone's `MediaSession`, which ships no APK. |
 | Material You / dynamic colour | Light and dark only, from a fixed palette that follows the system setting. |

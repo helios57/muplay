@@ -13,7 +13,7 @@ and other Subsonic/OpenSubsonic servers, with **Sonos and DLNA casting**.
 
 ## Why
 
-Nothing existing does all four of these at once:
+Nothing existing does all of these at once:
 
 - **Library-scoped shuffle.** If music and audiobooks live in separate Navidrome
   libraries, hitting shuffle should not pull chapter 14 of a novel into a music
@@ -23,6 +23,9 @@ Nothing existing does all four of these at once:
   progress is a property of the item — so playing something else touches nothing.
 - **Sonos.** Streaming to Sonos speakers, plus generic DLNA renderers, whether
   the phone is at home, in the office, or on a VPN back to the home network.
+- **Waves.** A binaural-beat generator for sleep, meditation and focus, with
+  prepared programs that move between bands over time, every one editable on the
+  phone. The evidence is weak and the app says so: [docs/BINAURAL.md](docs/BINAURAL.md).
 - **Proper Android integration.** Background playback, media notification,
   Android Auto, Wear OS.
 
@@ -74,6 +77,8 @@ days before production access opens. Nothing in this repository can do either.
 | `:core:cast` | HTTP/1.1, SSDP, SOAP, DIDL-Lite and the range-serving proxy — written rather than depended on |
 | `:core:designsystem` | the Material 3 theme |
 | `:feature:setup` `:feature:library` `:feature:player` | the Compose surfaces |
+| `:core:binaural` | the binaural-beat synthesiser, its timelines and the prepared profiles -- pure Kotlin, no Android; see [docs/BINAURAL.md](docs/BINAURAL.md) |
+| `:feature:binaural` | the Waves tab, the profile editor and the tone service |
 | `:integrations:core` `:integrations:lidarr` `:integrations:bindery` | optional request integrations, severable by construction |
 
 `:integrations:*` lives outside `core/` on purpose: `ConventionTest`'s *nothing
