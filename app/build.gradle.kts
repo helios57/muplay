@@ -17,8 +17,8 @@ android {
     // app/release-history.tsv. Nothing computes them, and nothing may -- `ConventionTest`'s
     // `android { }` allow-list permits a bare integer and a bare string here and nothing else.
     // See build-logic/convention/src/main/kotlin/VerifyReleaseVersionTask.kt for both rules.
-    versionCode = 300
-    versionName = "0.3.0"
+    versionCode = 301
+    versionName = "0.3.1"
   }
 }
 
