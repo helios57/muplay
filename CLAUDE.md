@@ -18,6 +18,16 @@ within seconds, so the mirror needs nothing from you. Pushing straight to `githu
 forbidden and is how this repository was run until now, but it puts the mirror ahead of its
 source and the next Forgejo push will move GitHub back.
 
+**Except when the push changes a workflow file.** Measured 2026-10-11 on v0.3.0: the mirror's
+GitHub credential has no `workflow` scope, so GitHub rejects the *whole* push -- branch and tag --
+with `refusing to allow an OAuth App to create or update workflow .github/workflows/e2e.yml without
+workflow scope`, and the release workflow never starts. Nothing on the Forgejo side says so except
+`last_error` in `GET /api/v1/repos/helios157/muplay/push_mirrors`. **An SSH push mirror does not
+fix it:** GitHub refuses a write deploy key with the identical message (tested with Forgejo's own
+mirror key and with a throwaway key). The owner chose to keep the mirror as it is, so after any
+push that touches `.github/workflows/`, push the same refs to `github` yourself
+(`git push github master`, plus the tag) and check `git ls-remote github` matches `origin`.
+
 Two things about credentials, because both cost time here:
 
 - **The token in `~/.gitconfig` cannot create repositories.** It is repo-scoped: it pushes fine
