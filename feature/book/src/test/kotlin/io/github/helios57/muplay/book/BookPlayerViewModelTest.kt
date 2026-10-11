@@ -118,6 +118,10 @@ class BookPlayerViewModelTest {
       calls += "setSpeed($speed)"
     }
 
+    override suspend fun setSkipSilence(bookId: String, enabled: Boolean) {
+      calls += "setSkipSilence($bookId, $enabled)"
+    }
+
     override fun startSleepTimer(request: SleepTimerRequest) {
       calls += "startSleepTimer($request)"
     }
@@ -376,6 +380,34 @@ class BookPlayerViewModelTest {
     advanceUntilIdle()
 
     assertThat(viewModel.content().failure).isEqualTo(PlaybackFailure.Server)
+  }
+
+  @Test
+  fun `dragging the whole-book scrubber seeks to that point of the book`() = runTest(dispatcher) {
+    val controls = controls()
+    val viewModel = warm(controls)
+    controls.publish(playing("m4b", 5_000))
+    advanceUntilIdle()
+    controls.calls.clear()
+
+    viewModel.seekBook(12_500)
+    advanceUntilIdle()
+
+    assertThat(controls.calls).containsExactly("seekTo(0, 12500)")
+  }
+
+  @Test
+  fun `skip silence is stored against the book that is playing`() = runTest(dispatcher) {
+    val controls = controls()
+    val viewModel = warm(controls)
+    controls.publish(playing("m4b", 5_000))
+    advanceUntilIdle()
+    controls.calls.clear()
+
+    viewModel.setSkipSilence(true)
+    advanceUntilIdle()
+
+    assertThat(controls.calls).containsExactly("setSkipSilence(book, true)")
   }
 
   @Test

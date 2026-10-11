@@ -123,7 +123,7 @@ class AudiobookResumeJourneyTest {
     composeRule.openBookNamed(BOOK_TITLE)
     // From the top, deliberately: whatever an earlier test in this process left for this book,
     // the number this journey asserts on is one this journey produced.
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
 
     val bookMediaId = awaitCurrentItemTitled(controller, BOOK_TITLE)
     awaitOnMain("the book to decode past ${LEAVE_AFTER_MS}ms") {
@@ -216,7 +216,7 @@ class AudiobookResumeJourneyTest {
 
     // The first book, left late.
     composeRule.openBookNamed(BOOK_TITLE)
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     val lateId = awaitCurrentItemTitled(controller, BOOK_TITLE)
     awaitOnMain("the first book to decode past ${LEAVE_LATE_AFTER_MS}ms") {
       controller.currentPosition > LEAVE_LATE_AFTER_MS
@@ -228,7 +228,7 @@ class AudiobookResumeJourneyTest {
     composeRule.pressBackToLibraryScreen()
     composeRule.openBookshelf()
     composeRule.openBookNamed(OTHER_BOOK_TITLE)
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     val earlyId = awaitCurrentItemTitled(controller, OTHER_BOOK_TITLE)
     assertThat(earlyId).describedAs("two books, two files").isNotEqualTo(lateId)
     awaitOnMain("the second book to decode past ${LEAVE_EARLY_AFTER_MS}ms") {
@@ -285,7 +285,7 @@ class AudiobookResumeJourneyTest {
     composeRule.reachLibraryScreen()
     composeRule.openBookshelf()
     composeRule.openBookNamed(BOOK_TITLE)
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     val bookMediaId = awaitCurrentItemTitled(controller, BOOK_TITLE)
 
     // The control, first: prove the question can come back "yes" for this exact id.
@@ -499,7 +499,6 @@ class AudiobookResumeJourneyTest {
     // Literal strings the real screens render, duplicated from the production code rather than
     // shared with it: a journey is a black-box walk through what a user sees, and a shared constant
     // would let a wording change pass unnoticed. Same stance as every other journey here.
-    const val START_OVER_LABEL = "Start from the beginning"
     const val RESUME_LABEL = "Resume"
     const val CONTINUE_LISTENING_LABEL = "Continue listening"
     const val MUSIC_LIBRARY_NAME = "Music"

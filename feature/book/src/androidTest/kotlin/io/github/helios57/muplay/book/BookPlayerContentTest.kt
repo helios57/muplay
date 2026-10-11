@@ -156,8 +156,12 @@ class BookPlayerContentTest {
   private fun topOf(text: String): Float =
     composeRule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().positionInRoot.y
 
+  /** The chapter's bar. The whole-book scrubber is a range too, and carries its own name. */
   private fun progress(): Float = composeRule
-    .onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
+    .onNode(
+      SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo) and
+        !hasContentDescription(BOOK_SCRUBBER_LABEL),
+    )
     .fetchSemanticsNode()
     .config[SemanticsProperties.ProgressBarRangeInfo]
     .current

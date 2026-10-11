@@ -39,6 +39,15 @@ internal const val RESUME_LABEL = "Resume"
 internal const val LOADING_BOOK_LABEL = "Loading this book…"
 internal const val BOOK_NOT_FOUND_LABEL = "That book is no longer in your library."
 internal const val START_OVER_LABEL = "Start from the beginning"
+internal const val PLAY_BOOK_LABEL = "Play"
+internal const val LISTEN_AGAIN_LABEL = "Listen again"
+internal const val FINISHED_LABEL = "Finished"
+internal const val MARK_FINISHED_LABEL = "Mark as finished"
+internal const val MARK_UNFINISHED_LABEL = "Mark as not finished"
+internal const val START_OVER_CONFIRM_TITLE = "Start this book again?"
+internal const val START_OVER_CONFIRM_TEXT = "Your place in this book will be forgotten."
+internal const val START_OVER_CONFIRM = "Start again"
+internal const val CANCEL_LABEL = "Cancel"
 internal const val CHAPTERS_HEADING = "Chapters"
 
 /**
@@ -70,6 +79,7 @@ internal const val CHAPTERS_UNAVAILABLE_LABEL =
  */
 internal const val RETRY_CHAPTERS_LABEL = "Try again"
 internal const val SKIP_SILENCE_LABEL = "Skip silence"
+internal const val BOOK_SCRUBBER_LABEL = "Position in the book"
 
 // ---- The player ----
 

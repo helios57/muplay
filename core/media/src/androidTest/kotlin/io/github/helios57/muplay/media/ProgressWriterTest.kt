@@ -195,12 +195,29 @@ class ProgressWriterTest {
   }
 
   /**
-   * `isFinished` is set to `true` and never back to `false`. A ticker that wrote `false` would
-   * un-finish a completed book on the next accidental tap. "Un-finish on replay" is real behaviour
-   * and it belongs to the plan that has a UI to express it.
+   * `isFinished` survives a write that does not move the position back: the ticker keeps firing
+   * after `STATE_ENDED`, parked at the end, and a ticker that wrote `false` would un-finish a
+   * completed book at its first tick. The position still moves, so "preserved" is not "frozen".
    */
   @Test
-  fun finishedStaysFinished() {
+  fun finishedStaysFinishedWhileTheTickerIdlesAtTheEnd() {
+    val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
+
+    runBlocking {
+      subject.write("chapter-14", positionMs = 900_000L, finished = true, gainDb = null)
+      subject.write("chapter-14", positionMs = 899_000L, finished = false, gainDb = null)
+    }
+
+    assertThat(row("chapter-14").isFinished).isTrue
+    assertThat(row("chapter-14").positionMs).isEqualTo(899_000L)
+  }
+
+  /**
+   * ...and is cleared when the listener plays the item again. Without this a finished book was a
+   * one-way door: it replayed, and was still "Finished" at the end of the replay.
+   */
+  @Test
+  fun listeningAgainClearsFinished() {
     val subject = ProgressWriter(NoOpPlayer(), dao, clock, scope)
 
     runBlocking {
@@ -208,8 +225,7 @@ class ProgressWriterTest {
       subject.write("chapter-14", positionMs = 1_000L, finished = false, gainDb = null)
     }
 
-    assertThat(row("chapter-14").isFinished).isTrue
-    // ...and the position still moved, so "preserved" does not mean "frozen".
+    assertThat(row("chapter-14").isFinished).isFalse
     assertThat(row("chapter-14").positionMs).isEqualTo(1_000L)
   }
 

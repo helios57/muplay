@@ -49,6 +49,7 @@ fun LibraryScreen(
   onAlbumClick: (String) -> Unit,
   onOpenPlayer: () -> Unit,
   modifier: Modifier = Modifier,
+  onBookClick: (String) -> Unit = onAlbumClick,
   viewModel: LibraryViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -58,7 +59,7 @@ fun LibraryScreen(
     onQueryChanged = viewModel::search,
     onShuffle = viewModel::shuffle,
     onRefresh = viewModel::refresh,
-    onAlbumClick = onAlbumClick,
+    onAlbumClick = { id -> if (uiState.opensAsBook(id)) onBookClick(id) else onAlbumClick(id) },
     // Play first, then navigate. The order is not cosmetic: `playShuffled` reads `uiState.value`,
     // and navigating away first is what would let `stateIn(WhileSubscribed)` drop the state out
     // from under it.

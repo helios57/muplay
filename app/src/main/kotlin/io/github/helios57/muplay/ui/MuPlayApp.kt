@@ -337,6 +337,7 @@ private fun MuPlayNavigation(
           LibraryScreen(
             onAlbumClick = { albumId -> backStack.add(AlbumRoute(albumId)) },
             onOpenPlayer = { openPlayer() },
+            onBookClick = { bookId -> backStack.add(BookRoute(bookId)) },
           )
         }
         // `route.albumId`, not the brief's parameterless `AlbumScreen()`: Task 9's own fix round

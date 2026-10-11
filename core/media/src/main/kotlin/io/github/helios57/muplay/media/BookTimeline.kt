@@ -133,4 +133,20 @@ object BookTimeline {
     val itemStart = timeline.firstOrNull { it.mediaId == mediaId } ?: return positionInItemMs
     return itemStart.bookStartMs - itemStart.startInItemMs + positionInItemMs
   }
+
+  /** Where a seek lands: which queue item, and how far into it. */
+  data class Seek(val itemIndex: Int, val positionInItemMs: Long)
+
+  /**
+   * The reverse of [bookPositionMs]: a point on the whole-book scrubber, as a queue item and an
+   * offset into it. Held to the book at both ends; null only for a book with no timeline at all.
+   */
+  fun locate(timeline: List<BookChapter>, bookMs: Long): Seek? {
+    if (timeline.isEmpty()) return null
+    val last = timeline.last()
+    val end = last.bookStartMs + last.durationMs
+    val at = bookMs.coerceIn(0L, end)
+    val chapter = timeline.lastOrNull { at >= it.bookStartMs } ?: timeline.first()
+    return Seek(chapter.itemIndex, chapter.startInItemMs + (at - chapter.bookStartMs))
+  }
 }

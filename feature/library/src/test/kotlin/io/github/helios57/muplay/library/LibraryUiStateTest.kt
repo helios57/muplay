@@ -293,4 +293,24 @@ class LibraryUiStateTest {
 
     assertThat(state.emptyReason).isNull()
   }
+
+  @Test
+  fun `an album in an audiobook library opens as a book, a music album as an album`() {
+    // Browsing the audiobook library from the library tab used to open the music album screen --
+    // no resume, no chapters, no speed -- for a book.
+    val state = libraryContent(
+      libraries = listOf(music, books),
+      selectedLibraryId = 2,
+      query = "",
+      albums = listOf(album("b1", "A Book", 2), album("a1", "An Album", 1)),
+      searchAlbums = emptyList(),
+      shuffle = null,
+      notice = LibraryNotice.Idle,
+    )
+
+    assertThat(state.opensAsBook("b1")).isTrue
+    assertThat(state.opensAsBook("a1")).isFalse
+    assertThat(state.opensAsBook("unknown")).isFalse
+    assertThat(LibraryUiState.Loading.opensAsBook("b1")).isFalse
+  }
 }

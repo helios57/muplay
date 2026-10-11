@@ -109,7 +109,7 @@ class AudiobookChapterJourneyTest {
     }
 
     // From the top, so the position this test then asserts on cannot be one an earlier test stored.
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     awaitCurrentItemTitled(controller, BOOK_TITLE)
     awaitOnMain("the book to start decoding") { controller.currentPosition > STARTED_MS }
     composeRule.pausePlayback()
@@ -167,7 +167,7 @@ class AudiobookChapterJourneyTest {
     composeRule.reachLibraryScreen()
     composeRule.openBookshelf()
     composeRule.openBookNamed(BOOK_TITLE)
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     awaitCurrentItemTitled(controller, BOOK_TITLE)
 
     // The audiobook player, which is a different instrument from the music one: five transport

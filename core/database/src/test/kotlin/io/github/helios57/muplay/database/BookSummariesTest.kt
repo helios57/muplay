@@ -256,6 +256,29 @@ class BookSummariesTest {
   }
 
   @Test
+  fun `listening again to a finished book from its first file un-finishes it`() {
+    val files = listOf(
+      file("a", "b", 1, seconds = 4, title = "One"),
+      file("b", "b", 2, seconds = 6, title = "Two"),
+    )
+
+    val summary = BookSummaries.summarise(
+      album("b", "B"),
+      files,
+      mapOf(
+        progress("b", 6_000, finished = true, at = 5),
+        // Pressed "Listen again" a day later: part one is newer than the flag on part two.
+        progress("a", 1_500, at = 90),
+      ),
+    )
+
+    assertThat(summary.isFinished).isFalse
+    // ...and the book is where the listener now is, not at the end it finished.
+    assertThat(summary.positionMs).isEqualTo(1_500)
+    assertThat(summary.hasStarted).isTrue
+  }
+
+  @Test
   fun `a row on the last file that is not finished does not finish the book`() {
     // The `isFinished` flag itself, isolated from *which* file carries it: with only the test
     // above, `progress[last] != null` would pass.

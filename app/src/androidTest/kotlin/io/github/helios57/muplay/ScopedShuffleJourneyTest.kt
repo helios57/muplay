@@ -171,7 +171,7 @@ class ScopedShuffleJourneyTest {
     // exactly what an earlier journey leaves behind and it stays on screen indefinitely.
     composeRule.openBookshelf()
     composeRule.openBookNamed(AUDIOBOOK_TITLE)
-    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.startBookFromTheTop()
     composeRule.pausePlayback()
     composeRule.pressBackToLibraryScreen()
 
@@ -237,9 +237,6 @@ class ScopedShuffleJourneyTest {
     val MUSIC_TITLES = listOf("Track 1", "Track 2", "Track 3")
 
     /** The two library chips' own labels, i.e. the names ci/configure-libraries.sh gives them. */
-    /** `BookScreen`'s own button, duplicated from it -- see this companion's note above. */
-    const val START_OVER_LABEL = "Start from the beginning"
-
     const val MUSIC_LIBRARY = "Music"
     const val AUDIOBOOK_LIBRARY = "Audiobooks"
 

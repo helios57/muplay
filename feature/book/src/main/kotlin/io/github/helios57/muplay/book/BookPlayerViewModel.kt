@@ -75,6 +75,8 @@ interface BookPlayerControls {
 
   suspend fun setSpeed(speed: Float)
 
+  suspend fun setSkipSilence(bookId: String, enabled: Boolean)
+
   fun startSleepTimer(request: SleepTimerRequest)
 
   fun cancelSleepTimer()
@@ -147,6 +149,11 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
 
       override suspend fun setSpeed(speed: Float) =
         playbackConnection.controller().setPlaybackSpeed(speed)
+
+      // Stored, and the service re-applies it to the playing chapter at once -- see
+      // `AudiobookSnapshot.settingsChanged`.
+      override suspend fun setSkipSilence(bookId: String, enabled: Boolean) =
+        audiobookRepository.setSkipSilence(bookId, enabled)
 
       override fun startSleepTimer(request: SleepTimerRequest) = sleepTimerController.start(request)
 
@@ -306,6 +313,17 @@ class BookPlayerViewModel(private val controls: BookPlayerControls) : ViewModel(
    */
   fun setSpeed(speed: Float) {
     viewModelScope.launch { controls.setSpeed(BookSettings.clampSpeed(speed)) }
+  }
+
+  /** A point on the whole-book scrubber, which can be in another file than the one playing. */
+  fun seekBook(bookMs: Long) {
+    val seek = BookTimeline.locate(timeline.value, bookMs) ?: return
+    viewModelScope.launch { controls.seekTo(seek.itemIndex, seek.positionInItemMs) }
+  }
+
+  fun setSkipSilence(enabled: Boolean) {
+    val bookId = book.value?.bookId ?: return
+    viewModelScope.launch { controls.setSkipSilence(bookId, enabled) }
   }
 
   fun startSleepTimer(request: SleepTimerRequest) = controls.startSleepTimer(request)

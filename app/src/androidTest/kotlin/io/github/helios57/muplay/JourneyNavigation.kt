@@ -218,6 +218,34 @@ internal fun ComposeTestRule.openBookNamed(title: String) {
   }
 }
 
+/**
+ * Plays the open book from its first second, whatever state an earlier test left it in.
+ *
+ * The book screen offers different buttons by state: `Play` on a book never opened, `Resume` plus
+ * `Start from the beginning` (which asks first) on one in progress, `Listen again` on a finished
+ * one. Each of the three starts at zero here -- `Play` because there is no position to resume.
+ */
+internal fun ComposeTestRule.startBookFromTheTop() {
+  waitForIdle()
+  when {
+    onAllNodesWithText(START_OVER_LABEL).fetchSemanticsNodes().isNotEmpty() -> {
+      onNodeWithText(START_OVER_LABEL).performClick()
+      waitUntil("the start-over confirmation", JOURNEY_TIMEOUT_MILLIS) {
+        onAllNodesWithText(START_OVER_CONFIRM).fetchSemanticsNodes().isNotEmpty()
+      }
+      onNodeWithText(START_OVER_CONFIRM).performClick()
+    }
+    onAllNodesWithText(LISTEN_AGAIN_LABEL).fetchSemanticsNodes().isNotEmpty() ->
+      onNodeWithText(LISTEN_AGAIN_LABEL).performClick()
+    else -> onAllNodesWithText(PLAY_BOOK_LABEL).notTheMiniPlayer()[0].performClick()
+  }
+}
+
+private const val START_OVER_LABEL = "Start from the beginning"
+private const val START_OVER_CONFIRM = "Start again"
+private const val LISTEN_AGAIN_LABEL = "Listen again"
+private const val PLAY_BOOK_LABEL = "Play"
+
 private fun ComposeTestRule.bookRows(title: String): SemanticsNodeInteractionCollection =
   onAllNodesWithText(title).notTheMiniPlayer()
 

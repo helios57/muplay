@@ -1,5 +1,7 @@
 package io.github.helios57.muplay.player
 
+import io.github.helios57.muplay.media.PlaybackState
+
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -144,7 +146,8 @@ private fun MiniPlayerBar(
   onOpenPlayer: () -> Unit,
   onPlayPause: () -> Unit,
 ) {
-  val spoken = nowPlayingDescription(content.playback.title, content.playback.artist)
+  val (primary, secondary) = miniPlayerLines(content.playback)
+  val spoken = nowPlayingDescription(primary, secondary)
 
   Surface(
     modifier = Modifier.fillMaxWidth(),
@@ -203,7 +206,7 @@ private fun MiniPlayerBar(
             .padding(horizontal = MuPlaySpacing.md),
         ) {
           Text(
-            text = content.playback.title.orEmpty(),
+            text = primary,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -221,7 +224,7 @@ private fun MiniPlayerBar(
           val failure = content.playback.failure
           if (failure == null) {
             Text(
-              text = content.playback.artist.orEmpty(),
+              text = secondary,
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
               maxLines = 1,
@@ -290,6 +293,19 @@ private fun nowPlayingDescription(title: String?, artist: String?): String? =
   listOfNotNull(title?.takeIf(String::isNotBlank), artist?.takeIf(String::isNotBlank))
     .takeIf { it.isNotEmpty() }
     ?.joinToString(SPOKEN_SEPARATOR)
+
+/**
+ * The bar's two lines: the track and its artist for music; for a book, the book and the part
+ * playing -- a book's files are called "Part 07" or "Track 12", and the bar used to show only
+ * that. A one-file book named like its file shows its author rather than the title twice.
+ */
+internal fun miniPlayerLines(playback: PlaybackState): Pair<String, String> {
+  val title = playback.title.orEmpty()
+  val artist = playback.artist.orEmpty()
+  val book = playback.albumTitle?.takeIf { playback.isAudiobook && it.isNotBlank() }
+    ?: return title to artist
+  return book to (if (title.isBlank() || title == book) artist else title)
+}
 
 /** The bar's own accessible name, and the handle Task 10's journey taps to open the player. */
 internal const val MINI_PLAYER_LABEL = "Now playing"

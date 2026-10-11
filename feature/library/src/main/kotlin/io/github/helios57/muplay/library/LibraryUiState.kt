@@ -1,6 +1,7 @@
 package io.github.helios57.muplay.library
 
 import io.github.helios57.muplay.model.Album
+import io.github.helios57.muplay.model.LibraryRole
 import io.github.helios57.muplay.model.MusicLibrary
 import io.github.helios57.muplay.model.ShuffleResult
 import io.github.helios57.muplay.model.Song
@@ -49,6 +50,17 @@ sealed interface LibraryUiState {
     val syncMessage: String?,
     val emptyReason: LibraryEmptyReason?,
   ) : LibraryUiState
+}
+
+/**
+ * Whether tapping [albumId] should open the book screen rather than the album screen: true for an
+ * album that lives in a library marked as audiobooks. A book's id is its album's id, so the same
+ * id opens either.
+ */
+fun LibraryUiState.opensAsBook(albumId: String): Boolean {
+  val content = this as? LibraryUiState.Content ?: return false
+  val libraryId = content.albums.firstOrNull { it.id == albumId }?.libraryId ?: return false
+  return content.libraries.firstOrNull { it.id == libraryId }?.role == LibraryRole.AUDIOBOOKS
 }
 
 /**

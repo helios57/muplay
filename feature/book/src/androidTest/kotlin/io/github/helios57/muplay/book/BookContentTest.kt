@@ -57,6 +57,7 @@ class BookContentTest {
         onSkipSilence = { skipSilence += it },
         onRetryChapters = { actions += "retryChapters" },
         coverArtUrl = NO_COVER,
+        onSetFinished = { actions += "finished=$it" },
       )
     }
   }
@@ -250,6 +251,9 @@ class BookContentTest {
    * Resume and start-over are two different buttons wired to two different things. Clicking both
    * in one composition is what makes the assertion value-bearing: a screen that wired both to
    * `onResume` records `["resume", "resume"]`.
+   *
+   * Start-over on a book in progress forgets the place, so it asks first; cancelling forgets
+   * nothing, and only the confirmation restarts.
    */
   @Test
   fun resumeAndStartOverAreWiredToTwoDifferentActions() {
@@ -257,8 +261,39 @@ class BookContentTest {
 
     composeRule.onNodeWithText(RESUME_LABEL).performClick()
     composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.onNodeWithText(CANCEL_LABEL).performClick()
+    assertThat(actions).containsExactly("resume")
+
+    composeRule.onNodeWithText(START_OVER_LABEL).performClick()
+    composeRule.onNodeWithText(START_OVER_CONFIRM).performClick()
 
     assertThat(actions).containsExactly("resume", "restart")
+  }
+
+  /** A finished book offers to be heard again from the start, not to replay its last seconds. */
+  @Test
+  fun aFinishedBookOffersListenAgainAndCanBeMarkedNotFinished() {
+    composeRule.setContent {
+      BookContent(
+        state = content().copy(book = startedBook().copy(isFinished = true)),
+        onResume = { actions += "resume" },
+        onRestart = { actions += "restart" },
+        onPlayChapter = {},
+        onSpeed = {},
+        onSkipSilence = {},
+        onRetryChapters = {},
+        coverArtUrl = NO_COVER,
+        onSetFinished = { actions += "finished=$it" },
+      )
+    }
+
+    composeRule.onNodeWithText(RESUME_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(START_OVER_LABEL).assertDoesNotExist()
+    composeRule.onNodeWithText(FINISHED_LABEL).assertIsDisplayed()
+    composeRule.onNodeWithText(LISTEN_AGAIN_LABEL).performClick()
+    composeRule.onNodeWithText(MARK_UNFINISHED_LABEL).performClick()
+
+    assertThat(actions).containsExactly("restart", "finished=false")
   }
 
   /** The speed shown is the book's own stored speed, to one decimal place with a dot. */

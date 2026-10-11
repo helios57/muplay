@@ -210,6 +210,27 @@ class AudiobookRepository @Inject constructor(
   }
 
   /**
+   * The reverse of [markFinished]: the listener says "I have not finished this".
+   *
+   * Clears the flag on every file and leaves `lastPlayedAtEpochMs` alone -- "unfinished" is not
+   * "just played" -- but **a position at the very end of its file goes back to the start of it**.
+   * [markFinished] writes each file's duration as its position, so without this the book would
+   * come back as "in progress" with a resume point on the last second of its last file, and
+   * pressing Resume would end it, and finish it, again.
+   */
+  suspend fun markUnfinished(bookId: String) {
+    val files = filesOf(bookId)
+    val existing = progressFor(files.map { it.id })
+    for (file in files) {
+      val row = existing[file.id] ?: continue
+      val atTheEnd = row.positionMs >= file.durationSeconds * 1_000L - END_TOLERANCE_MS
+      mediaProgressDao.upsert(
+        row.copy(isFinished = false, positionMs = if (atTheEnd) 0L else row.positionMs),
+      )
+    }
+  }
+
+  /**
    * Every audiobook file, mapped to its book. The input to `AudiobookSnapshot` (Task 6), which is
    * what makes "only books resume" structural rather than conventional: a media id absent from
    * this map is not an audiobook, and the resume policy has nothing to answer with.
@@ -217,6 +238,19 @@ class AudiobookRepository @Inject constructor(
   fun observeAudiobookItems(): Flow<Map<String, String>> =
     audiobookDao.observeItems(LibraryRole.AUDIOBOOKS)
       .map { rows -> rows.associate { it.mediaId to (it.albumId ?: it.mediaId) } }
+
+  /**
+   * Every book's file ids **in play order**, keyed by book id. The input `AudiobookSnapshot` needs
+   * to apply [BookFinish] -- "is the *last* file the newest thing heard" -- without a Room read per
+   * book, and ordered by the same comparator the shelf uses.
+   */
+  fun observeBookFileOrder(): Flow<Map<String, List<String>>> =
+    audiobookDao.observeItems(LibraryRole.AUDIOBOOKS).map { rows ->
+      rows.groupBy { it.albumId ?: it.mediaId }.mapValues { (_, files) ->
+        BookSummaries.playOrderOf(files, { it.discNumber }, { it.trackNumber }, { it.sortTitle }, { it.mediaId })
+          .map { it.mediaId }
+      }
+    }
 
   private suspend fun filesOf(bookId: String): List<SongEntity> =
     audiobookDao.files(bookId, LibraryRole.AUDIOBOOKS)
@@ -236,6 +270,9 @@ class AudiobookRepository @Inject constructor(
   }
 
   companion object {
+    /** A position this close to a file's end counts as "at the end" for [markUnfinished]. */
+    private const val END_TOLERANCE_MS = 1_000L
+
     /**
      * A book is an album; a file with no album is its own book.
      *

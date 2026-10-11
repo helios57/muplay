@@ -140,6 +140,9 @@ class BookSpeedController(
    * every book after it correct, which is the hardest kind of defect to see: it works the second
    * time.
    */
+  /** Re-reads the current item's settings: a change made on the book screen applies at once. */
+  fun applyCurrent() = applyFor(player.currentMediaItem?.mediaId)
+
   fun applyFor(mediaId: String?) {
     val settings = BookPlaybackSettings.of(mediaId?.let(source::itemFor))
     player.setPlaybackSpeed(settings.speed)

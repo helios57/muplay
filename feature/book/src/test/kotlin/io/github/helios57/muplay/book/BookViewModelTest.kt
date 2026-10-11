@@ -99,6 +99,14 @@ class BookViewModelTest {
       calls += "restart($bookId)"
     }
 
+    override suspend fun markFinished(bookId: String) {
+      calls += "markFinished($bookId)"
+    }
+
+    override suspend fun markUnfinished(bookId: String) {
+      calls += "markUnfinished($bookId)"
+    }
+
     override suspend fun playFile(bookId: String, mediaId: String) {
       calls += "playFile($bookId, $mediaId)"
     }
@@ -247,6 +255,24 @@ class BookViewModelTest {
     viewModel.restart()
     advanceUntilIdle()
     assertThat(source.calls).containsExactly("restart(wanted)")
+  }
+
+  @Test
+  fun `marking finished and not finished each reach the loaded book`() = runTest(dispatcher) {
+    val source = source()
+    val viewModel = warm(source)
+    viewModel.load("wanted")
+    advanceUntilIdle()
+    source.calls.clear()
+
+    viewModel.setFinished(true)
+    advanceUntilIdle()
+    assertThat(source.calls).containsExactly("markFinished(wanted)")
+
+    source.calls.clear()
+    viewModel.setFinished(false)
+    advanceUntilIdle()
+    assertThat(source.calls).containsExactly("markUnfinished(wanted)")
   }
 
   @Test

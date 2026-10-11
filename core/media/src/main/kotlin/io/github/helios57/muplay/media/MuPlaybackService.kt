@@ -242,6 +242,9 @@ class MuPlaybackService : MediaLibraryService() {
       // is why the position gets a blocking flush and this does not.
       serviceScope.launch { audiobookRepository.setSpeed(bookId, speed) }
     }.also { it.start() }
+    // Speed and skip silence used to be applied only on the next track change, so the switch on
+    // the book screen did nothing to the chapter playing under it.
+    serviceScope.launch { audiobookSnapshot.settingsChanged.collect { speedController?.applyCurrent() } }
 
     // Media3 posts its own notification through this provider; what this call changes is its
     // *identity*. Without it the notification lands on Media3's default channel under Media3's

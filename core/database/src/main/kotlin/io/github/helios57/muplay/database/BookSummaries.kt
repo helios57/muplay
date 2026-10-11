@@ -50,12 +50,27 @@ internal object BookSummaries {
    * back to the order SQLite happened to return, which it is entitled to change between two
    * identical queries.
    */
-  fun playOrder(files: List<SongEntity>): List<SongEntity> = files.sortedWith(
+  fun playOrder(files: List<SongEntity>): List<SongEntity> =
+    playOrderOf(files, { it.discNumber }, { it.trackNumber }, { it.sortTitle }, { it.id })
+
+  /**
+   * [playOrder]'s comparator over anything that carries the four keys. The playback side orders
+   * `AudiobookItemRow`s with it to find a book's last file, and two hand-written copies of this
+   * comparator are exactly how the shelf and the resume policy would end up disagreeing about
+   * which file is last.
+   */
+  fun <T> playOrderOf(
+    files: List<T>,
+    disc: (T) -> Int?,
+    track: (T) -> Int?,
+    sortTitle: (T) -> String,
+    id: (T) -> String,
+  ): List<T> = files.sortedWith(
     compareBy(
-      { it.discNumber ?: 1 },
-      { it.trackNumber ?: Int.MAX_VALUE },
-      { it.sortTitle },
-      { it.id },
+      { disc(it) ?: 1 },
+      { track(it) ?: Int.MAX_VALUE },
+      { sortTitle(it) },
+      { id(it) },
     ),
   )
 
@@ -94,9 +109,10 @@ internal object BookSummaries {
       fileCount = ordered.size,
       durationMs = durationMs,
       positionMs = offsetMs + (currentProgress?.positionMs ?: 0L),
-      // Reaching the end of the last file is what finishes a book. "Every file finished" would
-      // leave a book unfinished forever because the listener skipped a five-second interlude.
-      isFinished = ordered.isNotEmpty() && progress[ordered.last().id]?.isFinished == true,
+      // Reaching the end of the last file is what finishes a book -- "every file finished" would
+      // leave a book unfinished forever because the listener skipped a five-second interlude --
+      // and hearing any file after that un-finishes it. See [BookFinish].
+      isFinished = BookFinish.isFinished(ordered.map { it.id }, progress),
       // `0` is `BookSummary`'s own "never opened"; see its declaration.
       lastPlayedAtEpochMs = currentProgress?.lastPlayedAtEpochMs ?: 0L,
     )

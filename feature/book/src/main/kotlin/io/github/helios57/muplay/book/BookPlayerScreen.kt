@@ -27,8 +27,10 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,6 +127,8 @@ fun BookPlayerScreen(
     onCancelTimer = viewModel::cancelSleepTimer,
     coverArtUrl = viewModel::coverArtUrl,
     modifier = modifier,
+    onSeekBook = viewModel::seekBook,
+    onSkipSilence = viewModel::setSkipSilence,
   )
 }
 
@@ -141,6 +146,8 @@ internal fun BookPlayerContent(
   onCancelTimer: () -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
+  onSeekBook: (Long) -> Unit = {},
+  onSkipSilence: (Boolean) -> Unit = {},
 ) {
   BookVoice {
     when (state) {
@@ -153,6 +160,7 @@ internal fun BookPlayerContent(
 
       is BookPlayerUiState.Content -> Column(modifier = modifier.fillMaxSize()) {
         NowReading(state = state, coverArtUrl = coverArtUrl)
+        BookScrubber(state = state, onSeekBook = onSeekBook)
 
         // The only scrolling region. `contentPadding` rather than a padded parent so the chapter
         // rows' ripples reach the gutter and the list scrolls under the header edge to edge.
@@ -187,6 +195,7 @@ internal fun BookPlayerContent(
               modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.md),
             )
           }
+          item { SkipSilenceRow(checked = state.skipSilence, onCheckedChange = onSkipSilence) }
           item {
             SleepTimerRow(
               timer = state.sleepTimer,
@@ -323,6 +332,53 @@ private fun NowReading(
       // long this chapter is"), and the journey asserts the whole sentence.
       Text(
         text = "${formatClock(state.positionInChapterMs)} / ${formatClock(state.chapterDurationMs)}",
+        style = MaterialTheme.typography.labelSmall.merge(MuPlayTimecode),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+  }
+}
+
+/**
+ * **The whole book, draggable.** The bar above it is the chapter, and on a book of fifty files
+ * that was the only way to move: one chapter at a time, or thirty seconds at a time. This slider
+ * is the book from its first second to its last, across files -- `BookTimeline.locate` turns the
+ * point into a file and an offset.
+ *
+ * The thumb follows the finger while dragging and seeks once, on release: seeking on every
+ * `onValueChange` would issue a seek per frame and make the audio stutter under the finger.
+ * Hidden without a timeline (chapters unread), because there is no book length to drag along.
+ */
+@Composable
+private fun BookScrubber(state: BookPlayerUiState.Content, onSeekBook: (Long) -> Unit) {
+  if (state.chapters.isEmpty() || state.bookDurationMs <= 0L) return
+  var dragging by remember { mutableStateOf<Float?>(null) }
+  val shownMs = dragging?.toLong() ?: state.bookPositionMs
+  Column(modifier = Modifier.padding(horizontal = MuPlaySpacing.gutter)) {
+    Slider(
+      value = shownMs.coerceIn(0L, state.bookDurationMs).toFloat(),
+      onValueChange = { dragging = it },
+      onValueChangeFinished = {
+        dragging?.let { onSeekBook(it.toLong()) }
+        dragging = null
+      },
+      valueRange = 0f..state.bookDurationMs.toFloat(),
+      colors = SliderDefaults.colors(
+        thumbColor = MaterialTheme.colorScheme.tertiary,
+        activeTrackColor = MaterialTheme.colorScheme.tertiary,
+        inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant,
+      ),
+      modifier = Modifier.fillMaxWidth().semantics { contentDescription = BOOK_SCRUBBER_LABEL },
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+      Text(
+        text = formatClock(shownMs),
+        style = MaterialTheme.typography.labelSmall.merge(MuPlayTimecode),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.weight(1f),
+      )
+      Text(
+        text = formatClock(state.bookDurationMs),
         style = MaterialTheme.typography.labelSmall.merge(MuPlayTimecode),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )

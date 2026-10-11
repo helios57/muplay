@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -23,9 +24,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -86,6 +91,7 @@ fun BookScreen(
       viewModel.restart()
       onOpenPlayer()
     },
+    onSetFinished = viewModel::setFinished,
     onPlayChapter = { chapter ->
       viewModel.playChapter(chapter)
       onOpenPlayer()
@@ -109,8 +115,26 @@ internal fun BookContent(
   onRetryChapters: () -> Unit,
   coverArtUrl: suspend (String, Int) -> String,
   modifier: Modifier = Modifier,
+  onSetFinished: (Boolean) -> Unit = {},
 ) {
   BookVoice {
+    var confirmingStartOver by rememberSaveable { mutableStateOf(false) }
+    if (confirmingStartOver) {
+      AlertDialog(
+        onDismissRequest = { confirmingStartOver = false },
+        title = { Text(START_OVER_CONFIRM_TITLE) },
+        text = { Text(START_OVER_CONFIRM_TEXT) },
+        confirmButton = {
+          TextButton(onClick = {
+            confirmingStartOver = false
+            onRestart()
+          }) { Text(START_OVER_CONFIRM) }
+        },
+        dismissButton = {
+          TextButton(onClick = { confirmingStartOver = false }) { Text(CANCEL_LABEL) }
+        },
+      )
+    }
     when (state) {
       BookUiState.Loading -> Centred(modifier) { Message(text = LOADING_BOOK_LABEL, loading = true) }
       BookUiState.NotFound -> Centred(modifier) { Message(text = BOOK_NOT_FOUND_LABEL) }
@@ -157,7 +181,7 @@ internal fun BookContent(
                   overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                  text = formatRemaining(state.book.remainingMs),
+                  text = remainingLabel(state.book.remainingMs, state.book.isFinished),
                   style = MaterialTheme.typography.labelMedium,
                   color = MaterialTheme.colorScheme.tertiary,
                 )
@@ -179,36 +203,54 @@ internal fun BookContent(
         }
 
         item {
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
-            modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.lg),
-          ) {
-            Button(
-              onClick = onResume,
-              colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.tertiary,
-                contentColor = MaterialTheme.colorScheme.onTertiary,
-              ),
-              modifier = Modifier.weight(1f),
+          val actions = bookActions(state.book.hasStarted, state.book.isFinished)
+          Column(modifier = Modifier.fillMaxWidth().padding(bottom = MuPlaySpacing.lg)) {
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+              modifier = Modifier.fillMaxWidth(),
             ) {
-              Icon(
-                MuPlayIcons.Play,
-                contentDescription = null,
-                modifier = Modifier.size(INLINE_GLYPH_DP.dp),
-              )
-              Text(RESUME_LABEL, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+              Button(
+                // `Listen again` is a start-over that needs no confirmation: the place it forgets
+                // is "the end", which nobody wants back.
+                onClick = if (actions.primary == BookPrimary.ListenAgain) onRestart else onResume,
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = MaterialTheme.colorScheme.tertiary,
+                  contentColor = MaterialTheme.colorScheme.onTertiary,
+                ),
+                modifier = Modifier.weight(1f),
+              ) {
+                Icon(
+                  if (actions.primary == BookPrimary.ListenAgain) MuPlayIcons.RotateBack else MuPlayIcons.Play,
+                  contentDescription = null,
+                  modifier = Modifier.size(INLINE_GLYPH_DP.dp),
+                )
+                Text(actions.primary.label, modifier = Modifier.padding(start = MuPlaySpacing.sm))
+              }
+              if (actions.offersStartOver) {
+                OutlinedButton(
+                  onClick = {
+                    if (actions.confirmsStartOver) confirmingStartOver = true else onRestart()
+                  },
+                  modifier = Modifier.weight(1f),
+                ) {
+                  Icon(
+                    MuPlayIcons.RotateBack,
+                    contentDescription = null,
+                    modifier = Modifier.size(INLINE_GLYPH_DP.dp),
+                  )
+                  Text(
+                    text = START_OVER_LABEL,
+                    maxLines = START_OVER_LINES,
+                    modifier = Modifier.padding(start = MuPlaySpacing.sm),
+                  )
+                }
+              }
             }
-            OutlinedButton(onClick = onRestart, modifier = Modifier.weight(1f)) {
-              Icon(
-                MuPlayIcons.RotateBack,
-                contentDescription = null,
-                modifier = Modifier.size(INLINE_GLYPH_DP.dp),
-              )
-              Text(
-                text = START_OVER_LABEL,
-                maxLines = START_OVER_LINES,
-                modifier = Modifier.padding(start = MuPlaySpacing.sm),
-              )
+            TextButton(
+              onClick = { onSetFinished(actions.finishToggle == FinishToggle.MarkFinished) },
+              modifier = Modifier.align(Alignment.End),
+            ) {
+              Text(actions.finishToggle.label)
             }
           }
         }
@@ -287,7 +329,7 @@ internal fun BookContent(
  * fail on -- deliberately, since that finder is the thing pinning this shape.
  */
 @Composable
-private fun SkipSilenceRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+internal fun SkipSilenceRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
   Row(
     horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
     verticalAlignment = Alignment.CenterVertically,

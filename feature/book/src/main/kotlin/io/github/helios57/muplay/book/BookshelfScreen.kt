@@ -280,13 +280,15 @@ private fun BookRow(
               .height(PROGRESS_HEIGHT_DP.dp),
           )
           Text(
-            text = formatRemaining(book.remainingMs),
+            text = remainingLabel(book.remainingMs, book.isFinished),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.tertiary,
           )
         }
       }
-      if (book.hasStarted) {
+      // Not on a finished book: `Resume` there replays the last seconds of the last file. Its own
+      // screen offers `Listen again` instead.
+      if (book.hasStarted && !book.isFinished) {
         // Icon **and** text. The glyph is what makes the shelf scannable; the word is what a
         // journey finds and what makes the action unambiguous for anyone who has not met the
         // glyph before. `RESUME_LABEL` is unchanged and is still this button's text.

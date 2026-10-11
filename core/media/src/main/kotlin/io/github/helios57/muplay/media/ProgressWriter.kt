@@ -47,9 +47,9 @@ import kotlinx.coroutines.withContext
  * this class's own three fields could ever see. `ProgressWriterTest` asserts exactly that.
  *
  * `isFinished` gets the same treatment in the other direction: it is set to `true` at `STATE_ENDED`
- * and otherwise **preserved**, never written as `false`. A ticker that wrote `false` would un-finish
- * a completed book on the next accidental tap. "Un-finish on replay" is real behaviour and it is
- * Plan 4's, at the point it has a UI to express it.
+ * and otherwise **preserved** -- a ticker that wrote `false` would un-finish a completed book on the
+ * next accidental tap. It is cleared only when a write moves the position well back from where the
+ * item finished, which is the listener listening again; see [FinishedFlag].
  *
  * ### Book positions are local and never leave the device
  *
@@ -235,8 +235,14 @@ class ProgressWriter(
             // `C.TIME_UNSET` is negative and a player with no timeline reports it; a negative
             // position in the table would sort ahead of every real one.
             positionMs = positionMs.coerceAtLeast(0L),
-            // Only ever set, never cleared. See the class documentation.
-            isFinished = finished || (existing?.isFinished ?: false),
+            // Set at the ending, kept while the ticker idles there, cleared when the listener
+            // starts the item again. See [FinishedFlag].
+            isFinished = FinishedFlag.next(
+              wasFinished = existing?.isFinished ?: false,
+              storedPositionMs = existing?.positionMs ?: 0L,
+              newPositionMs = positionMs.coerceAtLeast(0L),
+              reachedTheEnd = finished,
+            ),
             lastPlayedAtEpochMs = clock.millis(),
             // Columns this class does not own the *meaning* of. `speed` and `skipSilence` are
             // the audiobook plan's and stay preserved-not-written.

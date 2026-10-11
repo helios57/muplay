@@ -285,4 +285,31 @@ class BookTimelineTest {
     assertThat(BookTimeline.previous(timeline, null, 0)).isNull()
     assertThat(BookTimeline.bookPositionMs(timeline, "anything", 5_000)).isEqualTo(5_000L)
   }
+
+  @Test
+  fun `a whole-book position lands in the file and at the offset that hold it`() {
+    // Parts of 4 s, 6 s and 5 s: book second 7 is three seconds into Part Two.
+    val timeline = BookTimeline.of(multiFile, emptyMap())
+
+    assertThat(BookTimeline.locate(timeline, 7_000)).isEqualTo(BookTimeline.Seek(1, 3_000))
+    assertThat(BookTimeline.locate(timeline, 0)).isEqualTo(BookTimeline.Seek(0, 0))
+    // A boundary belongs to the file that starts there, as it does for chapters.
+    assertThat(BookTimeline.locate(timeline, 4_000)).isEqualTo(BookTimeline.Seek(1, 0))
+  }
+
+  @Test
+  fun `a whole-book position inside a single file's chapters stays in item zero`() {
+    val timeline = BookTimeline.of(singleFile, secondBookChapters)
+
+    assertThat(BookTimeline.locate(timeline, 12_500)).isEqualTo(BookTimeline.Seek(0, 12_500))
+  }
+
+  @Test
+  fun `a position past either end is held to the book`() {
+    val timeline = BookTimeline.of(multiFile, emptyMap())
+
+    assertThat(BookTimeline.locate(timeline, -50)).isEqualTo(BookTimeline.Seek(0, 0))
+    assertThat(BookTimeline.locate(timeline, 99_000)).isEqualTo(BookTimeline.Seek(2, 5_000))
+    assertThat(BookTimeline.locate(emptyList(), 1_000)).isNull()
+  }
 }

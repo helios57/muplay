@@ -1,6 +1,7 @@
 package io.github.helios57.muplay.media
 
 import io.github.helios57.muplay.database.AudiobookRepository
+import io.github.helios57.muplay.database.BookFinish
 import io.github.helios57.muplay.database.dao.BookSettingsDao
 import io.github.helios57.muplay.database.dao.MediaProgressDao
 import io.github.helios57.muplay.database.entity.BookSettingsEntity
@@ -12,6 +13,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
@@ -30,6 +33,11 @@ data class AudiobookItem(
   val bookId: String,
   val positionMs: Long,
   val lastPlayedAtEpochMs: Long,
+  /**
+   * Whether the **book** is finished -- `BookFinish`'s rule, the shelf's own -- not this file's row.
+   * It is the same on every file of a book: pressing Resume on any part of a finished book is
+   * "listen again", and the answer must not depend on which part the caller happened to name.
+   */
   val isFinished: Boolean,
   val speed: Float,
   val skipSilence: Boolean,
@@ -109,9 +117,10 @@ class AudiobookSnapshot @Inject constructor(
     collector = scope.launch {
       combine(
         audiobookRepository.observeAudiobookItems(),
+        audiobookRepository.observeBookFileOrder(),
         mediaProgressDao.observeAll(),
         bookSettingsDao.observeAll(),
-      ) { bookIds, progress, settings -> build(bookIds, progress, settings) }
+      ) { bookIds, order, progress, settings -> build(bookIds, order, progress, settings) }
         // **Not on the caller's dispatcher.** `MuPlaybackService.onCreate` starts this on its
         // main-thread-confined scope (an `ExoPlayer` binds to its creating thread's `Looper`, so
         // that scope has to be main), and the transform above rebuilds the whole map -- once per
@@ -138,6 +147,7 @@ class AudiobookSnapshot @Inject constructor(
     publish(
       build(
         audiobookRepository.observeAudiobookItems().first(),
+        audiobookRepository.observeBookFileOrder().first(),
         mediaProgressDao.observeAll().first(),
         bookSettingsDao.observeAll().first(),
       ),
@@ -151,17 +161,36 @@ class AudiobookSnapshot @Inject constructor(
   override fun itemFor(mediaId: String): AudiobookItem? = current[mediaId]
 
   private fun publish(next: Map<String, AudiobookItem>) {
+    val previous = current
     current = next
     loaded.complete(Unit)
+    // Only a *change of setting* is announced, never a republish: the progress ticker rewrites
+    // `media_progress` every five seconds and each write rebuilds this map, so a signal on every
+    // publish would make the speed controller re-apply the stored speed over one the listener had
+    // just tapped on the player, before its own write-back had landed.
+    if (next.any { (id, item) -> previous[id]?.let { it.speed != item.speed || it.skipSilence != item.skipSilence } == true }) {
+      _settingsChanged.tryEmit(Unit)
+    }
   }
+
+  private val _settingsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+  /**
+   * Emits when a book's speed or silence-skipping changed in `book_settings` -- from the book
+   * screen, with the player already running -- so the player can be told. See
+   * `BookSpeedController.applyCurrent`.
+   */
+  val settingsChanged: SharedFlow<Unit> = _settingsChanged
 
   private fun build(
     bookIdByMediaId: Map<String, String>,
+    fileOrderByBookId: Map<String, List<String>>,
     progress: List<MediaProgressEntity>,
     settings: List<BookSettingsEntity>,
   ): Map<String, AudiobookItem> {
     val progressById = progress.associateBy { it.mediaId }
     val settingsByBook = settings.associateBy { it.bookId }
+    val finishedBooks = fileOrderByBookId.filterValues { BookFinish.isFinished(it, progressById) }.keys
     // Keyed off the audiobook item map, never off `media_progress`: a music row must not become an
     // entry here, and a book file with no progress row still needs its settings.
     return bookIdByMediaId.mapValues { (mediaId, bookId) ->
@@ -172,7 +201,7 @@ class AudiobookSnapshot @Inject constructor(
         bookId = bookId,
         positionMs = row?.positionMs ?: 0L,
         lastPlayedAtEpochMs = row?.lastPlayedAtEpochMs ?: 0L,
-        isFinished = row?.isFinished ?: false,
+        isFinished = bookId in finishedBooks,
         // Clamped on the way out, the same way `AudiobookRepository.settings` clamps: a `NaN` or a
         // 40x from a hand-edited database reaches `ExoPlayer.setPlaybackSpeed`, which throws from
         // inside a listener callback and surfaces as playback dying with no message.

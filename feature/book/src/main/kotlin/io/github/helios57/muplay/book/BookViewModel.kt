@@ -52,6 +52,10 @@ interface BookSource {
   /** Sets the book's queue and starts it on one file. The position is the resume policy's. */
   suspend fun playFile(bookId: String, mediaId: String)
 
+  suspend fun markFinished(bookId: String)
+
+  suspend fun markUnfinished(bookId: String)
+
   /** A seek inside the loaded queue: which item, and how far into it. */
   suspend fun seekTo(itemIndex: Int, positionMs: Long)
 
@@ -103,6 +107,11 @@ class BookViewModel(private val source: BookSource) : ViewModel() {
 
       override suspend fun playFile(bookId: String, mediaId: String) =
         launcher.playFile(bookId, mediaId)
+
+      override suspend fun markFinished(bookId: String) = audiobookRepository.markFinished(bookId)
+
+      override suspend fun markUnfinished(bookId: String) =
+        audiobookRepository.markUnfinished(bookId)
 
       override suspend fun seekTo(itemIndex: Int, positionMs: Long) {
         playbackConnection.controller().seekTo(itemIndex, positionMs)
@@ -222,6 +231,11 @@ class BookViewModel(private val source: BookSource) : ViewModel() {
    * open with nothing playing. `BookPlayerViewModel.setSpeed` is the other direction and sets the
    * player, which `BookSpeedController` then persists; the two meet at the same row.
    */
+  /** By hand, from the book screen: a book finished elsewhere, or one the listener gave up on. */
+  fun setFinished(finished: Boolean) = onBook {
+    if (finished) source.markFinished(it) else source.markUnfinished(it)
+  }
+
   fun setSpeed(speed: Float) = onBook { source.setSpeed(it, speed) }
 
   fun setSkipSilence(enabled: Boolean) = onBook { source.setSkipSilence(it, enabled) }

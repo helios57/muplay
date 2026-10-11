@@ -8,7 +8,14 @@ import io.github.helios57.muplay.model.LibraryRole
 import kotlinx.coroutines.flow.Flow
 
 /** One mirrored song, reduced to "which book does this file belong to". */
-data class AudiobookItemRow(val mediaId: String, val albumId: String?)
+data class AudiobookItemRow(
+  val mediaId: String,
+  val albumId: String?,
+  /** The three play-order keys, so a book's *last* file can be found without loading its songs. */
+  val discNumber: Int?,
+  val trackNumber: Int?,
+  val sortTitle: String,
+)
 
 /**
  * The mirror, read through the **user's own library-role assignment**.
@@ -37,7 +44,8 @@ interface AudiobookDao {
   fun observeBookAlbums(role: LibraryRole): Flow<List<AlbumEntity>>
 
   @Query(
-    "SELECT s.id AS mediaId, s.albumId AS albumId FROM songs s WHERE s.libraryId IN " +
+    "SELECT s.id AS mediaId, s.albumId AS albumId, s.discNumber AS discNumber, " +
+      "s.trackNumber AS trackNumber, s.sortTitle AS sortTitle FROM songs s WHERE s.libraryId IN " +
       "(SELECT musicFolderId FROM libraries WHERE role = :role)",
   )
   fun observeItems(role: LibraryRole): Flow<List<AudiobookItemRow>>
