@@ -2,6 +2,7 @@ package io.github.helios57.muplay.media
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -618,7 +619,7 @@ class MediaCacheTest {
     // folder is already held the binding under test has demonstrably already run, so there is
     // nothing to construct: assert against what it left, and touch nothing.
     val alreadyHeld = SimpleCache.isCacheFolderLocked(expected)
-    val production = if (alreadyHeld) null else MediaCacheModule.provideMediaCache(context)
+    val production = if (alreadyHeld) null else MediaCacheModule.provideMediaCache(context, StandaloneDatabaseProvider(context))
     // **The directory is created after the constructor returns, and this line is what waits for
     // it.** Read out of `media3-datasource` 1.11.0's bytecode rather than inferred: `SimpleCache`'s
     // constructor starts an init thread and blocks on a `ConditionVariable` that the thread opens

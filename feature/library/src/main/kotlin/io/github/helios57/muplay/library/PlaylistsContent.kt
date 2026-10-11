@@ -1,5 +1,6 @@
 package io.github.helios57.muplay.library
 
+import io.github.helios57.muplay.database.OfflinePlaylist
 import io.github.helios57.muplay.database.SyncFailure
 import io.github.helios57.muplay.model.Playlist
 
@@ -65,6 +66,10 @@ sealed interface PlaylistsUiState {
     val playlists: List<Playlist>,
     val filter: LibraryFilterState,
     val emptyReason: PlaylistsEmptyReason?,
+    /** Playlists kept on this phone, by id, for the list's badge. */
+    val kept: Map<String, OfflinePlaylist> = emptyMap(),
+    /** The server could not be reached and this list is only what is kept on the phone. */
+    val showingKeptOnly: Boolean = false,
   ) : PlaylistsUiState
 
   data class Failed(val failure: SyncFailure) : PlaylistsUiState
@@ -93,10 +98,26 @@ sealed interface PlaylistsUiState {
  * second place a playlist could be, so applying the derivation could only ever remove a playlist
  * that failed to place.
  */
-fun playlistsContent(fetch: PlaylistsFetch, filter: LibraryFilterState): PlaylistsUiState =
+fun playlistsContent(
+  fetch: PlaylistsFetch,
+  filter: LibraryFilterState,
+  saved: List<OfflinePlaylist> = emptyList(),
+): PlaylistsUiState =
   when (fetch) {
     PlaylistsFetch.Loading -> PlaylistsUiState.Loading
-    is PlaylistsFetch.Failed -> PlaylistsUiState.Failed(fetch.failure)
+    // Only a failure to *reach* the server falls back to what is kept: a refusal (a rejected
+    // sign-in, a removed account) is the listener's to fix, and an offline list would hide it.
+    is PlaylistsFetch.Failed -> if (saved.isNotEmpty() && fetch.failure.isUnreachable()) {
+      PlaylistsUiState.Content(
+        playlists = saved.map { it.playlist },
+        filter = LibraryFilterState.Unknown,
+        emptyReason = null,
+        kept = saved.associateBy { it.playlist.id },
+        showingKeptOnly = true,
+      )
+    } else {
+      PlaylistsUiState.Failed(fetch.failure)
+    }
     is PlaylistsFetch.Loaded -> {
       val selected = filter.selectedLibraryId
       val visible = if (!filter.offersChoice || selected == null) {
@@ -110,6 +131,7 @@ fun playlistsContent(fetch: PlaylistsFetch, filter: LibraryFilterState): Playlis
       PlaylistsUiState.Content(
         playlists = visible,
         filter = filter,
+        kept = saved.associateBy { it.playlist.id },
         emptyReason = when {
           fetch.playlists.isEmpty() -> PlaylistsEmptyReason.NoneAtAll
           visible.isEmpty() -> PlaylistsEmptyReason.NoneInThisLibrary
@@ -124,3 +146,7 @@ internal fun PlaylistsEmptyReason.toMessage(): String = when (this) {
   PlaylistsEmptyReason.NoneAtAll -> NO_PLAYLISTS_LABEL
   PlaylistsEmptyReason.NoneInThisLibrary -> NO_PLAYLISTS_IN_LIBRARY_LABEL
 }
+
+/** A failure that means "no connection", as opposed to an answer the server gave. */
+internal fun SyncFailure.isUnreachable(): Boolean =
+  this == SyncFailure.Unreachable || this == SyncFailure.Unknown || this is SyncFailure.ServerError

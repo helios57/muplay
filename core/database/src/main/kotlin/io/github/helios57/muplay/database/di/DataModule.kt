@@ -12,6 +12,7 @@ import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.MIGRATION_6_7
 import io.github.helios57.muplay.database.MIGRATION_7_8
 import io.github.helios57.muplay.database.MIGRATION_8_9
+import io.github.helios57.muplay.database.MIGRATION_9_10
 import io.github.helios57.muplay.database.MuPlayDatabase
 import io.github.helios57.muplay.database.RendererStore
 import io.github.helios57.muplay.database.SubsonicSourceProvider
@@ -22,6 +23,7 @@ import io.github.helios57.muplay.database.dao.BrowseDao
 import io.github.helios57.muplay.database.dao.ChapterDao
 import io.github.helios57.muplay.database.dao.LibraryDao
 import io.github.helios57.muplay.database.dao.MediaProgressDao
+import io.github.helios57.muplay.database.dao.OfflineDao
 import io.github.helios57.muplay.database.dao.SyncWatermarkDao
 import io.github.helios57.muplay.model.RememberedRenderers
 import io.github.helios57.muplay.network.DefaultSubsonicSourceFactory
@@ -60,7 +62,7 @@ object DataModule {
       // every listener's book position -- the one thing this application exists to keep -- and no
       // migration test that is handed `MIGRATION_6_7` by name can see it happen.
       // `MigrationTest.theRealBuilderMigratesRatherThanDropping` is the one that can.
-      .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+      .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
       // Pre-release only, and still needed. Versions 1 through 6 have no `Migration` between them
       // -- Plan 2 Tasks 4, 5 and 6 and Plan 3 Task 11 each bumped `version` and wrote none -- so a
       // developer's device (and the emulator that runs the required Tier 2 gate) must be allowed
@@ -98,6 +100,16 @@ object DataModule {
 
   @Provides
   fun provideAudiobookDao(database: MuPlayDatabase): AudiobookDao = database.audiobookDao()
+
+  @Provides
+  fun provideOfflineDao(database: MuPlayDatabase): OfflineDao = database.offlineDao()
+
+  /** Saved playlists belong to the account that saved them; sign-out forgets them. */
+  @Provides
+  @dagger.multibindings.IntoSet
+  fun provideOfflineSignOut(repository: io.github.helios57.muplay.database.OfflineRepository):
+    io.github.helios57.muplay.database.AccountScopedData =
+    io.github.helios57.muplay.database.AccountScopedData { repository.clear() }
 
   /**
    * Global constraint: *"Inject a `Clock`; no direct wall-clock reads outside the injection

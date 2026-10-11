@@ -5,7 +5,10 @@ import androidx.lifecycle.viewModelScope
 import io.github.helios57.muplay.database.LibraryRepository
 import io.github.helios57.muplay.database.LibrarySelection
 import io.github.helios57.muplay.database.PlaylistRepository
+import io.github.helios57.muplay.database.OfflinePlaylist
 import io.github.helios57.muplay.database.SyncFailure
+import io.github.helios57.muplay.media.DownloadActivity
+import io.github.helios57.muplay.media.OfflineDownloads
 import io.github.helios57.muplay.media.PlaybackLauncher
 import io.github.helios57.muplay.media.QueueEditor
 import io.github.helios57.muplay.model.Playlist
@@ -13,10 +16,10 @@ import io.github.helios57.muplay.model.PlaylistWithSongs
 import io.github.helios57.muplay.model.Song
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -41,12 +44,32 @@ interface PlaylistSource : QueueSink, LibraryFilterSource {
   suspend fun librariesOf(playlists: List<Playlist>): Map<String, Set<Int>>
   suspend fun playlist(playlistId: String, fallbackLibraryId: Int): PlaylistWithSongs
   suspend fun play(songs: List<Song>, startIndex: Int)
+
+  /** Playlists kept on this phone, and how much of each has arrived. */
+  fun kept(): Flow<List<OfflinePlaylist>>
+
+  val downloads: Flow<DownloadActivity>
+
+  suspend fun keep(playlist: Playlist, songs: List<Song>)
+
+  suspend fun forget(playlistId: String)
+
+  /** The kept copy of [playlistId], downloaded songs only -- what can play with no connection. */
+  suspend fun keptCopy(playlistId: String): PlaylistWithSongs?
+
+  fun resumeDownloads()
 }
 
 /** One playlist. */
 sealed interface PlaylistUiState {
   data object Loading : PlaylistUiState
-  data class Content(val playlist: Playlist, val songs: List<Song>) : PlaylistUiState
+  data class Content(
+    val playlist: Playlist,
+    val songs: List<Song>,
+    val offline: OfflineStatus = OfflineStatus.NotKept,
+    /** The server could not be reached; this is the copy kept on the phone. */
+    val fromKept: Boolean = false,
+  ) : PlaylistUiState
   data class Failed(val failure: SyncFailure) : PlaylistUiState
 }
 
@@ -72,6 +95,7 @@ class PlaylistsViewModel(
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
     queueEditor: QueueEditor,
+    offlineDownloads: OfflineDownloads,
   ) : this(
     PlaylistRepositorySource(
       playlistRepository,
@@ -79,6 +103,7 @@ class PlaylistsViewModel(
       librarySelection,
       playbackLauncher,
       queueEditor,
+      offlineDownloads,
     ),
   )
 
@@ -90,16 +115,31 @@ class PlaylistsViewModel(
   private val fetch = MutableStateFlow<PlaylistsFetch>(PlaylistsFetch.Loading)
 
   val uiState: StateFlow<PlaylistsUiState> =
-    combine(fetch, source.libraries, source.selectedLibraryId) { answer, libraries, selected ->
-      playlistsContent(answer, LibraryFilterState(libraries, selected))
+    combine(fetch, source.libraries, source.selectedLibraryId, source.kept()) { answer, libraries, selected, kept ->
+      playlistsContent(answer, LibraryFilterState(libraries, selected), kept)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), PlaylistsUiState.Loading)
 
   init {
     refresh()
+    // A download stopped by a lost connection, or by the process ending, picks up here.
+    source.resumeDownloads()
   }
 
   /** Switches library, for every browse screen at once -- see `LibrarySelection`. */
   fun selectLibrary(id: Int) = source.selectLibrary(id)
+
+  private var shown = false
+
+  /**
+   * The screen came (back) into view. Playlists are fetched live, and this view model outlives
+   * the screen -- measured, it outlived a sign-out and a sign-in to another server, and went on
+   * listing the first server's playlists until the process died. The first showing is covered by
+   * `init`; every later one asks again, keeping what is on screen until the answer arrives.
+   */
+  fun onShown() {
+    if (shown) refresh()
+    shown = true
+  }
 
   /**
    * Re-reads the list from the server.
@@ -144,6 +184,7 @@ class PlaylistViewModel(
     librarySelection: LibrarySelection,
     playbackLauncher: PlaybackLauncher,
     queueEditor: QueueEditor,
+    offlineDownloads: OfflineDownloads,
   ) : this(
     PlaylistRepositorySource(
       playlistRepository,
@@ -151,30 +192,54 @@ class PlaylistViewModel(
       librarySelection,
       playbackLauncher,
       queueEditor,
+      offlineDownloads,
     ),
   )
 
   private val state = MutableStateFlow<PlaylistUiState>(PlaylistUiState.Loading)
-  val uiState: StateFlow<PlaylistUiState> = state.asStateFlow()
+  val uiState: StateFlow<PlaylistUiState> =
+    combine(state, source.kept(), source.downloads) { current, kept, activity ->
+      if (current !is PlaylistUiState.Content) return@combine current
+      current.copy(offline = offlineStatus(kept.firstOrNull { it.playlist.id == current.playlist.id }, activity))
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, PlaylistUiState.Loading)
 
   private var openedId: String? = null
 
   /** Called from the screen's `LaunchedEffect(playlistId)`, the way `AlbumViewModel.load` is. */
   fun open(playlistId: String) {
-    if (openedId == playlistId) return
+    val current = state.value
+    val showingLive = current is PlaylistUiState.Loading ||
+      (current is PlaylistUiState.Content && !current.fromKept)
+    // Only a live answer (or one on its way) is worth keeping on a reopen. A kept copy or a
+    // failure is what the server could not give last time, so the next showing asks again.
+    if (openedId == playlistId && showingLive) return
+    if (openedId != playlistId) state.value = PlaylistUiState.Loading
     openedId = playlistId
-    state.value = PlaylistUiState.Loading
+    fetch(playlistId)
+  }
+
+  /** Asks the server again for the playlist on screen, keeping what is shown until it answers. */
+  fun retry() {
+    openedId?.let(::fetch)
+  }
+
+  private fun fetch(playlistId: String) {
     viewModelScope.launch {
       val fallback = source.selectedLibraryId.first()
-      state.value = runCatching { source.playlist(playlistId, fallback ?: 0) }
+      val answer = runCatching { source.playlist(playlistId, fallback ?: 0) }
         .fold(
           onSuccess = { PlaylistUiState.Content(it.playlist, it.songs) },
-          onFailure = { PlaylistUiState.Failed(SyncFailure.of(it)) },
+          onFailure = { error ->
+            val failure = SyncFailure.of(error)
+            val kept = if (failure.isUnreachable()) source.keptCopy(playlistId) else null
+            kept?.let { PlaylistUiState.Content(it.playlist, it.songs, fromKept = true) }
+              ?: PlaylistUiState.Failed(failure)
+          },
         )
+      if (openedId == playlistId) state.value = answer
     }
   }
 
-  /** Plays the playlist from the row tapped, in the playlist's own order. */
   fun play(startIndex: Int) {
     // `orEmpty` rather than a second `?: return`: a not-yet-loaded playlist and an out-of-range
     // index are the same behaviour, so a null guard beside the range check is a branch no test can
@@ -220,6 +285,20 @@ class PlaylistViewModel(
     songsOnScreen()?.let { songs -> viewModelScope.launch { source.playNext(songs) } }
   }
 
+  /** Downloads this playlist as it is on screen now. Not offered on the kept copy itself. */
+  fun keepOffline() {
+    val content = state.value as? PlaylistUiState.Content ?: return
+    if (content.fromKept) return
+    viewModelScope.launch { source.keep(content.playlist, content.songs) }
+  }
+
+  fun removeOffline() {
+    val content = state.value as? PlaylistUiState.Content ?: return
+    viewModelScope.launch { source.forget(content.playlist.id) }
+  }
+
+  fun retryDownloads() = source.resumeDownloads()
+
   private fun songsOnScreen(): List<Song>? = (state.value as? PlaylistUiState.Content)?.songs
 
   /** `orEmpty` rather than a second `?.`, for the reason [play] states: `Content.songs` is
@@ -240,6 +319,7 @@ private class PlaylistRepositorySource(
   librarySelection: LibrarySelection,
   private val playbackLauncher: PlaybackLauncher,
   queueEditor: QueueEditor,
+  private val offlineDownloads: OfflineDownloads,
 ) : PlaylistSource,
   QueueSink by QueueEditorSink(queueEditor),
   LibraryFilterSource by LibrarySelectionFilter(libraryRepository, librarySelection) {
@@ -250,4 +330,17 @@ private class PlaylistRepositorySource(
     playlistRepository.playlist(playlistId, fallbackLibraryId)
   override suspend fun play(songs: List<Song>, startIndex: Int) =
     playbackLauncher.play(songs, startIndex)
+
+  override fun kept(): Flow<List<OfflinePlaylist>> = offlineDownloads.saved()
+
+  override val downloads: Flow<DownloadActivity> = offlineDownloads.state
+
+  override suspend fun keep(playlist: Playlist, songs: List<Song>) = offlineDownloads.save(playlist, songs)
+
+  override suspend fun forget(playlistId: String) = offlineDownloads.remove(playlistId)
+
+  override suspend fun keptCopy(playlistId: String): PlaylistWithSongs? =
+    offlineDownloads.keptCopy(playlistId)
+
+  override fun resumeDownloads() = offlineDownloads.resume()
 }

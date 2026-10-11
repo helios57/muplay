@@ -3,9 +3,11 @@ package io.github.helios57.muplay.media
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.DatabaseProvider
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
@@ -62,10 +64,23 @@ object MediaCache {
     context: Context,
     directory: File = File(context.cacheDir, DIRECTORY_NAME),
     maxBytes: Long = MAX_BYTES,
+    database: DatabaseProvider = StandaloneDatabaseProvider(context),
   ): Cache =
     SimpleCache(
       directory,
       LeastRecentlyUsedCacheEvictor(maxBytes),
-      StandaloneDatabaseProvider(context),
+      database,
     )
+
+  const val OFFLINE_DIRECTORY_NAME: String = "offline"
+
+  /**
+   * Saved playlists' audio: in `filesDir`, so the system never clears it, and never evicted, so
+   * only removing the playlist frees it. See `OfflineAudioCache`.
+   */
+  fun createOffline(
+    context: Context,
+    database: DatabaseProvider,
+    directory: File = File(context.filesDir, OFFLINE_DIRECTORY_NAME),
+  ): Cache = SimpleCache(directory, NoOpCacheEvictor(), database)
 }

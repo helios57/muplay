@@ -3,6 +3,8 @@ package io.github.helios57.muplay.media.di
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.DatabaseProvider
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.Cache
 import io.github.helios57.muplay.media.MediaCache
 import dagger.Module
@@ -43,5 +45,25 @@ object MediaCacheModule {
   @Provides
   @Singleton
   @OptIn(UnstableApi::class)
-  fun provideMediaCache(@ApplicationContext context: Context): Cache = MediaCache.create(context)
+  fun provideMediaCache(@ApplicationContext context: Context, database: DatabaseProvider): Cache =
+    MediaCache.create(context, database = database)
+
+  /** Saved playlists' audio. See [OfflineAudioCache]. */
+  @Provides
+  @Singleton
+  @OfflineAudioCache
+  @OptIn(UnstableApi::class)
+  fun provideOfflineCache(@ApplicationContext context: Context, database: DatabaseProvider): Cache =
+    MediaCache.createOffline(context, database)
+
+  /**
+   * One index database for both caches. Each `SimpleCache` keeps its own tables in it, keyed by the
+   * cache's uid, so sharing is what Media3 intends -- two providers would be two connections
+   * writing one file.
+   */
+  @Provides
+  @Singleton
+  @OptIn(UnstableApi::class)
+  fun provideCacheDatabase(@ApplicationContext context: Context): DatabaseProvider =
+    StandaloneDatabaseProvider(context)
 }

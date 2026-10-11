@@ -118,3 +118,30 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
     db.execSQL("DELETE FROM `sync_watermark`")
   }
 }
+
+/**
+ * Version 10 adds the three offline-playlist tables and touches nothing else -- the statements are
+ * Room's own from `schemas/.../10.json`, so the validated schema is the one a fresh install gets.
+ * New tables only: no row of any existing table, `media_progress` included, is read or written.
+ */
+val MIGRATION_9_10 = object : Migration(9, 10) {
+  override fun migrate(db: SupportSQLiteDatabase) {
+    db.execSQL(
+      "CREATE TABLE IF NOT EXISTS `offline_playlists` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+        "`songCount` INTEGER NOT NULL, `durationSeconds` INTEGER NOT NULL, `owner` TEXT, " +
+        "`coverArtId` TEXT, `savedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+    )
+    db.execSQL(
+      "CREATE TABLE IF NOT EXISTS `offline_playlist_songs` (`playlistId` TEXT NOT NULL, " +
+        "`position` INTEGER NOT NULL, `songId` TEXT NOT NULL, PRIMARY KEY(`playlistId`, `position`))",
+    )
+    db.execSQL(
+      "CREATE INDEX IF NOT EXISTS `index_offline_playlist_songs_songId` " +
+        "ON `offline_playlist_songs` (`songId`)",
+    )
+    db.execSQL(
+      "CREATE TABLE IF NOT EXISTS `offline_songs` (`songId` TEXT NOT NULL, " +
+        "`downloaded` INTEGER NOT NULL, PRIMARY KEY(`songId`))",
+    )
+  }
+}

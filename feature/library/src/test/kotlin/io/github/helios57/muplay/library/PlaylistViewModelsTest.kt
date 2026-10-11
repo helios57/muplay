@@ -1,6 +1,8 @@
 package io.github.helios57.muplay.library
 
+import io.github.helios57.muplay.database.OfflinePlaylist
 import io.github.helios57.muplay.database.SyncFailure
+import io.github.helios57.muplay.media.DownloadActivity
 import io.github.helios57.muplay.model.LibraryRole
 import io.github.helios57.muplay.model.MusicLibrary
 import io.github.helios57.muplay.model.Playlist
@@ -113,6 +115,29 @@ class PlaylistViewModelsTest {
     val playNextCalls = mutableListOf<List<String>>()
     override suspend fun playNext(songs: List<Song>) {
       playNextCalls += songs.map { it.id }
+    }
+
+    val keptFlow = MutableStateFlow<List<OfflinePlaylist>>(emptyList())
+    override fun kept() = keptFlow
+
+    override val downloads = MutableStateFlow<DownloadActivity>(DownloadActivity.Idle)
+
+    val keepCalls = mutableListOf<Pair<String, List<String>>>()
+    override suspend fun keep(playlist: Playlist, songs: List<Song>) {
+      keepCalls += playlist.id to songs.map { it.id }
+    }
+
+    val forgetCalls = mutableListOf<String>()
+    override suspend fun forget(playlistId: String) {
+      forgetCalls += playlistId
+    }
+
+    var keptCopyAnswer: PlaylistWithSongs? = null
+    override suspend fun keptCopy(playlistId: String) = keptCopyAnswer
+
+    var resumeCalls = 0
+    override fun resumeDownloads() {
+      resumeCalls++
     }
   }
 
@@ -520,5 +545,136 @@ class PlaylistViewModelsTest {
 
     assertThat(source.enqueueCalls).isEmpty()
     assertThat(source.playNextCalls).isEmpty()
+  }
+
+  @Test
+  fun `keeping a playlist downloads the songs on screen, in their order`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("b"), song("a"))) }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    vm.keepOffline()
+    advanceUntilIdle()
+
+    assertThat(source.keepCalls).containsExactly("p1" to listOf("b", "a"))
+  }
+
+  @Test
+  fun `the playlist screen follows the download as it arrives`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"))) }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+    assertThat((vm.uiState.value as PlaylistUiState.Content).offline).isEqualTo(OfflineStatus.NotKept)
+
+    source.keptFlow.value = listOf(OfflinePlaylist(roadTrip, total = 2, downloaded = 1))
+    advanceUntilIdle()
+    assertThat((vm.uiState.value as PlaylistUiState.Content).offline).isEqualTo(OfflineStatus.Downloading(1, 2))
+
+    source.keptFlow.value = listOf(OfflinePlaylist(roadTrip, total = 2, downloaded = 2))
+    advanceUntilIdle()
+    assertThat((vm.uiState.value as PlaylistUiState.Content).offline).isEqualTo(OfflineStatus.Kept)
+
+    vm.removeOffline()
+    advanceUntilIdle()
+    assertThat(source.forgetCalls).containsExactly("p1")
+  }
+
+  @Test
+  fun `an unreachable server opens the kept copy instead of an error`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { throw IOException("no route to host") }
+    source.keptCopyAnswer = PlaylistWithSongs(roadTrip, listOf(song("a")))
+    val vm = PlaylistViewModel(source)
+
+    vm.open("p1")
+    advanceUntilIdle()
+
+    val state = vm.uiState.value as PlaylistUiState.Content
+    assertThat(state.fromKept).isTrue
+    assertThat(state.songs.map { it.id }).containsExactly("a")
+    // Re-keeping the kept copy would overwrite the full playlist with its downloaded part.
+    vm.keepOffline()
+    advanceUntilIdle()
+    assertThat(source.keepCalls).isEmpty()
+  }
+
+  @Test
+  fun `a playlist that is not kept still reports the failure`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { throw IOException("no route to host") }
+    val vm = PlaylistViewModel(source)
+
+    vm.open("p1")
+    advanceUntilIdle()
+
+    assertThat(vm.uiState.value).isInstanceOf(PlaylistUiState.Failed::class.java)
+  }
+
+  @Test
+  fun `opening the list resumes downloads a lost connection stopped`() = runTest {
+    val source = FakePlaylistSource()
+
+    warm(source)
+    advanceUntilIdle()
+
+    assertThat(source.resumeCalls).isEqualTo(1)
+  }
+
+  @Test
+  fun `coming back to the list asks the server again, the first showing does not ask twice`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistsAnswer = { listOf(roadTrip) }
+    val vm = warm(source)
+    advanceUntilIdle()
+
+    vm.onShown()
+    advanceUntilIdle()
+    assertThat(source.playlistsCallCount).isEqualTo(1)
+
+    // Signed in somewhere else meanwhile: the list must be that server's, not the last one's.
+    source.playlistsAnswer = { listOf(bedtime) }
+    vm.onShown()
+    advanceUntilIdle()
+
+    assertThat(source.playlistsCallCount).isEqualTo(2)
+    assertThat((vm.uiState.value as PlaylistsUiState.Content).playlists).containsExactly(bedtime)
+  }
+
+  @Test
+  fun `reopening a kept copy asks the server again once it is back`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { throw IOException("no route to host") }
+    source.keptCopyAnswer = PlaylistWithSongs(roadTrip, listOf(song("a")))
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"), song("b"))) }
+    vm.open("p1")
+    advanceUntilIdle()
+
+    val state = vm.uiState.value as PlaylistUiState.Content
+    assertThat(state.fromKept).isFalse
+    assertThat(state.songs).hasSize(2)
+  }
+
+  @Test
+  fun `trying again keeps the kept copy on screen while the server stays away`() = runTest {
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { throw IOException("no route to host") }
+    source.keptCopyAnswer = PlaylistWithSongs(roadTrip, listOf(song("a")))
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+
+    vm.retry()
+    advanceUntilIdle()
+
+    assertThat(source.playlistCalls).hasSize(2)
+    assertThat((vm.uiState.value as PlaylistUiState.Content).fromKept).isTrue
   }
 }

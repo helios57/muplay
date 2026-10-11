@@ -11,6 +11,7 @@ import io.github.helios57.muplay.media.AudiobookItemSource
 import io.github.helios57.muplay.media.AudiobookResumePolicy
 import io.github.helios57.muplay.media.AudiobookSnapshot
 import io.github.helios57.muplay.media.NeverResume
+import io.github.helios57.muplay.media.OfflineDownloads
 import io.github.helios57.muplay.media.ResumePolicy
 import io.github.helios57.muplay.media.PlaybackConnection
 import io.github.helios57.muplay.media.QueueStore
@@ -106,6 +107,12 @@ object MediaModule {
    * the player because the service's `QueueKeeper` may write the old queue in between; after the
    * player is empty it has nothing left to write.
    */
+  /** Saved playlists' audio goes with the account that saved it. */
+  @Provides
+  @IntoSet
+  fun provideOfflineAudioSignOut(downloads: OfflineDownloads): AccountScopedData =
+    AccountScopedData { downloads.clearAudio() }
+
   @Provides
   @IntoSet
   fun provideQueueSignOut(store: QueueStore, connection: PlaybackConnection): AccountScopedData =

@@ -8,6 +8,7 @@ import io.github.helios57.muplay.database.dao.BrowseDao
 import io.github.helios57.muplay.database.dao.ChapterDao
 import io.github.helios57.muplay.database.dao.LibraryDao
 import io.github.helios57.muplay.database.dao.MediaProgressDao
+import io.github.helios57.muplay.database.dao.OfflineDao
 import io.github.helios57.muplay.database.dao.SyncWatermarkDao
 import io.github.helios57.muplay.database.entity.AlbumEntity
 import io.github.helios57.muplay.database.entity.ArtistEntity
@@ -16,6 +17,9 @@ import io.github.helios57.muplay.database.entity.ChapterEntity
 import io.github.helios57.muplay.database.entity.ChapterScanEntity
 import io.github.helios57.muplay.database.entity.LibraryEntity
 import io.github.helios57.muplay.database.entity.MediaProgressEntity
+import io.github.helios57.muplay.database.entity.OfflinePlaylistEntity
+import io.github.helios57.muplay.database.entity.OfflinePlaylistSongEntity
+import io.github.helios57.muplay.database.entity.OfflineSongEntity
 import io.github.helios57.muplay.database.entity.SongEntity
 import io.github.helios57.muplay.database.entity.SyncWatermarkEntity
 
@@ -64,8 +68,11 @@ import io.github.helios57.muplay.database.entity.SyncWatermarkEntity
     BookSettingsEntity::class,
     ChapterScanEntity::class,
     ChapterEntity::class,
+    OfflinePlaylistEntity::class,
+    OfflinePlaylistSongEntity::class,
+    OfflineSongEntity::class,
   ],
-  version = 9,
+  version = 10,
   exportSchema = true,
 )
 abstract class MuPlayDatabase : RoomDatabase() {
@@ -89,6 +96,8 @@ abstract class MuPlayDatabase : RoomDatabase() {
    * JSON byte-identical, which is why this arrived without a migration.
    */
   abstract fun audiobookDao(): AudiobookDao
+
+  abstract fun offlineDao(): OfflineDao
 
   companion object {
     const val DATABASE_NAME = "muplay.db"

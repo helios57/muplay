@@ -171,6 +171,17 @@ object MuPlayIcons {
     close()
   }
 
+  /** An arrow down onto a tray: kept on this phone. */
+  val Download: ImageVector = stroked("MuPlayDownload") {
+    moveTo(12f, 4f)
+    lineTo(12f, 15f)
+    moveTo(7.5f, 10.5f)
+    lineTo(12f, 15f)
+    lineTo(16.5f, 10.5f)
+    moveTo(5f, 19f)
+    lineTo(19f, 19f)
+  }
+
   /** A standing book: cover and spine. The shelf destination. */
   val Book: ImageVector = stroked("MuPlayBook") {
     moveTo(6f, 4f)

@@ -11,6 +11,7 @@ import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import io.github.helios57.muplay.media.di.MediaHttpClient
+import io.github.helios57.muplay.media.di.OfflineAudioCache
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.Call
@@ -39,7 +40,11 @@ import okhttp3.Call
 class MuPlayDataSourceFactory @Inject constructor(
   @MediaHttpClient private val callFactory: Call.Factory,
   private val cache: Cache,
+  @OfflineAudioCache private val offline: Cache?,
 ) {
+
+  /** Streaming only, with no saved-playlist cache in front -- what most device tests build. */
+  constructor(callFactory: Call.Factory, cache: Cache) : this(callFactory, cache, null)
 
   /**
    * A cache-backed `DataSource.Factory`: read from [cache] where possible, fall through to HTTP
@@ -57,7 +62,46 @@ class MuPlayDataSourceFactory @Inject constructor(
    * The upstream source is wrapped in [RequestedUriDataSource], which is a **security** measure
    * and not a tidy-up — see that class.
    */
-  fun create(): DataSource.Factory =
+  /**
+   * Playback reads the saved-playlist cache first, read-only: a song that is on the phone plays
+   * with no request at all, which is what makes it play with no connection. Anything else falls
+   * through to the streaming chain below, unchanged.
+   */
+  fun create(): DataSource.Factory {
+    val streaming = streaming()
+    val offline = offline ?: return streaming
+    return CacheDataSource.Factory()
+      .setCache(offline)
+      .setCacheWriteDataSinkFactory(null)
+      .setUpstreamDataSourceFactory(streaming)
+      .setCacheKeyFactory(TrackIdCacheKeyFactory)
+      .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+  }
+
+  /**
+   * What a download writes through: into the saved-playlist cache, from the streaming cache when
+   * the song was played recently (read-only, so a download does not churn it), else the server --
+   * through [AudioOnlyDataSource], so an error document answered with a 200 is never kept as a song.
+   */
+  fun createDownload(): CacheDataSource {
+    val target = checkNotNull(offline) { "no saved-playlist cache was provided" }
+    val upstream = CacheDataSource.Factory()
+      .setCache(cache)
+      .setCacheWriteDataSinkFactory(null)
+      .setUpstreamDataSourceFactory(
+        AudioOnlyDataSource.Factory(
+          RequestedUriDataSource.Factory(OkHttpDataSource.Factory(callFactory).setUserAgent(USER_AGENT)),
+        ),
+      )
+      .setCacheKeyFactory(TrackIdCacheKeyFactory)
+    return CacheDataSource.Factory()
+      .setCache(target)
+      .setUpstreamDataSourceFactory(upstream)
+      .setCacheKeyFactory(TrackIdCacheKeyFactory)
+      .createDataSource()
+  }
+
+  private fun streaming(): CacheDataSource.Factory =
     CacheDataSource.Factory()
       .setCache(cache)
       .setUpstreamDataSourceFactory(
@@ -170,5 +214,36 @@ class RequestedUriDataSource(private val delegate: HttpDataSource) : HttpDataSou
   class Factory(private val delegate: HttpDataSource.Factory) : DataSource.Factory {
     override fun createDataSource(): DataSource =
       RequestedUriDataSource(delegate.createDataSource())
+  }
+}
+
+/**
+ * Refuses a response that is not audio. Navidrome answers some failures -- a transcode whose cache
+ * file has gone, for one -- with HTTP 200 and a JSON error document. A player meets that as a
+ * decode error and skips the song; a download would keep it as the song forever.
+ */
+@OptIn(UnstableApi::class)
+class AudioOnlyDataSource(private val delegate: HttpDataSource) : HttpDataSource by delegate {
+  override fun open(dataSpec: DataSpec): Long {
+    val length = delegate.open(dataSpec)
+    val type = delegate.responseHeaders.entries
+      .firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }
+      ?.value?.firstOrNull().orEmpty().lowercase()
+    if (isNotAudio(type)) {
+      delegate.close()
+      throw java.io.IOException("the server answered with $type instead of audio")
+    }
+    return length
+  }
+
+  class Factory(private val delegate: DataSource.Factory) : DataSource.Factory {
+    override fun createDataSource(): DataSource =
+      AudioOnlyDataSource(delegate.createDataSource() as HttpDataSource)
+  }
+
+  companion object {
+    fun isNotAudio(contentType: String): Boolean =
+      contentType.startsWith("application/json") || contentType.startsWith("text/") ||
+        contentType.startsWith("application/xml")
   }
 }

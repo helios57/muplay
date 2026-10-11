@@ -483,4 +483,27 @@ class MigrationTest {
       assertThat(c.getInt(1)).isZero
     }
   }
+
+  @Test
+  fun theMoveToTenKeepsEveryRowAndAddsTheOfflineTables() {
+    seedVersionEight(TEST_DB)
+    helper.runMigrationsAndValidate(TEST_DB, 9, true, MIGRATION_8_9).close()
+
+    val db = helper.runMigrationsAndValidate(TEST_DB, 10, true, MIGRATION_9_10)
+
+    db.query("SELECT positionMs FROM media_progress WHERE mediaId = 'chapter-14'").use { c ->
+      assertThat(c.count).isEqualTo(1)
+      c.moveToFirst()
+      assertThat(c.getLong(0)).isEqualTo(3_600_000L)
+    }
+    db.query("SELECT COUNT(*) FROM songs").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isEqualTo(2)
+    }
+    db.execSQL("INSERT INTO offline_songs (songId, downloaded) VALUES ('a-song', 0)")
+    db.query("SELECT COUNT(*) FROM offline_playlists").use { c ->
+      c.moveToFirst()
+      assertThat(c.getInt(0)).isZero
+    }
+  }
 }

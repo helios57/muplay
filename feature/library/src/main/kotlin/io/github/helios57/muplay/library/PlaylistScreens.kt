@@ -56,6 +56,7 @@ fun PlaylistsScreen(
   modifier: Modifier = Modifier,
   viewModel: PlaylistsViewModel = hiltViewModel(),
 ) {
+  LaunchedEffect(Unit) { viewModel.onShown() }
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   when (val state = uiState) {
     PlaylistsUiState.Loading -> Message(text = PLAYLISTS_LOADING_LABEL, loading = true, modifier = modifier)
@@ -77,6 +78,14 @@ fun PlaylistsScreen(
           // filter over a long list -- the same arrangement the albums tab uses, drawn by the same
           // `LibraryChips`. Behind `offersChoice`: one library is not a filter, it is a row of
           // screen spent saying so.
+          if (state.showingKeptOnly) {
+            item {
+              Column {
+                Message(text = KEPT_ONLY_NOTICE)
+                TextButton(onClick = viewModel::refresh) { Text(RETRY_LABEL) }
+              }
+            }
+          }
           if (state.filter.offersChoice) {
             item { LibraryChips(state = state.filter, onLibrarySelected = viewModel::selectLibrary) }
           }
@@ -84,7 +93,11 @@ fun PlaylistsScreen(
             item { Message(text = reason.toMessage()) }
           }
           items(state.playlists, key = { "playlist:" + it.id }) { playlist ->
-            PlaylistRow(playlist = playlist, onClick = { onOpenPlaylist(playlist.id) })
+            PlaylistRow(
+              playlist = playlist,
+              badge = keptBadge(state.kept[playlist.id]),
+              onClick = { onOpenPlaylist(playlist.id) },
+            )
           }
         }
         // Whether this bar appears is the server's decision, not this screen's: playlist order is
@@ -132,6 +145,22 @@ fun PlaylistScreen(
       contentPadding = PaddingValues(MuPlaySpacing.gutter),
       verticalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
     ) {
+      if (state.fromKept) {
+        item {
+          Column {
+            Message(text = KEPT_COPY_NOTICE)
+            TextButton(onClick = viewModel::retry) { Text(RETRY_LABEL) }
+          }
+        }
+      }
+      item {
+        KeepOfflineRow(
+          status = state.offline,
+          onKeep = viewModel::keepOffline,
+          onRemove = viewModel::removeOffline,
+          onRetry = viewModel::retryDownloads,
+        )
+      }
       if (state.songs.isNotEmpty()) {
         item {
           // Shuffle takes over playback; the queue control beside it deliberately does not. Both
@@ -174,7 +203,7 @@ fun PlaylistScreen(
 }
 
 @Composable
-private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
+private fun PlaylistRow(playlist: Playlist, badge: String?, onClick: () -> Unit) {
   Row(
     modifier = Modifier
       .fillMaxWidth()
@@ -193,10 +222,43 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
         overflow = TextOverflow.Ellipsis,
       )
       Text(
-        text = trackCountLabel(playlist.songCount),
+        text = listOfNotNull(trackCountLabel(playlist.songCount), badge).joinToString(" · "),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+    }
+  }
+}
+
+/**
+ * Keep-on-this-phone, as one row: a switch-like button while nothing is kept, the progress while it
+ * downloads, and the way back out once it is there. Removing is always offered, so a download the
+ * listener changed their mind about can be stopped half-way.
+ */
+@Composable
+private fun KeepOfflineRow(
+  status: OfflineStatus,
+  onKeep: () -> Unit,
+  onRemove: () -> Unit,
+  onRetry: () -> Unit,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth().heightIn(min = MuPlaySpacing.minTouchTarget),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(MuPlaySpacing.sm),
+  ) {
+    Icon(MuPlayIcons.Download, contentDescription = null, modifier = Modifier.size(MuPlaySpacing.xl))
+    when (status) {
+      OfflineStatus.NotKept -> TextButton(onClick = onKeep) { Text(KEEP_OFFLINE_LABEL) }
+      else -> {
+        Text(
+          text = status.label().orEmpty(),
+          style = MaterialTheme.typography.bodyMedium,
+          modifier = Modifier.weight(1f),
+        )
+        if (status is OfflineStatus.Paused) TextButton(onClick = onRetry) { Text(RETRY_LABEL) }
+        TextButton(onClick = onRemove) { Text(REMOVE_OFFLINE_LABEL) }
+      }
     }
   }
 }
