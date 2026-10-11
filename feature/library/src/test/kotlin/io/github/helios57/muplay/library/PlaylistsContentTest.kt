@@ -206,4 +206,21 @@ class PlaylistsContentTest {
   private fun shownIds(fetch: PlaylistsFetch, selected: Int) =
     (playlistsContent(fetch, filter(music, books, selected = selected)) as PlaylistsUiState.Content)
       .playlists.map { it.id }
+
+  @Test
+  fun `only a failure that means no connection counts as unreachable`() {
+    // This decides whether a kept copy is offered instead of the error, so a refusal the server
+    // actually answered -- a wrong password, a playlist not shared -- must never be read as "offline".
+    assertThat(
+      listOf(SyncFailure.Unreachable, SyncFailure.Unknown, SyncFailure.ServerError(status = 502))
+        .map { it.isUnreachable() },
+    ).containsOnly(true)
+    assertThat(
+      listOf(
+        SyncFailure.SignInRejected(code = 40),
+        SyncFailure.NotFound(detail = null),
+        SyncFailure.CertificateInvalid,
+      ).map { it.isUnreachable() },
+    ).containsOnly(false)
+  }
 }

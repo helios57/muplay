@@ -302,12 +302,15 @@ class LibraryUiStateTest {
       libraries = listOf(music, books),
       selectedLibraryId = 2,
       query = "",
-      albums = listOf(album("b1", "A Book", 2), album("a1", "An Album", 1)),
+      // `o1` names a library this account no longer has -- its role is unknown, so it opens as an
+      // album rather than being guessed into the book player.
+      albums = listOf(album("b1", "A Book", 2), album("a1", "An Album", 1), album("o1", "Orphan", 9)),
       searchAlbums = emptyList(),
       shuffle = null,
       notice = LibraryNotice.Idle,
     )
 
+    assertThat(state.opensAsBook("o1")).isFalse
     assertThat(state.opensAsBook("b1")).isTrue
     assertThat(state.opensAsBook("a1")).isFalse
     assertThat(state.opensAsBook("unknown")).isFalse

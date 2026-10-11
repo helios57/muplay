@@ -450,6 +450,23 @@ class BookPlayerViewModelTest {
   }
 
   @Test
+  fun `the scrubber and skip silence with nothing loaded touch the player not at all`() =
+    runTest(dispatcher) {
+      // No book means no timeline to locate a point in and no book to store a setting against.
+      // Either call reaching the controls would seek a music track, or file a setting under "".
+      val controls = controls()
+      val viewModel = warm(controls)
+      advanceUntilIdle()
+      controls.calls.clear()
+
+      viewModel.seekBook(12_500)
+      viewModel.setSkipSilence(true)
+      advanceUntilIdle()
+
+      assertThat(controls.calls).isEmpty()
+    }
+
+  @Test
   fun `chapter navigation with nothing loaded touches the player not at all`() =
     runTest(dispatcher) {
       val controls = controls()

@@ -677,4 +677,47 @@ class PlaylistViewModelsTest {
     assertThat(source.playlistCalls).hasSize(2)
     assertThat((vm.uiState.value as PlaylistUiState.Content).fromKept).isTrue
   }
+
+  @Test
+  fun `reopening a playlist that failed asks the server again`() = runTest {
+    // Only a live answer is kept across a reopen; an error is what the server could not give last
+    // time, and showing it again without asking would leave the screen stuck on it.
+    val source = FakePlaylistSource()
+    source.playlistAnswer = { throw IOException("no route to host") }
+    val vm = PlaylistViewModel(source)
+    vm.open("p1")
+    advanceUntilIdle()
+    assertThat(vm.uiState.value).isInstanceOf(PlaylistUiState.Failed::class.java)
+
+    source.playlistAnswer = { PlaylistWithSongs(roadTrip, listOf(song("a"))) }
+    vm.open("p1")
+    advanceUntilIdle()
+
+    assertThat(source.playlistCalls).hasSize(2)
+    assertThat(vm.uiState.value).isInstanceOf(PlaylistUiState.Content::class.java)
+  }
+
+  @Test
+  fun `trying again with no playlist open reads nothing`() = runTest {
+    val source = FakePlaylistSource()
+    val vm = PlaylistViewModel(source)
+
+    vm.retry()
+    advanceUntilIdle()
+
+    assertThat(source.playlistCalls).isEmpty()
+  }
+
+  @Test
+  fun `keeping or removing before the playlist has loaded touches nothing`() = runTest {
+    val source = FakePlaylistSource()
+    val vm = PlaylistViewModel(source)
+
+    vm.keepOffline()
+    vm.removeOffline()
+    advanceUntilIdle()
+
+    assertThat(source.keepCalls).isEmpty()
+    assertThat(source.forgetCalls).isEmpty()
+  }
 }

@@ -137,6 +137,15 @@ class LibraryNoticeTest {
   }
 
   @Test
+  fun `a refusal whose message is only whitespace reads as one with no message`() {
+    val blank = LibraryNotice.Failed(SyncFailure.NotFound(detail = "  ")).toMessage(false)
+
+    assertThat(blank)
+      .isEqualTo(LibraryNotice.Failed(SyncFailure.NotFound(detail = null)).toMessage(false))
+      .doesNotContain("\u201c")
+  }
+
+  @Test
   fun `a refusal with no message from the server still reads as a sentence`() {
     val message = LibraryNotice.Failed(SyncFailure.NotFound(detail = null)).toMessage(false)
 
