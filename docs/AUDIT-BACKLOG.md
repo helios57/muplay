@@ -377,6 +377,25 @@ deliberately omits it, and the omission is recorded at the floor rather than lef
 
 ---
 
+## P2 — seen while finishing 0.3.0, not fixed
+
+**OPEN, added 2026-10-11.** Three things noticed on `muplay37` while driving the 0.3.0 build, none
+of them fixed or yet located in code. They went out in v0.3.0.
+
+- **The transport shows Pause after the queue has played to the end.** With the player stopped
+  at the end of the queue, the central control still offers *Pause*, where *Play* (start again)
+  is what a user can actually do. Probably a decision made from `playWhenReady` where it should
+  come from the playback state. Write the test first: a queue played to its end, then read the
+  control's label with no wait.
+- **`ProgramCurve` draws its labels over the progress marker at the very start.** At x = 0 the
+  marker and the axis labels overlap slightly
+  (`feature/binaural/.../waves/ProgramCurve.kt`). Cosmetic.
+- **Skip silence, changed while a book is playing, was not checked on a device.** The switch is
+  covered on the JVM tier and the book player was driven on `muplay37`, but nobody listened for the
+  change taking effect mid-playback. Check it before calling it done.
+
+---
+
 ## What the audits say is genuinely good — do not disturb
 
 The **cast** error handling is the model the rest should copy: `CastUiState.kt:237-257`
