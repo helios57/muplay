@@ -444,7 +444,11 @@ one tree.
 
 **MuPlay declares nothing in that class** (**measured**, above). The one that needs paperwork later
 is `FOREGROUND_SERVICE_MEDIA_PLAYBACK`: Play requires a foreground-service-type declaration under
-*App content* for production, though not for internal testing. `POST_NOTIFICATIONS` is a normal
+*App content* for production, though not for internal testing. The declaration ("Media playback") is filed with the demo video
+[`docs/play/foreground-service-demo.mp4`](play/foreground-service-demo.mp4) (raw link:
+`https://raw.githubusercontent.com/helios57/muplay/master/docs/play/foreground-service-demo.mp4`):
+connect to the public demo server, start an audiobook, media controls in the notification shade,
+playback continuing with the screen off. `POST_NOTIFICATIONS` is a normal
 runtime permission and needs no declaration — it is requested at launch (`MainActivity`) and held
 there by `ConventionTest`'s *every runtime permission this app declares is requested somewhere in
 src main*.
